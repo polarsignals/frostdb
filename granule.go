@@ -91,22 +91,6 @@ func (g *Granule) AddPart(p *Part) uint64 {
 	return newcard
 }
 
-func (g *Granule) Cardinality(tx uint64, txCompleted func(uint64) uint64) int {
-	return g.cardinality(tx, txCompleted)
-}
-
-func (g *Granule) cardinality(tx uint64, txCompleted func(uint64) uint64) int {
-	res := 0
-	g.parts.Iterate(func(p *Part) bool {
-		if p.tx > tx || txCompleted(p.tx) > tx {
-			return true
-		}
-		res += p.Cardinality
-		return true
-	})
-	return res
-}
-
 // split a granule into n sized granules. With the last granule containing the remainder.
 // Returns the granules in order.
 // This assumes the Granule has had it's parts merged into a single part
