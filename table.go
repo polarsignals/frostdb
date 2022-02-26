@@ -136,7 +136,6 @@ func (t *Table) splitGranule(granule *Granule) {
 
 	// Obtain a new tx for this compaction
 	tx, commit := t.db.begin()
-	defer commit()
 
 	// Start compaction by adding sentinel node to parts list
 	parts := granule.parts.Sentinel(Compacting)
@@ -175,6 +174,11 @@ func (t *Table) splitGranule(granule *Granule) {
 		addPartToGranule(granules, p)
 		return true
 	})
+
+	// commit our compacted writes.
+	// Do this here to avoid a small race condition where we swap the index, and before what was previously a defer commit() would allow a read
+	// to not find the compacted parts
+	commit()
 
 	for {
 		curIndex := t.Index()
