@@ -146,7 +146,11 @@ func (t *Table) splitGranule(granule *Granule) {
 		level.Error(t.logger).Log("msg", "failed to merge parts", "error", err)
 	}
 	if newpart.Cardinality == 0 { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
-		return
+		for {
+			if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
+				return
+			}
+		}
 	}
 	g := NewGranule(t.metrics.granulesCreated, &t.schema, newpart)
 
