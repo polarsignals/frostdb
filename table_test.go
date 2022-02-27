@@ -527,7 +527,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 			go func(id string, tbl *Table, w *sync.WaitGroup) {
 				defer w.Done()
 				for i := 0; i < iterations; i++ {
-					if err := tbl.Insert(inserts[id][i : i+rows]); err != nil {
+					if err := tbl.Insert(inserts[id][i*rows : i*rows+rows]); err != nil {
 						fmt.Println("Received error on insert: ", err)
 					}
 				}
