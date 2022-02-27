@@ -206,10 +206,13 @@ func (t *Table) splitGranule(granule *Granule) {
 
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *Table) Iterator(pool memory.Allocator, iterator func(r arrow.Record) error) error {
+	index := t.Index()
 	tx := t.db.beginRead()
 
 	var err error
-	t.granuleIterator(func(g *Granule) bool {
+	index.Ascend(func(i btree.Item) bool {
+		g := i.(*Granule)
+
 		var r arrow.Record
 		r, err = g.ArrowRecord(tx, t.db.txCompleted, pool)
 		if err != nil {
