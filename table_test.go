@@ -10,37 +10,20 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/google/uuid"
+	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 )
 
 func basicTable(t *testing.T, granuleSize int) *Table {
-	schema := NewSchema(
-		[]ColumnDefinition{{
-			Name:     "labels",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-			Dynamic:  true,
-		}, {
-			Name:     "stacktrace",
-			Type:     List(UUIDType),
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "timestamp",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "value",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}},
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
 		granuleSize,
-		"labels",
-		"timestamp",
 	)
 
 	c := New(nil)
 	db := c.DB("test")
-	table := db.Table("test", schema, log.NewNopLogger())
+	table := db.Table("test", config, log.NewNopLogger())
 
 	return table
 }
@@ -48,97 +31,95 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 func TestTable(t *testing.T) {
 	table := basicTable(t, 2^12)
 
-	err := table.Insert(
-		[]Row{{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(1),
-				int64(1),
-			},
-		}, {
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label3", Value: "value3"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
-		}, {
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label4", Value: "value4"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(3),
-				int64(3),
-			},
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
 
-	err = table.Insert(
-		[]Row{{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
 
-	err = table.Insert(
-		[]Row{{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label3", Value: "value3"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(3),
-				int64(3),
-			},
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	err = table.Insert(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
+	require.NoError(t, err)
 
 	err = table.Iterator(memory.NewGoAllocator(), func(ar arrow.Record) error {
-		fmt.Println(ar)
+		t.Log(ar)
 		defer ar.Release()
 
 		return nil
@@ -151,119 +132,111 @@ func TestTable(t *testing.T) {
 	require.Equal(t, 1, table.index.Len())
 	require.Equal(t, uint64(3), table.index.Min().(*Granule).parts.total)
 	require.Equal(t, uint64(5), table.index.Min().(*Granule).card)
-	require.Equal(t, []interface{}{
-		[]DynamicColumnValue{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-		},
-		[]UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		int64(1),
-		int64(1),
-	}, table.index.Min().(*Granule).least.Values)
+	require.Equal(t, parquet.Row{
+		parquet.ValueOf("test").Level(0, 0, 0),
+		parquet.ValueOf("value1").Level(0, 1, 1),
+		parquet.ValueOf("value2").Level(0, 1, 2),
+		parquet.ValueOf(nil).Level(0, 0, 3),
+		parquet.ValueOf(nil).Level(0, 0, 4),
+		parquet.ValueOf(uuid.MustParse("00000000-0000-0000-0000-000000000001")).Level(0, 1, 5),
+		parquet.ValueOf(uuid.MustParse("00000000-0000-0000-0000-000000000002")).Level(1, 1, 5),
+		parquet.ValueOf(1).Level(0, 0, 6),
+		parquet.ValueOf(1).Level(0, 0, 7),
+	}, table.index.Min().(*Granule).least.Row)
 	require.Equal(t, 1, table.index.Len())
 }
 
 func Test_Table_GranuleSplit(t *testing.T) {
 	table := basicTable(t, 4)
 
-	err := table.Insert(
-		[]Row{{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(1),
-				int64(1),
-			},
-		}, {
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label3", Value: "value3"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
-		}, {
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label4", Value: "value4"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(3),
-				int64(3),
-			},
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
 
-	err = table.Insert(
-		[]Row{{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
 
-	err = table.Insert(
-		[]Row{{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label3", Value: "value3"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(3),
-				int64(3),
-			},
-		}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	err = table.Insert(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
+	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
 	table.Iterator(memory.NewGoAllocator(), func(r arrow.Record) error {
 		defer r.Release()
-		fmt.Println(r)
+		t.Log(r)
 		return nil
 	})
 
@@ -292,110 +265,105 @@ func Test_Table_GranuleSplit(t *testing.T) {
 func Test_Table_InsertLowest(t *testing.T) {
 	table := basicTable(t, 4)
 
-	err := table.Insert([]Row{
-		{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label10", Value: "value10"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label13", Value: "value13"},
 		},
-		{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label11", Value: "value11"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
 		},
-		{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label12", Value: "value12"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label12", Value: "value12"},
 		},
-		{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label13", Value: "value13"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
 		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label11", Value: "value11"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label10", Value: "value10"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
 
-	// Adding a 5th element should cause a split
-	err = table.Insert([]Row{
-		{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label14", Value: "value14"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	// Since we are inserting 4 elements and the granule size is 4, the granule
+	// will immediately split.
+	err = table.Insert(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label14", Value: "value14"},
 		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
+	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
 	require.Equal(t, 2, table.index.Len())
-	require.Equal(t, uint64(2), table.index.Min().(*Granule).card) // [10,11]
-	require.Equal(t, uint64(3), table.index.Max().(*Granule).card) // [12,13,14]
+	require.Equal(t, uint64(3), table.index.Min().(*Granule).card) // [10,11]
+	require.Equal(t, uint64(2), table.index.Max().(*Granule).card) // [12,13,14]
 
 	// Insert a new column that is the lowest column yet; expect it to be added to the minimum column
-	err = table.Insert([]Row{
-		{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(10),
-				int64(10),
-			},
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
 		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 10,
+		Value:     10,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
+	require.NoError(t, err)
+
+	table.Iterator(memory.NewGoAllocator(), func(r arrow.Record) error {
+		defer r.Release()
+		t.Log(r)
+		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	require.Equal(t, 2, table.index.Len())
 	require.Equal(t, uint64(3), table.index.Min().(*Granule).card) // [1,10,11]
@@ -406,25 +374,27 @@ func Test_Table_InsertLowest(t *testing.T) {
 func Test_Table_Concurrency(t *testing.T) {
 	table := basicTable(t, 1<<13)
 
-	generateRows := func(n int) []Row {
-		rows := make([]Row, 0, n)
+	generateRows := func(n int) *dynparquet.Buffer {
+		rows := make(dynparquet.Samples, 0, n)
 		for i := 0; i < n; i++ {
-			rows = append(rows, Row{
-				Values: []interface{}{
-					[]DynamicColumnValue{ // TODO would be nice to not have all the same column
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
-					},
-					[]UUID{
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-					},
-					rand.Int63(),
-					rand.Int63(),
+			rows = append(rows, dynparquet.Sample{
+				Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
+					{Name: "label1", Value: "value1"},
+					{Name: "label2", Value: "value2"},
 				},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+				},
+				Timestamp: rand.Int63(),
+				Value:     rand.Int63(),
 			})
 		}
-		return rows
+		buf, err := rows.ToBuffer(table.Schema())
+		require.NoError(t, err)
+
+		buf.Sort()
+		return buf
 	}
 
 	// Spawn n workers that will insert values into the table
@@ -458,169 +428,159 @@ func Test_Table_Concurrency(t *testing.T) {
 	require.Equal(t, int64(n*inserts*rows), totalrows)
 }
 
-func Benchmark_Table_Insert_10Rows_10Iter_10Writers(b *testing.B) {
-	benchmarkTableInserts(b, 10, 10, 10)
-}
-
-func Benchmark_Table_Insert_100Row_100Iter_100Writers(b *testing.B) {
-	benchmarkTableInserts(b, 100, 100, 100)
-}
-
-func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
-	schema := NewSchema(
-		[]ColumnDefinition{{
-			Name:     "labels",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-			Dynamic:  true,
-		}, {
-			Name:     "timestamp",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "value",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}},
-		2<<13,
-		"labels",
-		"timestamp",
-	)
-
-	c := New(nil)
-	db := c.DB("test")
-	generateRows := func(id string, n int) []Row {
-		rows := make([]Row, 0, n)
-		for i := 0; i < n; i++ {
-			rows = append(rows, Row{
-				Values: []interface{}{
-					[]DynamicColumnValue{ // TODO would be nice to not have all the same column
-						{Name: "label1", Value: id},
-						{Name: "label2", Value: "value2"},
-					},
-					rand.Int63(),
-					int64(i),
-				},
-			})
-		}
-		return rows
-	}
-
-	// Pre-generate all rows we're inserting
-	inserts := make(map[string][]Row, writers)
-	for i := 0; i < writers; i++ {
-		id := uuid.New().String()
-		inserts[id] = generateRows(id, rows*iterations)
-	}
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-
-		// Create table for test
-		table := db.Table(uuid.New().String(), schema, log.NewNopLogger())
-
-		// Spawn n workers that will insert values into the table
-		wg := &sync.WaitGroup{}
-		for id := range inserts {
-			wg.Add(1)
-			go func(id string, tbl *Table, w *sync.WaitGroup) {
-				defer w.Done()
-				for i := 0; i < iterations; i++ {
-					if err := tbl.Insert(inserts[id][i*rows : i*rows+rows]); err != nil {
-						fmt.Println("Received error on insert: ", err)
-					}
-				}
-			}(id, table, wg)
-		}
-		wg.Wait()
-
-		b.StopTimer()
-
-		// Wait for all compaction routines to complete
-		table.Sync()
-
-		// Calculate the number of entries in database
-		totalrows := int64(0)
-		err := table.Iterator(memory.NewGoAllocator(), func(ar arrow.Record) error {
-			totalrows += ar.NumRows()
-			defer ar.Release()
-
-			return nil
-		})
-		require.NoError(b, err)
-		require.Equal(b, int64(rows*iterations*writers), totalrows)
-
-		b.StartTimer()
-	}
-}
+//func Benchmark_Table_Insert_10Rows_10Iter_10Writers(b *testing.B) {
+//	benchmarkTableInserts(b, 10, 10, 10)
+//}
+//
+//func Benchmark_Table_Insert_100Row_100Iter_100Writers(b *testing.B) {
+//	benchmarkTableInserts(b, 100, 100, 100)
+//}
+//
+//func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
+//	config := NewTableConfig(
+//		dynparquet.NewSampleSchema(),
+//		2<<13,
+//	)
+//
+//	c := New(nil)
+//	db := c.DB("test")
+//	generateRows := func(id string, n int) *dynparquet.Buffer {
+//		rows := make(dynparquet.Samples, 0, n)
+//		for i := 0; i < n; i++ {
+//			rows = append(rows, dynparquet.Sample{
+//				Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
+//					{Name: "label1", Value: id},
+//					{Name: "label2", Value: "value2"},
+//				},
+//				Stacktrace: []uuid.UUID{
+//					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+//					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+//				},
+//				Timestamp: rand.Int63(),
+//				Value:     int64(i),
+//			})
+//		}
+//
+//		buf, err := rows.ToBuffer(config.schema)
+//		require.NoError(b, err)
+//
+//		buf.Sort()
+//		return buf
+//	}
+//
+//	// Pre-generate all rows we're inserting
+//	inserts := make(map[string]*dynparquet.Buffer, writers)
+//	for i := 0; i < writers; i++ {
+//		id := uuid.New().String()
+//		inserts[id] = generateRows(id, rows*iterations)
+//	}
+//
+//	b.ResetTimer()
+//
+//	for i := 0; i < b.N; i++ {
+//
+//		// Create table for test
+//		table := db.Table(uuid.New().String(), config, log.NewNopLogger())
+//
+//		// Spawn n workers that will insert values into the table
+//		wg := &sync.WaitGroup{}
+//		for id := range inserts {
+//			wg.Add(1)
+//			go func(id string, tbl *Table, w *sync.WaitGroup) {
+//				defer w.Done()
+//				for i := 0; i < iterations; i++ {
+//					if err := tbl.Insert(inserts[id][i*rows : i*rows+rows]); err != nil {
+//						fmt.Println("Received error on insert: ", err)
+//					}
+//				}
+//			}(id, table, wg)
+//		}
+//		wg.Wait()
+//
+//		b.StopTimer()
+//
+//		// Wait for all compaction routines to complete
+//		table.Sync()
+//
+//		// Calculate the number of entries in database
+//		totalrows := int64(0)
+//		err := table.Iterator(memory.NewGoAllocator(), func(ar arrow.Record) error {
+//			totalrows += ar.NumRows()
+//			defer ar.Release()
+//
+//			return nil
+//		})
+//		require.NoError(b, err)
+//		require.Equal(b, int64(rows*iterations*writers), totalrows)
+//
+//		b.StartTimer()
+//	}
+//}
 
 func Test_Table_ReadIsolation(t *testing.T) {
 	table := basicTable(t, 2<<12)
 
-	err := table.Insert(
-		[]Row{{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(1),
-				int64(1),
-			},
-		}, {
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label3", Value: "value3"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(2),
-				int64(2),
-			},
-		}, {
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label4", Value: "value4"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(3),
-				int64(3),
-			},
-		}},
-	)
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
 	require.NoError(t, err)
 
 	// Perform a new insert that will have a higher tx id
-	err = table.Insert(
-		[]Row{{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "blarg", Value: "blarg"},
-					{Name: "blah", Value: "blah"},
-				},
-				[]UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				int64(1),
-				int64(1),
-			},
-		}},
-	)
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "blarg", Value: "blarg"},
+			{Name: "blah", Value: "blah"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
 	require.NoError(t, err)
 
 	// Now we cheat and reset our tx so that we can perform a read in the past.
@@ -651,188 +611,173 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	require.Equal(t, int64(4), rows)
 }
 
-func Test_Table_Sorting(t *testing.T) {
-	granuleSize := 2 << 12
-	schema1 := NewSchema(
-		[]ColumnDefinition{{
-			Name:     "labels",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-			Dynamic:  true,
-		}, {
-			Name:     "stacktrace",
-			Type:     List(UUIDType),
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "timestamp",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "value",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}},
-		granuleSize,
-		"labels",
-		"timestamp",
-	)
+//func Test_Table_Sorting(t *testing.T) {
+//	granuleSize := 2 << 12
+//	schema1 := NewSchema(
+//		[]ColumnDefinition{{
+//			Name:     "labels",
+//			Type:     StringType,
+//			Encoding: PlainEncoding,
+//			Dynamic:  true,
+//		}, {
+//			Name:     "stacktrace",
+//			Type:     List(UUIDType),
+//			Encoding: PlainEncoding,
+//		}, {
+//			Name:     "timestamp",
+//			Type:     Int64Type,
+//			Encoding: PlainEncoding,
+//		}, {
+//			Name:     "value",
+//			Type:     Int64Type,
+//			Encoding: PlainEncoding,
+//		}},
+//		granuleSize,
+//		"labels",
+//		"timestamp",
+//	)
+//
+//	schema2 := NewSchema(
+//		[]ColumnDefinition{{
+//			Name:     "labels",
+//			Type:     StringType,
+//			Encoding: PlainEncoding,
+//			Dynamic:  true,
+//		}, {
+//			Name:     "stacktrace",
+//			Type:     List(UUIDType),
+//			Encoding: PlainEncoding,
+//		}, {
+//			Name:     "timestamp",
+//			Type:     Int64Type,
+//			Encoding: PlainEncoding,
+//		}, {
+//			Name:     "value",
+//			Type:     Int64Type,
+//			Encoding: PlainEncoding,
+//		}},
+//		granuleSize,
+//		"timestamp",
+//		"labels",
+//	)
+//
+//	c := New(nil)
+//	db := c.DB("test")
+//	table1 := db.Table("test1", schema1, log.NewNopLogger())
+//	table2 := db.Table("test2", schema2, log.NewNopLogger())
+//
+//	tables := []*Table{
+//		table1,
+//		table2,
+//	}
+//
+//	for _, table := range tables {
+//
+//		err := table.Insert(
+//			[]Row{{
+//				Values: []interface{}{
+//					[]DynamicColumnValue{
+//						{Name: "label1", Value: "value1"},
+//						{Name: "label2", Value: "value2"},
+//					},
+//					[]UUID{
+//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+//					},
+//					int64(3),
+//					int64(3),
+//				},
+//			}},
+//		)
+//		require.NoError(t, err)
+//
+//		err = table.Insert(
+//			[]Row{{
+//				Values: []interface{}{
+//					[]DynamicColumnValue{
+//						{Name: "label1", Value: "value1"},
+//						{Name: "label2", Value: "value2"},
+//						{Name: "label3", Value: "value3"},
+//					},
+//					[]UUID{
+//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+//					},
+//					int64(2),
+//					int64(2),
+//				},
+//			}},
+//		)
+//		require.NoError(t, err)
+//
+//		err = table.Insert(
+//			[]Row{{
+//				Values: []interface{}{
+//					[]DynamicColumnValue{
+//						{Name: "label1", Value: "value1"},
+//						{Name: "label2", Value: "value2"},
+//						{Name: "label4", Value: "value4"},
+//					},
+//					[]UUID{
+//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+//					},
+//					int64(1),
+//					int64(1),
+//				},
+//			}},
+//		)
+//		require.NoError(t, err)
+//	}
+//
+//	for i, table := range tables {
+//		err := table.Iterator(memory.NewGoAllocator(), func(ar arrow.Record) error {
+//			switch i {
+//			case 0:
+//				require.Equal(t, "[3 2 1]", fmt.Sprintf("%v", ar.Column(6)))
+//			case 1:
+//				require.Equal(t, "[1 2 3]", fmt.Sprintf("%v", ar.Column(6)))
+//			}
+//			defer ar.Release()
+//
+//			return nil
+//		})
+//		require.NoError(t, err)
+//	}
+//}
 
-	schema2 := NewSchema(
-		[]ColumnDefinition{{
-			Name:     "labels",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-			Dynamic:  true,
-		}, {
-			Name:     "stacktrace",
-			Type:     List(UUIDType),
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "timestamp",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "value",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}},
-		granuleSize,
-		"timestamp",
-		"labels",
-	)
-
-	c := New(nil)
-	db := c.DB("test")
-	table1 := db.Table("test1", schema1, log.NewNopLogger())
-	table2 := db.Table("test2", schema2, log.NewNopLogger())
-
-	tables := []*Table{
-		table1,
-		table2,
-	}
-
-	for _, table := range tables {
-
-		err := table.Insert(
-			[]Row{{
-				Values: []interface{}{
-					[]DynamicColumnValue{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
-					},
-					[]UUID{
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-					},
-					int64(3),
-					int64(3),
-				},
-			}},
-		)
-		require.NoError(t, err)
-
-		err = table.Insert(
-			[]Row{{
-				Values: []interface{}{
-					[]DynamicColumnValue{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
-						{Name: "label3", Value: "value3"},
-					},
-					[]UUID{
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-					},
-					int64(2),
-					int64(2),
-				},
-			}},
-		)
-		require.NoError(t, err)
-
-		err = table.Insert(
-			[]Row{{
-				Values: []interface{}{
-					[]DynamicColumnValue{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
-						{Name: "label4", Value: "value4"},
-					},
-					[]UUID{
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-					},
-					int64(1),
-					int64(1),
-				},
-			}},
-		)
-		require.NoError(t, err)
-	}
-
-	for i, table := range tables {
-		err := table.Iterator(memory.NewGoAllocator(), func(ar arrow.Record) error {
-			switch i {
-			case 0:
-				require.Equal(t, "[3 2 1]", fmt.Sprintf("%v", ar.Column(6)))
-			case 1:
-				require.Equal(t, "[1 2 3]", fmt.Sprintf("%v", ar.Column(6)))
-			}
-			defer ar.Release()
-
-			return nil
-		})
-		require.NoError(t, err)
-	}
-}
-
-func Test_Granule_Less(t *testing.T) {
-
-	schema := NewSchema(
-		[]ColumnDefinition{{
-			Name:     "labels",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-			Dynamic:  true,
-		}, {
-			Name:     "timestamp",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "value",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}},
-		2<<13,
-		"labels",
-		"timestamp",
-	)
-	g := &Granule{
-		schema: &schema,
-		least: &Row{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "06e32507-cda3-49db-8093-53a8a4c8da76"},
-					{Name: "label2", Value: "value2"},
-				},
-				int64(6375179957311426905),
-				int64(0),
-			},
-		},
-	}
-	g1 := &Granule{
-		schema: &schema,
-		least: &Row{
-			Values: []interface{}{
-				[]DynamicColumnValue{
-					{Name: "label1", Value: "06e32507-cda3-49db-8093-53a8a4c8da76"},
-					{Name: "label2", Value: "value2"},
-				},
-				int64(8825936717838690748),
-				int64(0),
-			},
-		},
-	}
-
-	require.NotEqual(t, g.Less(g1), g1.Less(g))
-}
+//func Test_Granule_Less(t *testing.T) {
+//	config := NewTableConfig(
+//		dynparquet.NewSampleSchema(),
+//		2<<13,
+//	)
+//
+//	g := &Granule{
+//		tableConfig: config,
+//		least: &Row{
+//			Values: []interface{}{
+//				[]DynamicColumnValue{
+//					{Name: "label1", Value: "06e32507-cda3-49db-8093-53a8a4c8da76"},
+//					{Name: "label2", Value: "value2"},
+//				},
+//				int64(6375179957311426905),
+//				int64(0),
+//			},
+//		},
+//	}
+//	g1 := &Granule{
+//		tableConfig: config,
+//		least: &Row{
+//			Values: []interface{}{
+//				[]DynamicColumnValue{
+//					{Name: "label1", Value: "06e32507-cda3-49db-8093-53a8a4c8da76"},
+//					{Name: "label2", Value: "value2"},
+//				},
+//				int64(8825936717838690748),
+//				int64(0),
+//			},
+//		},
+//	}
+//
+//	require.NotEqual(t, g.Less(g1), g1.Less(g))
+//}

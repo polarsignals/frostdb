@@ -6,67 +6,16 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/google/uuid"
 	"github.com/parca-dev/parca/pkg/metastore"
+	"github.com/parca-dev/parca/pkg/parcaparquet"
 	parcaprofile "github.com/parca-dev/parca/pkg/profile"
 	"github.com/prometheus/prometheus/model/labels"
 )
 
-func ParcaProfilingTableSchema() Schema {
-	return NewSchema(
-		[]ColumnDefinition{{
-			Name:     "sample_type",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "sample_unit",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "period_type",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "period_unit",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "labels",
-			Type:     StringType,
-			Encoding: PlainEncoding,
-			Dynamic:  true,
-		}, {
-			Name: "stacktrace",
-			// This should be a UUID, but we don't have a UUID type yet. For
-			// now, we'll just use a string. UUIDs might also be best
-			// represented as a Uint128 internally.
-			Type:     List(UUIDType),
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "timestamp",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-			// TODO
-			//}, {
-			//	Name:     "pprof_labels",
-			//	Type:     StringType,
-			//	Encoding: PlainEncoding,
-			//}, {
-			//	Name:     "pprof_num_labels",
-			//	Type:     Int64Type,
-			//	Encoding: PlainEncoding,
-		}, {
-			Name:     "duration",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "period",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}, {
-			Name:     "value",
-			Type:     Int64Type,
-			Encoding: PlainEncoding,
-		}},
+func ParcaProfilingTableConfig() *TableConfig {
+	return NewTableConfig(
+		parcaparquet.Schema(),
 		8192, // 2^13
 	)
 }
@@ -77,90 +26,61 @@ func InsertProfileIntoTable(ctx context.Context, logger log.Logger, table *Table
 	// only here for backward compatibility while we finish up the
 	// columnstore. This can be removed once the migration is
 	// complete and the old storage is removed.
-	labels := make([]DynamicColumnValue, 0, len(ls))
+	lbls := make(labels.Labels, 0, len(ls)+1)
 	found := false
 	for _, l := range ls {
 		if l.Name == "__name__" {
 			found = true
-			labels = append(labels, DynamicColumnValue{
+			lbls = append(lbls, labels.Label{
 				Name:  "__name__",
 				Value: l.Value + "_" + prof.Meta.SampleType.Type + "_" + prof.Meta.SampleType.Unit,
 			})
 			continue
 		}
-		labels = append(labels, DynamicColumnValue{
+		lbls = append(lbls, labels.Label{
 			Name:  l.Name,
 			Value: l.Value,
 		})
 	}
 	if !found {
-		labels = append(labels, DynamicColumnValue{
+		lbls = append(lbls, labels.Label{
 			Name:  "__name__",
 			Value: prof.Meta.SampleType.Type + "_" + prof.Meta.SampleType.Unit,
 		})
 	}
+	sort.Sort(lbls)
 
-	rows := make([]*SampleRow, 0, len(prof.FlatSamples))
+	rows := make(parcaparquet.Samples, 0, len(prof.FlatSamples))
 	for _, s := range prof.FlatSamples {
-		rows = append(rows, &SampleRow{
-			Stacktrace: metastoreLocationsToSampleStacktrace(s.Location),
+		rows = append(rows, parcaparquet.Sample{
+			SampleType: prof.Meta.SampleType.Type,
+			SampleUnit: prof.Meta.SampleType.Unit,
+			PeriodType: prof.Meta.PeriodType.Type,
+			PeriodUnit: prof.Meta.PeriodType.Unit,
+			Labels:     lbls,
+			Stacktrace: extractLocationIDs(s.Location),
+			Timestamp:  prof.Meta.Timestamp,
+			Duration:   prof.Meta.Duration,
+			Period:     prof.Meta.Period,
 			Value:      s.Value,
 		})
 	}
 
 	level.Debug(logger).Log("msg", "writing sample", "label_set", ls.String(), "timestamp", prof.Meta.Timestamp)
 
-	SortSampleRows(rows)
-	return len(rows), table.Insert(makeRows(prof, labels, rows))
-}
-
-func makeRows(prof *parcaprofile.FlatProfile, labels []DynamicColumnValue, rows []*SampleRow) []Row {
-	res := make([]Row, len(rows))
-	for i, r := range rows {
-		res[i] = Row{
-			Values: []interface{}{
-				prof.Meta.SampleType.Type,
-				prof.Meta.SampleType.Unit,
-				prof.Meta.PeriodType.Type,
-				prof.Meta.PeriodType.Unit,
-				labels,
-				r.Stacktrace,
-				prof.Meta.Timestamp,
-				prof.Meta.Duration,
-				prof.Meta.Period,
-				r.Value,
-			},
-		}
+	buf, err := rows.ToBuffer(table.Schema())
+	if err != nil {
+		return 0, err
 	}
 
+	buf.Sort()
+	return len(prof.FlatSamples), table.Insert(buf)
+}
+
+func extractLocationIDs(locs []*metastore.Location) []uuid.UUID {
+	res := make([]uuid.UUID, 0, len(locs))
+	for i := len(locs) - 1; i >= 0; i-- {
+		res = append(res, locs[i].ID)
+	}
 	return res
-}
-
-func metastoreLocationsToSampleStacktrace(locs []*metastore.Location) []UUID {
-	length := len(locs) - 1
-	stacktrace := make([]UUID, length+1)
-	for i := range locs {
-		cUUID := UUID(locs[length-i].ID)
-		stacktrace[i] = cUUID
-	}
-
-	return stacktrace
-}
-
-type SampleRow struct {
-	// Array of Location IDs.
-	Stacktrace []UUID
-
-	PprofStringLabels  map[string]string
-	PprofNumLabels     map[string]int64
-	PprofNumLabelUnits map[string]string
-
-	Value int64
-}
-
-func SortSampleRows(samples []*SampleRow) {
-	sort.Slice(samples, func(i, j int) bool {
-		// TODO need to take labels into account
-		return UUIDType.ListLess(samples[i].Stacktrace, samples[j].Stacktrace)
-	})
 }

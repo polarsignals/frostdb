@@ -1,28 +1,30 @@
 package columnstore
 
 import (
-	"fmt"
+	"io"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/array"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/google/btree"
+	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/parca-dev/parca/pkg/columnstore/pqarrow"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/segmentio/parquet-go"
 )
 
 type Granule struct {
 
 	// least is the row that exists within the Granule that is the least.
 	// This is used for quick insertion into the btree, without requiring an iterator
-	least *Row
+	least *dynparquet.DynamicRow
 	parts *PartList
 
 	// card is the raw commited, and uncommited cardinality of the granule. It is used as a suggestion for potential compaction
 	card uint64
 
-	schema *Schema
+	tableConfig *TableConfig
 
 	granulesCreated prometheus.Counter
 
@@ -33,29 +35,24 @@ type Granule struct {
 	newGranules []*Granule
 }
 
-func NewGranule(granulesCreated prometheus.Counter, schema *Schema, parts ...*Part) *Granule {
+func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) *Granule {
 	g := &Granule{
 		granulesCreated: granulesCreated,
 		parts:           &PartList{},
-		schema:          schema,
+		tableConfig:     tableConfig,
 	}
 
 	// Find the least column
-	for i, p := range parts {
-		g.card += uint64(p.Cardinality)
-		g.parts.Prepend(p)
-		it := p.Iterator()
-		if it.Next() { // Since we assume a part is sorted, we need only to look at the first row in each Part
-			r := &Row{Values: it.Values()}
-			switch i {
-			case 0:
-				g.least = r
-			default:
-				if schema.RowLessThan(r.Values, g.least.Values) {
-					g.least = r
-				}
-			}
+	if firstPart != nil {
+		g.card = uint64(firstPart.Buf.NumRows())
+		g.parts.Prepend(firstPart)
+		// Since we assume a part is sorted, we need only to look at the first row in each Part
+		row, err := firstPart.Buf.DynamicRows().ReadRow(nil)
+		if err != nil {
+			// TODO(brancz): handle error
+			panic(err)
 		}
+		g.least = row
 	}
 
 	granulesCreated.Inc()
@@ -64,28 +61,28 @@ func NewGranule(granulesCreated prometheus.Counter, schema *Schema, parts ...*Pa
 
 // AddPart returns the new cardinality of the Granule
 func (g *Granule) AddPart(p *Part) uint64 {
-
 	node := g.parts.Prepend(p)
-	newcard := atomic.AddUint64(&g.card, uint64(p.Cardinality))
-	it := p.Iterator()
+	newcard := atomic.AddUint64(&g.card, uint64(p.Buf.NumRows()))
+	r, err := p.Buf.DynamicRows().ReadRow(nil)
+	if err != nil {
+		// TODO(brancz): handle error
+		panic(err)
+	}
 
-	if it.Next() {
-		for {
-			r := &Row{Values: it.Values()}
-			least := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)))
-			if least == nil || g.schema.RowLessThan(r.Values, (*Row)(least).Values) {
-				if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)), least, unsafe.Pointer(r)) {
-					break
-				}
-			} else {
+	for {
+		least := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)))
+		if least == nil || g.tableConfig.schema.RowLessThan(r, (*dynparquet.DynamicRow)(least)) {
+			if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)), least, unsafe.Pointer(r)) {
 				break
 			}
+		} else {
+			break
 		}
+	}
 
-		// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
-		if node.sentinel == Compacted {
-			addPartToGranule(g.newGranules, p)
-		}
+	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
+	if node.sentinel == Compacted {
+		addPartToGranule(g.newGranules, p)
 	}
 
 	return newcard
@@ -95,41 +92,53 @@ func (g *Granule) AddPart(p *Part) uint64 {
 // Returns the granules in order.
 // This assumes the Granule has had it's parts merged into a single part
 func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
-
-	// How many granules we'll need to build
-	count := 0
-	var it *PartIterator
-	g.parts.Iterate(func(p *Part) bool {
-		count = p.Cardinality / n
-		it = p.Iterator()
+	// Get the first part in the granule's part list.
+	var p *Part
+	g.parts.Iterate(func(part *Part) bool {
+		// Since all parts are already merged into one, this iterator will only
+		// iterate over the one and only part.
+		p = part
 		return false
 	})
+	// How many granules we'll need to build
+	count := int(p.Buf.NumRows()) / n
 
 	// Build all the new granules
 	granules := make([]*Granule, 0, count)
 
-	rows := make([]Row, 0, n)
-	for it.Next() {
-		rows = append(rows, Row{Values: it.Values()})
-		if len(rows) == n && len(granules) != count-1 { // If we have n rows, and aren't on the last granule, create the n-sized granule
-			p, err := NewPart(tx, g.schema.columns, NewSimpleRowWriter(rows))
+	// TODO: Buffers should be able to efficiently slice themselves.
+	var row parquet.Row
+	buf, err := g.tableConfig.schema.NewBuffer(p.Buf.DynamicColumns())
+	if err != nil {
+		return nil, err
+	}
+	rows := p.Buf.Rows()
+	for {
+		row, err := rows.ReadRow(row)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		err = buf.WriteRow(row)
+		if err != nil {
+			return nil, err
+		}
+
+		if int(buf.NumRows()) == n && len(granules) != count-1 { // If we have n rows, and aren't on the last granule, create the n-sized granule
+			granules = append(granules, NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, buf)))
+			buf, err = g.tableConfig.schema.NewBuffer(p.Buf.DynamicColumns())
 			if err != nil {
-				return nil, fmt.Errorf("failed to create new part: %w", err)
+				return nil, err
 			}
-			granules = append(granules, NewGranule(g.granulesCreated, g.schema, p))
-			rows = make([]Row, 0, n)
 		}
 	}
 
-	// Save the remaining Granule
-	if len(rows) != 0 {
-		p, err := NewPart(tx, g.schema.columns, NewSimpleRowWriter(rows))
-		if err != nil {
-			if err != nil {
-				return nil, fmt.Errorf("failed to create new part: %w", err)
-			}
-		}
-		granules = append(granules, NewGranule(g.granulesCreated, g.schema, p))
+	if buf.NumRows() > 0 {
+		// Save the remaining Granule
+		granules = append(granules, NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, buf)))
 	}
 
 	return granules, nil
@@ -137,76 +146,38 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 
 // ArrowRecord merges all parts in a Granule before returning an ArrowRecord over that part
 func (g *Granule) ArrowRecord(tx uint64, txCompleted func(uint64) uint64, pool memory.Allocator) (arrow.Record, error) {
+	bufs := []dynparquet.DynamicRowGroup{}
 
-	// Merge the parts
-	p, err := Merge(tx, txCompleted, g.schema, g.parts)
+	// Convert all the parts into a set of rows
+	g.parts.Iterate(func(p *Part) bool {
+		// Don't merge parts from an newer tx, or from an uncompleted tx, or a completed tx that finished after this tx started
+		if p.tx > tx || txCompleted(p.tx) > tx {
+			return true
+		}
+
+		bufs = append(bufs, p.Buf)
+		return true
+	})
+
+	merge, err := g.tableConfig.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
 		return nil, err
 	}
 
-	// Prefetch all dynamic columns
-	cols := make([]int, len(p.columns))
-	names := make([][]string, len(p.columns))
-	for i, c := range p.columns {
-		if g.schema.columns[i].Dynamic {
-			cols[i] = len(c.(*DynamicColumn).dynamicColumns)
-			names[i] = make([]string, cols[i])
-			for j, name := range c.(*DynamicColumn).dynamicColumns {
-				names[i][j] = name
-			}
-		}
+	record, err := pqarrow.ParquetRowGroupToArrowRecord(pool, merge)
+	if err != nil {
+		return nil, err
 	}
 
-	// Build the record
-	bld := array.NewRecordBuilder(pool, g.schema.ToArrow(names, cols))
-	defer bld.Release()
-
-	i := 0 // i is the index into our arrow schema
-	for j, c := range p.columns {
-
-		switch g.schema.columns[j].Dynamic {
-		case true: // expand the dynamic columns
-			d := c.(*DynamicColumn) // TODO this is gross and we should change this iteration
-			for k, name := range d.dynamicColumns {
-				err := d.def.Type.AppendIteratorToArrow(d.data[name].Iterator(p.Cardinality), bld.Field(i+k))
-				if err != nil {
-					return nil, err
-				}
-			}
-			i += len(d.dynamicColumns)
-		default:
-			col := c.(*StaticColumn)
-			err := col.def.Type.AppendIteratorToArrow(col.data.Iterator(p.Cardinality), bld.Field(i))
-			if err != nil {
-				return nil, err
-			}
-			i++
-		}
-	}
-
-	maxValues := 0
-	for _, c := range bld.Fields() {
-		l := c.Len()
-		if l > maxValues {
-			maxValues = l
-		}
-	}
-
-	for _, c := range bld.Fields() {
-		for i := c.Len(); i < maxValues; i++ {
-			c.AppendNull()
-		}
-	}
-
-	return bld.NewRecord(), nil
+	return record, nil
 }
 
 // Less implements the btree.Item interface
 func (g *Granule) Less(than btree.Item) bool {
-	return g.schema.RowLessThan(g.Least().Values, than.(*Granule).Least().Values)
+	return g.tableConfig.schema.RowLessThan(g.Least(), than.(*Granule).Least())
 }
 
 // Least returns the least row in a Granule
-func (g *Granule) Least() *Row {
-	return (*Row)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least))))
+func (g *Granule) Least() *dynparquet.DynamicRow {
+	return (*dynparquet.DynamicRow)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least))))
 }

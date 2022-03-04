@@ -73,7 +73,7 @@ func (s *ColumnStore) DB(name string) *DB {
 	return db
 }
 
-func (db *DB) Table(name string, schema Schema, logger log.Logger) *Table {
+func (db *DB) Table(name string, config *TableConfig, logger log.Logger) *Table {
 	db.mtx.RLock()
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
@@ -91,7 +91,7 @@ func (db *DB) Table(name string, schema Schema, logger log.Logger) *Table {
 		return table
 	}
 
-	table = newTable(db, name, schema, db.reg, logger)
+	table = newTable(db, name, config, db.reg, logger)
 	db.tables[name] = table
 	return table
 }

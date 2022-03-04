@@ -138,11 +138,7 @@ func (s Schema) parquetSchema(
 	g := parquet.Group{}
 	for _, col := range s.columns {
 		if col.Dynamic {
-			dyn, err := dynamicColumnsFor(col.Name, dynamicColumns)
-			if err != nil {
-				return nil, fmt.Errorf("dynamic columns for schema column: %w", err)
-			}
-
+			dyn := dynamicColumnsFor(col.Name, dynamicColumns)
 			for _, name := range dyn.Names {
 				g[col.Name+"."+name] = col.StorageLayout
 			}
@@ -158,10 +154,7 @@ func (s Schema) parquetSchema(
 // columns with the concrete dynamic column names given in the argument.
 func (s Schema) parquetSortingColumns(
 	dynamicColumns map[string]DynamicColumns,
-) (
-	[]parquet.SortingColumn,
-	error,
-) {
+) []parquet.SortingColumn {
 	cols := make([]parquet.SortingColumn, 0, len(s.sortingColumns))
 	for _, col := range s.sortingColumns {
 		colName := col.ColumnName()
@@ -169,24 +162,17 @@ func (s Schema) parquetSortingColumns(
 			cols = append(cols, col)
 			continue
 		}
-		dyn, err := dynamicColumnsFor(colName, dynamicColumns)
-		if err != nil {
-			return nil, fmt.Errorf("dynamic columns for sorting column: %w", err)
-		}
+		dyn := dynamicColumnsFor(colName, dynamicColumns)
 		for _, name := range dyn.Names {
 			cols = append(cols, makeDynamicSortingColumn(name, col))
 		}
 	}
-	return cols, nil
+	return cols
 }
 
 // dynamicColumnsFor returns the concrete dynamic column names for the given dynamic column name.
-func dynamicColumnsFor(column string, dynamicColumns map[string]DynamicColumns) (DynamicColumns, error) {
-	dyn, ok := dynamicColumns[column]
-	if !ok {
-		return DynamicColumns{}, fmt.Errorf("no dynamic column names found for column %s", column)
-	}
-	return dyn, nil
+func dynamicColumnsFor(column string, dynamicColumns map[string]DynamicColumns) DynamicColumns {
+	return dynamicColumns[column]
 }
 
 // Buffer represents an batch of rows with a concrete set of dynamic column
@@ -204,6 +190,46 @@ type DynamicRowGroup interface {
 	// DynamicColumns returns the concrete dynamic column names that were used
 	// create its concrete parquet schema with a dynamic parquet schema.
 	DynamicColumns() map[string]DynamicColumns
+	// DynamicRows return an iterator over the rows in the row group.
+	DynamicRows() DynamicRows
+}
+
+// DynamicRows is an iterator over the rows in a DynamicRowGroup.
+type DynamicRows interface {
+	ReadRow(*DynamicRow) (*DynamicRow, error)
+}
+
+type dynamicRowGroupReader struct {
+	rg             DynamicRowGroup
+	schema         *parquet.Schema
+	dynamicColumns map[string]DynamicColumns
+	rows           parquet.Rows
+}
+
+func newDynamicRowGroupReader(rg DynamicRowGroup) *dynamicRowGroupReader {
+	return &dynamicRowGroupReader{
+		rg:             rg,
+		schema:         rg.Schema(),
+		dynamicColumns: rg.DynamicColumns(),
+		rows:           rg.Rows(),
+	}
+}
+
+// Implements the DynamicRows interface.
+func (r *dynamicRowGroupReader) ReadRow(row *DynamicRow) (*DynamicRow, error) {
+	if row == nil {
+		row = &DynamicRow{
+			DynamicColumns: r.dynamicColumns,
+			Schema:         r.schema,
+			Row:            make(parquet.Row, 0, 50), // randomly chosen number
+		}
+	}
+
+	row.Row = row.Row[:0]
+
+	var err error
+	row.Row, err = r.rows.ReadRow(row.Row)
+	return row, err
 }
 
 // Column returns the parquet.ColumnChunk for the given index. It contains all
@@ -217,6 +243,10 @@ func (b *Buffer) Column(i int) parquet.ColumnChunk {
 // parquet.RowGroup interface.
 func (b *Buffer) NumRows() int64 {
 	return b.buffer.NumRows()
+}
+
+func (b *Buffer) Sort() {
+	sort.Stable(b.buffer)
 }
 
 // NumColumns returns the number of columns in the buffer. Implements the
@@ -248,10 +278,21 @@ func (b *Buffer) WriteRow(row parquet.Row) error {
 	return b.buffer.WriteRow(row)
 }
 
+// WriteRowGroup writes a single row to the buffer.
+func (b *Buffer) WriteRowGroup(rg parquet.RowGroup) (int64, error) {
+	return b.buffer.WriteRowGroup(rg)
+}
+
 // Rows returns an iterator for the rows in the buffer. It implements the
 // parquet.RowGroup interface.
 func (b *Buffer) Rows() parquet.Rows {
 	return b.buffer.Rows()
+}
+
+// DynamicRows returns an iterator for the rows in the buffer. It implements the
+// DynamicRowGroup interface.
+func (b *Buffer) DynamicRows() DynamicRows {
+	return newDynamicRowGroupReader(b)
 }
 
 // NewBuffer returns a new buffer with a concrete parquet schema generated
@@ -262,11 +303,7 @@ func (s *Schema) NewBuffer(dynamicColumns map[string]DynamicColumns) (*Buffer, e
 		return nil, err
 	}
 
-	cols, err := s.parquetSortingColumns(dynamicColumns)
-	if err != nil {
-		return nil, err
-	}
-
+	cols := s.parquetSortingColumns(dynamicColumns)
 	return &Buffer{
 		dynamicColumns: dynamicColumns,
 		buffer: parquet.NewBuffer(
@@ -276,19 +313,25 @@ func (s *Schema) NewBuffer(dynamicColumns map[string]DynamicColumns) (*Buffer, e
 	}, nil
 }
 
-// rowGroup allows wrapping any parquet.RowGroup to implement the
+// MergedRowGroup allows wrapping any parquet.RowGroup to implement the
 // DynamicRowGroup interface by specifying the concrete dynamic column names
 // the RowGroup's schema contains.
-type rowGroup struct {
+type MergedRowGroup struct {
 	parquet.RowGroup
-	dynamicColumns map[string]DynamicColumns
+	DynCols map[string]DynamicColumns
 }
 
 // DynamicColumns returns the concrete dynamic column names that were used
 // create its concrete parquet schema with a dynamic parquet schema. Implements
 // the DynamicRowGroup interface.
-func (r *rowGroup) DynamicColumns() map[string]DynamicColumns {
-	return r.dynamicColumns
+func (r *MergedRowGroup) DynamicColumns() map[string]DynamicColumns {
+	return r.DynCols
+}
+
+// DynamicRows returns an iterator over the rows in the row group. Implements
+// the DynamicRowGroup interface.
+func (r *MergedRowGroup) DynamicRows() DynamicRows {
+	return newDynamicRowGroupReader(r)
 }
 
 // MergeDynamicRowGroups merges the given dynamic row groups into a single
@@ -296,20 +339,17 @@ func (r *rowGroup) DynamicColumns() map[string]DynamicColumns {
 // merging all the concrete dynamic column names and generating a superset
 // parquet schema that all given dynamic row groups are compatible with.
 func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowGroup, error) {
-	dynamicColumns, err := mergeDynamicRowGroupDynamicColumns(rowGroups)
-	if err != nil {
-		return nil, err
+	if len(rowGroups) == 1 {
+		return rowGroups[0], nil
 	}
 
+	dynamicColumns := mergeDynamicRowGroupDynamicColumns(rowGroups)
 	ps, err := s.parquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, err
 	}
 
-	cols, err := s.parquetSortingColumns(dynamicColumns)
-	if err != nil {
-		return nil, err
-	}
+	cols := s.parquetSortingColumns(dynamicColumns)
 
 	adapters := make([]parquet.RowGroup, 0, len(rowGroups))
 	for _, rowGroup := range rowGroups {
@@ -321,24 +361,33 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowG
 		))
 	}
 
-	merge, err := parquet.MergeRowGroups(adapters)
+	merge, err := parquet.MergeRowGroups(adapters, parquet.SortingColumns(cols...))
 	if err != nil {
 		return nil, err
 	}
 
-	return &rowGroup{
-		RowGroup:       merge,
-		dynamicColumns: dynamicColumns,
+	return &MergedRowGroup{
+		RowGroup: merge,
+		DynCols:  dynamicColumns,
 	}, nil
 }
 
 // mergeDynamicRowGroupDynamicColumns merges the concrete dynamic column names
 // of multiple DynamicRowGroups into a single, merged, superset of dynamic
 // column names.
-func mergeDynamicRowGroupDynamicColumns(rowGroups []DynamicRowGroup) (map[string]DynamicColumns, error) {
-	dynamicColumns := map[string][]DynamicColumns{}
+func mergeDynamicRowGroupDynamicColumns(rowGroups []DynamicRowGroup) map[string]DynamicColumns {
+	sets := []map[string]DynamicColumns{}
 	for _, batch := range rowGroups {
-		for k, v := range batch.DynamicColumns() {
+		sets = append(sets, batch.DynamicColumns())
+	}
+
+	return mergeDynamicColumnSets(sets)
+}
+
+func mergeDynamicColumnSets(sets []map[string]DynamicColumns) map[string]DynamicColumns {
+	dynamicColumns := map[string][]DynamicColumns{}
+	for _, set := range sets {
+		for k, v := range set {
 			_, seen := dynamicColumns[k]
 			if !seen {
 				dynamicColumns[k] = []DynamicColumns{}
@@ -352,7 +401,7 @@ func mergeDynamicRowGroupDynamicColumns(rowGroups []DynamicRowGroup) (map[string
 		resultDynamicColumns[name] = mergeDynamicColumns(dynCols)
 	}
 
-	return resultDynamicColumns, nil
+	return resultDynamicColumns
 }
 
 // mergeDynamicColumns merges the given concrete dynamic column names into a

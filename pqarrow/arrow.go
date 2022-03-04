@@ -8,10 +8,77 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/array"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/segmentio/parquet-go"
+
+	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
 )
 
 // ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
 func ParquetRowGroupToArrowRecord(pool memory.Allocator, rg parquet.RowGroup) (arrow.Record, error) {
+	switch rg.(type) {
+	case *dynparquet.MergedRowGroup:
+		return rowBasedParquetRowGroupToArrowRecord(pool, rg)
+	default:
+		return contiguousParquetRowGroupToArrowRecord(pool, rg)
+	}
+}
+
+// rowBasedParquetRowGroupToArrowRecord converts a parquet row group to an arrow record row by row.
+func rowBasedParquetRowGroupToArrowRecord(pool memory.Allocator, rg parquet.RowGroup) (arrow.Record, error) {
+	s := rg.Schema()
+
+	children := s.ChildNames()
+	fields := make([]arrow.Field, 0, len(children))
+	newWriterFuncs := make([]func(array.Builder) valueWriter, 0, len(children))
+	for _, child := range children {
+		node := s.ChildByName(child)
+		typ, newValueWriter := parquetNodeToType(node)
+		nullable := false
+		if node.Optional() {
+			nullable = true
+		}
+
+		if node.Repeated() {
+			typ = arrow.ListOf(typ)
+			newValueWriter = listValueWriter(newValueWriter)
+		}
+		newWriterFuncs = append(newWriterFuncs, newValueWriter)
+
+		fields = append(fields, arrow.Field{
+			Name:     child,
+			Type:     typ,
+			Nullable: nullable,
+		})
+	}
+
+	writers := make([]valueWriter, len(children))
+	b := array.NewRecordBuilder(pool, arrow.NewSchema(fields, nil))
+	for i, column := range b.Fields() {
+		writers[i] = newWriterFuncs[i](column)
+	}
+
+	rows := rg.Rows()
+	row := make(parquet.Row, 0, 50) // Random guess.
+	var err error
+	for {
+		row, err = rows.ReadRow(row[:0])
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read row: %w", err)
+		}
+
+		for i, writer := range writers {
+			values := dynparquet.ValuesForIndex(row, i)
+			writer.Write(values)
+		}
+	}
+
+	return b.NewRecord(), nil
+}
+
+// contiguousParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
+func contiguousParquetRowGroupToArrowRecord(pool memory.Allocator, rg parquet.RowGroup) (arrow.Record, error) {
 	s := rg.Schema()
 
 	children := s.ChildNames()
@@ -51,9 +118,9 @@ func parquetColumnToArrowArray(
 	at, newValueWriter := parquetNodeToType(n)
 
 	var (
-		writeValues func([]parquet.Value)
-		b           array.Builder
-		lb          *array.ListBuilder
+		w  valueWriter
+		b  array.Builder
+		lb *array.ListBuilder
 
 		repeated = false
 		nullable = false
@@ -81,11 +148,11 @@ func parquetColumnToArrowArray(
 		// A list builder actually expects all values of all sublists to be
 		// written contiguously, the offsets where litsts start are recorded in
 		// the offsets array below.
-		writeValues = newValueWriter(lb.ValueBuilder())
+		w = newValueWriter(lb.ValueBuilder())
 		b = lb
 	} else {
 		b = array.NewBuilder(pool, at)
-		writeValues = newValueWriter(b)
+		w = newValueWriter(b)
 	}
 	defer b.Release()
 
@@ -93,7 +160,7 @@ func parquetColumnToArrowArray(
 		c.Pages(),
 		repeated,
 		lb,
-		writeValues,
+		w,
 	)
 	if err != nil {
 		return nil, false, nil, err
@@ -119,7 +186,7 @@ func writePagesToArray(
 	pages parquet.Pages,
 	repeated bool,
 	lb *array.ListBuilder,
-	writeValues func([]parquet.Value),
+	w valueWriter,
 ) error {
 	for {
 		p, err := pages.ReadPage()
@@ -137,7 +204,7 @@ func writePagesToArray(
 			return fmt.Errorf("expected io.EOF since all values of the page are being read: %w", err)
 		}
 
-		writeValues(values)
+		w.Write(values)
 
 		if repeated {
 			offsets := []int32{}
@@ -166,23 +233,23 @@ func writePagesToArray(
 
 // parquetNodeToType converts a parquet node to an arrow type and a function to
 // create a value writer.
-func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder) func([]parquet.Value)) {
+func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder) valueWriter) {
 	t := n.Type()
 	lt := t.LogicalType()
 	switch {
 	case lt.UUID != nil:
 		return &arrow.FixedSizeBinaryType{
 			ByteWidth: 16,
-		}, uuidValueWriter
+		}, newUUIDValueWriter
 	case lt.UTF8 != nil:
-		return &arrow.StringType{}, stringValueWriter
+		return &arrow.StringType{}, newStringValueWriter
 	case lt.Integer != nil:
 		switch lt.Integer.BitWidth {
 		case 64:
 			if lt.Integer.IsSigned {
-				return &arrow.Int64Type{}, int64ValueWriter
+				return &arrow.Int64Type{}, newInt64ValueWriter
 			}
-			return &arrow.Uint64Type{}, uint64ValueWriter
+			return &arrow.Uint64Type{}, newUint64ValueWriter
 		default:
 			panic("unsupported int bit width")
 		}
@@ -191,70 +258,127 @@ func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder) fu
 	}
 }
 
-// uuidValueWriter writes parquet UUID values to an arrow array builder.
-func uuidValueWriter(b array.Builder) func([]parquet.Value) {
-	uuidBuilder := b.(*array.FixedSizeBinaryBuilder)
-	return func(values []parquet.Value) {
-		// Depending on the nullability of the column this could be optimized
-		// further by reading UUIDs directly and adding all of them at once to
-		// the array builder.
-		for _, v := range values {
-			if v.IsNull() {
-				uuidBuilder.AppendNull()
-			} else {
-				uuidBuilder.Append(v.ByteArray())
-			}
+type valueWriter interface {
+	Write([]parquet.Value)
+}
+
+type uuidValueWriter struct {
+	b *array.FixedSizeBinaryBuilder
+}
+
+func newUUIDValueWriter(b array.Builder) valueWriter {
+	return &uuidValueWriter{
+		b: b.(*array.FixedSizeBinaryBuilder),
+	}
+}
+
+func (w *uuidValueWriter) Write(values []parquet.Value) {
+	// Depending on the nullability of the column this could be optimized
+	// further by reading UUIDs directly and adding all of them at once to
+	// the array builder.
+	for _, v := range values {
+		if v.IsNull() {
+			w.b.AppendNull()
+		} else {
+			w.b.Append(v.ByteArray())
 		}
 	}
 }
 
-// stringValueWriter writes parquet string values to an arrow array builder.
-func stringValueWriter(b array.Builder) func([]parquet.Value) {
-	stringBuilder := b.(*array.StringBuilder)
-	return func(values []parquet.Value) {
-		// Depending on the nullability of the column this could be optimized
-		// further by reading strings directly and adding all of them at once
-		// to the array builder.
-		for _, v := range values {
-			if v.IsNull() {
-				stringBuilder.AppendNull()
-			} else {
-				stringBuilder.Append(string(v.ByteArray()))
-			}
+type stringValueWriter struct {
+	b *array.StringBuilder
+}
+
+func newStringValueWriter(b array.Builder) valueWriter {
+	return &stringValueWriter{
+		b: b.(*array.StringBuilder),
+	}
+}
+
+func (w *stringValueWriter) Write(values []parquet.Value) {
+	// Depending on the nullability of the column this could be optimized
+	// further by reading strings directly and adding all of them at once
+	// to the array builder.
+	for _, v := range values {
+		if v.IsNull() {
+			w.b.AppendNull()
+		} else {
+			w.b.Append(string(v.ByteArray()))
 		}
 	}
 }
 
-// int64ValueWriter writes parquet int64 values to an arrow array builder.
-func int64ValueWriter(b array.Builder) func([]parquet.Value) {
-	int64Builder := b.(*array.Int64Builder)
-	return func(values []parquet.Value) {
-		// Depending on the nullability of the column this could be optimized
-		// further by reading int64s directly and adding all of them at once to
-		// the array builder.
-		for _, v := range values {
-			if v.IsNull() {
-				int64Builder.AppendNull()
-			} else {
-				int64Builder.Append(v.Int64())
-			}
+type int64ValueWriter struct {
+	b *array.Int64Builder
+}
+
+func newInt64ValueWriter(b array.Builder) valueWriter {
+	return &int64ValueWriter{
+		b: b.(*array.Int64Builder),
+	}
+}
+
+func (w *int64ValueWriter) Write(values []parquet.Value) {
+	// Depending on the nullability of the column this could be optimized
+	// further by reading int64s directly and adding all of them at once to
+	// the array builder.
+	for _, v := range values {
+		if v.IsNull() {
+			w.b.AppendNull()
+		} else {
+			w.b.Append(v.Int64())
 		}
 	}
 }
 
-// uint64ValueWriter writes parquet uint64 values to an arrow array builder.
-func uint64ValueWriter(b array.Builder) func([]parquet.Value) {
-	uint64Builder := b.(*array.Uint64Builder)
-	return func(values []parquet.Value) {
-		// Depending on the nullability of the column this could be optimized
-		// further by reading uint64s directly and adding all of them at once
-		// to the array builder.
-		for _, v := range values {
-			if v.IsNull() {
-				uint64Builder.AppendNull()
-			} else {
-				uint64Builder.Append(uint64(v.Int64()))
-			}
+type uint64ValueWriter struct {
+	b *array.Uint64Builder
+}
+
+func newUint64ValueWriter(b array.Builder) valueWriter {
+	return &uint64ValueWriter{
+		b: b.(*array.Uint64Builder),
+	}
+}
+
+func (w *uint64ValueWriter) Write(values []parquet.Value) {
+	// Depending on the nullability of the column this could be optimized
+	// further by reading uint64s directly and adding all of them at once
+	// to the array builder.
+	for _, v := range values {
+		if v.IsNull() {
+			w.b.AppendNull()
+		} else {
+			w.b.Append(uint64(v.Int64()))
 		}
 	}
+}
+
+type repeatedValueWriter struct {
+	b      *array.ListBuilder
+	values valueWriter
+}
+
+// listValueWriter writes repeated parquet values to an arrow list array builder.
+func listValueWriter(newValueWriterFunc func(array.Builder) valueWriter) func(array.Builder) valueWriter {
+	return func(b array.Builder) valueWriter {
+		builder := b.(*array.ListBuilder)
+
+		return &repeatedValueWriter{
+			b:      builder,
+			values: newValueWriterFunc(builder.ValueBuilder()),
+		}
+	}
+}
+
+func (w *repeatedValueWriter) Write(values []parquet.Value) {
+	v0 := values[0]
+	rep := v0.RepetitionLevel()
+	def := v0.DefinitionLevel()
+	if rep == 0 && def == 0 {
+		w.b.AppendNull()
+	}
+
+	w.b.Append(true)
+	w.values.Write(values)
 }

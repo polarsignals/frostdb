@@ -2,6 +2,7 @@ package columnstore
 
 import (
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -11,18 +12,31 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
+	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 var ErrNoSchema = fmt.Errorf("no schema")
 
+type TableConfig struct {
+	schema      *dynparquet.Schema
+	granuleSize int
+}
+
+func NewTableConfig(schema *dynparquet.Schema, granuleSize int) *TableConfig {
+	return &TableConfig{
+		schema:      schema,
+		granuleSize: granuleSize,
+	}
+}
+
 type Table struct {
 	db      *DB
 	metrics *tableMetrics
 	logger  log.Logger
 
-	schema Schema
+	config *TableConfig
 	index  *btree.BTree
 
 	sync.WaitGroup
@@ -40,7 +54,7 @@ type tableMetrics struct {
 func newTable(
 	db *DB,
 	name string,
-	schema Schema,
+	tableConfig *TableConfig,
 	reg prometheus.Registerer,
 	logger log.Logger,
 ) *Table {
@@ -48,7 +62,7 @@ func newTable(
 
 	t := &Table{
 		db:     db,
-		schema: schema,
+		config: tableConfig,
 		index:  btree.New(2), // TODO make the degree a setting
 		logger: logger,
 		metrics: &tableMetrics{
@@ -83,7 +97,7 @@ func newTable(
 		return float64(t.Index().Len())
 	})
 
-	g := NewGranule(t.metrics.granulesCreated, &t.schema, []*Part{}...)
+	g := NewGranule(t.metrics.granulesCreated, t.config, nil)
 	t.index.ReplaceOrInsert(g)
 
 	return t
@@ -97,28 +111,27 @@ func (t *Table) Sync() {
 	t.Wait()
 }
 
-func (t *Table) Insert(rows []Row) error {
+func (t *Table) Schema() *dynparquet.Schema {
+	return t.config.schema
+}
+
+func (t *Table) Insert(buf *dynparquet.Buffer) error {
 	defer func() {
-		t.metrics.rowsInserted.Add(float64(len(rows)))
-		t.metrics.rowInsertSize.Observe(float64(len(rows)))
+		t.metrics.rowsInserted.Add(float64(buf.NumRows()))
+		t.metrics.rowInsertSize.Observe(float64(buf.NumRows()))
 	}()
 
-	if len(rows) == 0 {
-		t.metrics.zeroRowsInserted.Add(float64(len(rows)))
+	if buf.NumRows() == 0 {
+		t.metrics.zeroRowsInserted.Add(float64(buf.NumRows()))
 		return nil
 	}
 
 	tx, commit := t.db.begin()
 	defer commit()
 
-	rowsToInsertPerGranule := t.splitRowsByGranule(rows)
-	for granule, rows := range rowsToInsertPerGranule {
-		p, err := NewPart(tx, t.schema.columns, NewSimpleRowWriter(rows))
-		if err != nil {
-			return err
-		}
-
-		if granule.AddPart(p) >= uint64(t.schema.granuleSize) {
+	rowsToInsertPerGranule := t.splitRowsByGranule(buf)
+	for granule, buf := range rowsToInsertPerGranule {
+		if granule.AddPart(NewPart(tx, buf)) >= uint64(t.config.granuleSize) {
 			t.Add(1)
 			go t.compact(granule)
 		}
@@ -140,20 +153,46 @@ func (t *Table) splitGranule(granule *Granule) {
 	// Start compaction by adding sentinel node to parts list
 	parts := granule.parts.Sentinel(Compacting)
 
-	newpart, remain, err := FilterMerge(tx, t.db.txCompleted, &t.schema, parts) // need to merge all parts in a granule before splitting
+	bufs := []dynparquet.DynamicRowGroup{}
+	remain := []*Part{}
+
+	// Convert all the parts into a set of rows
+	parts.Iterate(func(p *Part) bool {
+		// Don't merge parts from an newer tx, or from an uncompleted tx, or a completed tx that finished after this tx started
+		if p.tx > tx || t.db.txCompleted(p.tx) > tx {
+			remain = append(remain, p)
+			return true
+		}
+
+		bufs = append(bufs, p.Buf)
+		return true
+	})
+
+	merge, err := t.config.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
-		level.Error(t.logger).Log("msg", "failed to merge parts", "error", err)
+		panic(err)
 	}
-	if newpart.Cardinality == 0 { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
+
+	buf, err := t.config.schema.NewBuffer(merge.DynamicColumns())
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = buf.WriteRowGroup(merge)
+	if err != nil {
+		panic(err)
+	}
+
+	if buf.NumRows() == 0 { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
 		for {
 			if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
 				return
 			}
 		}
 	}
-	g := NewGranule(t.metrics.granulesCreated, &t.schema, newpart)
+	g := NewGranule(t.metrics.granulesCreated, t.config, NewPart(tx, buf))
 
-	granules, err := g.split(tx, t.schema.granuleSize/2) // TODO magic numbers
+	granules, err := g.split(tx, t.config.granuleSize/2) // TODO magic numbers
 	if err != nil {
 		level.Error(t.logger).Log("msg", "granule split failed after add part", "error", err)
 	}
@@ -238,26 +277,54 @@ func (t *Table) granuleIterator(iterator func(g *Granule) bool) {
 	})
 }
 
-func (t *Table) splitRowsByGranule(rows []Row) map[*Granule][]Row {
-	rowsByGranule := map[*Granule][]Row{}
+func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparquet.Buffer {
+	rowsByGranule := map[*Granule]*dynparquet.Buffer{}
 
 	// Special case: if there is only one granule, insert parts into it until full.
 	index := t.Index()
 	if index.Len() == 1 {
-		rowsByGranule[index.Min().(*Granule)] = rows
+		rowsByGranule[index.Min().(*Granule)] = buf
 		return rowsByGranule
 	}
 
 	// TODO: we might be able to do ascend less than or ascend greater than here?
-	j := 0
+	rows := buf.DynamicRows()
 	var prev *Granule
+	exhaustedAllRows := false
+
+	row, err := rows.ReadRow(nil)
+	if err != nil {
+		panic(err)
+	}
+
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
-		for ; j < len(rows); j++ {
-			if t.schema.RowLessThan(rows[j].Values, g.Least().Values) {
+		for {
+			isLess := t.config.schema.RowLessThan(row, g.Least())
+			if isLess {
 				if prev != nil {
-					rowsByGranule[prev] = append(rowsByGranule[prev], rows[j])
+					gbuf, ok := rowsByGranule[prev]
+					if !ok {
+						gbuf, err = t.config.schema.NewBuffer(buf.DynamicColumns())
+						if err != nil {
+							panic(err)
+						}
+						rowsByGranule[prev] = gbuf
+					}
+					err = gbuf.WriteRow(row.Row)
+					if err != nil {
+						panic(err)
+					}
+					row, err = rows.ReadRow(row)
+					if err == io.EOF {
+						// All rows accounted for
+						exhaustedAllRows = true
+						return false
+					}
+					if err != nil {
+						panic(err)
+					}
 					continue
 				}
 			}
@@ -267,14 +334,32 @@ func (t *Table) splitRowsByGranule(rows []Row) map[*Granule][]Row {
 			prev = g
 			return true // continue btree iteration
 		}
-
-		// All rows accounted for
-		return false
 	})
 
-	// Save any remaining rows that belong into prev
-	for ; j < len(rows); j++ {
-		rowsByGranule[prev] = append(rowsByGranule[prev], rows[j])
+	if !exhaustedAllRows {
+		gbuf, ok := rowsByGranule[prev]
+		if !ok {
+			gbuf, err = t.config.schema.NewBuffer(buf.DynamicColumns())
+			if err != nil {
+				panic(err)
+			}
+			rowsByGranule[prev] = gbuf
+		}
+
+		// Save any remaining rows that belong into prev
+		for {
+			err = gbuf.WriteRow(row.Row)
+			if err != nil {
+				panic(err)
+			}
+			row, err = rows.ReadRow(row)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				panic(err)
+			}
+		}
 	}
 
 	return rowsByGranule
@@ -288,21 +373,25 @@ func (t *Table) compact(g *Granule) {
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules
 func addPartToGranule(granules []*Granule, p *Part) {
-	it := p.Iterator()
-	if it.Next() {
-		row := it.Values()
-		var prev *Granule
-		for _, g := range granules {
-			if g.schema.RowLessThan(row, g.Least().Values) {
-				if prev != nil {
-					prev.AddPart(p)
-					return
-				}
-			}
-			prev = g
-		}
-
-		// Save part to prev
-		prev.AddPart(p)
+	row, err := p.Buf.DynamicRows().ReadRow(nil)
+	if err == io.EOF {
+		return
 	}
+	if err != nil {
+		panic(err)
+	}
+
+	var prev *Granule
+	for _, g := range granules {
+		if g.tableConfig.schema.RowLessThan(row, g.Least()) {
+			if prev != nil {
+				prev.AddPart(p)
+				return
+			}
+		}
+		prev = g
+	}
+
+	// Save part to prev
+	prev.AddPart(p)
 }
