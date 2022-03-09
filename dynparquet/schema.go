@@ -246,7 +246,24 @@ func (b *Buffer) NumRows() int64 {
 }
 
 func (b *Buffer) Sort() {
-	sort.Stable(b.buffer)
+	sort.Sort(b.buffer)
+}
+
+func (b *Buffer) Clone() (*Buffer, error) {
+	buf := parquet.NewBuffer(
+		b.buffer.Schema(),
+		parquet.SortingColumns(b.buffer.SortingColumns()...),
+	)
+
+	_, err := parquet.CopyRows(buf, b.buffer.Rows())
+	if err != nil {
+		return nil, err
+	}
+
+	return &Buffer{
+		buffer:         buf,
+		dynamicColumns: b.dynamicColumns,
+	}, nil
 }
 
 // NumColumns returns the number of columns in the buffer. Implements the

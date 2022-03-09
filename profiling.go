@@ -74,6 +74,17 @@ func InsertProfileIntoTable(ctx context.Context, logger log.Logger, table *Table
 	}
 
 	buf.Sort()
+
+	// This is necessary because sorting a buffer makes concurrent reading not
+	// safe as the internal pages are cyclicly sorted at read time. Cloning
+	// executes the cyclic sort once and makes the resulting buffer safe for
+	// concurrent reading as it no longer has to perform the cyclic sorting at
+	// read time. This should probably be improved in the parquet library.
+	buf, err = buf.Clone()
+	if err != nil {
+		return 0, err
+	}
+
 	return len(prof.FlatSamples), table.Insert(buf)
 }
 
