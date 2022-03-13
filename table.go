@@ -183,7 +183,7 @@ func (t *Table) splitGranule(granule *Granule) {
 		panic(err)
 	}
 
-	if buf.NumRows() == 0 { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
+	if buf.NumRows() < int64(t.config.granuleSize) { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
 		for {
 			if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
 				return
@@ -209,7 +209,7 @@ func (t *Table) splitGranule(granule *Granule) {
 	parts = granule.parts.Sentinel(Compacted)
 
 	// Now we need to copy any new parts that happened while we were compacting
-	parts.Iterate(func(p *Part) bool { // TODO  this is a stupid API; the sublist returned from Sentinel should auto know when to stop
+	parts.Iterate(func(p *Part) bool {
 		addPartToGranule(granules, p)
 		return true
 	})

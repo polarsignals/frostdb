@@ -25,8 +25,8 @@ type PartList struct {
 	next  unsafe.Pointer
 	total uint64
 
-	// partial indicates if iteration should stop when hitting a sentinel
-	partial bool
+	// listType indicates the type of list this list is
+	listType SentinelType
 }
 
 // Sentinel adds a new sentinel node to the list, and returns the sub list starting from that sentinel
@@ -40,9 +40,9 @@ func (l *PartList) Sentinel(s SentinelType) *PartList {
 		if atomic.CompareAndSwapPointer(&l.next, next, (unsafe.Pointer)(node)) {
 			size := atomic.AddUint64(&l.total, 1) // TODO should we add sentinels to the total?
 			return &PartList{
-				next:    next,
-				total:   size, // TODO I'm not sure this is even correct to do
-				partial: true,
+				next:     next,
+				total:    size, // TODO I'm not sure this is even correct to do
+				listType: s,
 			}
 		}
 	}
@@ -74,7 +74,7 @@ func (l *PartList) Iterate(iterate func(*Part) bool) {
 		if node == nil {
 			return
 		}
-		if node.part == nil && l.partial { // if sentinel and we're a partial list; we're done
+		if node.part == nil && node.sentinel != l.listType { // if we've encountererd a sentinel node from a different type of list we must exit
 			return
 		}
 		if node.part != nil && !iterate(node.part) { // if the part == nil then this is a sentinel node, and we can skip it

@@ -9,6 +9,7 @@ import (
 	"github.com/apache/arrow/go/v7/arrow"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/go-kit/log"
+	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
 	"github.com/segmentio/parquet-go"
@@ -234,11 +235,16 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
-	table.Iterator(memory.NewGoAllocator(), func(r arrow.Record) error {
-		defer r.Release()
-		t.Log(r)
-		return nil
-	})
+	// Because inserts happen in parallel to compaction both of the triggered compactions may have aborted because the writes weren't completed.
+	// Manually perform the compaction if we run into this corner case.
+	for table.Index().Len() == 1 {
+		table.Index().Ascend(func(i btree.Item) bool {
+			g := i.(*Granule)
+			table.Add(1)
+			table.compact(g)
+			return false
+		})
+	}
 
 	require.Equal(t, 2, table.index.Len())
 	require.Equal(t, uint64(2), table.index.Min().(*Granule).card)
