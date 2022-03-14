@@ -2,6 +2,7 @@ package dynparquet
 
 import (
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/segmentio/parquet-go"
@@ -150,8 +151,9 @@ func (s Schema) parquetSchema(
 	return parquet.NewSchema(s.name, g), nil
 }
 
-// parquetSchema returns the parquet sorting columns for the dynamic sorting
-// columns with the concrete dynamic column names given in the argument.
+// parquetSortingColumns returns the parquet sorting columns for the dynamic
+// sorting columns with the concrete dynamic column names given in the
+// argument.
 func (s Schema) parquetSortingColumns(
 	dynamicColumns map[string]DynamicColumns,
 ) []parquet.SortingColumn {
@@ -225,11 +227,16 @@ func (r *dynamicRowGroupReader) ReadRow(row *DynamicRow) (*DynamicRow, error) {
 		}
 	}
 
-	row.Row = row.Row[:0]
-
 	var err error
-	row.Row, err = r.rows.ReadRow(row.Row)
-	return row, err
+	row.Row, err = r.rows.ReadRow(row.Row[:0])
+	if err == io.EOF {
+		return row, io.EOF
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read row: %w", err)
+	}
+
+	return row, nil
 }
 
 // Column returns the parquet.ColumnChunk for the given index. It contains all
@@ -257,7 +264,7 @@ func (b *Buffer) Clone() (*Buffer, error) {
 
 	_, err := parquet.CopyRows(buf, b.buffer.Rows())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("copy rows: %w", err)
 	}
 
 	return &Buffer{
@@ -317,7 +324,7 @@ func (b *Buffer) DynamicRows() DynamicRows {
 func (s *Schema) NewBuffer(dynamicColumns map[string]DynamicColumns) (*Buffer, error) {
 	ps, err := s.parquetSchema(dynamicColumns)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create parquet schema for buffer: %w", err)
 	}
 
 	cols := s.parquetSortingColumns(dynamicColumns)
@@ -363,7 +370,7 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowG
 	dynamicColumns := mergeDynamicRowGroupDynamicColumns(rowGroups)
 	ps, err := s.parquetSchema(dynamicColumns)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create merged parquet schema merging %d row groups: %w", len(rowGroups), err)
 	}
 
 	cols := s.parquetSortingColumns(dynamicColumns)
@@ -380,7 +387,7 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowG
 
 	merge, err := parquet.MergeRowGroups(adapters, parquet.SortingColumns(cols...))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create merge row groups: %w", err)
 	}
 
 	return &MergedRowGroup{
@@ -588,8 +595,11 @@ type remappedPages struct {
 // configured remapped column index. Implements the parquet.Pages interface.
 func (p *remappedPages) ReadPage() (parquet.Page, error) {
 	page, err := p.Pages.ReadPage()
-	if err != nil {
+	if err == io.EOF {
 		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read page: %w", err)
 	}
 
 	return &remappedPage{
@@ -638,5 +648,12 @@ func (r *remappedValueReader) ReadValues(v []parquet.Value) (int, error) {
 		v[i] = v[i].Level(v[i].RepetitionLevel(), v[i].DefinitionLevel(), r.remappedIndex)
 	}
 
-	return n, err
+	if err == io.EOF {
+		return n, err
+	}
+	if err != nil {
+		return n, fmt.Errorf("read values: %w", err)
+	}
+
+	return n, nil
 }

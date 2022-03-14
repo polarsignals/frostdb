@@ -1,6 +1,7 @@
 package columnstore
 
 import (
+	"fmt"
 	"io"
 	"sync/atomic"
 	"unsafe"
@@ -161,12 +162,12 @@ func (g *Granule) ArrowRecord(tx uint64, txCompleted func(uint64) uint64, pool m
 
 	merge, err := g.tableConfig.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("merge part row groups: %w", err)
 	}
 
 	record, err := pqarrow.ParquetRowGroupToArrowRecord(pool, merge)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("convert merged row groups to arrow: %w", err)
 	}
 
 	return record, nil
