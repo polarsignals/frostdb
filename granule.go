@@ -160,6 +160,11 @@ func (g *Granule) ArrowRecord(tx uint64, txCompleted func(uint64) uint64, pool m
 		return true
 	})
 
+	if len(bufs) == 0 {
+		// Nothing readable for this transaction in this Granule.
+		return nil, nil
+	}
+
 	merge, err := g.tableConfig.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
 		return nil, fmt.Errorf("merge part row groups: %w", err)

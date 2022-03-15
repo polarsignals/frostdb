@@ -257,6 +257,10 @@ func (t *Table) Iterator(pool memory.Allocator, iterator func(r arrow.Record) er
 		if err != nil {
 			return false
 		}
+		if r == nil {
+			// Granule had no readable parts for this transaction.
+			return true
+		}
 		err = iterator(r)
 		r.Release()
 		return err == nil
