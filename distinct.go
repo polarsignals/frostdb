@@ -106,5 +106,7 @@ func (d *Distinction) Callback(r arrow.Record) error {
 		rows,
 	)
 
-	return d.next(distinctRecord)
+	err := d.next(distinctRecord)
+	distinctRecord.Release()
+	return err
 }
