@@ -31,25 +31,7 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 		}
 
 		av, bv := extractValues(a, b, aIndex, bIndex)
-
-		definitionLevel := int8(0)
-		if node.Optional() {
-			definitionLevel = 1
-		}
-
-		repetitionLevel := int8(0)
-		if node.Repeated() {
-			definitionLevel = 1
-			repetitionLevel = 1
-		}
-
-		cmp := parquet.SortFuncOf(
-			node.Type(),
-			repetitionLevel,
-			definitionLevel,
-			col.Descending(),
-			col.NullsFirst(),
-		)(av, bv)
+		cmp := compare(col, node, av, bv)
 		if cmp < 0 {
 			return true
 		}
@@ -61,6 +43,25 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 	}
 
 	return false
+}
+
+func compare(col parquet.SortingColumn, node parquet.Node, av, bv []parquet.Value) int {
+	sortOptions := []parquet.SortOption{
+		parquet.SortDescending(col.Descending()),
+		parquet.SortNullsFirst(col.NullsFirst()),
+	}
+	if node.Optional() || node.Repeated() {
+		sortOptions = append(sortOptions, parquet.SortMaxDefinitionLevel(1))
+	}
+
+	if node.Repeated() {
+		sortOptions = append(sortOptions, parquet.SortMaxRepetitionLevel(1))
+	}
+
+	return parquet.SortFuncOf(
+		node.Type(),
+		sortOptions...,
+	)(av, bv)
 }
 
 func extractValues(a, b *DynamicRow, aIndex, bIndex int) ([]parquet.Value, []parquet.Value) {
