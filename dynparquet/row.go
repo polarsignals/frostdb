@@ -7,11 +7,11 @@ import (
 type DynamicRow struct {
 	Row            parquet.Row
 	Schema         *parquet.Schema
-	DynamicColumns map[string]DynamicColumns
+	DynamicColumns map[string][]string
 }
 
 func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
-	dynamicColumns := mergeDynamicColumnSets([]map[string]DynamicColumns{a.DynamicColumns, b.DynamicColumns})
+	dynamicColumns := mergeDynamicColumnSets([]map[string][]string{a.DynamicColumns, b.DynamicColumns})
 	cols := s.parquetSortingColumns(dynamicColumns)
 	for _, col := range cols {
 		name := col.Path()[0] // Currently we only support flat schemas.

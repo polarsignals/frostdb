@@ -25,11 +25,8 @@ type Samples []Sample
 func (s Samples) ToBuffer(schema *Schema) (*Buffer, error) {
 	names := s.SampleLabelNames()
 
-	pb, err := schema.NewBuffer(map[string]DynamicColumns{
-		"labels": DynamicColumns{
-			Column: "labels",
-			Names:  names,
-		},
+	pb, err := schema.NewBuffer(map[string][]string{
+		"labels": names,
 	})
 	if err != nil {
 		return nil, err
@@ -118,7 +115,7 @@ func NewSampleSchema() *Schema {
 			Dynamic:       true,
 		}, {
 			Name:          "stacktrace",
-			StorageLayout: parquet.Encoded(parquet.Repeated(parquet.UUID()), &parquet.RLEDictionary),
+			StorageLayout: parquet.Repeated(parquet.UUID()),
 			Dynamic:       false,
 		}, {
 			Name:          "timestamp",
