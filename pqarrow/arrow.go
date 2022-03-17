@@ -188,6 +188,9 @@ func writePagesToArray(
 	lb *array.ListBuilder,
 	w valueWriter,
 ) error {
+	// We are potentially writing multiple pages to the same array, so we need
+	// to keep track of the index of the offsets in case this is a List-type.
+	i := 0
 	for {
 		p, err := pages.ReadPage()
 		if err != nil {
@@ -200,8 +203,8 @@ func writePagesToArray(
 		reader := p.Values()
 		_, err = reader.ReadValues(values)
 		// We're reading all values in the page so we always expect an io.EOF.
-		if err != io.EOF {
-			return fmt.Errorf("expected io.EOF since all values of the page are being read: %w", err)
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("read values: %w", err)
 		}
 
 		w.Write(values)
@@ -209,7 +212,7 @@ func writePagesToArray(
 		if repeated {
 			offsets := []int32{}
 			validity := []bool{}
-			for i, v := range values {
+			for _, v := range values {
 				rep := v.RepetitionLevel()
 				def := v.DefinitionLevel()
 				if rep == 0 && def == 1 {
@@ -222,6 +225,7 @@ func writePagesToArray(
 				}
 				// rep == 1 && def == 1 means the item in the list is not null which is handled by the value writer
 				// rep == 1 && def == 0 means the item in the list is null which is handled by the value writer
+				i++
 			}
 
 			lb.AppendValues(offsets, validity)

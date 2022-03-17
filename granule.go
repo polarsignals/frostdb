@@ -1,16 +1,14 @@
 package columnstore
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/google/btree"
 	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
-	"github.com/parca-dev/parca/pkg/columnstore/pqarrow"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/parquet-go"
 )
@@ -48,7 +46,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		g.card = uint64(firstPart.Buf.NumRows())
 		g.parts.Prepend(firstPart)
 		// Since we assume a part is sorted, we need only to look at the first row in each Part
-		row, err := firstPart.Buf.DynamicRows().ReadRow(nil)
+		row, err := firstPart.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 		if err != nil {
 			// TODO(brancz): handle error
 			panic(err)
@@ -62,9 +60,14 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 
 // AddPart returns the new cardinality of the Granule
 func (g *Granule) AddPart(p *Part) uint64 {
+	rows := p.Buf.NumRows()
+	if rows == 0 {
+		return g.card
+	}
 	node := g.parts.Prepend(p)
+
 	newcard := atomic.AddUint64(&g.card, uint64(p.Buf.NumRows()))
-	r, err := p.Buf.DynamicRows().ReadRow(nil)
+	r, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 	if err != nil {
 		// TODO(brancz): handle error
 		panic(err)
@@ -108,74 +111,84 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	granules := make([]*Granule, 0, count)
 
 	// TODO: Buffers should be able to efficiently slice themselves.
-	var row parquet.Row
-	buf, err := g.tableConfig.schema.NewBuffer(p.Buf.DynamicColumns())
+	var (
+		row parquet.Row
+		b   *bytes.Buffer
+		w   *parquet.Writer
+		err error
+	)
+	b = bytes.NewBuffer(nil)
+	w, err = g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
 	if err != nil {
 		return nil, err
 	}
-	rows := p.Buf.Rows()
-	for {
-		row, err := rows.ReadRow(row)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
+	rowsWritten := 0
 
-		err = buf.WriteRow(row)
-		if err != nil {
-			return nil, err
-		}
-
-		if int(buf.NumRows()) == n && len(granules) != count-1 { // If we have n rows, and aren't on the last granule, create the n-sized granule
-			granules = append(granules, NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, buf)))
-			buf, err = g.tableConfig.schema.NewBuffer(p.Buf.DynamicColumns())
+	f := p.Buf.ParquetFile()
+	rowGroups := f.NumRowGroups()
+	for i := 0; i < rowGroups; i++ {
+		rows := f.RowGroup(i).Rows()
+		for {
+			row, err = rows.ReadRow(row[:0])
+			if err == io.EOF {
+				break
+			}
 			if err != nil {
 				return nil, err
+			}
+
+			err = w.WriteRow(row)
+			if err != nil {
+				return nil, err
+			}
+			rowsWritten++
+
+			if rowsWritten == n && len(granules) != count-1 { // If we have n rows, and aren't on the last granule, create the n-sized granule
+				err = w.Close()
+				if err != nil {
+					return nil, fmt.Errorf("close writer: %w", err)
+				}
+				r, err := dynparquet.ReaderFromBytes(b.Bytes())
+				if err != nil {
+					return nil, fmt.Errorf("create reader: %w", err)
+				}
+				granules = append(granules, NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r)))
+				b = bytes.NewBuffer(nil)
+				w, err = g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
+				if err != nil {
+					return nil, fmt.Errorf("create writer: %w", err)
+				}
+				rowsWritten = 0
 			}
 		}
 	}
 
-	if buf.NumRows() > 0 {
+	if rowsWritten > 0 {
 		// Save the remaining Granule
-		granules = append(granules, NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, buf)))
+		err = w.Close()
+		if err != nil {
+			return nil, fmt.Errorf("close last writer: %w", err)
+		}
+		r, err := dynparquet.ReaderFromBytes(b.Bytes())
+		if err != nil {
+			return nil, fmt.Errorf("create last reader: %w", err)
+		}
+		granules = append(granules, NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r)))
 	}
 
 	return granules, nil
 }
 
-// ArrowRecord merges all parts in a Granule before returning an ArrowRecord over that part
-func (g *Granule) ArrowRecord(tx uint64, txCompleted func(uint64) uint64, pool memory.Allocator) (arrow.Record, error) {
-	bufs := []dynparquet.DynamicRowGroup{}
-
-	// Convert all the parts into a set of rows
+// PartBuffersForTx returns the PartBuffers for the given transaction constraints.
+func (g *Granule) PartBuffersForTx(tx uint64, txCompleted func(uint64) uint64, iterator func(*dynparquet.SerializedBuffer) bool) {
 	g.parts.Iterate(func(p *Part) bool {
-		// Don't merge parts from an newer tx, or from an uncompleted tx, or a completed tx that finished after this tx started
+		// Don't iterate over parts from an newer tx, or from an uncompleted tx, or a completed tx that finished after this tx started
 		if p.tx > tx || txCompleted(p.tx) > tx {
 			return true
 		}
 
-		bufs = append(bufs, p.Buf)
-		return true
+		return iterator(p.Buf)
 	})
-
-	if len(bufs) == 0 {
-		// Nothing readable for this transaction in this Granule.
-		return nil, nil
-	}
-
-	merge, err := g.tableConfig.schema.MergeDynamicRowGroups(bufs)
-	if err != nil {
-		return nil, fmt.Errorf("merge part row groups: %w", err)
-	}
-
-	record, err := pqarrow.ParquetRowGroupToArrowRecord(pool, merge)
-	if err != nil {
-		return nil, fmt.Errorf("convert merged row groups to arrow: %w", err)
-	}
-
-	return record, nil
 }
 
 // Less implements the btree.Item interface

@@ -9,12 +9,28 @@ import (
 	"github.com/apache/arrow/go/v7/arrow"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 )
+
+type testOutput struct {
+	t *testing.T
+}
+
+func (l *testOutput) Write(p []byte) (n int, err error) {
+	l.t.Log(string(p))
+	return len(p), nil
+}
+
+func newTestLogger(t *testing.T) log.Logger {
+	logger := log.NewLogfmtLogger(log.NewSyncWriter(&testOutput{t: t}))
+	logger = level.NewFilter(logger, level.AllowDebug())
+	return logger
+}
 
 func basicTable(t *testing.T, granuleSize int) *Table {
 	config := NewTableConfig(
@@ -24,7 +40,7 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 
 	c := New(nil)
 	db := c.DB("test")
-	table := db.Table("test", config, log.NewNopLogger())
+	table := db.Table("test", config, newTestLogger(t))
 
 	return table
 }
@@ -245,6 +261,11 @@ func Test_Table_GranuleSplit(t *testing.T) {
 			return false
 		})
 	}
+	table.Iterator(memory.NewGoAllocator(), func(r arrow.Record) error {
+		defer r.Release()
+		t.Log(r)
+		return nil
+	})
 
 	require.Equal(t, 2, table.index.Len())
 	require.Equal(t, uint64(2), table.index.Min().(*Granule).card)
@@ -400,6 +421,15 @@ func Test_Table_Concurrency(t *testing.T) {
 		require.NoError(t, err)
 
 		buf.Sort()
+
+		// This is necessary because sorting a buffer makes concurrent reading not
+		// safe as the internal pages are cyclically sorted at read time. Cloning
+		// executes the cyclic sort once and makes the resulting buffer safe for
+		// concurrent reading as it no longer has to perform the cyclic sorting at
+		// read time. This should probably be improved in the parquet library.
+		buf, err = buf.Clone()
+		require.NoError(t, err)
+
 		return buf
 	}
 

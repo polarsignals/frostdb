@@ -1,6 +1,7 @@
 package columnstore
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"sync"
@@ -13,8 +14,10 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/parca-dev/parca/pkg/columnstore/pqarrow"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/segmentio/parquet-go"
 )
 
 var ErrNoSchema = fmt.Errorf("no schema")
@@ -130,8 +133,8 @@ func (t *Table) Insert(buf *dynparquet.Buffer) error {
 	defer commit()
 
 	rowsToInsertPerGranule := t.splitRowsByGranule(buf)
-	for granule, buf := range rowsToInsertPerGranule {
-		if granule.AddPart(NewPart(tx, buf)) >= uint64(t.config.granuleSize) {
+	for granule, serBuf := range rowsToInsertPerGranule {
+		if granule.AddPart(NewPart(tx, serBuf)) >= uint64(t.config.granuleSize) {
 			t.Add(1)
 			go t.compact(granule)
 		}
@@ -164,7 +167,9 @@ func (t *Table) splitGranule(granule *Granule) {
 			return true
 		}
 
-		bufs = append(bufs, p.Buf)
+		for i := 0; i < p.Buf.NumRowGroups(); i++ {
+			bufs = append(bufs, p.Buf.DynamicRowGroup(i))
+		}
 		return true
 	})
 
@@ -173,28 +178,52 @@ func (t *Table) splitGranule(granule *Granule) {
 		panic(err)
 	}
 
-	buf, err := t.config.schema.NewBuffer(merge.DynamicColumns())
+	b := bytes.NewBuffer(nil)
+	w, err := t.config.schema.NewWriter(b, merge.DynamicColumns())
 	if err != nil {
 		panic(err)
 	}
 
-	_, err = buf.WriteRowGroup(merge)
+	rows := merge.Rows()
+	n := 0
+	for {
+		row, err := rows.ReadRow(nil)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			panic(err)
+		}
+		err = w.WriteRow(row)
+		if err != nil {
+			panic(err)
+		}
+		n++
+	}
+
+	err = w.Close()
 	if err != nil {
 		panic(err)
 	}
 
-	if buf.NumRows() < int64(t.config.granuleSize) { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
+	if n < t.config.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
 		for {
 			if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
 				return
 			}
 		}
 	}
-	g := NewGranule(t.metrics.granulesCreated, t.config, NewPart(tx, buf))
+
+	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
+	if err != nil {
+		panic(err)
+	}
+
+	g := NewGranule(t.metrics.granulesCreated, t.config, NewPart(tx, serBuf))
 
 	granules, err := g.split(tx, t.config.granuleSize/2) // TODO magic numbers
 	if err != nil {
-		level.Error(t.logger).Log("msg", "granule split failed after add part", "error", err)
+		panic(err)
 	}
 
 	// add remaining parts onto new granules
@@ -244,7 +273,10 @@ func (t *Table) splitGranule(granule *Granule) {
 }
 
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
-func (t *Table) Iterator(pool memory.Allocator, iterator func(r arrow.Record) error) error {
+func (t *Table) Iterator(
+	pool memory.Allocator,
+	iterator func(r arrow.Record) error,
+) error {
 	index := t.Index()
 	tx := t.db.beginRead()
 
@@ -252,17 +284,35 @@ func (t *Table) Iterator(pool memory.Allocator, iterator func(r arrow.Record) er
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
-		var r arrow.Record
-		r, err = g.ArrowRecord(tx, t.db.txCompleted, pool)
-		if err != nil {
-			return false
-		}
-		if r == nil {
+		rowGroups := []dynparquet.DynamicRowGroup{}
+		g.PartBuffersForTx(tx, t.db.txCompleted, func(buf *dynparquet.SerializedBuffer) bool {
+			f := buf.ParquetFile()
+			for i := 0; i < f.NumRowGroups(); i++ {
+				rg := buf.DynamicRowGroup(i)
+				rowGroups = append(rowGroups, rg)
+			}
+			return true
+		})
+
+		if len(rowGroups) == 0 {
 			// Granule had no readable parts for this transaction.
 			return true
 		}
-		err = iterator(r)
-		r.Release()
+
+		var merge dynparquet.DynamicRowGroup
+		merge, err = g.tableConfig.schema.MergeDynamicRowGroups(rowGroups)
+		if err != nil {
+			return false
+		}
+
+		var record arrow.Record
+		record, err = pqarrow.ParquetRowGroupToArrowRecord(pool, merge)
+		if err != nil {
+			return false
+		}
+
+		err = iterator(record)
+		record.Release()
 		return err == nil
 	})
 	return err
@@ -281,15 +331,48 @@ func (t *Table) granuleIterator(iterator func(g *Granule) bool) {
 	})
 }
 
-func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparquet.Buffer {
-	rowsByGranule := map[*Granule]*dynparquet.Buffer{}
-
+func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparquet.SerializedBuffer {
 	// Special case: if there is only one granule, insert parts into it until full.
 	index := t.Index()
 	if index.Len() == 1 {
-		rowsByGranule[index.Min().(*Granule)] = buf
-		return rowsByGranule
+		b := bytes.NewBuffer(nil)
+		w, err := t.config.schema.NewWriter(b, buf.DynamicColumns())
+		if err != nil {
+			panic(err)
+		}
+
+		rows := buf.Rows()
+		for {
+			row, err := rows.ReadRow(nil)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				panic(err)
+			}
+			err = w.WriteRow(row)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		err = w.Close()
+		if err != nil {
+			panic(err)
+		}
+
+		serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
+		if err != nil {
+			panic(err)
+		}
+
+		return map[*Granule]*dynparquet.SerializedBuffer{
+			index.Min().(*Granule): serBuf,
+		}
 	}
+
+	writerByGranule := map[*Granule]*parquet.Writer{}
+	bufByGranule := map[*Granule]*bytes.Buffer{}
 
 	// TODO: we might be able to do ascend less than or ascend greater than here?
 	rows := buf.DynamicRows()
@@ -308,15 +391,17 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 			isLess := t.config.schema.RowLessThan(row, g.Least())
 			if isLess {
 				if prev != nil {
-					gbuf, ok := rowsByGranule[prev]
+					w, ok := writerByGranule[prev]
 					if !ok {
-						gbuf, err = t.config.schema.NewBuffer(buf.DynamicColumns())
+						b := bytes.NewBuffer(nil)
+						w, err = t.config.schema.NewWriter(b, buf.DynamicColumns())
 						if err != nil {
 							panic(err)
 						}
-						rowsByGranule[prev] = gbuf
+						writerByGranule[prev] = w
+						bufByGranule[prev] = b
 					}
-					err = gbuf.WriteRow(row.Row)
+					err = w.WriteRow(row.Row)
 					if err != nil {
 						panic(err)
 					}
@@ -341,18 +426,20 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 	})
 
 	if !exhaustedAllRows {
-		gbuf, ok := rowsByGranule[prev]
+		w, ok := writerByGranule[prev]
 		if !ok {
-			gbuf, err = t.config.schema.NewBuffer(buf.DynamicColumns())
+			b := bytes.NewBuffer(nil)
+			w, err = t.config.schema.NewWriter(b, buf.DynamicColumns())
 			if err != nil {
 				panic(err)
 			}
-			rowsByGranule[prev] = gbuf
+			writerByGranule[prev] = w
+			bufByGranule[prev] = b
 		}
 
 		// Save any remaining rows that belong into prev
 		for {
-			err = gbuf.WriteRow(row.Row)
+			err = w.WriteRow(row.Row)
 			if err != nil {
 				panic(err)
 			}
@@ -366,7 +453,19 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 		}
 	}
 
-	return rowsByGranule
+	res := map[*Granule]*dynparquet.SerializedBuffer{}
+	for g, w := range writerByGranule {
+		err := w.Close()
+		if err != nil {
+			panic(err)
+		}
+		res[g], err = dynparquet.ReaderFromBytes(bufByGranule[g].Bytes())
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	return res
 }
 
 // compact will compact a Granule; should be performed as a background go routine
@@ -377,7 +476,7 @@ func (t *Table) compact(g *Granule) {
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules
 func addPartToGranule(granules []*Granule, p *Part) {
-	row, err := p.Buf.DynamicRows().ReadRow(nil)
+	row, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 	if err == io.EOF {
 		return
 	}
@@ -396,6 +495,8 @@ func addPartToGranule(granules []*Granule, p *Part) {
 		prev = g
 	}
 
-	// Save part to prev
-	prev.AddPart(p)
+	if prev != nil {
+		// Save part to prev
+		prev.AddPart(p)
+	}
 }
