@@ -10,15 +10,27 @@ import (
 	"github.com/segmentio/parquet-go"
 
 	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
 )
 
 // ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
-func ParquetRowGroupToArrowRecord(pool memory.Allocator, rg parquet.RowGroup) (arrow.Record, error) {
+func ParquetRowGroupToArrowRecord(
+	pool memory.Allocator,
+	rg parquet.RowGroup,
+	projections []logicalplan.ColumnMatcher,
+) (arrow.Record, error) {
 	switch rg.(type) {
 	case *dynparquet.MergedRowGroup:
-		return rowBasedParquetRowGroupToArrowRecord(pool, rg)
+		return rowBasedParquetRowGroupToArrowRecord(
+			pool,
+			rg,
+		)
 	default:
-		return contiguousParquetRowGroupToArrowRecord(pool, rg)
+		return contiguousParquetRowGroupToArrowRecord(
+			pool,
+			rg,
+			projections,
+		)
 	}
 }
 
@@ -78,27 +90,46 @@ func rowBasedParquetRowGroupToArrowRecord(pool memory.Allocator, rg parquet.RowG
 }
 
 // contiguousParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
-func contiguousParquetRowGroupToArrowRecord(pool memory.Allocator, rg parquet.RowGroup) (arrow.Record, error) {
+func contiguousParquetRowGroupToArrowRecord(
+	pool memory.Allocator,
+	rg parquet.RowGroup,
+	projections []logicalplan.ColumnMatcher,
+) (arrow.Record, error) {
 	s := rg.Schema()
 
 	children := s.ChildNames()
 	fields := make([]arrow.Field, 0, len(children))
 	cols := make([]array.Interface, 0, len(children))
 	for i, child := range children {
-		typ, nullable, array, err := parquetColumnToArrowArray(pool, s.ChildByName(child), rg.Column(i))
-		if err != nil {
-			return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+		if includedProjection(projections, child) {
+			typ, nullable, array, err := parquetColumnToArrowArray(pool, s.ChildByName(child), rg.Column(i))
+			if err != nil {
+				return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+			}
+			fields = append(fields, arrow.Field{
+				Name:     child,
+				Type:     typ,
+				Nullable: nullable,
+			})
+			cols = append(cols, array)
 		}
-		fields = append(fields, arrow.Field{
-			Name:     child,
-			Type:     typ,
-			Nullable: nullable,
-		})
-		cols = append(cols, array)
 	}
 
 	schema := arrow.NewSchema(fields, nil)
 	return array.NewRecord(schema, cols, rg.NumRows()), nil
+}
+
+func includedProjection(projections []logicalplan.ColumnMatcher, name string) bool {
+	if len(projections) == 0 {
+		return true
+	}
+
+	for _, p := range projections {
+		if p.Match(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // parquetColumnToArrowArray converts a single parquet column to an arrow array
@@ -233,6 +264,12 @@ func writePagesToArray(
 	}
 
 	return nil
+}
+
+// ParquetNodeToType converts a parquet node to an arrow type.
+func ParquetNodeToType(n parquet.Node) arrow.DataType {
+	typ, _ := parquetNodeToType(n)
+	return typ
 }
 
 // parquetNodeToType converts a parquet node to an arrow type and a function to

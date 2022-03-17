@@ -118,6 +118,14 @@ func NewSchema(
 	return s
 }
 
+func (s *Schema) ColumnByName(name string) (ColumnDefinition, bool) {
+	i, ok := s.columnIndexes[name]
+	if !ok {
+		return ColumnDefinition{}, false
+	}
+	return s.columns[i], true
+}
+
 // parquetSchema returns the parquet schema for the dynamic schema with the
 // concrete dynamic column names given in the argument.
 func (s Schema) parquetSchema(

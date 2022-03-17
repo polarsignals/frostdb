@@ -1,4 +1,4 @@
-package columnstore
+package physicalplan
 
 import (
 	"hash/maphash"
@@ -8,24 +8,28 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/apache/arrow/go/v7/arrow/scalar"
 	"github.com/dgryski/go-metro"
+	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
 )
 
 type Distinction struct {
 	pool     memory.Allocator
 	seen     map[uint64]struct{}
 	next     func(r arrow.Record) error
-	columns  []ArrowFieldMatcher
+	columns  []logicalplan.ColumnMatcher
 	hashSeed maphash.Seed
 }
 
-func Distinct(pool memory.Allocator, columns []ArrowFieldMatcher, callback func(r arrow.Record) error) *Distinction {
+func Distinct(pool memory.Allocator, columns []logicalplan.ColumnMatcher) *Distinction {
 	return &Distinction{
 		pool:     pool,
 		columns:  columns,
 		seen:     make(map[uint64]struct{}),
-		next:     callback,
 		hashSeed: maphash.MakeSeed(),
 	}
+}
+
+func (d *Distinction) SetNextCallback(callback func(r arrow.Record) error) {
+	d.next = callback
 }
 
 func (d *Distinction) Callback(r arrow.Record) error {
@@ -34,7 +38,7 @@ func (d *Distinction) Callback(r arrow.Record) error {
 
 	for i, field := range r.Schema().Fields() {
 		for _, col := range d.columns {
-			if col.MatchArrowField(field.Name) {
+			if col.Match(field.Name) {
 				distinctFields = append(distinctFields, field)
 				distinctArrays = append(distinctArrays, r.Column(i))
 			}

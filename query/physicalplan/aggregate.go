@@ -1,4 +1,4 @@
-package columnstore
+package physicalplan
 
 import (
 	"errors"
@@ -11,7 +11,79 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/apache/arrow/go/v7/arrow/scalar"
 	"github.com/dgryski/go-metro"
+	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
 )
+
+func Aggregate(
+	pool memory.Allocator,
+	s *dynparquet.Schema,
+	agg *logicalplan.Aggregation,
+) (*HashAggregate, error) {
+	groupByMatchers := make([]logicalplan.ColumnMatcher, 0, len(agg.GroupExprs))
+	for _, groupExpr := range agg.GroupExprs {
+		groupByMatchers = append(groupByMatchers, groupExpr.Matcher())
+	}
+
+	var (
+		aggFunc      logicalplan.AggFunc
+		aggFuncFound bool
+
+		aggColumnMatcher logicalplan.ColumnMatcher
+		aggColumnFound   bool
+	)
+
+	agg.AggExpr.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+		switch e := expr.(type) {
+		case logicalplan.AggregationFunction:
+			aggFunc = e.Func
+			aggFuncFound = true
+		case logicalplan.Column:
+			aggColumnMatcher = e.Matcher()
+			aggColumnFound = true
+		}
+
+		return true
+	}))
+
+	if !aggFuncFound {
+		return nil, errors.New("aggregation function not found")
+	}
+
+	if !aggColumnFound {
+		return nil, errors.New("aggregation column not found")
+	}
+
+	f, err := chooseAggregationFunction(aggFunc, agg.AggExpr.DataType(s))
+	if err != nil {
+		return nil, err
+	}
+
+	return NewHashAggregate(
+		pool,
+		agg.AggExpr.Name(),
+		f,
+		aggColumnMatcher,
+		groupByMatchers,
+	), nil
+}
+
+func chooseAggregationFunction(
+	aggFunc logicalplan.AggFunc,
+	dataType arrow.DataType,
+) (AggregationFunction, error) {
+	switch aggFunc {
+	case logicalplan.SumAggFunc:
+		switch dataType.ID() {
+		case arrow.INT64:
+			return &Int64SumAggregation{}, nil
+		default:
+			return nil, fmt.Errorf("unsupported sum of type: %s", dataType.Name())
+		}
+	default:
+		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
+	}
+}
 
 type AggregationFunction interface {
 	Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error)
@@ -19,36 +91,40 @@ type AggregationFunction interface {
 
 type HashAggregate struct {
 	pool                  memory.Allocator
+	resultColumnName      string
 	groupByCols           map[string]array.Builder
 	arraysToAggregate     []array.Builder
 	hashToAggregate       map[uint64]int
-	groupByColumnMatchers []ArrowFieldMatcher
-	columnToAggregate     StaticArrowFieldMatcher
+	groupByColumnMatchers []logicalplan.ColumnMatcher
+	columnToAggregate     logicalplan.ColumnMatcher
 	aggregationFunction   AggregationFunction
 	hashSeed              maphash.Seed
-}
-
-type ArrowFieldMatcher interface {
-	MatchArrowField(columnstore string) bool
+	nextCallback          func(r arrow.Record) error
 }
 
 func NewHashAggregate(
 	pool memory.Allocator,
+	resultColumnName string,
 	aggregationFunction AggregationFunction,
-	columnToAggregate ArrowFieldMatcher,
-	groupByColumnMatchers ...ArrowFieldMatcher,
+	columnToAggregate logicalplan.ColumnMatcher,
+	groupByColumnMatchers []logicalplan.ColumnMatcher,
 ) *HashAggregate {
 	return &HashAggregate{
 		pool:              pool,
+		resultColumnName:  resultColumnName,
 		groupByCols:       map[string]array.Builder{},
 		arraysToAggregate: make([]array.Builder, 0),
 		hashToAggregate:   map[uint64]int{},
-		columnToAggregate: columnToAggregate.(StaticArrowFieldMatcher),
+		columnToAggregate: columnToAggregate,
 		// TODO: Matchers can be optimized to be something like a radix tree or just a fast-lookup datastructure for exact matches or prefix matches.
 		groupByColumnMatchers: groupByColumnMatchers,
 		hashSeed:              maphash.MakeSeed(),
 		aggregationFunction:   aggregationFunction,
 	}
+}
+
+func (a *HashAggregate) SetNextCallback(nextCallback func(r arrow.Record) error) {
+	a.nextCallback = nextCallback
 }
 
 func (a *HashAggregate) Callback(r arrow.Record) error {
@@ -59,13 +135,13 @@ func (a *HashAggregate) Callback(r arrow.Record) error {
 
 	for i, field := range r.Schema().Fields() {
 		for _, matcher := range a.groupByColumnMatchers {
-			if matcher.MatchArrowField(field.Name) {
+			if matcher.Match(field.Name) {
 				groupByFields = append(groupByFields, field)
 				groupByArrays = append(groupByArrays, r.Column(i))
 			}
 		}
 
-		if a.columnToAggregate.Name == field.Name {
+		if a.columnToAggregate.Match(field.Name) {
 			columnToAggregate = r.Column(i)
 			aggregateFieldFound = true
 		}
@@ -186,7 +262,7 @@ func appendValue(arr array.Builder, s scalar.Scalar) error {
 	}
 }
 
-func (a *HashAggregate) Aggregate() (arrow.Record, error) {
+func (a *HashAggregate) Finish() error {
 	numCols := len(a.groupByCols) + 1
 
 	groupByFields := make([]arrow.Field, 0, numCols)
@@ -204,16 +280,16 @@ func (a *HashAggregate) Aggregate() (arrow.Record, error) {
 
 	aggregateArray, err := a.aggregationFunction.Aggregate(a.pool, arrs)
 	if err != nil {
-		return nil, fmt.Errorf("aggregate batched arrays: %w", err)
+		return fmt.Errorf("aggregate batched arrays: %w", err)
 	}
 
-	aggregateField := arrow.Field{Name: a.columnToAggregate.Name, Type: aggregateArray.DataType()}
+	aggregateField := arrow.Field{Name: a.resultColumnName, Type: aggregateArray.DataType()}
 
-	return array.NewRecord(
+	return a.nextCallback(array.NewRecord(
 		arrow.NewSchema(append(groupByFields, aggregateField), nil),
 		append(groupByArrays, aggregateArray),
 		int64(aggregateArray.Len()),
-	), nil
+	))
 }
 
 type Int64SumAggregation struct{}

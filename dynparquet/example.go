@@ -115,7 +115,7 @@ func NewSampleSchema() *Schema {
 			Dynamic:       true,
 		}, {
 			Name:          "stacktrace",
-			StorageLayout: parquet.Repeated(parquet.UUID()),
+			StorageLayout: parquet.Encoded(parquet.Repeated(parquet.UUID()), &parquet.RLEDictionary),
 			Dynamic:       false,
 		}, {
 			Name:          "timestamp",

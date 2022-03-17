@@ -15,6 +15,7 @@ import (
 	"github.com/google/btree"
 	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
 	"github.com/parca-dev/parca/pkg/columnstore/pqarrow"
+	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/segmentio/parquet-go"
@@ -275,12 +276,18 @@ func (t *Table) splitGranule(granule *Granule) {
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *Table) Iterator(
 	pool memory.Allocator,
+	projections []logicalplan.ColumnMatcher,
+	filterExpr logicalplan.Expr,
 	iterator func(r arrow.Record) error,
 ) error {
 	index := t.Index()
 	tx := t.db.beginRead()
 
-	var err error
+	filter, err := booleanExpr(filterExpr)
+	if err != nil {
+		return err
+	}
+
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
@@ -289,7 +296,14 @@ func (t *Table) Iterator(
 			f := buf.ParquetFile()
 			for i := 0; i < f.NumRowGroups(); i++ {
 				rg := buf.DynamicRowGroup(i)
-				rowGroups = append(rowGroups, rg)
+				var mayContainUsefulData bool
+				mayContainUsefulData, err = filter.Eval(rg)
+				if err != nil {
+					return false
+				}
+				if mayContainUsefulData {
+					rowGroups = append(rowGroups, rg)
+				}
 			}
 			return true
 		})
@@ -299,21 +313,25 @@ func (t *Table) Iterator(
 			return true
 		}
 
-		var merge dynparquet.DynamicRowGroup
-		merge, err = g.tableConfig.schema.MergeDynamicRowGroups(rowGroups)
-		if err != nil {
-			return false
+		// Previously we sorted all row groups into a single row group here,
+		// but it turns out that none of the downstream uses actually rely on
+		// the sorting so it's not worth it in the general case. Physical plans
+		// can decide to sort if they need to in order to exploit the
+		// characteristics of sorted data.
+		for _, rg := range rowGroups {
+			var record arrow.Record
+			record, err = pqarrow.ParquetRowGroupToArrowRecord(pool, rg, projections)
+			if err != nil {
+				return false
+			}
+			err = iterator(record)
+			record.Release()
+			if err != nil {
+				return false
+			}
 		}
 
-		var record arrow.Record
-		record, err = pqarrow.ParquetRowGroupToArrowRecord(pool, merge)
-		if err != nil {
-			return false
-		}
-
-		err = iterator(record)
-		record.Release()
-		return err == nil
+		return true
 	})
 	return err
 }

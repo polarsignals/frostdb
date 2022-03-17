@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/go-kit/log"
+	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -94,6 +95,26 @@ func (db *DB) Table(name string, config *TableConfig, logger log.Logger) *Table 
 	table = newTable(db, name, config, db.reg, logger)
 	db.tables[name] = table
 	return table
+}
+
+func (db *DB) TableProvider() *DBTableProvider {
+	return NewDBTableProvider(db)
+}
+
+type DBTableProvider struct {
+	db *DB
+}
+
+func NewDBTableProvider(db *DB) *DBTableProvider {
+	return &DBTableProvider{
+		db: db,
+	}
+}
+
+func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
+	p.db.mtx.RLock()
+	defer p.db.mtx.RUnlock()
+	return p.db.tables[name]
 }
 
 // beginRead starts a read transaction

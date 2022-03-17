@@ -3,15 +3,25 @@ package columnstore
 import (
 	"testing"
 
+	"github.com/apache/arrow/go/v7/arrow"
 	"github.com/apache/arrow/go/v7/arrow/array"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/parca-dev/parca/pkg/columnstore/query"
+	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAggregate(t *testing.T) {
-	table := basicTable(t, 2^12)
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+		8192,
+	)
+
+	c := New(nil)
+	db := c.DB("test")
+	table := db.Table("test", config, newTestLogger(t))
 
 	samples := dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -56,23 +66,27 @@ func TestAggregate(t *testing.T) {
 	err = table.Insert(buf)
 	require.NoError(t, err)
 
-	pool := memory.NewGoAllocator()
-	agg := NewHashAggregate(
-		pool,
-		&Int64SumAggregation{},
-		StaticColumnRef("value").ArrowFieldMatcher(),
-		DynamicColumnRef("labels").Column("label2").ArrowFieldMatcher(),
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
 	)
 
-	err = table.Iterator(pool, agg.Callback)
+	var res arrow.Record
+	err = engine.ScanTable("test").
+		Aggregate(
+			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
+			logicalplan.Col("labels.label2"),
+		).Execute(func(r arrow.Record) error {
+		r.Retain()
+		res = r
+		return nil
+	})
 	require.NoError(t, err)
+	defer res.Release()
 
-	r, err := agg.Aggregate()
-	require.NoError(t, err)
-
-	for i, col := range r.Columns() {
-		require.Equal(t, 1, col.Len(), "unexpected number of values in column %s", r.Schema().Field(i).Name)
+	for i, col := range res.Columns() {
+		require.Equal(t, 1, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 	}
-	cols := r.Columns()
+	cols := res.Columns()
 	require.Equal(t, []int64{6}, cols[len(cols)-1].(*array.Int64).Int64Values())
 }

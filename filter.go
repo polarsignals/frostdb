@@ -1,90 +1,141 @@
 package columnstore
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/array"
-	"github.com/apache/arrow/go/v7/arrow/memory"
+	"github.com/apache/arrow/go/v7/arrow/scalar"
+	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
+	"github.com/segmentio/parquet-go"
 )
 
-func Filter(pool memory.Allocator, filterExpr BooleanExpression, callback func(r arrow.Record) error) func(r arrow.Record) error {
-	return func(r arrow.Record) error {
-		filtered, empty, err := filter(pool, filterExpr, r)
-		if err != nil {
-			return err
-		}
-		if empty {
-			return nil
-		}
+type PreExprVisitorFunc func(expr logicalplan.Expr) bool
 
-		defer filtered.Release()
-		return callback(filtered)
+func (f PreExprVisitorFunc) PreVisit(expr logicalplan.Expr) bool {
+	return f(expr)
+}
+
+func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
+	return false
+}
+
+type TrueNegativeFilter interface {
+	Eval(dynparquet.DynamicRowGroup) (bool, error)
+}
+
+type AlwaysTrueFilter struct{}
+
+func (f *AlwaysTrueFilter) Eval(dynparquet.DynamicRowGroup) (bool, error) {
+	return true, nil
+}
+
+func arrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
+	switch s := sc.(type) {
+	case *scalar.String:
+		return parquet.ValueOf(string(s.Data())), nil
+	case *scalar.Int64:
+		return parquet.ValueOf(s.Value), nil
+	case *scalar.FixedSizeBinary:
+		width := s.Type.(*arrow.FixedSizeBinaryType).ByteWidth
+		v := [16]byte{}
+		copy(v[:width], s.Data())
+		return parquet.ValueOf(v), nil
+	default:
+		return parquet.Value{}, fmt.Errorf("unsupported scalar type %T", s)
 	}
 }
 
-func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record) (arrow.Record, bool, error) {
-	bitmap, err := filterExpr.Eval(ar)
-	if err != nil {
-		return nil, true, err
-	}
-
-	if bitmap.IsEmpty() {
-		return nil, true, nil
-	}
-
-	indicesToKeep := bitmap.ToArray()
-	ranges := buildIndexRanges(indicesToKeep)
-
-	totalRows := int64(0)
-	recordRanges := make([]arrow.Record, len(ranges))
-	for j, r := range ranges {
-		recordRanges[j] = ar.NewSlice(int64(r.Start), int64(r.End))
-		totalRows += int64(r.End - r.Start)
-	}
-
-	cols := make([]arrow.Array, ar.NumCols())
-	numRanges := len(recordRanges)
-	for i := range cols {
-		colRanges := make([]arrow.Array, 0, numRanges)
-		for _, rr := range recordRanges {
-			colRanges = append(colRanges, rr.Column(i))
-		}
-
-		cols[i], err = array.Concatenate(colRanges, pool)
-		if err != nil {
-			return nil, true, err
-		}
-	}
-
-	return array.NewRecord(ar.Schema(), cols, totalRows), false, nil
-}
-
-type IndexRange struct {
-	Start uint32
-	End   uint32
-}
-
-// buildIndexRanges returns a set of continguous index ranges from the given indicies
-// ex: [1,2,7,8,9] would return [{Start:1, End:2},{Start:7,End:9}]
-func buildIndexRanges(indices []uint32) []IndexRange {
-	ranges := []IndexRange{}
-
-	cur := IndexRange{
-		Start: indices[0],
-		End:   indices[0] + 1,
-	}
-
-	for _, i := range indices[1:] {
-		if i == cur.End {
-			cur.End++
-		} else {
-			ranges = append(ranges, cur)
-			cur = IndexRange{
-				Start: i,
-				End:   i + 1,
+func binaryBooleanExpr(expr logicalplan.BinaryExpr) (TrueNegativeFilter, error) {
+	switch expr.Op {
+	case logicalplan.EqOp: //, logicalplan.NotEqOp, logicalplan.LTOp, logicalplan.LTEOp, logicalplan.GTOp, logicalplan.GTEOp, logicalplan.RegExpOp, logicalplan.NotRegExpOp:
+		var leftColumnRef *ColumnRef
+		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+			switch e := expr.(type) {
+			case logicalplan.Column:
+				leftColumnRef = &ColumnRef{
+					ColumnName: e.ColumnName,
+				}
+				return false
 			}
+			return true
+		}))
+		if leftColumnRef == nil {
+			return nil, errors.New("left side of binary expression must be a column")
 		}
+
+		var (
+			rightValue parquet.Value
+			err        error
+		)
+		expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+			switch e := expr.(type) {
+			case logicalplan.LiteralExpr:
+				rightValue, err = arrowScalarToParquetValue(e.Value)
+				return false
+			}
+			return true
+		}))
+
+		if err != nil {
+			return nil, err
+		}
+
+		return &BinaryScalarExpr{
+			Left:  leftColumnRef,
+			Op:    expr.Op,
+			Right: rightValue,
+		}, nil
+	case logicalplan.AndOp:
+		left, err := booleanExpr(expr.Left)
+		if err != nil {
+			return nil, err
+		}
+
+		right, err := booleanExpr(expr.Right)
+		if err != nil {
+			return nil, err
+		}
+
+		return &AndExpr{
+			Left:  left,
+			Right: right,
+		}, nil
+	default:
+		return &AlwaysTrueFilter{}, nil
+	}
+}
+
+type AndExpr struct {
+	Left  TrueNegativeFilter
+	Right TrueNegativeFilter
+}
+
+func (a *AndExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
+	left, err := a.Left.Eval(rg)
+	if err != nil {
+		return false, err
 	}
 
-	ranges = append(ranges, cur)
-	return ranges
+	right, err := a.Right.Eval(rg)
+	if err != nil {
+		return false, err
+	}
+
+	// This stores the result in place to avoid allocations.
+	return left && right, nil
+}
+
+func booleanExpr(expr logicalplan.Expr) (TrueNegativeFilter, error) {
+	if expr == nil {
+		return &AlwaysTrueFilter{}, nil
+	}
+
+	switch e := expr.(type) {
+	case logicalplan.BinaryExpr:
+		return binaryBooleanExpr(e)
+	default:
+		return nil, fmt.Errorf("unsupported boolean expression %T", e)
+	}
 }
