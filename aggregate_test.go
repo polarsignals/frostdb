@@ -7,9 +7,9 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/array"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/google/uuid"
-	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
-	"github.com/parca-dev/parca/pkg/columnstore/query"
-	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
+	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/query"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/stretchr/testify/require"
 )
 

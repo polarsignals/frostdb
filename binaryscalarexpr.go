@@ -3,8 +3,8 @@ package columnstore
 import (
 	"errors"
 
-	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
-	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
+	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/segmentio/parquet-go"
 )
 

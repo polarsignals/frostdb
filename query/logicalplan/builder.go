@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/polarsignals/arcticdb/dynparquet"
 )
 
 type Builder struct {

@@ -9,7 +9,7 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/array"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/apache/arrow/go/v7/arrow/scalar"
-	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
 type PredicateFilter struct {

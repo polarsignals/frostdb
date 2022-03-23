@@ -12,7 +12,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/google/uuid"
-	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 )

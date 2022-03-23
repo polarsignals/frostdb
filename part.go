@@ -1,7 +1,7 @@
 package columnstore
 
 import (
-	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/polarsignals/arcticdb/dynparquet"
 )
 
 type Part struct {

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/apache/arrow/go/v7/arrow/memory"
-	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
-	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
+	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/stretchr/testify/require"
 )
 

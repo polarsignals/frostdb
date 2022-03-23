@@ -8,7 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/google/btree"
-	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/parquet-go"
 )

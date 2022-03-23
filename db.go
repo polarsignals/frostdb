@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/go-kit/log"
-	"github.com/parca-dev/parca/pkg/columnstore/query/logicalplan"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

@@ -3,7 +3,7 @@ package logicalplan
 import (
 	"github.com/apache/arrow/go/v7/arrow"
 	"github.com/apache/arrow/go/v7/arrow/scalar"
-	"github.com/parca-dev/parca/pkg/columnstore/dynparquet"
+	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/segmentio/parquet-go"
 )
 
