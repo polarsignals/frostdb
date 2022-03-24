@@ -6,8 +6,9 @@ import (
 	"sync/atomic"
 
 	"github.com/go-kit/log"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
 type ColumnStore struct {

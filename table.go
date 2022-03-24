@@ -13,12 +13,13 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/pqarrow"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/segmentio/parquet-go"
+
+	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/pqarrow"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
 var ErrNoSchema = fmt.Errorf("no schema")
