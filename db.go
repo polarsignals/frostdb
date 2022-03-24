@@ -1,4 +1,4 @@
-package columnstore
+package arcticdb
 
 import (
 	"math"
@@ -35,10 +35,10 @@ type DB struct {
 	tables map[string]*Table
 	reg    prometheus.Registerer
 
-	// Databases monotomically increasing transaction id
+	// Databases monotonically increasing transaction id
 	txmtx *sync.RWMutex
 	tx    uint64
-	// active is the list of active transactions TODO: a gc gorouting should prune this list as parts get merged
+	// active is the list of active transactions TODO: a gc goroutine should prune this list as parts get merged
 	active map[uint64]uint64 // TODO probably not the best choice for active list...
 }
 
@@ -53,7 +53,7 @@ func (s *ColumnStore) DB(name string) *DB {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	// Need to double check that in the mean time a database with the same name
+	// Need to double-check that in the meantime a database with the same name
 	// wasn't concurrently created.
 	db, ok = s.dbs[name]
 	if ok {
@@ -85,7 +85,7 @@ func (db *DB) Table(name string, config *TableConfig, logger log.Logger) *Table 
 	db.mtx.Lock()
 	defer db.mtx.Unlock()
 
-	// Need to double check that in the mean time another table with the same
+	// Need to double-check that in the meantime another table with the same
 	// name wasn't concurrently created.
 	table, ok = db.tables[name]
 	if ok {

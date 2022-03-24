@@ -1,4 +1,4 @@
-package columnstore
+package arcticdb
 
 //import (
 //	"bytes"
