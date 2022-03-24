@@ -3,14 +3,13 @@ package arcticdb
 import (
 	"errors"
 
+	"github.com/segmentio/parquet-go"
+
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
-	"github.com/segmentio/parquet-go"
 )
 
-var (
-	ErrUnexpectedNumberOfFields = errors.New("unexpected number of fields")
-)
+var ErrUnexpectedNumberOfFields = errors.New("unexpected number of fields")
 
 type ColumnRef struct {
 	ColumnName string
@@ -60,9 +59,7 @@ func (e BinaryScalarExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
 	return BinaryScalarOperation(leftData, e.Right, e.Op)
 }
 
-var (
-	ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
-)
+var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 
 func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Operator) (bool, error) {
 	switch operator {

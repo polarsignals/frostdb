@@ -1,4 +1,4 @@
-package columnstore
+package arcticdb
 
 import (
 	"testing"
@@ -7,10 +7,11 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/array"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
-	"github.com/stretchr/testify/require"
 )
 
 func TestAggregate(t *testing.T) {

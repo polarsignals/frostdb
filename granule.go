@@ -8,9 +8,10 @@ import (
 	"unsafe"
 
 	"github.com/google/btree"
-	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/parquet-go"
+
+	"github.com/polarsignals/arcticdb/dynparquet"
 )
 
 type Granule struct {

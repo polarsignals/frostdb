@@ -6,10 +6,11 @@ import (
 	"github.com/apache/arrow/go/v7/arrow"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
-	"github.com/stretchr/testify/require"
 )
 
 func TestFilter(t *testing.T) {
