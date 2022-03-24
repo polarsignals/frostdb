@@ -24,6 +24,20 @@ import (
 
 var ErrNoSchema = fmt.Errorf("no schema")
 
+type ErrWriteRow struct{ err error }
+
+func (e ErrWriteRow) Error() string { return "failed to write row: " + e.err.Error() }
+
+type ErrReadRow struct{ err error }
+
+func (e ErrReadRow) Error() string { return "failed to read row: " + e.err.Error() }
+
+type ErrCreateSchemaWriter struct{ err error }
+
+func (e ErrCreateSchemaWriter) Error() string {
+	return "failed to create schema write: " + e.err.Error()
+}
+
 type TableConfig struct {
 	schema      *dynparquet.Schema
 	granuleSize int
@@ -134,7 +148,11 @@ func (t *Table) Insert(buf *dynparquet.Buffer) error {
 	tx, commit := t.db.begin()
 	defer commit()
 
-	rowsToInsertPerGranule := t.splitRowsByGranule(buf)
+	rowsToInsertPerGranule, err := t.splitRowsByGranule(buf)
+	if err != nil {
+		return fmt.Errorf("failed to split rows by granule: %w", err)
+	}
+
 	for granule, serBuf := range rowsToInsertPerGranule {
 		if granule.AddPart(NewPart(tx, serBuf)) >= uint64(t.config.granuleSize) {
 			t.Add(1)
@@ -349,14 +367,14 @@ func (t *Table) granuleIterator(iterator func(g *Granule) bool) {
 	})
 }
 
-func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparquet.SerializedBuffer {
+func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) (map[*Granule]*dynparquet.SerializedBuffer, error) {
 	// Special case: if there is only one granule, insert parts into it until full.
 	index := t.Index()
 	if index.Len() == 1 {
 		b := bytes.NewBuffer(nil)
 		w, err := t.config.schema.NewWriter(b, buf.DynamicColumns())
 		if err != nil {
-			panic(err)
+			return nil, ErrCreateSchemaWriter{err}
 		}
 
 		rows := buf.Rows()
@@ -366,27 +384,27 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 				break
 			}
 			if err != nil {
-				panic(err)
+				return nil, ErrReadRow{err}
 			}
 			err = w.WriteRow(row)
 			if err != nil {
-				panic(err)
+				return nil, ErrWriteRow{err}
 			}
 		}
 
 		err = w.Close()
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("failed to close schema writer: %w", err)
 		}
 
 		serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("failed to create dynparquet reader: %w", err)
 		}
 
 		return map[*Granule]*dynparquet.SerializedBuffer{
 			index.Min().(*Granule): serBuf,
-		}
+		}, nil
 	}
 
 	writerByGranule := map[*Granule]*parquet.Writer{}
@@ -399,8 +417,10 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 
 	row, err := rows.ReadRow(nil)
 	if err != nil {
-		panic(err)
+		return nil, ErrReadRow{err}
 	}
+
+	var ascendErr error
 
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
@@ -414,14 +434,16 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 						b := bytes.NewBuffer(nil)
 						w, err = t.config.schema.NewWriter(b, buf.DynamicColumns())
 						if err != nil {
-							panic(err)
+							ascendErr = ErrCreateSchemaWriter{err}
+							return false
 						}
 						writerByGranule[prev] = w
 						bufByGranule[prev] = b
 					}
 					err = w.WriteRow(row.Row)
 					if err != nil {
-						panic(err)
+						ascendErr = ErrWriteRow{err}
+						return false
 					}
 					row, err = rows.ReadRow(row)
 					if err == io.EOF {
@@ -430,7 +452,8 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 						return false
 					}
 					if err != nil {
-						panic(err)
+						ascendErr = ErrReadRow{err}
+						return false
 					}
 					continue
 				}
@@ -442,6 +465,9 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 			return true // continue btree iteration
 		}
 	})
+	if ascendErr != nil {
+		return nil, ascendErr
+	}
 
 	if !exhaustedAllRows {
 		w, ok := writerByGranule[prev]
@@ -449,7 +475,7 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 			b := bytes.NewBuffer(nil)
 			w, err = t.config.schema.NewWriter(b, buf.DynamicColumns())
 			if err != nil {
-				panic(err)
+				return nil, ErrCreateSchemaWriter{err}
 			}
 			writerByGranule[prev] = w
 			bufByGranule[prev] = b
@@ -459,14 +485,14 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 		for {
 			err = w.WriteRow(row.Row)
 			if err != nil {
-				panic(err)
+				return nil, ErrWriteRow{err}
 			}
 			row, err = rows.ReadRow(row)
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				panic(err)
+				return nil, ErrReadRow{err}
 			}
 		}
 	}
@@ -475,15 +501,15 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) map[*Granule]*dynparq
 	for g, w := range writerByGranule {
 		err := w.Close()
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 		res[g], err = dynparquet.ReaderFromBytes(bufByGranule[g].Bytes())
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("failed to read from granule buffer: %w", err)
 		}
 	}
 
-	return res
+	return res, nil
 }
 
 // compact will compact a Granule; should be performed as a background go routine
