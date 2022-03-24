@@ -120,7 +120,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	b = bytes.NewBuffer(nil)
 	w, err = g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
 	if err != nil {
-		return nil, err
+		return nil, ErrCreateSchemaWriter{err}
 	}
 	rowsWritten := 0
 
@@ -134,12 +134,12 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 				break
 			}
 			if err != nil {
-				return nil, err
+				return nil, ErrReadRow{err}
 			}
 
 			err = w.WriteRow(row)
 			if err != nil {
-				return nil, err
+				return nil, ErrWriteRow{err}
 			}
 			rowsWritten++
 
@@ -156,7 +156,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 				b = bytes.NewBuffer(nil)
 				w, err = g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
 				if err != nil {
-					return nil, fmt.Errorf("create writer: %w", err)
+					return nil, ErrCreateSchemaWriter{err}
 				}
 				rowsWritten = 0
 			}
