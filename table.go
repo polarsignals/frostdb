@@ -1,4 +1,4 @@
-package columnstore
+package arcticdb
 
 import (
 	"bytes"
@@ -145,7 +145,6 @@ func (t *Table) Insert(buf *dynparquet.Buffer) error {
 }
 
 func (t *Table) splitGranule(granule *Granule) {
-
 	// Recheck to ensure the granule still needs to be split
 	if !atomic.CompareAndSwapUint64(&granule.pruned, 0, 1) {
 		return

@@ -1,4 +1,4 @@
-package columnstore
+package arcticdb
 
 import (
 	"bytes"
@@ -14,7 +14,6 @@ import (
 )
 
 type Granule struct {
-
 	// least is the row that exists within the Granule that is the least.
 	// This is used for quick insertion into the btree, without requiring an iterator
 	least *dynparquet.DynamicRow
@@ -94,7 +93,7 @@ func (g *Granule) AddPart(p *Part) uint64 {
 
 // split a granule into n sized granules. With the last granule containing the remainder.
 // Returns the granules in order.
-// This assumes the Granule has had it's parts merged into a single part
+// This assumes the Granule has had its parts merged into a single part
 func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	// Get the first part in the granule's part list.
 	var p *Part

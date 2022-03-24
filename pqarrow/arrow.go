@@ -143,7 +143,7 @@ func parquetColumnToArrowArray(
 ) (
 	arrow.DataType,
 	bool,
-	array.Interface,
+	arrow.Array,
 	error,
 ) {
 	at, newValueWriter := parquetNodeToType(n)

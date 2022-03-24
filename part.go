@@ -1,4 +1,4 @@
-package columnstore
+package arcticdb
 
 import (
 	"github.com/polarsignals/arcticdb/dynparquet"
@@ -7,7 +7,7 @@ import (
 type Part struct {
 	Buf *dynparquet.SerializedBuffer
 
-	// transaction id that this part was indserted under
+	// transaction id that this part was inserted under
 	tx uint64
 }
 
