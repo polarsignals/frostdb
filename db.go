@@ -2,6 +2,8 @@ package arcticdb
 
 import (
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -135,6 +137,7 @@ func (db *DB) begin() (uint64, uint64, func(done func())) {
 				if atomic.CompareAndSwapUint64(&db.highWatermark, tx-1, tx) {
 					return
 				}
+				time.Sleep(time.Nanosecond)
 			}
 		}()
 	}
