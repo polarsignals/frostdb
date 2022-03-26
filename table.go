@@ -318,7 +318,7 @@ func (t *TableBlock) Insert(buf *dynparquet.Buffer) error {
 		return nil
 	}
 
-	tx, commit := t.table.db.begin()
+	tx, _, commit := t.db.begin()
 	defer commit()
 
 	rowsToInsertPerGranule, err := t.splitRowsByGranule(buf)
@@ -344,7 +344,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	}
 
 	// Obtain a new tx for this compaction
-	tx, commit := t.table.db.begin()
+	tx, watermark, commit := t.db.begin()
 
 	// Start compaction by adding sentinel node to parts list
 	parts := granule.parts.Sentinel(Compacting)
@@ -356,7 +356,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	// Convert all the parts into a set of rows
 	parts.Iterate(func(p *Part) bool {
 		// Don't merge parts from an newer tx, or from an uncompleted tx, or a completed tx that finished after this tx started
-		if p.tx > tx || t.table.db.txCompleted(p.tx) > tx {
+		if p.tx > tx || p.tx > watermark {
 			remain = append(remain, p)
 			return true
 		}
@@ -478,13 +478,13 @@ func (t *TableBlock) RowGroupIterator(
 	iterator func(rg dynparquet.DynamicRowGroup) bool,
 ) error {
 	index := t.Index()
-	tx := t.table.db.beginRead()
+	watermark := t.db.beginRead()
 
 	var err error
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
-		g.PartBuffersForTx(tx, t.table.db.txCompleted, func(buf *dynparquet.SerializedBuffer) bool {
+		g.PartBuffersForTx(watermark, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
 			for i := 0; i < f.NumRowGroups(); i++ {
 				rg := buf.DynamicRowGroup(i)
