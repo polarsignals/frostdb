@@ -346,6 +346,14 @@ func Test_Table_InsertLowest(t *testing.T) {
 	err = table.Insert(buf)
 	require.NoError(t, err)
 
+	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
+	table.Sync()
+	if table.index.Len() == 1 {
+		table.Add(1)
+		table.compact(table.index.Min().(*Granule))
+		table.Sync()
+	}
+
 	samples = dynparquet.Samples{{
 		Labels: []dynparquet.Label{
 			{Name: "label14", Value: "value14"},

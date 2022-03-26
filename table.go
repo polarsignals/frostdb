@@ -377,7 +377,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	}
 
 	if len(bufs) == 0 { // aborting; nothing to do
-		commit(t.wg.Done)
+		t.abort(commit, granule)
 		return
 	}
 
@@ -411,13 +411,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	}
 
 	if n < t.table.config.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
-		for {
-			// unmark pruned, so that we can compact it in the future
-			if granule.pruned.CAS(1, 0) {
-				commit(t.wg.Done)
-				return
-			}
-		}
+		t.abort(commit, granule)
 	}
 
 	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
@@ -711,5 +705,15 @@ func addPartToGranule(granules []*Granule, p *Part) {
 	if prev != nil {
 		// Save part to prev
 		prev.AddPart(p)
+	}
+}
+
+// abort a compaction transaction
+func (t *TableBlock) abort(commit func(func()), granule *Granule) {
+	for {
+		if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
+			commit(t.wg.Done)
+			return
+		}
 	}
 }
