@@ -462,8 +462,8 @@ func Test_Table_Concurrency(t *testing.T) {
 		}()
 	}
 
-	// TODO probably have them generate until a stop event
 	wg.Wait()
+	table.Sync()
 
 	totalrows := int64(0)
 	err := table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
