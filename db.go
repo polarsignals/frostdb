@@ -124,12 +124,13 @@ func (db *DB) beginRead() uint64 {
 //   the write tx id
 //   The current high watermark
 //   A function to complete the transaction
-func (db *DB) begin() (uint64, uint64, func()) {
+func (db *DB) begin() (uint64, uint64, func(done func())) {
 	tx := atomic.AddUint64(&db.tx, 1)
 	watermark := atomic.LoadUint64(&db.highWatermark)
-	return tx, watermark, func() {
+	return tx, watermark, func(done func()) {
 		// commit the transaction
 		go func() { // TODO: ideally we wouldn't have unbounded go routine creation
+			defer done() // used for determining when transactions have been completed
 			for {
 				if atomic.CompareAndSwapUint64(&db.highWatermark, tx-1, tx) {
 					return
