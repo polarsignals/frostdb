@@ -18,7 +18,11 @@ type Granule struct {
 	// least is the row that exists within the Granule that is the least.
 	// This is used for quick insertion into the btree, without requiring an iterator
 	least *dynparquet.DynamicRow
-	parts *PartList
+
+	// greatest is the row that exists within the Granule that is the greatest.
+	// This is used for quick insertion into the btree, without requiring an iterator
+	greatest *dynparquet.DynamicRow
+	parts    *PartList
 
 	// card is the raw commited, and uncommited cardinality of the granule. It is used as a suggestion for potential compaction
 	card uint64
@@ -32,6 +36,9 @@ type Granule struct {
 
 	// newGranules are the granules that were created after a split
 	newGranules []*Granule
+
+	// isLessThan is used to determine if this granule is being used during an AscendRange as the lessThan pivot
+	isLessThan bool
 }
 
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) *Granule {
@@ -41,10 +48,11 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		tableConfig:     tableConfig,
 	}
 
-	// Find the least column
 	if firstPart != nil {
 		g.card = uint64(firstPart.Buf.NumRows())
 		g.parts.Prepend(firstPart)
+
+		// Set the least row
 		// Since we assume a part is sorted, we need only to look at the first row in each Part
 		row, err := firstPart.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 		if err != nil {
@@ -52,6 +60,17 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 			panic(err)
 		}
 		g.least = row
+
+		// Set the greatest row
+		// Since we assume a part is sorted, we need only to look at the last row in each Part
+		n := firstPart.Buf.NumRowGroups()
+		max, err := firstPart.Buf.DynamicRowGroup(n - 1).DynamicRows().ReadRow(nil)
+		if err != nil {
+			// TODO: handle error
+			panic(err)
+		}
+
+		g.greatest = max
 	}
 
 	granulesCreated.Inc()
@@ -75,13 +94,19 @@ func (g *Granule) AddPart(p *Part) uint64 {
 
 	for {
 		least := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)))
+		greatest := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.greatest)))
+
 		if least == nil || g.tableConfig.schema.RowLessThan(r, (*dynparquet.DynamicRow)(least)) {
-			if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)), least, unsafe.Pointer(r)) {
-				break
+			if !atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)), least, unsafe.Pointer(r)) {
+				continue
 			}
-		} else {
-			break
 		}
+		if greatest == nil || g.tableConfig.schema.RowGreaterThan(r, (*dynparquet.DynamicRow)(greatest)) {
+			if !atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&g.greatest)), greatest, unsafe.Pointer(r)) {
+				continue
+			}
+		}
+		break
 	}
 
 	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
@@ -193,10 +218,18 @@ func (g *Granule) PartBuffersForTx(tx uint64, txCompleted func(uint64) uint64, i
 
 // Less implements the btree.Item interface
 func (g *Granule) Less(than btree.Item) bool {
-	return g.tableConfig.schema.RowLessThan(g.Least(), than.(*Granule).Least())
+	if g.isLessThan || than.(*Granule).isLessThan { // Used only during AscendRange
+		return g.tableConfig.schema.RowLessThanOrEqualTo(g.Least(), than.(*Granule).Least())
+	}
+	return g.tableConfig.schema.RowLessThan(g.Greatest(), than.(*Granule).Least())
 }
 
 // Least returns the least row in a Granule
 func (g *Granule) Least() *dynparquet.DynamicRow {
 	return (*dynparquet.DynamicRow)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least))))
+}
+
+// Greatest returns the greatest row in a Granule
+func (g *Granule) Greatest() *dynparquet.DynamicRow {
+	return (*dynparquet.DynamicRow)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.greatest))))
 }

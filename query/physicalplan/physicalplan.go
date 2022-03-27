@@ -73,6 +73,7 @@ func (s *TableScan) Execute(pool memory.Allocator) error {
 		s.options.Filter,
 		s.options.Distinct,
 		s.next.Callback,
+		s.options.IterateOptions...,
 	)
 	if err != nil {
 		return err

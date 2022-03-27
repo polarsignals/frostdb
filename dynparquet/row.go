@@ -10,7 +10,7 @@ type DynamicRow struct {
 	DynamicColumns map[string][]string
 }
 
-func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
+func (s *Schema) Compare(a, b *DynamicRow) int {
 	dynamicColumns := mergeDynamicColumnSets([]map[string][]string{a.DynamicColumns, b.DynamicColumns})
 	cols := s.parquetSortingColumns(dynamicColumns)
 	for _, col := range cols {
@@ -32,17 +32,26 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 
 		av, bv := extractValues(a, b, aIndex, bIndex)
 		cmp := compare(col, node, av, bv)
-		if cmp < 0 {
-			return true
-		}
-		if cmp > 0 {
-			return false
+		if cmp != 0 {
+			return cmp
 		}
 		// neither of those case are true so a and b are equal for this column
 		// and we need to continue with the next column.
 	}
 
-	return false
+	return 0
+}
+
+func (s *Schema) RowGreaterThan(a, b *DynamicRow) bool {
+	return s.Compare(a, b) > 0
+}
+
+func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
+	return s.Compare(a, b) < 0
+}
+
+func (s *Schema) RowLessThanOrEqualTo(a, b *DynamicRow) bool {
+	return s.Compare(a, b) <= 0
 }
 
 func compare(col parquet.SortingColumn, node parquet.Node, av, bv []parquet.Value) int {

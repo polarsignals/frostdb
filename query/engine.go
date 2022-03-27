@@ -29,10 +29,10 @@ type QueryBuilder struct {
 	planBuilder logicalplan.Builder
 }
 
-func (e *Engine) ScanTable(name string) QueryBuilder {
+func (e *Engine) ScanTable(name string, options ...logicalplan.IterateOption) QueryBuilder {
 	return QueryBuilder{
 		pool:        e.pool,
-		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name),
+		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name, options...),
 	}
 }
 

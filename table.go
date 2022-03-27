@@ -298,6 +298,7 @@ func (t *Table) Iterator(
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
 	iterator func(r arrow.Record) error,
+	opts ...logicalplan.IterateOption,
 ) error {
 	index := t.Index()
 	tx := t.db.beginRead()
@@ -309,7 +310,12 @@ func (t *Table) Iterator(
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
 
-	index.Ascend(func(i btree.Item) bool {
+	options := &logicalplan.IterateOptions{}
+	for _, o := range opts {
+		o.Apply(options)
+	}
+
+	it := func(i btree.Item) bool {
 		g := i.(*Granule)
 
 		g.PartBuffersForTx(tx, t.db.txCompleted, func(buf *dynparquet.SerializedBuffer) bool {
@@ -329,7 +335,29 @@ func (t *Table) Iterator(
 		})
 
 		return true
-	})
+	}
+
+	switch {
+	case options.GreaterOrEqual != nil && options.LessThan != nil:
+
+		lessThanGranule := &Granule{
+			isLessThan:  true,
+			least:       options.LessThan,
+			greatest:    options.LessThan,
+			parts:       &PartList{},
+			tableConfig: t.config,
+		}
+
+		greaterOrEqualGranule := &Granule{
+			least:       options.GreaterOrEqual,
+			greatest:    options.GreaterOrEqual,
+			parts:       &PartList{},
+			tableConfig: t.config,
+		}
+		index.AscendRange(greaterOrEqualGranule, lessThanGranule, it)
+	default:
+		index.Ascend(it)
+	}
 
 	// Previously we sorted all row groups into a single row group here,
 	// but it turns out that none of the downstream uses actually rely on

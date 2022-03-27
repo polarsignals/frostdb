@@ -11,15 +11,13 @@ type Builder struct {
 	plan *LogicalPlan
 }
 
-func (b Builder) Scan(
-	provider TableProvider,
-	tableName string,
-) Builder {
+func (b Builder) Scan(provider TableProvider, tableName string, options ...IterateOption) Builder {
 	return Builder{
 		plan: &LogicalPlan{
 			TableScan: &TableScan{
-				TableProvider: provider,
-				TableName:     tableName,
+				TableProvider:  provider,
+				TableName:      tableName,
+				IterateOptions: options,
 			},
 		},
 	}
