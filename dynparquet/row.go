@@ -1,6 +1,8 @@
 package dynparquet
 
 import (
+	"fmt"
+
 	"github.com/segmentio/parquet-go"
 )
 
@@ -10,11 +12,53 @@ type DynamicRow struct {
 	DynamicColumns map[string][]string
 }
 
-func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
+// Intersection returns the intersection of two schemas
+// This is useful when comparing two rows of different schemas to only compare the columns that intersect
+func Intersection(a, b *parquet.Schema) *parquet.Schema {
+
+	aChildren := a.ChildNames()
+	bChildren := b.ChildNames()
+	aChildMap := map[string]bool{}
+	for _, name := range aChildren {
+		aChildMap[name] = true
+	}
+	intersect := map[string]bool{}
+	for _, name := range bChildren {
+		if aChildMap[name] {
+			intersect[name] = true
+		}
+	}
+
+	// Construct the intersection schema
+	g := parquet.Group{}
+	for name := range intersect {
+		g[name] = b.ChildByName(name)
+	}
+
+	return parquet.NewSchema(fmt.Sprintf("intersection of %v and %v", a.Name(), b.Name()), g)
+}
+
+func (s *Schema) Compare(a, b *DynamicRow) int {
 	dynamicColumns := mergeDynamicColumnSets([]map[string][]string{a.DynamicColumns, b.DynamicColumns})
 	cols := s.parquetSortingColumns(dynamicColumns)
+
+	// Create an intersection of the two schemas. This is the shared columns between both schemas
+	intersection := Intersection(a.Schema, b.Schema).ChildNames()
+
 	for _, col := range cols {
 		name := col.Path()[0] // Currently we only support flat schemas.
+
+		found := false
+		for _, intersect := range intersection {
+			if intersect == name {
+				found = true
+				break
+			}
+		}
+		// As soon as we no longer have a sorting column in our intersection, we can no longer assume anything about the comparison, and must reqturn equal.
+		if !found {
+			return 0
+		}
 
 		aIndex := findChildIndex(a.Schema, name)
 		bIndex := findChildIndex(b.Schema, name)
@@ -32,17 +76,26 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 
 		av, bv := extractValues(a, b, aIndex, bIndex)
 		cmp := compare(col, node, av, bv)
-		if cmp < 0 {
-			return true
-		}
-		if cmp > 0 {
-			return false
+		if cmp != 0 {
+			return cmp
 		}
 		// neither of those case are true so a and b are equal for this column
 		// and we need to continue with the next column.
 	}
 
-	return false
+	return 0
+}
+
+func (s *Schema) RowGreaterThan(a, b *DynamicRow) bool {
+	return s.Compare(a, b) > 0
+}
+
+func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
+	return s.Compare(a, b) < 0
+}
+
+func (s *Schema) RowLessThanOrEqualTo(a, b *DynamicRow) bool {
+	return s.Compare(a, b) <= 0
 }
 
 func compare(col parquet.SortingColumn, node parquet.Node, av, bv []parquet.Value) int {

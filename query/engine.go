@@ -37,10 +37,10 @@ type LocalQueryBuilder struct {
 	planBuilder logicalplan.Builder
 }
 
-func (e *LocalEngine) ScanTable(name string) Builder {
+func (e *LocalEngine) ScanTable(name string, options ...logicalplan.IterateOption) Builder {
 	return LocalQueryBuilder{
 		pool:        e.pool,
-		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name),
+		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name, options...),
 	}
 }
 

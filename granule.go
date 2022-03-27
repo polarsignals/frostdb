@@ -32,6 +32,11 @@ type Granule struct {
 
 	// newGranules are the granules that were created after a split
 	newGranules []*Granule
+
+	// isLessThan is used to determine if this granule is being used during an AscendRange as the lessThan pivot
+	isLessThan bool
+	// isGreaterThan is used to determine if this granule is being used during an AscendRange as the greaterOrEqualThan pivot
+	isGreaterThan bool
 }
 
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
@@ -49,6 +54,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 	if firstPart != nil {
 		g.card = atomic.NewUint64(uint64(firstPart.Buf.NumRows()))
 		g.parts.Prepend(firstPart)
+
 		// Since we assume a part is sorted, we need only to look at the first row in each Part
 		row, err := firstPart.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 		if err != nil {
@@ -81,9 +87,8 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 			if g.least.CAS(least, unsafe.Pointer(r)) {
 				break
 			}
-		} else {
-			break
 		}
+		break
 	}
 
 	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
@@ -206,6 +211,9 @@ func (g *Granule) PartBuffersForTx(watermark uint64, iterator func(*dynparquet.S
 
 // Less implements the btree.Item interface.
 func (g *Granule) Less(than btree.Item) bool {
+	if than.(*Granule).isLessThan || g.isGreaterThan {
+		return g.tableConfig.schema.RowLessThanOrEqualTo(g.Least(), than.(*Granule).Least())
+	}
 	return g.tableConfig.schema.RowLessThan(g.Least(), than.(*Granule).Least())
 }
 

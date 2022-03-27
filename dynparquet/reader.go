@@ -30,9 +30,14 @@ func ReaderFromBytes(buf []byte) (*SerializedBuffer, error) {
 }
 
 func NewSerializedBuffer(f *parquet.File) (*SerializedBuffer, error) {
+	b := &SerializedBuffer{
+		Reader: parquet.NewReader(f),
+		f:      f,
+	}
+
 	dynColString, found := f.Lookup(DynamicColumnsKey)
 	if !found {
-		return nil, ErrNoDynamicColumns
+		return b, nil
 	}
 
 	dynCols, err := deserializeDynamicColumns(dynColString)
@@ -40,11 +45,8 @@ func NewSerializedBuffer(f *parquet.File) (*SerializedBuffer, error) {
 		return nil, fmt.Errorf("deserialize dynamic columns metadata %q: %w", dynColString, err)
 	}
 
-	return &SerializedBuffer{
-		Reader:  parquet.NewReader(f),
-		f:       f,
-		dynCols: dynCols,
-	}, nil
+	b.dynCols = dynCols
+	return b, nil
 }
 
 func (b *SerializedBuffer) ParquetFile() *parquet.File {

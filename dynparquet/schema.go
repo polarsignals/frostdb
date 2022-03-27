@@ -373,13 +373,20 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 		bloomFilterColumns = append(bloomFilterColumns, parquet.SplitBlockFilter(col.Path()...))
 	}
 
-	return parquet.NewWriter(w,
+	options := []parquet.WriterOption{
 		ps,
 		parquet.BloomFilters(bloomFilterColumns...),
-		parquet.KeyValueMetadata(
+	}
+
+	if len(dynamicColumns) != 0 {
+		options = append(options, parquet.KeyValueMetadata(
 			DynamicColumnsKey,
 			serializeDynamicColumns(dynamicColumns),
-		),
+		))
+	}
+
+	return parquet.NewWriter(w,
+		options...,
 	), nil
 }
 

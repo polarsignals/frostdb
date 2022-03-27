@@ -6,6 +6,7 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/polarsignals/arcticdb/dynparquet"
 )
 
 // LogicalPlan is a logical representation of a query. Each LogicalPlan is a
@@ -71,6 +72,39 @@ func (plan *LogicalPlan) Accept(visitor PlanVisitor) bool {
 	return visitor.PostVisit(plan)
 }
 
+type IterateOption interface {
+	Apply(*IterateOptions)
+}
+
+type IterateOptions struct {
+	GreaterOrEqual *dynparquet.DynamicRow
+	LessThan       *dynparquet.DynamicRow
+}
+
+type iterateOption struct {
+	f func(*IterateOptions)
+}
+
+func (i *iterateOption) Apply(options *IterateOptions) {
+	i.f(options)
+}
+
+func LessThan(row *dynparquet.DynamicRow) IterateOption {
+	return &iterateOption{
+		f: func(o *IterateOptions) {
+			o.LessThan = row
+		},
+	}
+}
+
+func GreaterOrEqual(row *dynparquet.DynamicRow) IterateOption {
+	return &iterateOption{
+		f: func(o *IterateOptions) {
+			o.GreaterOrEqual = row
+		},
+	}
+}
+
 type TableReader interface {
 	Iterator(
 		pool memory.Allocator,
@@ -78,6 +112,7 @@ type TableReader interface {
 		filter Expr,
 		distinctColumns []ColumnMatcher,
 		callback func(r arrow.Record) error,
+		opts ...IterateOption,
 	) error
 	SchemaIterator(
 		pool memory.Allocator,
@@ -106,6 +141,9 @@ type TableScan struct {
 
 	// Distinct describes the columns that are to be distinct.
 	Distinct []ColumnMatcher
+
+	// IterateOptions are options around iteration
+	IterateOptions []IterateOption
 }
 
 func (scan *TableScan) String() string {

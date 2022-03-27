@@ -206,6 +206,7 @@ func (t *Table) Iterator(
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
 	iterator func(r arrow.Record) error,
+	opts ...logicalplan.IterateOption,
 ) error {
 	filter, err := booleanExpr(filterExpr)
 	if err != nil {
@@ -216,7 +217,7 @@ func (t *Table) Iterator(
 	err = t.ActiveBlock().RowGroupIterator(filter, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
-	})
+	}, opts...)
 	if err != nil {
 		return err
 	}
@@ -527,12 +528,18 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 func (t *TableBlock) RowGroupIterator(
 	filter TrueNegativeFilter,
 	iterator func(rg dynparquet.DynamicRowGroup) bool,
+	opts ...logicalplan.IterateOption,
 ) error {
 	index := t.Index()
 	watermark := t.table.db.beginRead()
 
 	var err error
-	index.Ascend(func(i btree.Item) bool {
+	options := &logicalplan.IterateOptions{}
+	for _, o := range opts {
+		o.Apply(options)
+	}
+
+	it := func(i btree.Item) bool {
 		g := i.(*Granule)
 
 		g.PartBuffersForTx(watermark, func(buf *dynparquet.SerializedBuffer) bool {
@@ -555,7 +562,28 @@ func (t *TableBlock) RowGroupIterator(
 		})
 
 		return true
-	})
+	}
+
+	switch {
+	case options.GreaterOrEqual != nil && options.LessThan != nil:
+
+		lessThanGranule := &Granule{
+			isLessThan:  true,
+			least:       atomic.NewUnsafePointer(unsafe.Pointer(options.LessThan)),
+			parts:       &PartList{},
+			tableConfig: t.table.config,
+		}
+
+		greaterOrEqualGranule := &Granule{
+			isGreaterThan: true,
+			least:         atomic.NewUnsafePointer(unsafe.Pointer(options.GreaterOrEqual)),
+			parts:         &PartList{},
+			tableConfig:   t.table.config,
+		}
+		index.AscendRange(greaterOrEqualGranule, lessThanGranule, it)
+	default:
+		index.Ascend(it)
+	}
 
 	return err
 }

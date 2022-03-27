@@ -1,7 +1,9 @@
 package arcticdb
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"math/rand"
 	"sync"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
 type testOutput struct {
@@ -844,3 +847,222 @@ func Test_Table_ReadIsolation(t *testing.T) {
 //
 //	require.NotEqual(t, g.Less(g1), g1.Less(g))
 //}
+
+func Test_Table_AscendRange(t *testing.T) {
+	table := basicTable(t, 4)
+
+	samples := dynparquet.Samples{}
+	for i := 0; i < 30; i++ {
+		var exampleType string
+		switch {
+		case i < 10:
+			exampleType = "test"
+		case i < 20:
+			exampleType = "test2"
+		default:
+			exampleType = "test3"
+		}
+		samples = append(samples, dynparquet.Sample{
+			ExampleType: exampleType,
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: int64(i),
+			Value:     1,
+		})
+	}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
+	require.NoError(t, err)
+
+	table.Sync()
+
+	// Esnure the table has a few granules
+	require.GreaterOrEqual(t, table.active.Index().Len(), 4)
+
+	// Define a pivot schema. This is a subset of the table schema.
+	// It allows us to only perform comparisons on the intersection between the two schemas.
+	// In this case, example_types and timestamps. However because timestamps are currently one of the last things sorted on, they will be ignored during pivoting.
+	pivotSchema := dynparquet.NewSchema(
+		"pivot",
+		[]dynparquet.ColumnDefinition{
+			{
+				Name:          "example_type",
+				StorageLayout: parquet.Encoded(parquet.String(), &parquet.RLEDictionary),
+				Dynamic:       false,
+			},
+			{
+				Name:          "timestamp",
+				StorageLayout: parquet.Int(64),
+				Dynamic:       false,
+			},
+		},
+		[]dynparquet.SortingColumn{
+			dynparquet.Ascending("example_type"),
+			dynparquet.Ascending("timestamp"),
+		},
+	)
+
+	// Create a lessthan row with the pivot schema
+	lessBuf, err := pivotSchema.NewBuffer(nil)
+	require.NoError(t, err)
+	row := make([]parquet.Value, 0, 2)
+	row = append(row, parquet.ValueOf("test2").Level(0, 0, 0))
+	row = append(row, parquet.ValueOf(int64(12)).Level(0, 0, 1))
+	require.NoError(t, lessBuf.WriteRow(row))
+
+	// Create a greaterorequal row with the pivot schema
+	greaterOrEqualBuf, err := pivotSchema.NewBuffer(nil)
+	require.NoError(t, err)
+	row = make([]parquet.Value, 0, 2)
+	row = append(row, parquet.ValueOf("test2").Level(0, 0, 0))
+	row = append(row, parquet.ValueOf(int64(7)).Level(0, 0, 1))
+	require.NoError(t, greaterOrEqualBuf.WriteRow(row))
+
+	var rows int64
+	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+		defer ar.Release()
+		rows += ar.NumRows()
+
+		return nil
+	},
+		logicalplan.LessThan(bufToRow(t, lessBuf, pivotSchema)),
+		logicalplan.GreaterOrEqual(bufToRow(t, greaterOrEqualBuf, pivotSchema)),
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), rows)
+}
+
+// Test_Table_AscendRange_NoIntersection performs an ascned range with a search schema that has no consecutive overlap with the soreting columns.
+// What this means is that we can't make a valid comparison, and have to return all objects in the tree
+func Test_Table_AscendRange_NoIntersection(t *testing.T) {
+	table := basicTable(t, 4)
+
+	samples := dynparquet.Samples{}
+	for i := 0; i < 30; i++ {
+		var exampleType string
+		switch {
+		case i < 10:
+			exampleType = "test"
+		case i < 20:
+			exampleType = "test2"
+		default:
+			exampleType = "test3"
+		}
+		samples = append(samples, dynparquet.Sample{
+			ExampleType: exampleType,
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: int64(i),
+			Value:     1,
+		})
+	}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	err = table.Insert(buf)
+	require.NoError(t, err)
+
+	table.Sync()
+
+	// Esnure the table has a few granules
+	require.GreaterOrEqual(t, table.active.Index().Len(), 4)
+
+	// Define a pivot schema. This is a subset of the table schema.
+	// It allows us to only perform comparisons on the intersection between the two schemas.
+	// In this case, example_types and timestamps. However because timestamps are currently one of the last things sorted on, they will be ignored during pivoting.
+	pivotSchema := dynparquet.NewSchema(
+		"pivot",
+		[]dynparquet.ColumnDefinition{
+			{
+				Name:          "timestamp",
+				StorageLayout: parquet.Int(64),
+				Dynamic:       false,
+			},
+		},
+		[]dynparquet.SortingColumn{
+			dynparquet.Ascending("timestamp"),
+		},
+	)
+
+	// Create a lessthan row with the pivot schema
+	lessBuf, err := pivotSchema.NewBuffer(nil)
+	require.NoError(t, err)
+	row := make([]parquet.Value, 0, 1)
+	row = append(row, parquet.ValueOf(int64(12)).Level(0, 0, 0))
+	require.NoError(t, lessBuf.WriteRow(row))
+
+	// Create a greaterorequal row with the pivot schema
+	greaterOrEqualBuf, err := pivotSchema.NewBuffer(nil)
+	require.NoError(t, err)
+	row = make([]parquet.Value, 0, 1)
+	row = append(row, parquet.ValueOf(int64(7)).Level(0, 0, 0))
+	require.NoError(t, greaterOrEqualBuf.WriteRow(row))
+
+	var rows int64
+	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+		defer ar.Release()
+		rows += ar.NumRows()
+
+		return nil
+	},
+		logicalplan.LessThan(bufToRow(t, lessBuf, pivotSchema)),
+		logicalplan.GreaterOrEqual(bufToRow(t, greaterOrEqualBuf, pivotSchema)),
+	)
+
+	var row2 int64
+	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+		defer ar.Release()
+		row2 += ar.NumRows()
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Expect a iteration with a pivot schema that doesn't intersect with the primary sorting keys, to
+	// return all rows
+	require.Equal(t, row2, rows)
+}
+
+func bufToRow(t *testing.T, buf *dynparquet.Buffer, schema *dynparquet.Schema) *dynparquet.DynamicRow {
+	b := bytes.NewBuffer(nil)
+	w, err := schema.NewWriter(b, buf.DynamicColumns())
+	require.NoError(t, err)
+
+	rows := buf.Rows()
+	for {
+		row, err := rows.ReadRow(nil)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		err = w.WriteRow(row)
+		require.NoError(t, err)
+	}
+
+	err = w.Close()
+	require.NoError(t, err)
+
+	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
+	require.NoError(t, err)
+
+	dynrow, err := serBuf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
+	require.NoError(t, err)
+
+	return dynrow
+}
