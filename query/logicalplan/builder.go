@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/apache/arrow/go/v7/arrow"
+
 	"github.com/polarsignals/arcticdb/dynparquet"
 )
 

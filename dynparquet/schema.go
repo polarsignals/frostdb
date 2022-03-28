@@ -68,9 +68,11 @@ type dynamicSortingColumn struct {
 func (dyn dynamicSortingColumn) String() string {
 	return fmt.Sprintf("dynamic(%s, %v)", dyn.dynamicColumnName, dyn.SortingColumn)
 }
+
 func (dyn dynamicSortingColumn) ColumnName() string {
 	return dyn.SortingColumn.ColumnName() + "." + dyn.dynamicColumnName
 }
+
 func (dyn dynamicSortingColumn) Path() []string { return []string{dyn.ColumnName()} }
 
 // Schema is a dynamic parquet schema. It extends a parquet schema with the
@@ -608,10 +610,10 @@ func (c *remappedColumnChunk) Column() int {
 // Pages returns the column chunk's pages ensuring that all pages read will be
 // remapped to the configured remapped index. Implements the
 // parquet.ColumnChunk interface.
-func (a *remappedColumnChunk) Pages() parquet.Pages {
+func (c *remappedColumnChunk) Pages() parquet.Pages {
 	return &remappedPages{
-		Pages:         a.ColumnChunk.Pages(),
-		remappedIndex: a.remappedIndex,
+		Pages:         c.ColumnChunk.Pages(),
+		remappedIndex: c.remappedIndex,
 	}
 }
 

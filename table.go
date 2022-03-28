@@ -354,17 +354,10 @@ func (t *Table) Iterator(
 	return err
 }
 
-// Index provides atomic access to the table index
+// Index provides atomic access to the table index.
 func (t *Table) Index() *btree.BTree {
 	ptr := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&t.index)))
 	return (*btree.BTree)(ptr)
-}
-
-func (t *Table) granuleIterator(iterator func(g *Granule) bool) {
-	t.Index().Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-		return iterator(g)
-	})
 }
 
 func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) (map[*Granule]*dynparquet.SerializedBuffer, error) {
@@ -512,13 +505,13 @@ func (t *Table) splitRowsByGranule(buf *dynparquet.Buffer) (map[*Granule]*dynpar
 	return res, nil
 }
 
-// compact will compact a Granule; should be performed as a background go routine
+// compact will compact a Granule; should be performed as a background go routine.
 func (t *Table) compact(g *Granule) {
 	defer t.Done()
 	t.splitGranule(g)
 }
 
-// addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules
+// addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
 func addPartToGranule(granules []*Granule, p *Part) {
 	row, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 	if err == io.EOF {

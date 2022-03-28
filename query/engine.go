@@ -24,56 +24,56 @@ func NewEngine(
 	}
 }
 
-type QueryBuilder struct {
+type Builder struct {
 	pool        memory.Allocator
 	planBuilder logicalplan.Builder
 }
 
-func (e *Engine) ScanTable(name string) QueryBuilder {
-	return QueryBuilder{
+func (e *Engine) ScanTable(name string) Builder {
+	return Builder{
 		pool:        e.pool,
 		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name),
 	}
 }
 
-func (b QueryBuilder) Aggregate(
+func (b Builder) Aggregate(
 	aggExpr logicalplan.Expr,
 	groupExprs ...logicalplan.ColumnExpr,
-) QueryBuilder {
-	return QueryBuilder{
+) Builder {
+	return Builder{
 		pool:        b.pool,
 		planBuilder: b.planBuilder.Aggregate(aggExpr, groupExprs...),
 	}
 }
 
-func (b QueryBuilder) Filter(
+func (b Builder) Filter(
 	expr logicalplan.Expr,
-) QueryBuilder {
-	return QueryBuilder{
+) Builder {
+	return Builder{
 		pool:        b.pool,
 		planBuilder: b.planBuilder.Filter(expr),
 	}
 }
 
-func (b QueryBuilder) Distinct(
+func (b Builder) Distinct(
 	expr ...logicalplan.ColumnExpr,
-) QueryBuilder {
-	return QueryBuilder{
+) Builder {
+	return Builder{
 		pool:        b.pool,
 		planBuilder: b.planBuilder.Distinct(expr...),
 	}
 }
 
-func (b QueryBuilder) Project(
+func (b Builder) Project(
 	projections ...string,
-) QueryBuilder {
-	return QueryBuilder{
+) Builder {
+	return Builder{
 		pool:        b.pool,
 		planBuilder: b.planBuilder.Project(projections...),
 	}
 }
 
-func (b QueryBuilder) Execute(callback func(r arrow.Record) error) error {
+func (b Builder) Execute(callback func(r arrow.Record) error) error {
 	logicalPlan := b.planBuilder.Build()
 
 	optimizers := []logicalplan.Optimizer{

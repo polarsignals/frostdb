@@ -3,8 +3,9 @@ package logicalplan
 import (
 	"github.com/apache/arrow/go/v7/arrow"
 	"github.com/apache/arrow/go/v7/arrow/scalar"
-	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/segmentio/parquet-go"
+
+	"github.com/polarsignals/arcticdb/dynparquet"
 )
 
 type Operator int
@@ -259,7 +260,7 @@ func (c DynamicColumn) ColumnsUsed() []ColumnMatcher {
 	return []ColumnMatcher{c.Matcher()}
 }
 
-func (c DynamicColumn) Matcher() ColumnMatcher {
+func (c DynamicColumn) Matcher() DynamicColumnMatcher {
 	return DynamicColumnMatcher{ColumnName: c.ColumnName}
 }
 
@@ -317,26 +318,26 @@ func (f AggregationFunction) DataType(s *dynparquet.Schema) arrow.DataType {
 	return f.Expr.DataType(s)
 }
 
-func (e AggregationFunction) Accept(visitor Visitor) bool {
-	continu := visitor.PreVisit(e)
+func (f AggregationFunction) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(f)
 	if !continu {
 		return false
 	}
 
-	continu = e.Expr.Accept(visitor)
+	continu = f.Expr.Accept(visitor)
 	if !continu {
 		return false
 	}
 
-	return visitor.PostVisit(e)
+	return visitor.PostVisit(f)
 }
 
-func (e AggregationFunction) Name() string {
-	return e.Func.String() + "(" + e.Expr.Name() + ")"
+func (f AggregationFunction) Name() string {
+	return f.Func.String() + "(" + f.Expr.Name() + ")"
 }
 
-func (e AggregationFunction) ColumnsUsed() []ColumnMatcher {
-	return e.Expr.ColumnsUsed()
+func (f AggregationFunction) ColumnsUsed() []ColumnMatcher {
+	return f.Expr.ColumnsUsed()
 }
 
 type AggFunc int

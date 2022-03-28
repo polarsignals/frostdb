@@ -1,0 +1,32 @@
+name: golangci-lint
+on:
+  push:
+    tags:
+      - v*
+    branches: [ main ]
+    paths:
+      - '**.go'
+      - .golangci.yml
+      - .github/workflows/golangci-lint.yml
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.go'
+      - .golangci.yml
+      - .github/workflows/golangci-lint.yml
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v2
+        with:
+          go-version: ^1.16
+
+      - uses: actions/checkout@v3
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3.1.0
+        with:
+          version: v1.45.2

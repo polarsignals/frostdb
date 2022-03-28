@@ -99,7 +99,7 @@ func contiguousParquetRowGroupToArrowRecord(
 
 	children := s.ChildNames()
 	fields := make([]arrow.Field, 0, len(children))
-	cols := make([]array.Interface, 0, len(children))
+	cols := make([]arrow.Array, 0, len(children))
 	for i, child := range children {
 		if includedProjection(projections, child) {
 			typ, nullable, array, err := parquetColumnToArrowArray(pool, s.ChildByName(child), rg.Column(i))

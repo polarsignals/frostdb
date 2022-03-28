@@ -8,6 +8,7 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/apache/arrow/go/v7/arrow/scalar"
 	"github.com/dgryski/go-metro"
+
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
@@ -87,7 +88,7 @@ func (d *Distinction) Callback(r arrow.Record) error {
 			}
 		}
 
-		rows += 1
+		rows++
 		d.seen[hash] = struct{}{}
 	}
 

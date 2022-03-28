@@ -5,10 +5,11 @@ import (
 
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/google/uuid"
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
+
+	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
 type TestStruct struct {
