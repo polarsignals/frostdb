@@ -296,6 +296,7 @@ func (t *Table) Iterator(
 	pool memory.Allocator,
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
 	iterator func(r arrow.Record) error,
 ) error {
 	index := t.Index()
@@ -338,7 +339,13 @@ func (t *Table) Iterator(
 		// characteristics of sorted data.
 		for _, rg := range rowGroups {
 			var record arrow.Record
-			record, err = pqarrow.ParquetRowGroupToArrowRecord(pool, rg, projections)
+			record, err = pqarrow.ParquetRowGroupToArrowRecord(
+				pool,
+				rg,
+				projections,
+				filterExpr,
+				distinctColumns,
+			)
 			if err != nil {
 				return false
 			}

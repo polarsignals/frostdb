@@ -1,6 +1,7 @@
 package pqarrow
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -8,6 +9,8 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/array"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/segmentio/parquet-go"
+	"github.com/segmentio/parquet-go/deprecated"
+	"github.com/segmentio/parquet-go/encoding"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
@@ -18,6 +21,8 @@ func ParquetRowGroupToArrowRecord(
 	pool memory.Allocator,
 	rg parquet.RowGroup,
 	projections []logicalplan.ColumnMatcher,
+	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
 ) (arrow.Record, error) {
 	switch rg.(type) {
 	case *dynparquet.MergedRowGroup:
@@ -30,12 +35,17 @@ func ParquetRowGroupToArrowRecord(
 			pool,
 			rg,
 			projections,
+			filterExpr,
+			distinctColumns,
 		)
 	}
 }
 
 // rowBasedParquetRowGroupToArrowRecord converts a parquet row group to an arrow record row by row.
-func rowBasedParquetRowGroupToArrowRecord(pool memory.Allocator, rg parquet.RowGroup) (arrow.Record, error) {
+func rowBasedParquetRowGroupToArrowRecord(
+	pool memory.Allocator,
+	rg parquet.RowGroup,
+) (arrow.Record, error) {
 	s := rg.Schema()
 
 	children := s.ChildNames()
@@ -94,15 +104,54 @@ func contiguousParquetRowGroupToArrowRecord(
 	pool memory.Allocator,
 	rg parquet.RowGroup,
 	projections []logicalplan.ColumnMatcher,
+	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
 ) (arrow.Record, error) {
 	s := rg.Schema()
-
 	children := s.ChildNames()
+
+	if len(distinctColumns) == 1 && filterExpr == nil {
+		// We can use the faster path for a single distinct column by just
+		// returning its dictionary.
+		fields := make([]arrow.Field, 0, 1)
+		cols := make([]arrow.Array, 0, 1)
+		rows := int64(0)
+		for i, child := range children {
+			if distinctColumns[0].Match(child) {
+				typ, nullable, array, err := parquetColumnToArrowArray(
+					pool,
+					s.ChildByName(child),
+					rg.Column(i),
+					true,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+				}
+				fields = append(fields, arrow.Field{
+					Name:     child,
+					Type:     typ,
+					Nullable: nullable,
+				})
+				cols = append(cols, array)
+				rows = int64(array.Len())
+			}
+		}
+
+		schema := arrow.NewSchema(fields, nil)
+		return array.NewRecord(schema, cols, rows), nil
+	}
+
 	fields := make([]arrow.Field, 0, len(children))
 	cols := make([]array.Interface, 0, len(children))
+
 	for i, child := range children {
 		if includedProjection(projections, child) {
-			typ, nullable, array, err := parquetColumnToArrowArray(pool, s.ChildByName(child), rg.Column(i))
+			typ, nullable, array, err := parquetColumnToArrowArray(
+				pool,
+				s.ChildByName(child),
+				rg.Column(i),
+				false,
+			)
 			if err != nil {
 				return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
 			}
@@ -140,6 +189,7 @@ func parquetColumnToArrowArray(
 	pool memory.Allocator,
 	n parquet.Node,
 	c parquet.ColumnChunk,
+	dictionaryOnly bool,
 ) (
 	arrow.DataType,
 	bool,
@@ -189,9 +239,11 @@ func parquetColumnToArrowArray(
 
 	err := writePagesToArray(
 		c.Pages(),
+		optional,
 		repeated,
 		lb,
 		w,
+		dictionaryOnly,
 	)
 	if err != nil {
 		return nil, false, nil, err
@@ -215,9 +267,11 @@ func parquetColumnToArrowArray(
 // starting offsets of lists to the list builder.
 func writePagesToArray(
 	pages parquet.Pages,
+	optional bool,
 	repeated bool,
 	lb *array.ListBuilder,
 	w valueWriter,
+	dictionaryOnly bool,
 ) error {
 	// We are potentially writing multiple pages to the same array, so we need
 	// to keep track of the index of the offsets in case this is a List-type.
@@ -230,15 +284,29 @@ func writePagesToArray(
 			}
 			return fmt.Errorf("read page: %w", err)
 		}
-		values := make([]parquet.Value, p.NumValues())
-		reader := p.Values()
-		_, err = reader.ReadValues(values)
-		// We're reading all values in the page so we always expect an io.EOF.
-		if err != nil && err != io.EOF {
-			return fmt.Errorf("read values: %w", err)
-		}
+		var values []parquet.Value
+		dict := p.Dictionary()
 
-		w.Write(values)
+		switch {
+		case !repeated && dictionaryOnly && dict != nil:
+			// If we are only writing the dictionary, we don't need to read
+			// the values.
+			dict.WriteTo(w)
+		case !repeated && !optional && dict == nil:
+			// If the column is not optional, we can read all values at once
+			// consecutively without worrying about null values.
+			p.Buffer().WriteTo(w)
+		default:
+			values = make([]parquet.Value, p.NumValues())
+			reader := p.Values()
+			_, err = reader.ReadValues(values)
+			// We're reading all values in the page so we always expect an io.EOF.
+			if err != nil && err != io.EOF {
+				return fmt.Errorf("read values: %w", err)
+			}
+
+			w.Write(values)
+		}
 
 		if repeated {
 			offsets := []int32{}
@@ -299,7 +367,12 @@ func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder) va
 	}
 }
 
+var (
+	ErrPageTypeMismatch = errors.New("page type mismatch")
+)
+
 type valueWriter interface {
+	encoding.Encoder
 	Write([]parquet.Value)
 }
 
@@ -326,6 +399,31 @@ func (w *uuidValueWriter) Write(values []parquet.Value) {
 	}
 }
 
+func (w *uuidValueWriter) Reset(io.Writer)                           {}
+func (w *uuidValueWriter) EncodeBoolean(data []bool) error           { return ErrPageTypeMismatch }
+func (w *uuidValueWriter) EncodeInt8(data []int8) error              { return ErrPageTypeMismatch }
+func (w *uuidValueWriter) EncodeInt16(data []int16) error            { return ErrPageTypeMismatch }
+func (w *uuidValueWriter) EncodeInt32(data []int32) error            { return ErrPageTypeMismatch }
+func (w *uuidValueWriter) EncodeInt64(data []int64) error            { return ErrPageTypeMismatch }
+func (w *uuidValueWriter) EncodeInt96(data []deprecated.Int96) error { return ErrPageTypeMismatch }
+func (w *uuidValueWriter) EncodeFloat(data []float32) error          { return ErrPageTypeMismatch }
+func (w *uuidValueWriter) EncodeDouble(data []float64) error         { return ErrPageTypeMismatch }
+func (w *uuidValueWriter) EncodeByteArray(data encoding.ByteArrayList) error {
+	return ErrPageTypeMismatch
+}
+func (w *uuidValueWriter) SetBitWidth(bitWidth int) {}
+
+func (w *uuidValueWriter) EncodeFixedLenByteArray(size int, data []byte) error {
+	values := make([][]byte, size)
+	for i := 0; i < size; i++ {
+		values[i] = data[i*16 : (i+1)*16]
+	}
+
+	w.b.AppendValues(values, nil)
+
+	return nil
+}
+
 type stringValueWriter struct {
 	b *array.StringBuilder
 }
@@ -347,6 +445,30 @@ func (w *stringValueWriter) Write(values []parquet.Value) {
 			w.b.Append(string(v.ByteArray()))
 		}
 	}
+}
+
+func (w *stringValueWriter) Reset(io.Writer)                           {}
+func (w *stringValueWriter) EncodeBoolean(data []bool) error           { return ErrPageTypeMismatch }
+func (w *stringValueWriter) EncodeInt8(data []int8) error              { return ErrPageTypeMismatch }
+func (w *stringValueWriter) EncodeInt16(data []int16) error            { return ErrPageTypeMismatch }
+func (w *stringValueWriter) EncodeInt32(data []int32) error            { return ErrPageTypeMismatch }
+func (w *stringValueWriter) EncodeInt64(data []int64) error            { return ErrPageTypeMismatch }
+func (w *stringValueWriter) EncodeInt96(data []deprecated.Int96) error { return ErrPageTypeMismatch }
+func (w *stringValueWriter) EncodeFloat(data []float32) error          { return ErrPageTypeMismatch }
+func (w *stringValueWriter) EncodeDouble(data []float64) error         { return ErrPageTypeMismatch }
+func (w *stringValueWriter) EncodeFixedLenByteArray(size int, data []byte) error {
+	return ErrPageTypeMismatch
+}
+func (w *stringValueWriter) SetBitWidth(bitWidth int) {}
+
+func (w *stringValueWriter) EncodeByteArray(data encoding.ByteArrayList) error {
+	values := make([]string, data.Len())
+	for i := 0; i < data.Len(); i++ {
+		values[i] = string(data.Index(i))
+	}
+
+	w.b.AppendValues(values, nil)
+	return nil
 }
 
 type int64ValueWriter struct {
@@ -372,6 +494,27 @@ func (w *int64ValueWriter) Write(values []parquet.Value) {
 	}
 }
 
+func (w *int64ValueWriter) Reset(io.Writer)                           {}
+func (w *int64ValueWriter) EncodeBoolean(data []bool) error           { return ErrPageTypeMismatch }
+func (w *int64ValueWriter) EncodeInt8(data []int8) error              { return ErrPageTypeMismatch }
+func (w *int64ValueWriter) EncodeInt16(data []int16) error            { return ErrPageTypeMismatch }
+func (w *int64ValueWriter) EncodeInt32(data []int32) error            { return ErrPageTypeMismatch }
+func (w *int64ValueWriter) EncodeInt96(data []deprecated.Int96) error { return ErrPageTypeMismatch }
+func (w *int64ValueWriter) EncodeFloat(data []float32) error          { return ErrPageTypeMismatch }
+func (w *int64ValueWriter) EncodeDouble(data []float64) error         { return ErrPageTypeMismatch }
+func (w *int64ValueWriter) EncodeByteArray(data encoding.ByteArrayList) error {
+	return ErrPageTypeMismatch
+}
+func (w *int64ValueWriter) EncodeFixedLenByteArray(size int, data []byte) error {
+	return ErrPageTypeMismatch
+}
+func (w *int64ValueWriter) SetBitWidth(bitWidth int) {}
+
+func (w *int64ValueWriter) EncodeInt64(data []int64) error {
+	w.b.AppendValues(data, nil)
+	return nil
+}
+
 type uint64ValueWriter struct {
 	b *array.Uint64Builder
 }
@@ -393,6 +536,31 @@ func (w *uint64ValueWriter) Write(values []parquet.Value) {
 			w.b.Append(uint64(v.Int64()))
 		}
 	}
+}
+
+func (w *uint64ValueWriter) Reset(io.Writer)                           {}
+func (w *uint64ValueWriter) EncodeBoolean(data []bool) error           { return ErrPageTypeMismatch }
+func (w *uint64ValueWriter) EncodeInt8(data []int8) error              { return ErrPageTypeMismatch }
+func (w *uint64ValueWriter) EncodeInt16(data []int16) error            { return ErrPageTypeMismatch }
+func (w *uint64ValueWriter) EncodeInt32(data []int32) error            { return ErrPageTypeMismatch }
+func (w *uint64ValueWriter) EncodeInt96(data []deprecated.Int96) error { return ErrPageTypeMismatch }
+func (w *uint64ValueWriter) EncodeFloat(data []float32) error          { return ErrPageTypeMismatch }
+func (w *uint64ValueWriter) EncodeDouble(data []float64) error         { return ErrPageTypeMismatch }
+func (w *uint64ValueWriter) EncodeByteArray(data encoding.ByteArrayList) error {
+	return ErrPageTypeMismatch
+}
+func (w *uint64ValueWriter) EncodeFixedLenByteArray(size int, data []byte) error {
+	return ErrPageTypeMismatch
+}
+func (w *uint64ValueWriter) SetBitWidth(bitWidth int) {}
+
+func (w *uint64ValueWriter) EncodeInt64(data []int64) error {
+	values := make([]uint64, len(data))
+	for i, v := range data {
+		values[i] = uint64(v)
+	}
+	w.b.AppendValues(values, nil)
+	return nil
 }
 
 type repeatedValueWriter struct {
@@ -422,4 +590,30 @@ func (w *repeatedValueWriter) Write(values []parquet.Value) {
 
 	w.b.Append(true)
 	w.values.Write(values)
+}
+
+var (
+	ErrBatchWriteNotSupported = errors.New("batch write not supported")
+)
+
+func (w *repeatedValueWriter) Reset(io.Writer)                 {}
+func (w *repeatedValueWriter) EncodeBoolean(data []bool) error { return ErrBatchWriteNotSupported }
+func (w *repeatedValueWriter) EncodeInt8(data []int8) error    { return ErrBatchWriteNotSupported }
+func (w *repeatedValueWriter) EncodeInt16(data []int16) error  { return ErrBatchWriteNotSupported }
+func (w *repeatedValueWriter) EncodeInt32(data []int32) error  { return ErrBatchWriteNotSupported }
+func (w *repeatedValueWriter) EncodeInt96(data []deprecated.Int96) error {
+	return ErrBatchWriteNotSupported
+}
+func (w *repeatedValueWriter) EncodeFloat(data []float32) error  { return ErrBatchWriteNotSupported }
+func (w *repeatedValueWriter) EncodeDouble(data []float64) error { return ErrBatchWriteNotSupported }
+func (w *repeatedValueWriter) EncodeByteArray(data encoding.ByteArrayList) error {
+	return ErrBatchWriteNotSupported
+}
+func (w *repeatedValueWriter) EncodeFixedLenByteArray(size int, data []byte) error {
+	return ErrBatchWriteNotSupported
+}
+func (w *repeatedValueWriter) SetBitWidth(bitWidth int) {}
+
+func (w *repeatedValueWriter) EncodeInt64(data []int64) error {
+	return ErrBatchWriteNotSupported
 }

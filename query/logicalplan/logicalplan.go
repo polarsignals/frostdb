@@ -62,6 +62,7 @@ type TableReader interface {
 		pool memory.Allocator,
 		projection []ColumnMatcher,
 		filter Expr,
+		distinctColumns []ColumnMatcher,
 		callback func(r arrow.Record) error,
 	) error
 }
@@ -74,13 +75,16 @@ type TableScan struct {
 	TableProvider TableProvider
 	TableName     string
 
-	// projection in this case means the columns that are to be read by the
+	// Projection in this case means the columns that are to be read by the
 	// table scan.
 	Projection []ColumnMatcher
 
-	// filter is the predicate that is to be applied by the table scan to rule
+	// Filter is the predicate that is to be applied by the table scan to rule
 	// out any blocks of data to be scanned at all.
 	Filter Expr
+
+	// Distinct describes the columns that are to be distinct.
+	Distinct []ColumnMatcher
 }
 
 func (scan *TableScan) String() string {

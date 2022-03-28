@@ -37,6 +37,24 @@ func TestOptimizeProjectionPushDown(t *testing.T) {
 	}, p.Input.Input.Input.TableScan)
 }
 
+func TestOptimizeDistinctPushDown(t *testing.T) {
+	p := (&Builder{}).
+		Scan(nil, "table1").
+		Distinct(Col("labels.test")).
+		Build()
+
+	optimizer := &DistinctPushDown{}
+	optimizer.Optimize(p)
+
+	// Projection -> Aggregate -> Filter -> TableScan
+	require.Equal(t, &TableScan{
+		TableName: "table1",
+		Distinct: []ColumnMatcher{
+			StaticColumnMatcher{ColumnName: "labels.test"},
+		},
+	}, p.Input.TableScan)
+}
+
 func TestOptimizeFilterPushDown(t *testing.T) {
 	p := (&Builder{}).
 		Scan(nil, "table1").
@@ -79,6 +97,7 @@ func TestAllOptimizers(t *testing.T) {
 	optimizers := []Optimizer{
 		&ProjectionPushDown{},
 		&FilterPushDown{},
+		&DistinctPushDown{},
 	}
 
 	for _, optimizer := range optimizers {

@@ -136,7 +136,7 @@ func TestTable(t *testing.T) {
 	err = table.Insert(buf)
 	require.NoError(t, err)
 
-	err = table.Iterator(memory.NewGoAllocator(), nil, nil, func(ar arrow.Record) error {
+	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		t.Log(ar)
 		defer ar.Release()
 
@@ -262,7 +262,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 			return false
 		})
 	}
-	table.Iterator(memory.NewGoAllocator(), nil, nil, func(r arrow.Record) error {
+	table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
 		defer r.Release()
 		t.Log(r)
 		return nil
@@ -387,7 +387,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 	err = table.Insert(buf)
 	require.NoError(t, err)
 
-	table.Iterator(memory.NewGoAllocator(), nil, nil, func(r arrow.Record) error {
+	table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
 		defer r.Release()
 		t.Log(r)
 		return nil
@@ -455,7 +455,7 @@ func Test_Table_Concurrency(t *testing.T) {
 	wg.Wait()
 
 	totalrows := int64(0)
-	err := table.Iterator(memory.NewGoAllocator(), nil, nil, func(ar arrow.Record) error {
+	err := table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		totalrows += ar.NumRows()
 		defer ar.Release()
 
@@ -625,7 +625,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.tx = 1
 
 	rows := int64(0)
-	err = table.Iterator(memory.NewGoAllocator(), nil, nil, func(ar arrow.Record) error {
+	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		rows += ar.NumRows()
 		defer ar.Release()
 
@@ -638,7 +638,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.tx = prev
 
 	rows = int64(0)
-	err = table.Iterator(memory.NewGoAllocator(), nil, nil, func(ar arrow.Record) error {
+	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		rows += ar.NumRows()
 		defer ar.Release()
 

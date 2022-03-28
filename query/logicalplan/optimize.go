@@ -72,3 +72,32 @@ func (p *FilterPushDown) optimize(plan *LogicalPlan, exprs []Expr) {
 		p.optimize(plan.Input, exprs)
 	}
 }
+
+// The DistinctPushDown optimizer tries to push down the distinct operator to
+// the table provider. There are certain cases of distinct queries where the
+// storage engine can make smarter decisions than just returning all the data,
+// such as with dictionary encoded columns that are not filtered they can
+// return only the dictionary avoiding unnecessary decoding and deduplication
+// in downstream distinct operators.
+type DistinctPushDown struct{}
+
+func (p *DistinctPushDown) Optimize(plan *LogicalPlan) {
+	p.optimize(plan, nil)
+}
+
+func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []ColumnMatcher) {
+	switch {
+	case plan.TableScan != nil:
+		if len(distinctColumns) > 0 {
+			plan.TableScan.Distinct = distinctColumns
+		}
+	case plan.Distinct != nil:
+		for _, expr := range plan.Distinct.Columns {
+			distinctColumns = append(distinctColumns, expr.Matcher())
+		}
+	}
+
+	if plan.Input != nil {
+		p.optimize(plan.Input, distinctColumns)
+	}
+}
