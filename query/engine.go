@@ -79,6 +79,7 @@ func (b QueryBuilder) Execute(callback func(r arrow.Record) error) error {
 	optimizers := []logicalplan.Optimizer{
 		&logicalplan.ProjectionPushDown{},
 		&logicalplan.FilterPushDown{},
+		&logicalplan.DistinctPushDown{},
 	}
 
 	for _, optimizer := range optimizers {

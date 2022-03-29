@@ -71,6 +71,7 @@ func (s *TableScan) Execute(pool memory.Allocator) error {
 		pool,
 		s.options.Projection,
 		s.options.Filter,
+		s.options.Distinct,
 		s.next.Callback,
 	)
 	if err != nil {

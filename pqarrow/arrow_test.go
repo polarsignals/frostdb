@@ -57,7 +57,7 @@ func TestArrowUUIDList(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	ar, err := ParquetRowGroupToArrowRecord(memory.DefaultAllocator, b, nil)
+	ar, err := ParquetRowGroupToArrowRecord(memory.DefaultAllocator, b, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(len(lists)), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
@@ -105,7 +105,7 @@ func TestProjections(t *testing.T) {
 
 	ar, err := ParquetRowGroupToArrowRecord(memory.DefaultAllocator, b, []logicalplan.ColumnMatcher{logicalplan.StaticColumnMatcher{
 		ColumnName: "test_string",
-	}})
+	}}, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(len(lists)), ar.NumRows())
 	require.Equal(t, int64(1), ar.NumCols())
@@ -190,7 +190,7 @@ func TestMergeToArrow(t *testing.T) {
 	merge, err := schema.MergeDynamicRowGroups([]dynparquet.DynamicRowGroup{buf1, buf2, buf3})
 	require.NoError(t, err)
 
-	ar, err := ParquetRowGroupToArrowRecord(memory.DefaultAllocator, merge, nil)
+	ar, err := ParquetRowGroupToArrowRecord(memory.DefaultAllocator, merge, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), ar.NumRows())
 	require.Equal(t, int64(8), ar.NumCols())
