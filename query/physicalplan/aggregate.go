@@ -10,7 +10,6 @@ import (
 	"github.com/apache/arrow/go/v7/arrow/math"
 	"github.com/apache/arrow/go/v7/arrow/memory"
 	"github.com/apache/arrow/go/v7/arrow/scalar"
-	"github.com/dgryski/go-metro"
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
@@ -127,6 +126,12 @@ func (a *HashAggregate) SetNextCallback(nextCallback func(r arrow.Record) error)
 	a.nextCallback = nextCallback
 }
 
+// Go translation of boost's hash_combine function. Read here why these values
+// are used and good choices: https://stackoverflow.com/questions/35985960/c-why-is-boosthash-combine-the-best-way-to-combine-hash-values
+func hashCombine(lhs, rhs uint64) uint64 {
+	return lhs ^ (rhs + 0x9e3779b9 + (lhs << 6) + (lhs >> 2))
+}
+
 func (a *HashAggregate) Callback(r arrow.Record) error {
 	groupByFields := make([]arrow.Field, 0, 10)
 	groupByArrays := make([]arrow.Array, 0, 10)
@@ -172,9 +177,13 @@ func (a *HashAggregate) Callback(r arrow.Record) error {
 				continue
 			}
 
-			// TODO: This is extremely naive and will probably cause a ton of collisions.
-			hash ^= metro.Hash64Str(groupByFields[j].Name, 0)
-			hash ^= scalar.Hash(a.hashSeed, colScalar)
+			hash = hashCombine(
+				hash,
+				hashCombine(
+					scalar.Hash(a.hashSeed, scalar.NewStringScalar(groupByFields[j].Name+"\u0000")),
+					scalar.Hash(a.hashSeed, colScalar),
+				),
+			)
 		}
 
 		s, err := scalar.GetScalar(columnToAggregate, i)

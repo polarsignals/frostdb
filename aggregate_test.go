@@ -85,9 +85,10 @@ func TestAggregate(t *testing.T) {
 	require.NoError(t, err)
 	defer res.Release()
 
-	for i, col := range res.Columns() {
+	cols := res.Columns()
+	require.Equal(t, 2, len(cols))
+	for i, col := range cols {
 		require.Equal(t, 1, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 	}
-	cols := res.Columns()
 	require.Equal(t, []int64{6}, cols[len(cols)-1].(*array.Int64).Int64Values())
 }
