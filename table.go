@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/memory"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
@@ -307,10 +307,11 @@ func (t *Table) Iterator(
 		return err
 	}
 
+	rowGroups := []dynparquet.DynamicRowGroup{}
+
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
-		rowGroups := []dynparquet.DynamicRowGroup{}
 		g.PartBuffersForTx(tx, t.db.txCompleted, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
 			for i := 0; i < f.NumRowGroups(); i++ {
@@ -327,37 +328,33 @@ func (t *Table) Iterator(
 			return true
 		})
 
-		if len(rowGroups) == 0 {
-			// Granule had no readable parts for this transaction.
-			return true
-		}
-
-		// Previously we sorted all row groups into a single row group here,
-		// but it turns out that none of the downstream uses actually rely on
-		// the sorting so it's not worth it in the general case. Physical plans
-		// can decide to sort if they need to in order to exploit the
-		// characteristics of sorted data.
-		for _, rg := range rowGroups {
-			var record arrow.Record
-			record, err = pqarrow.ParquetRowGroupToArrowRecord(
-				pool,
-				rg,
-				projections,
-				filterExpr,
-				distinctColumns,
-			)
-			if err != nil {
-				return false
-			}
-			err = iterator(record)
-			record.Release()
-			if err != nil {
-				return false
-			}
-		}
-
 		return true
 	})
+
+	// Previously we sorted all row groups into a single row group here,
+	// but it turns out that none of the downstream uses actually rely on
+	// the sorting so it's not worth it in the general case. Physical plans
+	// can decide to sort if they need to in order to exploit the
+	// characteristics of sorted data.
+	for _, rg := range rowGroups {
+		var record arrow.Record
+		record, err = pqarrow.ParquetRowGroupToArrowRecord(
+			pool,
+			rg,
+			projections,
+			filterExpr,
+			distinctColumns,
+		)
+		if err != nil {
+			return err
+		}
+		err = iterator(record)
+		record.Release()
+		if err != nil {
+			return err
+		}
+	}
+
 	return err
 }
 

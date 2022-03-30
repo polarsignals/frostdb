@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"errors"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/array"
-	"github.com/apache/arrow/go/v7/arrow/scalar"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
@@ -75,6 +75,29 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 			return StringArrayScalarEqual(left.(*array.String), right.(*scalar.String))
 		case logicalplan.NotEqOp:
 			return StringArrayScalarNotEqual(left.(*array.String), right.(*scalar.String))
+		default:
+			panic("something terrible has happened, this should have errored previously during validation")
+		}
+	case arrow.BinaryTypes.Binary:
+		switch operator {
+		case logicalplan.EqOp:
+			switch r := right.(type) {
+			case *scalar.Binary:
+				return BinaryArrayScalarEqual(left.(*array.Binary), r)
+			case *scalar.String:
+				return BinaryArrayScalarEqual(left.(*array.Binary), r.Binary)
+			default:
+				panic("something terrible has happened, this should have errored previously during validation")
+			}
+		case logicalplan.NotEqOp:
+			switch r := right.(type) {
+			case *scalar.Binary:
+				return BinaryArrayScalarNotEqual(left.(*array.Binary), r)
+			case *scalar.String:
+				return BinaryArrayScalarNotEqual(left.(*array.Binary), r.Binary)
+			default:
+				panic("something terrible has happened, this should have errored previously during validation")
+			}
 		default:
 			panic("something terrible has happened, this should have errored previously during validation")
 		}
@@ -156,6 +179,35 @@ func StringArrayScalarNotEqual(left *array.String, right *scalar.String) (*Bitma
 			continue
 		}
 		if left.Value(i) != string(right.Data()) {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func BinaryArrayScalarEqual(left *array.Binary, right *scalar.Binary) (*Bitmap, error) {
+	res := NewBitmap()
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if bytes.Equal(left.Value(i), right.Data()) {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func BinaryArrayScalarNotEqual(left *array.Binary, right *scalar.Binary) (*Bitmap, error) {
+	res := NewBitmap()
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			res.Add(uint32(i))
+			continue
+		}
+		if !bytes.Equal(left.Value(i), right.Data()) {
 			res.Add(uint32(i))
 		}
 	}

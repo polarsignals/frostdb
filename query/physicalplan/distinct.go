@@ -3,10 +3,10 @@ package physicalplan
 import (
 	"hash/maphash"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/array"
-	"github.com/apache/arrow/go/v7/arrow/memory"
-	"github.com/apache/arrow/go/v7/arrow/scalar"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/dgryski/go-metro"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
@@ -80,8 +80,8 @@ func (d *Distinction) Callback(r arrow.Record) error {
 			continue
 		}
 
-		for j, colScalar := range colScalars {
-			err := appendValue(resBuilders[j], colScalar)
+		for j, arr := range distinctArrays {
+			err := appendValue(resBuilders[j], arr, i)
 			if err != nil {
 				return err
 			}

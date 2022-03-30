@@ -1,10 +1,11 @@
 package physicalplan
 
 import (
+	"errors"
 	"regexp"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/array"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
 )
 
 type RegExpFilter struct {
@@ -33,10 +34,60 @@ func (f *RegExpFilter) Eval(r arrow.Record) (*Bitmap, error) {
 	}
 
 	if f.notMatch {
-		return StringArrayScalarRegexNotMatch(leftData.(*array.String), f.right)
+		return ArrayScalarRegexNotMatch(leftData, f.right)
 	}
 
-	return StringArrayScalarRegexMatch(leftData.(*array.String), f.right)
+	return ArrayScalarRegexMatch(leftData, f.right)
+}
+
+func ArrayScalarRegexMatch(left arrow.Array, right *regexp.Regexp) (*Bitmap, error) {
+	switch left.(type) {
+	case *array.Binary:
+		return BinaryArrayScalarRegexMatch(left.(*array.Binary), right)
+	case *array.String:
+		return StringArrayScalarRegexMatch(left.(*array.String), right)
+	}
+
+	return nil, errors.New("unsupported type")
+}
+
+func ArrayScalarRegexNotMatch(left arrow.Array, right *regexp.Regexp) (*Bitmap, error) {
+	switch left.(type) {
+	case *array.Binary:
+		return BinaryArrayScalarRegexNotMatch(left.(*array.Binary), right)
+	case *array.String:
+		return StringArrayScalarRegexNotMatch(left.(*array.String), right)
+	}
+
+	return nil, errors.New("unsupported type")
+}
+
+func BinaryArrayScalarRegexMatch(left *array.Binary, right *regexp.Regexp) (*Bitmap, error) {
+	res := NewBitmap()
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if right.MatchString(string(left.Value(i))) {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func BinaryArrayScalarRegexNotMatch(left *array.Binary, right *regexp.Regexp) (*Bitmap, error) {
+	res := NewBitmap()
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if !right.MatchString(string(left.Value(i))) {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
 }
 
 func StringArrayScalarRegexMatch(left *array.String, right *regexp.Regexp) (*Bitmap, error) {

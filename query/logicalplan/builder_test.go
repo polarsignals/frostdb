@@ -3,7 +3,7 @@ package logicalplan
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v7/arrow/scalar"
+	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/stretchr/testify/require"
 )
 
