@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/memory"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/memory"
 )
 
 // LogicalPlan is a logical representation of a query. Each LogicalPlan is a

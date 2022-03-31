@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/scalar"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/arcticdb/dynparquet"

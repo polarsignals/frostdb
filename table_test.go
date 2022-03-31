@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/memory"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
@@ -146,6 +146,9 @@ func TestTable(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	uuid1 := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	uuid2 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+
 	// One granule with 3 parts
 	require.Equal(t, 1, table.index.Len())
 	require.Equal(t, uint64(3), table.index.Min().(*Granule).parts.total)
@@ -156,8 +159,7 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf("value2").Level(0, 1, 2),
 		parquet.ValueOf(nil).Level(0, 0, 3),
 		parquet.ValueOf(nil).Level(0, 0, 4),
-		parquet.ValueOf(uuid.MustParse("00000000-0000-0000-0000-000000000001")).Level(0, 1, 5),
-		parquet.ValueOf(uuid.MustParse("00000000-0000-0000-0000-000000000002")).Level(1, 1, 5),
+		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
 	}, table.index.Min().(*Granule).least.Row)

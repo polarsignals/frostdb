@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"hash/maphash"
 
-	"github.com/apache/arrow/go/v7/arrow"
-	"github.com/apache/arrow/go/v7/arrow/array"
-	"github.com/apache/arrow/go/v7/arrow/math"
-	"github.com/apache/arrow/go/v7/arrow/memory"
-	"github.com/apache/arrow/go/v7/arrow/scalar"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v8/arrow/math"
+	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"github.com/dgryski/go-metro"
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
@@ -99,6 +100,11 @@ type HashAggregate struct {
 	aggregationFunction   AggregationFunction
 	hashSeed              maphash.Seed
 	nextCallback          func(r arrow.Record) error
+
+	// Buffers that are reused across callback calls.
+	groupByFields      []arrow.Field
+	groupByFieldHashes []uint64
+	groupByArrays      []arrow.Array
 }
 
 func NewHashAggregate(
@@ -119,6 +125,10 @@ func NewHashAggregate(
 		groupByColumnMatchers: groupByColumnMatchers,
 		hashSeed:              maphash.MakeSeed(),
 		aggregationFunction:   aggregationFunction,
+
+		groupByFields:      make([]arrow.Field, 0, 10),
+		groupByFieldHashes: make([]uint64, 0, 10),
+		groupByArrays:      make([]arrow.Array, 0, 10),
 	}
 }
 
@@ -132,9 +142,48 @@ func hashCombine(lhs, rhs uint64) uint64 {
 	return lhs ^ (rhs + 0x9e3779b9 + (lhs << 6) + (lhs >> 2))
 }
 
+func hashArray(arr arrow.Array) []uint64 {
+	switch arr.(type) {
+	case *array.Binary:
+		return hashBinaryArray(arr.(*array.Binary))
+	case *array.Int64:
+		return hashInt64Array(arr.(*array.Int64))
+	default:
+		panic("unsupported array type " + fmt.Sprintf("%T", arr))
+	}
+}
+
+func hashBinaryArray(arr *array.Binary) []uint64 {
+	res := make([]uint64, 0, arr.Len())
+	for i := 0; i < arr.Len(); i++ {
+		if !arr.IsNull(i) {
+			res = append(res, metro.Hash64(arr.Value(i), 0))
+		}
+	}
+	return res
+}
+
+func hashInt64Array(arr *array.Int64) []uint64 {
+	res := make([]uint64, 0, arr.Len())
+	for i := 0; i < arr.Len(); i++ {
+		if !arr.IsNull(i) {
+			res = append(res, uint64(arr.Value(i)))
+		}
+	}
+	return res
+}
+
 func (a *HashAggregate) Callback(r arrow.Record) error {
-	groupByFields := make([]arrow.Field, 0, 10)
-	groupByArrays := make([]arrow.Array, 0, 10)
+	groupByFields := a.groupByFields
+	groupByFieldHashes := a.groupByFieldHashes
+	groupByArrays := a.groupByArrays
+
+	defer func() {
+		groupByFields = groupByFields[:0]
+		groupByFieldHashes = groupByFieldHashes[:0]
+		groupByArrays = groupByArrays[:0]
+	}()
+
 	var columnToAggregate arrow.Array
 	aggregateFieldFound := false
 
@@ -142,6 +191,7 @@ func (a *HashAggregate) Callback(r arrow.Record) error {
 		for _, matcher := range a.groupByColumnMatchers {
 			if matcher.Match(field.Name) {
 				groupByFields = append(groupByFields, field)
+				groupByFieldHashes = append(groupByFieldHashes, scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name)))
 				groupByArrays = append(groupByArrays, r.Column(i))
 			}
 		}
@@ -158,48 +208,36 @@ func (a *HashAggregate) Callback(r arrow.Record) error {
 
 	numRows := int(r.NumRows())
 
-	colScalars := make([]scalar.Scalar, len(groupByFields))
+	colHashes := make([][]uint64, len(groupByArrays))
+	for i, arr := range groupByArrays {
+		colHashes[i] = hashArray(arr)
+	}
+
 	for i := 0; i < numRows; i++ {
-		colScalars = colScalars[:0]
-
-		for _, arr := range groupByArrays {
-			colScalar, err := scalar.GetScalar(arr, i)
-			if err != nil {
-				return err
-			}
-
-			colScalars = append(colScalars, colScalar)
-		}
-
 		hash := uint64(0)
-		for j, colScalar := range colScalars {
-			if colScalar == nil || !colScalar.IsValid() {
+		for j := range colHashes {
+			if colHashes[j][i] == 0 {
 				continue
 			}
 
 			hash = hashCombine(
 				hash,
 				hashCombine(
-					scalar.Hash(a.hashSeed, scalar.NewStringScalar(groupByFields[j].Name+"\u0000")),
-					scalar.Hash(a.hashSeed, colScalar),
+					groupByFieldHashes[j],
+					colHashes[j][i],
 				),
 			)
 		}
 
-		s, err := scalar.GetScalar(columnToAggregate, i)
-		if err != nil {
-			return err
-		}
-
 		k, ok := a.hashToAggregate[hash]
 		if !ok {
-			agg := array.NewBuilder(a.pool, s.DataType())
+			agg := array.NewBuilder(a.pool, columnToAggregate.DataType())
 			a.arraysToAggregate = append(a.arraysToAggregate, agg)
 			k = len(a.arraysToAggregate) - 1
 			a.hashToAggregate[hash] = k
 
 			// insert new row into columns grouped by and create new aggregate array to append to.
-			for j, colScalar := range colScalars {
+			for j, arr := range groupByArrays {
 				fieldName := groupByFields[j].Name
 
 				groupByCol, found := a.groupByCols[fieldName]
@@ -215,14 +253,14 @@ func (a *HashAggregate) Callback(r arrow.Record) error {
 					groupByCol.AppendNull()
 				}
 
-				err := appendValue(groupByCol, colScalar)
+				err := appendValue(groupByCol, arr, i)
 				if err != nil {
 					return err
 				}
 			}
 		}
 
-		if err := appendValue(a.arraysToAggregate[k], s); err != nil {
+		if err := appendValue(a.arraysToAggregate[k], columnToAggregate, i); err != nil {
 			return err
 		}
 	}
@@ -230,42 +268,45 @@ func (a *HashAggregate) Callback(r arrow.Record) error {
 	return nil
 }
 
-func appendValue(arr array.Builder, s scalar.Scalar) error {
-	if s == nil || !s.IsValid() {
-		arr.AppendNull()
+func appendValue(b array.Builder, arr arrow.Array, i int) error {
+	if arr == nil || arr.IsNull(i) {
+		b.AppendNull()
 		return nil
 	}
 
-	switch s := s.(type) {
-	case *scalar.Int64:
-		arr.(*array.Int64Builder).Append(s.Value)
+	switch arr := arr.(type) {
+	case *array.Int64:
+		b.(*array.Int64Builder).Append(arr.Value(i))
 		return nil
-	case *scalar.String:
-		arr.(*array.StringBuilder).Append(string(s.Data()))
+	case *array.String:
+		b.(*array.StringBuilder).Append(arr.Value(i))
 		return nil
-	case *scalar.FixedSizeBinary:
-		arr.(*array.FixedSizeBinaryBuilder).Append(s.Data())
+	case *array.Binary:
+		b.(*array.BinaryBuilder).Append(arr.Value(i))
 		return nil
-	case *scalar.List:
-		// TODO: This seems horribly inefficient, we already have the whole
-		// array and are just doing an expensive copy, but arrow doesn't seem
-		// to be able to append whole list scalars at once.
-		length := s.Value.Len()
-		larr := arr.(*array.ListBuilder)
-		vb := larr.ValueBuilder()
-		larr.Append(true)
-		for i := 0; i < length; i++ {
-			v, err := scalar.GetScalar(s.Value, i)
-			if err != nil {
-				return err
-			}
+	case *array.FixedSizeBinary:
+		b.(*array.FixedSizeBinaryBuilder).Append(arr.Value(i))
+		return nil
+	//case *array.List:
+	//	// TODO: This seems horribly inefficient, we already have the whole
+	//	// array and are just doing an expensive copy, but arrow doesn't seem
+	//	// to be able to append whole list scalars at once.
+	//	length := s.Value.Len()
+	//	larr := arr.(*array.ListBuilder)
+	//	vb := larr.ValueBuilder()
+	//	larr.Append(true)
+	//	for i := 0; i < length; i++ {
+	//		v, err := scalar.GetScalar(s.Value, i)
+	//		if err != nil {
+	//			return err
+	//		}
 
-			err = appendValue(vb, v)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+	//		err = appendValue(vb, v)
+	//		if err != nil {
+	//			return err
+	//		}
+	//	}
+	//	return nil
 	default:
 		return errors.New("unsupported type")
 	}
