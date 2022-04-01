@@ -25,6 +25,20 @@ func (b Builder) Scan(
 	}
 }
 
+func (b Builder) ScanSchema(
+	provider TableProvider,
+	tableName string,
+) Builder {
+	return Builder{
+		plan: &LogicalPlan{
+			SchemaScan: &SchemaScan{
+				TableProvider: provider,
+				TableName:     tableName,
+			},
+		},
+	}
+}
+
 func (b Builder) Project(
 	projections ...string,
 ) Builder {

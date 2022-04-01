@@ -81,6 +81,31 @@ func (s *TableScan) Execute(pool memory.Allocator) error {
 	return s.finisher()
 }
 
+type SchemaScan struct {
+	options  *logicalplan.SchemaScan
+	next     PhysicalPlan
+	finisher func() error
+}
+
+func (s *SchemaScan) Execute(pool memory.Allocator) error {
+	table := s.options.TableProvider.GetTable(s.options.TableName)
+	if table == nil {
+		return errors.New("table not found")
+	}
+	err := table.SchemaIterator(
+		pool,
+		s.options.Projection,
+		s.options.Filter,
+		s.options.Distinct,
+		s.next.Callback,
+	)
+	if err != nil {
+		return err
+	}
+
+	return s.finisher()
+}
+
 func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
 	outputPlan := &OutputPlan{}
 	var (
@@ -93,7 +118,12 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 		var phyPlan PhysicalPlan
 		switch {
 		case plan.SchemaScan != nil:
-			panic("SchemaScan not implemented")
+			outputPlan.scan = &SchemaScan{
+				options:  plan.SchemaScan,
+				next:     prev,
+				finisher: finisher,
+			}
+			return false
 		case plan.TableScan != nil:
 			outputPlan.scan = &TableScan{
 				options:  plan.TableScan,

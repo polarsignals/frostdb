@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -350,6 +351,69 @@ func (t *Table) Iterator(
 		}
 		err = iterator(record)
 		record.Release()
+		if err != nil {
+			return err
+		}
+	}
+
+	return err
+}
+
+// SchemaIterator iterates in order over all granules in the table and returns
+// all the schemas seen across the table.
+func (t *Table) SchemaIterator(
+	pool memory.Allocator,
+	projections []logicalplan.ColumnMatcher,
+	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
+	iterator func(r arrow.Record) error,
+) error {
+	index := t.Index()
+	tx := t.db.beginRead()
+
+	filter, err := booleanExpr(filterExpr)
+	if err != nil {
+		return err
+	}
+
+	rowGroups := []dynparquet.DynamicRowGroup{}
+
+	index.Ascend(func(i btree.Item) bool {
+		g := i.(*Granule)
+
+		g.PartBuffersForTx(tx, t.db.txCompleted, func(buf *dynparquet.SerializedBuffer) bool {
+			f := buf.ParquetFile()
+			for i := 0; i < f.NumRowGroups(); i++ {
+				rg := buf.DynamicRowGroup(i)
+				var mayContainUsefulData bool
+				mayContainUsefulData, err = filter.Eval(rg)
+				if err != nil {
+					return false
+				}
+				if mayContainUsefulData {
+					rowGroups = append(rowGroups, rg)
+				}
+			}
+			return true
+		})
+
+		return true
+	})
+
+	schema := arrow.NewSchema(
+		[]arrow.Field{
+			{Name: "name", Type: arrow.BinaryTypes.String},
+		},
+		nil,
+	)
+	for _, rg := range rowGroups {
+		b := array.NewRecordBuilder(pool, schema)
+		b.Field(0).(*array.StringBuilder).AppendValues(rg.Schema().ChildNames(), nil)
+
+		record := b.NewRecord()
+		err = iterator(record)
+		record.Release()
+		b.Release()
 		if err != nil {
 			return err
 		}
