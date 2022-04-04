@@ -79,6 +79,13 @@ type TableReader interface {
 		distinctColumns []ColumnMatcher,
 		callback func(r arrow.Record) error,
 	) error
+	SchemaIterator(
+		pool memory.Allocator,
+		projection []ColumnMatcher,
+		filter Expr,
+		distinctColumns []ColumnMatcher,
+		callback func(r arrow.Record) error,
+	) error
 }
 
 type TableProvider interface {
@@ -120,6 +127,9 @@ type SchemaScan struct {
 	// filter is the predicate that is to be applied by the table scan to rule
 	// out any blocks of data to be scanned at all.
 	Filter Expr
+
+	// Distinct describes the columns that are to be distinct.
+	Distinct []ColumnMatcher
 }
 
 func (scan *SchemaScan) String() string {

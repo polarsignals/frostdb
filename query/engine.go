@@ -9,7 +9,15 @@ import (
 	"github.com/polarsignals/arcticdb/query/physicalplan"
 )
 
-type Engine struct {
+type Builder interface {
+	Aggregate(aggExpr logicalplan.Expr, groupExprs ...logicalplan.ColumnExpr) Builder
+	Filter(expr logicalplan.Expr) Builder
+	Distinct(expr ...logicalplan.ColumnExpr) Builder
+	Project(projections ...string) Builder
+	Execute(callback func(r arrow.Record) error) error
+}
+
+type LocalEngine struct {
 	pool          memory.Allocator
 	tableProvider logicalplan.TableProvider
 }
@@ -17,63 +25,70 @@ type Engine struct {
 func NewEngine(
 	pool memory.Allocator,
 	tableProvider logicalplan.TableProvider,
-) *Engine {
-	return &Engine{
+) *LocalEngine {
+	return &LocalEngine{
 		pool:          pool,
 		tableProvider: tableProvider,
 	}
 }
 
-type QueryBuilder struct {
+type LocalQueryBuilder struct {
 	pool        memory.Allocator
 	planBuilder logicalplan.Builder
 }
 
-func (e *Engine) ScanTable(name string) QueryBuilder {
-	return QueryBuilder{
+func (e *LocalEngine) ScanTable(name string) Builder {
+	return LocalQueryBuilder{
 		pool:        e.pool,
 		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name),
 	}
 }
 
-func (b QueryBuilder) Aggregate(
+func (e *LocalEngine) ScanSchema(name string) Builder {
+	return LocalQueryBuilder{
+		pool:        e.pool,
+		planBuilder: (&logicalplan.Builder{}).ScanSchema(e.tableProvider, name),
+	}
+}
+
+func (b LocalQueryBuilder) Aggregate(
 	aggExpr logicalplan.Expr,
 	groupExprs ...logicalplan.ColumnExpr,
-) QueryBuilder {
-	return QueryBuilder{
+) Builder {
+	return LocalQueryBuilder{
 		pool:        b.pool,
 		planBuilder: b.planBuilder.Aggregate(aggExpr, groupExprs...),
 	}
 }
 
-func (b QueryBuilder) Filter(
+func (b LocalQueryBuilder) Filter(
 	expr logicalplan.Expr,
-) QueryBuilder {
-	return QueryBuilder{
+) Builder {
+	return LocalQueryBuilder{
 		pool:        b.pool,
 		planBuilder: b.planBuilder.Filter(expr),
 	}
 }
 
-func (b QueryBuilder) Distinct(
+func (b LocalQueryBuilder) Distinct(
 	expr ...logicalplan.ColumnExpr,
-) QueryBuilder {
-	return QueryBuilder{
+) Builder {
+	return LocalQueryBuilder{
 		pool:        b.pool,
 		planBuilder: b.planBuilder.Distinct(expr...),
 	}
 }
 
-func (b QueryBuilder) Project(
+func (b LocalQueryBuilder) Project(
 	projections ...string,
-) QueryBuilder {
-	return QueryBuilder{
+) Builder {
+	return LocalQueryBuilder{
 		pool:        b.pool,
 		planBuilder: b.planBuilder.Project(projections...),
 	}
 }
 
-func (b QueryBuilder) Execute(callback func(r arrow.Record) error) error {
+func (b LocalQueryBuilder) Execute(callback func(r arrow.Record) error) error {
 	logicalPlan := b.planBuilder.Build()
 
 	optimizers := []logicalplan.Optimizer{
