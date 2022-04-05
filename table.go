@@ -373,7 +373,8 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	}
 
 	b := bytes.NewBuffer(nil)
-	w, err := t.table.config.schema.NewWriter(b, merge.DynamicColumns())
+	cols := merge.DynamicColumns()
+	w, err := t.table.config.schema.NewWriter(b, cols)
 	if err != nil {
 		panic(err)
 	}
@@ -528,7 +529,9 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.Buffer) (map[*Granule]*d
 	index := t.Index()
 	if index.Len() == 1 {
 		b := bytes.NewBuffer(nil)
-		w, err := t.table.config.schema.NewWriter(b, buf.DynamicColumns())
+
+		cols := buf.DynamicColumns()
+		w, err := t.table.config.schema.NewWriter(b, cols)
 		if err != nil {
 			return nil, ErrCreateSchemaWriter{err}
 		}
