@@ -348,9 +348,9 @@ func Test_Table_InsertLowest(t *testing.T) {
 
 	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
 	table.Sync()
-	if table.index.Len() == 1 {
-		table.Add(1)
-		table.compact(table.index.Min().(*Granule))
+	if table.active.index.Len() == 1 {
+		table.active.wg.Add(1)
+		table.active.compact(table.active.index.Min().(*Granule))
 		table.Sync()
 	}
 
