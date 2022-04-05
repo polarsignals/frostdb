@@ -26,3 +26,20 @@ func TestDynamicColumnsSerialization(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, input, output)
 }
+
+func TestDynamicColumnsDeserialization(t *testing.T) {
+	input := "labels:__name__;pprof_labels:;pprof_num_labels:bytes"
+	output, err := deserializeDynamicColumns(input)
+	require.NoError(t, err)
+
+	expected := map[string][]string{
+		"labels": {
+			"__name__",
+		},
+		"pprof_labels": {},
+		"pprof_num_labels": {
+			"bytes",
+		},
+	}
+	require.Equal(t, expected, output)
+}

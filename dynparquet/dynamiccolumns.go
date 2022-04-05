@@ -34,7 +34,11 @@ func deserializeDynamicColumns(dynColString string) (map[string][]string, error)
 		if len(split) != 2 {
 			return nil, ErrMalformedDynamicColumns
 		}
-		dynCols[split[0]] = strings.Split(split[1], ",")
+		labelValues := strings.Split(split[1], ",")
+		if len(labelValues) == 1 && labelValues[0] == "" {
+			labelValues = []string{}
+		}
+		dynCols[split[0]] = labelValues
 	}
 
 	return dynCols, nil
