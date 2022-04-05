@@ -371,14 +371,14 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		return true
 	})
 
-	merge, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
-	if err != nil {
-		panic(err)
-	}
-
 	if len(bufs) == 0 { // aborting; nothing to do
 		t.abort(commit, granule)
 		return
+	}
+
+	merge, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
+	if err != nil {
+		panic(err)
 	}
 
 	b := bytes.NewBuffer(nil)
@@ -412,6 +412,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	if n < t.table.config.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
 		t.abort(commit, granule)
+		return
 	}
 
 	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
