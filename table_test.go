@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
 )
@@ -151,9 +152,9 @@ func TestTable(t *testing.T) {
 	uuid2 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 
 	// One granule with 3 parts
-	require.Equal(t, 1, table.active.index.Len())
-	require.Equal(t, uint64(3), table.active.index.Min().(*Granule).parts.total)
-	require.Equal(t, uint64(5), table.active.index.Min().(*Granule).card)
+	require.Equal(t, 1, (*btree.BTree)(table.active.index.Load()).Len())
+	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).parts.total)
+	require.Equal(t, uint64(5), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card)
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
@@ -163,8 +164,8 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
-	}, table.active.index.Min().(*Granule).least.Row)
-	require.Equal(t, 1, table.active.index.Len())
+	}, (*dynparquet.DynamicRow)((*btree.BTree)(table.active.index.Load()).Min().(*Granule).least.Load()).Row)
+	require.Equal(t, 1, (*btree.BTree)(table.active.index.Load()).Len())
 }
 
 func Test_Table_GranuleSplit(t *testing.T) {
@@ -271,9 +272,9 @@ func Test_Table_GranuleSplit(t *testing.T) {
 		return nil
 	})
 
-	require.Equal(t, 2, table.active.index.Len())
-	require.Equal(t, uint64(2), table.active.index.Min().(*Granule).card)
-	require.Equal(t, uint64(3), table.active.index.Max().(*Granule).card)
+	require.Equal(t, 2, (*btree.BTree)(table.active.index.Load()).Len())
+	require.Equal(t, uint64(2), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card)
+	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Max().(*Granule).card)
 }
 
 /*
@@ -367,9 +368,9 @@ func Test_Table_InsertLowest(t *testing.T) {
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
-	require.Equal(t, 2, table.active.index.Len())
-	require.Equal(t, uint64(3), table.active.index.Min().(*Granule).card) // [10,11]
-	require.Equal(t, uint64(2), table.active.index.Max().(*Granule).card) // [12,13,14]
+	require.Equal(t, 2, (*btree.BTree)(table.active.index.Load()).Len())
+	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card) // [10,11]
+	require.Equal(t, uint64(2), (*btree.BTree)(table.active.index.Load()).Max().(*Granule).card) // [12,13,14]
 
 	// Insert a new column that is the lowest column yet; expect it to be added to the minimum column
 	samples = dynparquet.Samples{{
@@ -396,9 +397,9 @@ func Test_Table_InsertLowest(t *testing.T) {
 		return nil
 	})
 
-	require.Equal(t, 2, table.active.index.Len())
-	require.Equal(t, uint64(3), table.active.index.Min().(*Granule).card) // [1,10,11]
-	require.Equal(t, uint64(3), table.active.index.Max().(*Granule).card) // [12,13,14]
+	require.Equal(t, 2, (*btree.BTree)(table.active.index.Load()).Len())
+	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card) // [1,10,11]
+	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Max().(*Granule).card) // [12,13,14]
 }
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
@@ -625,7 +626,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 
 	// Now we cheat and reset our tx so that we can perform a read in the past.
 	prev := table.db.tx
-	table.db.tx = 1
+	table.db.tx = atomic.NewUint64(1)
 
 	rows := int64(0)
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {

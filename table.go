@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -17,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/segmentio/parquet-go"
+	"go.uber.org/atomic"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/pqarrow"
@@ -72,8 +72,8 @@ type TableBlock struct {
 	table  *Table
 	logger log.Logger
 
-	size  int64
-	index *btree.BTree
+	size  *atomic.Int64
+	index *atomic.UnsafePointer
 
 	wg  *sync.WaitGroup
 	mtx *sync.Mutex
@@ -284,16 +284,18 @@ func (t *Table) SchemaIterator(
 }
 
 func newTableBlock(table *Table) *TableBlock {
+	index := btree.New(2) // TODO make the degree a setting
 	tb := &TableBlock{
 		table: table,
-		index: btree.New(2), // TODO make the degree a setting
-		mtx:   &sync.Mutex{},
+		index: atomic.NewUnsafePointer(unsafe.Pointer(index)),
 		wg:    &sync.WaitGroup{},
+		mtx:   &sync.Mutex{},
+		size:  atomic.NewInt64(0),
 	}
 
 	g := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)
-	tb.index.ReplaceOrInsert(g)
-
+	// Maybe we can simply use the index from above directly?
+	(*btree.BTree)(tb.index.Load()).ReplaceOrInsert(g)
 	return tb
 }
 
@@ -329,7 +331,7 @@ func (t *TableBlock) Insert(buf *dynparquet.Buffer) error {
 			t.wg.Add(1)
 			go t.compact(granule)
 		}
-		atomic.AddInt64(&t.size, serBuf.ParquetFile().Size())
+		t.size.Add(serBuf.ParquetFile().Size())
 	}
 
 	return nil
@@ -337,7 +339,7 @@ func (t *TableBlock) Insert(buf *dynparquet.Buffer) error {
 
 func (t *TableBlock) splitGranule(granule *Granule) {
 	// Recheck to ensure the granule still needs to be split
-	if !atomic.CompareAndSwapUint64(&granule.pruned, 0, 1) {
+	if !granule.pruned.CAS(0, 1) {
 		return
 	}
 
@@ -402,7 +404,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	if n < t.table.config.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
 		for {
-			if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
+			if granule.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
 				return
 			}
 		}
@@ -460,9 +462,9 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		}
 
 		// Point to the new index
-		if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&t.index)), unsafe.Pointer(t.index), unsafe.Pointer(index)) {
+		if t.index.CAS(unsafe.Pointer(t.index), unsafe.Pointer(index)) {
 			sizeDiff := serBuf.ParquetFile().Size() - sizeBefore
-			atomic.AddInt64(&t.size, sizeDiff)
+			t.size.Add(sizeDiff)
 			return
 		}
 	}
@@ -507,13 +509,12 @@ func (t *TableBlock) RowGroupIterator(
 
 // Size returns the cumulative size of all buffers in the table. This is roughly the size of the table in bytes.
 func (t *TableBlock) Size() int64 {
-	return atomic.LoadInt64(&t.size)
+	return t.size.Load()
 }
 
 // Index provides atomic access to the table index.
 func (t *TableBlock) Index() *btree.BTree {
-	ptr := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&t.index)))
-	return (*btree.BTree)(ptr)
+	return (*btree.BTree)(t.index.Load())
 }
 
 func (t *TableBlock) granuleIterator(iterator func(g *Granule) bool) {

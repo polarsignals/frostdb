@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/google/btree"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/parquet-go"
+	"go.uber.org/atomic"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
 )
@@ -17,18 +17,18 @@ import (
 type Granule struct {
 	// least is the row that exists within the Granule that is the least.
 	// This is used for quick insertion into the btree, without requiring an iterator
-	least *dynparquet.DynamicRow
+	least *atomic.UnsafePointer
 	parts *PartList
 
 	// card is the raw commited, and uncommited cardinality of the granule. It is used as a suggestion for potential compaction
-	card uint64
+	card *atomic.Uint64
 
 	tableConfig *TableConfig
 
 	granulesCreated prometheus.Counter
 
 	// pruned indicates if this Granule is longer found in the index
-	pruned uint64
+	pruned *atomic.Uint64
 
 	// newGranules are the granules that were created after a split
 	newGranules []*Granule
@@ -37,13 +37,20 @@ type Granule struct {
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) *Granule {
 	g := &Granule{
 		granulesCreated: granulesCreated,
-		parts:           &PartList{},
-		tableConfig:     tableConfig,
+		parts: &PartList{
+			next:  atomic.NewUnsafePointer(nil),
+			total: atomic.NewUint64(0),
+		},
+		tableConfig: tableConfig,
+
+		least:  atomic.NewUnsafePointer(nil),
+		pruned: atomic.NewUint64(0),
+		card:   atomic.NewUint64(0),
 	}
 
 	// Find the least column
 	if firstPart != nil {
-		g.card = uint64(firstPart.Buf.NumRows())
+		g.card = atomic.NewUint64(uint64(firstPart.Buf.NumRows()))
 		g.parts.Prepend(firstPart)
 		// Since we assume a part is sorted, we need only to look at the first row in each Part
 		row, err := firstPart.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
@@ -51,7 +58,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 			// TODO(brancz): handle error
 			panic(err)
 		}
-		g.least = row
+		g.least = atomic.NewUnsafePointer(unsafe.Pointer(row))
 	}
 
 	granulesCreated.Inc()
@@ -62,11 +69,11 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 func (g *Granule) AddPart(p *Part) uint64 {
 	rows := p.Buf.NumRows()
 	if rows == 0 {
-		return g.card
+		return g.card.Load()
 	}
 	node := g.parts.Prepend(p)
 
-	newcard := atomic.AddUint64(&g.card, uint64(p.Buf.NumRows()))
+	newcard := g.card.Add(uint64(p.Buf.NumRows()))
 	r, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 	if err != nil {
 		// TODO(brancz): handle error
@@ -74,9 +81,9 @@ func (g *Granule) AddPart(p *Part) uint64 {
 	}
 
 	for {
-		least := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)))
+		least := g.least.Load()
 		if least == nil || g.tableConfig.schema.RowLessThan(r, (*dynparquet.DynamicRow)(least)) {
-			if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least)), least, unsafe.Pointer(r)) {
+			if g.least.CAS(least, unsafe.Pointer(r)) {
 				break
 			}
 		} else {
@@ -198,5 +205,5 @@ func (g *Granule) Less(than btree.Item) bool {
 
 // Least returns the least row in a Granule.
 func (g *Granule) Least() *dynparquet.DynamicRow {
-	return (*dynparquet.DynamicRow)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least))))
+	return (*dynparquet.DynamicRow)(g.least.Load())
 }
