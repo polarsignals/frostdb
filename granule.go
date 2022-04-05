@@ -58,7 +58,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 	return g
 }
 
-// AddPart returns the new cardinality of the Granule
+// AddPart returns the new cardinality of the Granule.
 func (g *Granule) AddPart(p *Part) uint64 {
 	rows := p.Buf.NumRows()
 	if rows == 0 {
@@ -94,7 +94,7 @@ func (g *Granule) AddPart(p *Part) uint64 {
 
 // split a granule into n sized granules. With the last granule containing the remainder.
 // Returns the granules in order.
-// This assumes the Granule has had its parts merged into a single part
+// This assumes the Granule has had its parts merged into a single part.
 func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	// Get the first part in the granule's part list.
 	var p *Part
@@ -191,12 +191,12 @@ func (g *Granule) PartBuffersForTx(tx uint64, txCompleted func(uint64) uint64, i
 	})
 }
 
-// Less implements the btree.Item interface
+// Less implements the btree.Item interface.
 func (g *Granule) Less(than btree.Item) bool {
 	return g.tableConfig.schema.RowLessThan(g.Least(), than.(*Granule).Least())
 }
 
-// Least returns the least row in a Granule
+// Least returns the least row in a Granule.
 func (g *Granule) Least() *dynparquet.DynamicRow {
 	return (*dynparquet.DynamicRow)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&g.least))))
 }
