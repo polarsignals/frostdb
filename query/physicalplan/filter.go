@@ -9,6 +9,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
+
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
@@ -30,8 +31,7 @@ type BooleanExpression interface {
 
 var ErrUnsupportedBooleanExpression = errors.New("unsupported boolean expression")
 
-type ArrayReference struct {
-}
+type ArrayReference struct{}
 
 type PreExprVisitorFunc func(expr logicalplan.Expr) bool
 

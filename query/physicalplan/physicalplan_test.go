@@ -4,9 +4,10 @@ import (
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/stretchr/testify/require"
+
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
-	"github.com/stretchr/testify/require"
 )
 
 func TestBuildPhysicalPlan(t *testing.T) {

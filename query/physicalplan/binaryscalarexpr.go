@@ -7,12 +7,11 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
+
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
-var (
-	ErrUnexpectedNumberOfFields = errors.New("unexpected number of fields")
-)
+var ErrUnexpectedNumberOfFields = errors.New("unexpected number of fields")
 
 type ArrayRef struct {
 	ColumnName string
@@ -53,9 +52,7 @@ func (e BinaryScalarExpr) Eval(r arrow.Record) (*Bitmap, error) {
 	return BinaryScalarOperation(leftData, e.Right, e.Op)
 }
 
-var (
-	ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
-)
+var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 
 func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logicalplan.Operator) (*Bitmap, error) {
 	leftType := left.DataType()
