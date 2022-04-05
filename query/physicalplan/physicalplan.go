@@ -5,6 +5,7 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
+
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
@@ -111,7 +112,7 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 	var (
 		err      error
 		prev     PhysicalPlan = outputPlan
-		finisher func() error = func() error { return nil }
+		finisher              = func() error { return nil }
 	)
 
 	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {

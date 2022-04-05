@@ -11,6 +11,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/dgryski/go-metro"
+
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
@@ -287,7 +288,7 @@ func appendValue(b array.Builder, arr arrow.Array, i int) error {
 	case *array.FixedSizeBinary:
 		b.(*array.FixedSizeBinaryBuilder).Append(arr.Value(i))
 		return nil
-	//case *array.List:
+	// case *array.List:
 	//	// TODO: This seems horribly inefficient, we already have the whole
 	//	// array and are just doing an expensive copy, but arrow doesn't seem
 	//	// to be able to append whole list scalars at once.
@@ -344,9 +345,7 @@ func (a *HashAggregate) Finish() error {
 
 type Int64SumAggregation struct{}
 
-var (
-	ErrUnsupportedSumType = errors.New("unsupported type for sum aggregation, expected int64")
-)
+var ErrUnsupportedSumType = errors.New("unsupported type for sum aggregation, expected int64")
 
 func (a *Int64SumAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	if len(arrs) == 0 {
