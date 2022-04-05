@@ -17,6 +17,7 @@ func TestFilter(t *testing.T) {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
 		8192,
+		512*1024*1024,
 	)
 
 	c := New(nil)
