@@ -6,9 +6,7 @@ import (
 	"strings"
 )
 
-var (
-	ErrMalformedDynamicColumns = errors.New("malformed dynamic columns string")
-)
+var ErrMalformedDynamicColumns = errors.New("malformed dynamic columns string")
 
 func serializeDynamicColumns(dynamicColumns map[string][]string) string {
 	names := make([]string, 0, len(dynamicColumns))
@@ -23,7 +21,6 @@ func serializeDynamicColumns(dynamicColumns map[string][]string) string {
 			str += ";"
 		}
 		str += name + ":" + strings.Join(dynamicColumns[name], ",")
-		i++
 	}
 
 	return str

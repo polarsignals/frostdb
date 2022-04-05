@@ -12,9 +12,7 @@ const (
 	DynamicColumnsKey = "dynamic_columns"
 )
 
-var (
-	ErrNoDynamicColumns = errors.New("no dynamic columns metadata found, it must be present")
-)
+var ErrNoDynamicColumns = errors.New("no dynamic columns metadata found, it must be present")
 
 type SerializedBuffer struct {
 	*parquet.Reader
