@@ -5,8 +5,9 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
-	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/stretchr/testify/require"
+
+	"github.com/polarsignals/arcticdb/dynparquet"
 )
 
 func TestMergeToArrow(t *testing.T) {

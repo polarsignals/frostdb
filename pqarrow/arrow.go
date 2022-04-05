@@ -365,9 +365,7 @@ func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder, nu
 	}
 }
 
-var (
-	ErrPageTypeMismatch = errors.New("page type mismatch")
-)
+var ErrPageTypeMismatch = errors.New("page type mismatch")
 
 type valueWriter interface {
 	WritePage(p parquet.Page) error
