@@ -118,12 +118,12 @@ func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
 	return p.db.tables[name]
 }
 
-// beginRead starts a read transaction
+// beginRead starts a read transaction.
 func (db *DB) beginRead() uint64 {
 	return atomic.AddUint64(&db.tx, 1)
 }
 
-// begin is an internal function that Tables call to start a transaction for writes
+// begin is an internal function that Tables call to start a transaction for writes.
 func (db *DB) begin() (uint64, func()) {
 	tx := atomic.AddUint64(&db.tx, 1)
 	db.txmtx.Lock()
@@ -137,7 +137,7 @@ func (db *DB) begin() (uint64, func()) {
 	}
 }
 
-// txCompleted returns true if a write transaction has been completed
+// txCompleted returns true if a write transaction has been completed.
 func (db *DB) txCompleted(tx uint64) uint64 {
 	db.txmtx.RLock()
 	defer db.txmtx.RUnlock()

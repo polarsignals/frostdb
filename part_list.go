@@ -13,7 +13,7 @@ const (
 	Compacted
 )
 
-// Node is a Part that is a part of a linked-list
+// Node is a Part that is a part of a linked-list.
 type Node struct {
 	next unsafe.Pointer
 	part *Part
@@ -29,7 +29,7 @@ type PartList struct {
 	listType SentinelType
 }
 
-// Sentinel adds a new sentinel node to the list, and returns the sub list starting from that sentinel
+// Sentinel adds a new sentinel node to the list, and returns the sub list starting from that sentinel.
 func (l *PartList) Sentinel(s SentinelType) *PartList {
 	node := &Node{
 		sentinel: s,
@@ -48,7 +48,7 @@ func (l *PartList) Sentinel(s SentinelType) *PartList {
 	}
 }
 
-// Prepend a node onto the front of the list
+// Prepend a node onto the front of the list.
 func (l *PartList) Prepend(part *Part) *Node {
 	node := &Node{
 		part: part,
@@ -66,7 +66,7 @@ func (l *PartList) Prepend(part *Part) *Node {
 	}
 }
 
-// Iterate accesses every node in the list
+// Iterate accesses every node in the list.
 func (l *PartList) Iterate(iterate func(*Part) bool) {
 	next := atomic.LoadPointer(&l.next)
 	for {
