@@ -337,7 +337,7 @@ func (t *TableBlock) Insert(buf *dynparquet.Buffer) error {
 
 func (t *TableBlock) splitGranule(granule *Granule) {
 	// Recheck to ensure the granule still needs to be split
-	if !atomic.CompareAndSwapUint64(&granule.pruned, 0, 1) {
+	if !granule.pruned.CAS(0, 1) {
 		return
 	}
 
@@ -403,7 +403,8 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	if n < t.table.config.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
 		for {
-			if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
+			// unmark pruned, so that we can compact it in the future
+			if granule.pruned.CAS(1, 0) {
 				return
 			}
 		}
