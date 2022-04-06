@@ -37,7 +37,7 @@ type Granule struct {
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) *Granule {
 	g := &Granule{
 		granulesCreated: granulesCreated,
-		parts:           &PartList{},
+		parts:           NewPartList(nil, 0, None),
 		tableConfig:     tableConfig,
 
 		least:  atomic.NewUnsafePointer(nil),
