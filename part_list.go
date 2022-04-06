@@ -30,6 +30,15 @@ type PartList struct {
 	listType SentinelType
 }
 
+// NewPartList creates a new PartList using atomic constructs.
+func NewPartList(next unsafe.Pointer, total uint64, s SentinelType) *PartList {
+	return &PartList{
+		next:     atomic.NewUnsafePointer(next),
+		total:    atomic.NewUint64(total),
+		listType: s,
+	}
+}
+
 // Sentinel adds a new sentinel node to the list, and returns the sub list starting from that sentinel.
 func (l *PartList) Sentinel(s SentinelType) *PartList {
 	node := &Node{
@@ -39,12 +48,8 @@ func (l *PartList) Sentinel(s SentinelType) *PartList {
 		next := l.next.Load()
 		node.next = atomic.NewUnsafePointer(next)
 		if l.next.CAS(next, unsafe.Pointer(node)) {
-			size := l.total.Inc() // TODO should we add sentinels to the total?
-			return &PartList{
-				next:     atomic.NewUnsafePointer(next),
-				total:    atomic.NewUint64(size), // TODO I'm not sure this is even correct to do
-				listType: s,
-			}
+			// TODO should we add sentinels to the total?
+			return NewPartList(next, l.total.Inc(), s)
 		}
 	}
 }
