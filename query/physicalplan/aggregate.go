@@ -155,20 +155,20 @@ func hashArray(arr arrow.Array) []uint64 {
 }
 
 func hashBinaryArray(arr *array.Binary) []uint64 {
-	res := make([]uint64, 0, arr.Len())
+	res := make([]uint64, arr.Len())
 	for i := 0; i < arr.Len(); i++ {
 		if !arr.IsNull(i) {
-			res = append(res, metro.Hash64(arr.Value(i), 0))
+			res[i] = metro.Hash64(arr.Value(i), 0)
 		}
 	}
 	return res
 }
 
 func hashInt64Array(arr *array.Int64) []uint64 {
-	res := make([]uint64, 0, arr.Len())
+	res := make([]uint64, arr.Len())
 	for i := 0; i < arr.Len(); i++ {
 		if !arr.IsNull(i) {
-			res = append(res, uint64(arr.Value(i)))
+			res[i] = uint64(arr.Value(i))
 		}
 	}
 	return res
