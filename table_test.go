@@ -152,7 +152,7 @@ func TestTable(t *testing.T) {
 
 	// One granule with 3 parts
 	require.Equal(t, 1, (*btree.BTree)(table.active.index.Load()).Len())
-	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).parts.total)
+	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).parts.total.Load())
 	require.Equal(t, uint64(5), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card.Load())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
