@@ -153,8 +153,8 @@ func TestTable(t *testing.T) {
 
 	// One granule with 3 parts
 	require.Equal(t, 1, (*btree.BTree)(table.active.index.Load()).Len())
-	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).parts.total)
-	require.Equal(t, uint64(5), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card)
+	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).parts.total.Load())
+	require.Equal(t, uint64(5), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card.Load())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
@@ -273,8 +273,8 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	})
 
 	require.Equal(t, 2, (*btree.BTree)(table.active.index.Load()).Len())
-	require.Equal(t, uint64(2), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card)
-	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Max().(*Granule).card)
+	require.Equal(t, uint64(2), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card.Load())
+	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Max().(*Granule).card.Load())
 }
 
 /*

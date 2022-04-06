@@ -37,12 +37,12 @@ func (l *PartList) Sentinel(s SentinelType) *PartList {
 	}
 	for { // continue until a successful compare and swap occurs
 		next := l.next.Load()
-		node.next = l.next
+		node.next = (*atomic.UnsafePointer)(next)
 		if l.next.CAS(next, unsafe.Pointer(node)) {
-			l.total.Add(1)
+			size := l.total.Inc()
 			return &PartList{
-				next:     (*atomic.UnsafePointer)(next),
-				total:    l.total,
+				next:     atomic.NewUnsafePointer(next),
+				total:    atomic.NewUint64(size),
 				listType: s,
 			}
 		}
@@ -81,6 +81,6 @@ func (l *PartList) Iterate(iterate func(*Part) bool) {
 		if node.part != nil && !iterate(node.part) { // if the part == nil then this is a sentinel node, and we can skip it
 			return
 		}
-		next = unsafe.Pointer(node.next)
+		next = node.next.Load()
 	}
 }

@@ -288,8 +288,8 @@ func newTableBlock(table *Table) *TableBlock {
 	tb := &TableBlock{
 		table: table,
 		index: atomic.NewUnsafePointer(unsafe.Pointer(index)),
-		wg:    &sync.WaitGroup{},
 		mtx:   &sync.Mutex{},
+		wg:    &sync.WaitGroup{},
 		size:  atomic.NewInt64(0),
 	}
 
