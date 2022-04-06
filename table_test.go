@@ -624,8 +624,8 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now we cheat and reset our tx so that we can perform a read in the past.
-	prev := table.db.tx
-	table.db.tx = 1
+	prev := table.db.tx.Load()
+	table.db.tx.Store(1)
 
 	rows := int64(0)
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
@@ -638,7 +638,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	require.Equal(t, int64(3), rows)
 
 	// Now set the tx back to what it was, and perform the same read, we should return all 4 rows
-	table.db.tx = prev
+	table.db.tx.Store(prev)
 
 	rows = int64(0)
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {

@@ -3,10 +3,10 @@ package arcticdb
 import (
 	"math"
 	"sync"
-	"sync/atomic"
 
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/atomic"
 
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
@@ -38,7 +38,7 @@ type DB struct {
 
 	// Databases monotonically increasing transaction id
 	txmtx *sync.RWMutex
-	tx    uint64
+	tx    *atomic.Uint64
 	// active is the list of active transactions TODO: a gc goroutine should prune this list as parts get merged
 	active map[uint64]uint64 // TODO probably not the best choice for active list...
 }
@@ -69,6 +69,7 @@ func (s *ColumnStore) DB(name string) *DB {
 
 		active: map[uint64]uint64{},
 		txmtx:  &sync.RWMutex{},
+		tx:     atomic.NewUint64(0),
 	}
 
 	s.dbs[name] = db
@@ -120,19 +121,19 @@ func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
 
 // beginRead starts a read transaction.
 func (db *DB) beginRead() uint64 {
-	return atomic.AddUint64(&db.tx, 1)
+	return db.tx.Inc()
 }
 
 // begin is an internal function that Tables call to start a transaction for writes.
 func (db *DB) begin() (uint64, func()) {
-	tx := atomic.AddUint64(&db.tx, 1)
+	tx := db.tx.Inc()
 	db.txmtx.Lock()
 	db.active[tx] = math.MaxUint64
 	db.txmtx.Unlock()
 	return tx, func() {
 		// commit the transaction
 		db.txmtx.Lock()
-		db.active[tx] = atomic.AddUint64(&db.tx, 1)
+		db.active[tx] = db.tx.Inc()
 		db.txmtx.Unlock()
 	}
 }
