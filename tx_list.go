@@ -66,7 +66,7 @@ func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
 // this function does not return.
 func (l *TxPool) cleaner(watermark *atomic.Uint64) {
 	for {
-		ticker := time.NewTicker(time.Millisecond)
+		ticker := time.NewTicker(time.Millisecond * 10)
 		defer ticker.Stop()
 		select {
 		case <-ticker.C:
