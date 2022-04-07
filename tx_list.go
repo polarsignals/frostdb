@@ -42,14 +42,22 @@ func (l *TxPool) Prepend(tx uint64) *TxNode {
 // Iterate accesses every node in the list.
 func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
 	next := l.next.Load()
+	prev := unsafe.Pointer(nil)
 	for {
 		node := (*TxNode)(next)
 		if node == nil {
 			return
 		}
 		if iterate(node.tx) {
-			// TODO remove this node.
+			if prev == nil { // we're removing the first node
+				l.next.CAS(nil, node.next.Load())
+			} else {
+				// set the previous nodes next to this nodes nex
+				prevnode := (*TxNode)(prev)
+				prevnode.next.CAS(prevnode.next.Load(), node.next.Load())
+			}
 		}
+		prev = next
 		next = node.next.Load()
 	}
 }
@@ -63,11 +71,16 @@ func (l *TxPool) cleaner(watermark *atomic.Uint64) {
 		select {
 		case <-ticker.C:
 			l.Iterate(func(tx uint64) bool {
-				if watermark.Load()+1 == tx {
+				mark := watermark.Load()
+				switch {
+				case mark+1 == tx:
 					watermark.Inc()
 					return true // return true to indicate that this node should be removed from the tx list.
+				case mark >= tx:
+					return true
+				default:
+					return false
 				}
-				return false
 			})
 		}
 	}
