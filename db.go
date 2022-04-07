@@ -1,7 +1,6 @@
 package arcticdb
 
 import (
-	"math"
 	"sync"
 
 	"github.com/go-kit/log"
@@ -37,10 +36,13 @@ type DB struct {
 	reg    prometheus.Registerer
 
 	// Databases monotonically increasing transaction id
-	txmtx *sync.RWMutex
-	tx    *atomic.Uint64
-	// active is the list of active transactions TODO: a gc goroutine should prune this list as parts get merged
-	active map[uint64]uint64 // TODO probably not the best choice for active list...
+	tx *atomic.Uint64
+
+	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
+	txPool *TxPool
+
+	// highWatermark maintains the highest consecutively completed tx number
+	highWatermark *atomic.Uint64
 }
 
 func (s *ColumnStore) DB(name string) *DB {
@@ -62,15 +64,15 @@ func (s *ColumnStore) DB(name string) *DB {
 	}
 
 	db = &DB{
-		name:   name,
-		mtx:    &sync.RWMutex{},
-		tables: map[string]*Table{},
-		reg:    prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg),
-
-		active: map[uint64]uint64{},
-		txmtx:  &sync.RWMutex{},
-		tx:     atomic.NewUint64(0),
+		name:          name,
+		mtx:           &sync.RWMutex{},
+		tables:        map[string]*Table{},
+		reg:           prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg),
+		tx:            atomic.NewUint64(0),
+		highWatermark: atomic.NewUint64(0),
 	}
+
+	db.txPool = NewTxPool(db.highWatermark)
 
 	s.dbs[name] = db
 	return db
@@ -119,34 +121,25 @@ func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
 	return p.db.tables[name]
 }
 
-// beginRead starts a read transaction.
+// beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.
 func (db *DB) beginRead() uint64 {
-	return db.tx.Inc()
+	return db.highWatermark.Load()
 }
 
 // begin is an internal function that Tables call to start a transaction for writes.
-func (db *DB) begin() (uint64, func()) {
+// It returns:
+//   the write tx id
+//   The current high watermark
+//   A function to complete the transaction
+func (db *DB) begin() (uint64, uint64, func()) {
 	tx := db.tx.Inc()
-	db.txmtx.Lock()
-	db.active[tx] = math.MaxUint64
-	db.txmtx.Unlock()
-	return tx, func() {
-		// commit the transaction
-		db.txmtx.Lock()
-		db.active[tx] = db.tx.Inc()
-		db.txmtx.Unlock()
+	watermark := db.highWatermark.Load()
+	return tx, watermark, func() {
+		if mark := db.highWatermark.Load(); mark+1 == tx { // This is the next consecutive transaction; increate the watermark
+			db.highWatermark.Inc()
+		}
+
+		// place completed transaction in the waiting pool
+		db.txPool.Prepend(tx)
 	}
-}
-
-// txCompleted returns true if a write transaction has been completed.
-func (db *DB) txCompleted(tx uint64) uint64 {
-	db.txmtx.RLock()
-	defer db.txmtx.RUnlock()
-
-	finaltx, ok := db.active[tx]
-	if !ok {
-		return math.MaxUint64
-	}
-
-	return finaltx
 }

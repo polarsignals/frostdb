@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -346,6 +347,14 @@ func Test_Table_InsertLowest(t *testing.T) {
 	err = table.Insert(buf)
 	require.NoError(t, err)
 
+	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
+	table.Sync()
+	if (*btree.BTree)(table.active.index.Load()).Len() == 1 {
+		table.active.wg.Add(1)
+		table.active.compact((*btree.BTree)(table.active.index.Load()).Min().(*Granule))
+		table.Sync()
+	}
+
 	samples = dynparquet.Samples{{
 		Labels: []dynparquet.Label{
 			{Name: "label14", Value: "value14"},
@@ -454,8 +463,13 @@ func Test_Table_Concurrency(t *testing.T) {
 		}()
 	}
 
-	// TODO probably have them generate until a stop event
 	wg.Wait()
+	table.Sync()
+
+	// Sync has happened so all transactions are complete. We should be able to wait unti the watermark is equal to the the number of tx
+	for watermark := table.db.highWatermark.Load(); watermark < uint64(n*inserts); watermark = table.db.highWatermark.Load() {
+		time.Sleep(time.Millisecond)
+	}
 
 	totalrows := int64(0)
 	err := table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
@@ -623,9 +637,16 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	err = table.Insert(buf)
 	require.NoError(t, err)
 
-	// Now we cheat and reset our tx so that we can perform a read in the past.
-	prev := table.db.tx.Load()
+	table.Sync()
+
+	// Wait for all tx to be committed
+	for watermark := table.db.highWatermark.Load(); watermark != 2; watermark = table.db.highWatermark.Load() {
+		time.Sleep(time.Millisecond)
+	}
+
+	// Now we cheat and reset our tx and watermark
 	table.db.tx.Store(1)
+	table.db.highWatermark.Store(1)
 
 	rows := int64(0)
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
@@ -638,7 +659,8 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	require.Equal(t, int64(3), rows)
 
 	// Now set the tx back to what it was, and perform the same read, we should return all 4 rows
-	table.db.tx.Store(prev)
+	table.db.tx.Store(2)
+	table.db.highWatermark.Store(2)
 
 	rows = int64(0)
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {

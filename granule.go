@@ -184,10 +184,10 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 }
 
 // PartBuffersForTx returns the PartBuffers for the given transaction constraints.
-func (g *Granule) PartBuffersForTx(tx uint64, txCompleted func(uint64) uint64, iterator func(*dynparquet.SerializedBuffer) bool) {
+func (g *Granule) PartBuffersForTx(watermark uint64, iterator func(*dynparquet.SerializedBuffer) bool) {
 	g.parts.Iterate(func(p *Part) bool {
-		// Don't iterate over parts from an newer tx, or from an uncompleted tx, or a completed tx that finished after this tx started
-		if p.tx > tx || txCompleted(p.tx) > tx {
+		// Don't iterate over parts from an uncompleted transaction
+		if p.tx > watermark {
 			return true
 		}
 

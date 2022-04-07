@@ -68,6 +68,9 @@ func TestAggregate(t *testing.T) {
 	err = table.Insert(buf)
 	require.NoError(t, err)
 
+	// Ensure all transactions are completed
+	table.Sync()
+
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
 		db.TableProvider(),
