@@ -2,7 +2,6 @@ package arcticdb
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -37,13 +36,13 @@ type DB struct {
 	reg    prometheus.Registerer
 
 	// Databases monotonically increasing transaction id
-	tx uint64
+	tx *atomic.Uint64
 
 	//TxPool is a waiting area for finished transactions that haven't been added to the watermark
 	txPool *TxPool
 
 	// highWatermark maintains the highest consecutively completed tx number
-	highWatermark uint64
+	highWatermark *atomic.Uint64
 }
 
 func (s *ColumnStore) DB(name string) *DB {
@@ -65,13 +64,15 @@ func (s *ColumnStore) DB(name string) *DB {
 	}
 
 	db = &DB{
-		name:   name,
-		mtx:    &sync.RWMutex{},
-		tables: map[string]*Table{},
-		reg:    prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg),
+		name:          name,
+		mtx:           &sync.RWMutex{},
+		tables:        map[string]*Table{},
+		reg:           prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg),
+		tx:            atomic.NewUint64(0),
+		highWatermark: atomic.NewUint64(0),
 	}
 
-	db.txPool = NewTxPool(&db.highWatermark)
+	db.txPool = NewTxPool(db.highWatermark)
 
 	s.dbs[name] = db
 	return db
@@ -122,7 +123,7 @@ func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
 
 // beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.
 func (db *DB) beginRead() uint64 {
-	return atomic.LoadUint64(&db.highWatermark)
+	return db.highWatermark.Load()
 }
 
 // begin is an internal function that Tables call to start a transaction for writes.
@@ -131,12 +132,12 @@ func (db *DB) beginRead() uint64 {
 //   The current high watermark
 //   A function to complete the transaction
 func (db *DB) begin() (uint64, uint64, func()) {
-	tx := atomic.AddUint64(&db.tx, 1)
-	watermark := atomic.LoadUint64(&db.highWatermark)
+	tx := db.tx.Inc()
+	watermark := db.highWatermark.Load()
 	return tx, watermark, func() {
 
-		if mark := atomic.LoadUint64(&db.highWatermark); mark+1 == tx { // This is the next consecutive transaction; increate the watermark
-			atomic.AddUint64(&db.highWatermark, 1)
+		if mark := db.highWatermark.Load(); mark+1 == tx { // This is the next consecutive transaction; increate the watermark
+			db.highWatermark.Inc()
 		}
 
 		// place completed transaction in the waiting pool

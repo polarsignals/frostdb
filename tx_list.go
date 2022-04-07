@@ -1,23 +1,26 @@
 package arcticdb
 
 import (
-	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"go.uber.org/atomic"
 )
 
 type TxNode struct {
-	next unsafe.Pointer
+	next *atomic.UnsafePointer
 	tx   uint64
 }
 
 type TxPool struct {
-	next unsafe.Pointer
+	next *atomic.UnsafePointer
 }
 
 // NewTxPool returns a new TxPool and starts the pool cleaner routine
-func NewTxPool(watermark *uint64) *TxPool {
-	txpool := &TxPool{}
+func NewTxPool(watermark *atomic.Uint64) *TxPool {
+	txpool := &TxPool{
+		next: atomic.NewUnsafePointer(unsafe.Pointer(nil)),
+	}
 	go txpool.cleaner(watermark)
 	return txpool
 }
@@ -28,9 +31,9 @@ func (l *TxPool) Prepend(tx uint64) *TxNode {
 		tx: tx,
 	}
 	for { // continue until a successful compare and swap occurs
-		next := atomic.LoadPointer(&l.next)
-		node.next = next
-		if atomic.CompareAndSwapPointer(&l.next, next, (unsafe.Pointer)(node)) {
+		next := l.next.Load()
+		node.next = atomic.NewUnsafePointer(next)
+		if l.next.CAS(next, unsafe.Pointer(node)) {
 			return node
 		}
 	}
@@ -38,7 +41,7 @@ func (l *TxPool) Prepend(tx uint64) *TxNode {
 
 // Iterate accesses every node in the list
 func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
-	next := atomic.LoadPointer(&l.next)
+	next := l.next.Load()
 	for {
 		node := (*TxNode)(next)
 		if node == nil {
@@ -47,22 +50,21 @@ func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
 		if iterate(node.tx) {
 			// TODO remove this node
 		}
-		next = atomic.LoadPointer(&node.next)
+		next = node.next.Load()
 	}
 }
 
 // cleaner sweeps the pool periodically, and bubbles up the given watermark.
 // this function does not return
-func (l *TxPool) cleaner(watermark *uint64) {
+func (l *TxPool) cleaner(watermark *atomic.Uint64) {
 	for {
 		ticker := time.NewTicker(time.Millisecond)
 		defer ticker.Stop()
 		select {
 		case <-ticker.C:
 			l.Iterate(func(tx uint64) bool {
-				mark := atomic.LoadUint64(watermark)
-				if mark+1 == tx {
-					atomic.AddUint64(watermark, 1)
+				if watermark.Load()+1 == tx {
+					watermark.Inc()
 					return true // return true to indicate that this node should be removed from the tx list
 				}
 				return false

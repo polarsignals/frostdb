@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -350,9 +349,9 @@ func Test_Table_InsertLowest(t *testing.T) {
 
 	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
 	table.Sync()
-	if table.active.index.Len() == 1 {
+	if (*btree.BTree)(table.active.index.Load()).Len() == 1 {
 		table.active.wg.Add(1)
-		table.active.compact(table.active.index.Min().(*Granule))
+		table.active.compact((*btree.BTree)(table.active.index.Load()).Min().(*Granule))
 		table.Sync()
 	}
 
@@ -475,7 +474,7 @@ func Test_Table_Concurrency(t *testing.T) {
 		}
 		return false
 	})
-	for watermark := atomic.LoadUint64(&table.db.highWatermark); watermark < max; watermark = atomic.LoadUint64(&table.db.highWatermark) {
+	for watermark := table.db.highWatermark.Load(); watermark < max; watermark = table.db.highWatermark.Load() {
 		time.Sleep(time.Millisecond)
 	}
 
@@ -648,13 +647,13 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.Sync()
 
 	// Wait for all tx to be committed
-	for watermark := atomic.LoadUint64(&table.db.highWatermark); watermark != 2; watermark = atomic.LoadUint64(&table.db.highWatermark) {
+	for watermark := table.db.highWatermark.Load(); watermark != 2; watermark = table.db.highWatermark.Load() {
 		time.Sleep(time.Millisecond)
 	}
 
 	// Now we cheat and reset our tx and watermark
-	table.db.tx = 1
-	table.db.highWatermark = 1
+	table.db.tx.Store(1)
+	table.db.highWatermark.Store(1)
 
 	rows := int64(0)
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
@@ -667,8 +666,8 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	require.Equal(t, int64(3), rows)
 
 	// Now set the tx back to what it was, and perform the same read, we should return all 4 rows
-	table.db.tx = 2
-	table.db.highWatermark = 2
+	table.db.tx.Store(2)
+	table.db.highWatermark.Store(2)
 
 	rows = int64(0)
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {

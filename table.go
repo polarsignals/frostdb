@@ -710,7 +710,7 @@ func addPartToGranule(granules []*Granule, p *Part) {
 // abort a compaction transaction
 func (t *TableBlock) abort(commit func(), granule *Granule) {
 	for {
-		if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
+		if granule.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
 			commit()
 			return
 		}
