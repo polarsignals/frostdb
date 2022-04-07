@@ -319,8 +319,7 @@ func (t *TableBlock) Insert(buf *dynparquet.Buffer) error {
 	}
 
 	tx, _, commit := t.table.db.begin()
-	t.wg.Add(1)
-	defer commit(t.wg.Done)
+	defer commit()
 
 	rowsToInsertPerGranule, err := t.splitRowsByGranule(buf)
 	if err != nil {
@@ -346,7 +345,6 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	// Obtain a new tx for this compaction
 	tx, watermark, commit := t.table.db.begin()
-	t.wg.Add(1)
 
 	// Start compaction by adding sentinel node to parts list
 	parts := granule.parts.Sentinel(Compacting)
@@ -447,7 +445,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	// commit our compacted writes.
 	// Do this here to avoid a small race condition where we swap the index, and before what was previously a defer commit() would allow a read
 	// to not find the compacted parts
-	commit(t.wg.Done)
+	commit()
 
 	for {
 		curIndex := t.Index()
@@ -710,10 +708,10 @@ func addPartToGranule(granules []*Granule, p *Part) {
 }
 
 // abort a compaction transaction
-func (t *TableBlock) abort(commit func(func()), granule *Granule) {
+func (t *TableBlock) abort(commit func(), granule *Granule) {
 	for {
 		if atomic.CompareAndSwapUint64(&granule.pruned, 1, 0) { // unmark pruned, so that we can compact it in the future
-			commit(t.wg.Done)
+			commit()
 			return
 		}
 	}

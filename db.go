@@ -3,7 +3,6 @@ package arcticdb
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -40,6 +39,9 @@ type DB struct {
 	// Databases monotonically increasing transaction id
 	tx uint64
 
+	//TxPool is a waiting area for finished transactions that haven't been added to the watermark
+	txPool *TxPool
+
 	// highWatermark maintains the highest consecutively completed tx number
 	highWatermark uint64
 }
@@ -68,6 +70,8 @@ func (s *ColumnStore) DB(name string) *DB {
 		tables: map[string]*Table{},
 		reg:    prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg),
 	}
+
+	db.txPool = NewTxPool(&db.highWatermark)
 
 	s.dbs[name] = db
 	return db
@@ -126,19 +130,16 @@ func (db *DB) beginRead() uint64 {
 //   the write tx id
 //   The current high watermark
 //   A function to complete the transaction
-func (db *DB) begin() (uint64, uint64, func(done func())) {
+func (db *DB) begin() (uint64, uint64, func()) {
 	tx := atomic.AddUint64(&db.tx, 1)
 	watermark := atomic.LoadUint64(&db.highWatermark)
-	return tx, watermark, func(done func()) {
-		// commit the transaction
-		go func() { // TODO: ideally we wouldn't have unbounded go routine creation
-			defer done() // used for determining when transactions have been completed
-			for {
-				if atomic.CompareAndSwapUint64(&db.highWatermark, tx-1, tx) {
-					return
-				}
-				time.Sleep(time.Nanosecond)
-			}
-		}()
+	return tx, watermark, func() {
+
+		if mark := atomic.LoadUint64(&db.highWatermark); mark+1 == tx { // This is the next consecutive transaction; increate the watermark
+			atomic.AddUint64(&db.highWatermark, 1)
+		}
+
+		// place completed transaction in the waiting pool
+		db.txPool.Prepend(tx)
 	}
 }

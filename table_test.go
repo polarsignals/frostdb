@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -464,6 +466,18 @@ func Test_Table_Concurrency(t *testing.T) {
 
 	wg.Wait()
 	table.Sync()
+
+	// Sync has happened so all transactions are complete. We should be able to wait unti the watermark is equal to the highest transaction in the txpool
+	max := uint64(0)
+	table.db.txPool.Iterate(func(tx uint64) bool {
+		if tx > max {
+			max = tx
+		}
+		return false
+	})
+	for watermark := atomic.LoadUint64(&table.db.highWatermark); watermark < max; watermark = atomic.LoadUint64(&table.db.highWatermark) {
+		time.Sleep(time.Millisecond)
+	}
 
 	totalrows := int64(0)
 	err := table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
