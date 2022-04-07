@@ -152,9 +152,9 @@ func TestTable(t *testing.T) {
 	uuid2 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 
 	// One granule with 3 parts
-	require.Equal(t, 1, (*btree.BTree)(table.active.index.Load()).Len())
-	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).parts.total.Load())
-	require.Equal(t, uint64(5), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card.Load())
+	require.Equal(t, 1, table.active.Index().Len())
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).parts.total.Load())
+	require.Equal(t, uint64(5), table.active.Index().Min().(*Granule).card.Load())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
@@ -164,8 +164,8 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
-	}, (*dynparquet.DynamicRow)((*btree.BTree)(table.active.index.Load()).Min().(*Granule).least.Load()).Row)
-	require.Equal(t, 1, (*btree.BTree)(table.active.index.Load()).Len())
+	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).least.Load()).Row)
+	require.Equal(t, 1, table.active.Index().Len())
 }
 
 func Test_Table_GranuleSplit(t *testing.T) {
@@ -272,9 +272,9 @@ func Test_Table_GranuleSplit(t *testing.T) {
 		return nil
 	})
 
-	require.Equal(t, 2, (*btree.BTree)(table.active.index.Load()).Len())
-	require.Equal(t, uint64(2), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card.Load())
-	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Max().(*Granule).card.Load())
+	require.Equal(t, 2, table.active.Index().Len())
+	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).card.Load())
+	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).card.Load())
 }
 
 /*
@@ -349,9 +349,9 @@ func Test_Table_InsertLowest(t *testing.T) {
 
 	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
 	table.Sync()
-	if (*btree.BTree)(table.active.index.Load()).Len() == 1 {
+	if table.active.Index().Len() == 1 {
 		table.active.wg.Add(1)
-		table.active.compact((*btree.BTree)(table.active.index.Load()).Min().(*Granule))
+		table.active.compact(table.active.Index().Min().(*Granule))
 		table.Sync()
 	}
 
@@ -376,9 +376,9 @@ func Test_Table_InsertLowest(t *testing.T) {
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
-	require.Equal(t, 2, (*btree.BTree)(table.active.index.Load()).Len())
-	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card.Load()) // [10,11]
-	require.Equal(t, uint64(2), (*btree.BTree)(table.active.index.Load()).Max().(*Granule).card.Load()) // [12,13,14]
+	require.Equal(t, 2, table.active.Index().Len())
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [10,11]
+	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).card.Load()) // [12,13,14]
 
 	// Insert a new column that is the lowest column yet; expect it to be added to the minimum column
 	samples = dynparquet.Samples{{
@@ -405,9 +405,9 @@ func Test_Table_InsertLowest(t *testing.T) {
 		return nil
 	})
 
-	require.Equal(t, 2, (*btree.BTree)(table.active.index.Load()).Len())
-	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Min().(*Granule).card.Load()) // [1,10,11]
-	require.Equal(t, uint64(3), (*btree.BTree)(table.active.index.Load()).Max().(*Granule).card.Load()) // [12,13,14]
+	require.Equal(t, 2, table.active.Index().Len())
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [1,10,11]
+	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).card.Load()) // [12,13,14]
 }
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
