@@ -707,7 +707,7 @@ func addPartToGranule(granules []*Granule, p *Part) {
 	}
 }
 
-// abort a compaction transaction
+// abort a compaction transaction.
 func (t *TableBlock) abort(commit func(), granule *Granule) {
 	for {
 		if granule.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future

@@ -38,7 +38,7 @@ type DB struct {
 	// Databases monotonically increasing transaction id
 	tx *atomic.Uint64
 
-	//TxPool is a waiting area for finished transactions that haven't been added to the watermark
+	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
 	txPool *TxPool
 
 	// highWatermark maintains the highest consecutively completed tx number
@@ -135,7 +135,6 @@ func (db *DB) begin() (uint64, uint64, func()) {
 	tx := db.tx.Inc()
 	watermark := db.highWatermark.Load()
 	return tx, watermark, func() {
-
 		if mark := db.highWatermark.Load(); mark+1 == tx { // This is the next consecutive transaction; increate the watermark
 			db.highWatermark.Inc()
 		}
