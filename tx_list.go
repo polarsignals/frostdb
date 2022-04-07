@@ -65,9 +65,10 @@ func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
 // cleaner sweeps the pool periodically, and bubbles up the given watermark.
 // this function does not return.
 func (l *TxPool) cleaner(watermark *atomic.Uint64) {
+	ticker := time.NewTicker(time.Millisecond * 10)
+	defer ticker.Stop()
+
 	for {
-		ticker := time.NewTicker(time.Millisecond * 10)
-		defer ticker.Stop()
 		select {
 		case <-ticker.C:
 			l.Iterate(func(tx uint64) bool {
