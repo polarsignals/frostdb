@@ -1,6 +1,7 @@
 package arcticdb
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/go-kit/log"
@@ -78,12 +79,12 @@ func (s *ColumnStore) DB(name string) *DB {
 	return db
 }
 
-func (db *DB) Table(name string, config *TableConfig, logger log.Logger) *Table {
+func (db *DB) Table(name string, config *TableConfig, logger log.Logger) (*Table, error) {
 	db.mtx.RLock()
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
 	if ok {
-		return table
+		return table, nil
 	}
 
 	db.mtx.Lock()
@@ -93,12 +94,16 @@ func (db *DB) Table(name string, config *TableConfig, logger log.Logger) *Table 
 	// name wasn't concurrently created.
 	table, ok = db.tables[name]
 	if ok {
-		return table
+		return table, nil
 	}
 
-	table = newTable(db, name, config, db.reg, logger)
+	var err error
+	table, err = newTable(db, name, config, db.reg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create table: %w", err)
+	}
 	db.tables[name] = table
-	return table
+	return table, nil
 }
 
 func (db *DB) TableProvider() *DBTableProvider {

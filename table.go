@@ -93,7 +93,7 @@ func newTable(
 	tableConfig *TableConfig,
 	reg prometheus.Registerer,
 	logger log.Logger,
-) *Table {
+) (*Table, error) {
 	reg = prometheus.WrapRegistererWith(prometheus.Labels{"table": name}, reg)
 
 	t := &Table{
@@ -126,7 +126,11 @@ func newTable(
 		},
 	}
 
-	t.active = newTableBlock(t)
+	var err error
+	t.active, err = newTableBlock(t)
+	if err != nil {
+		return nil, err
+	}
 
 	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "index_size",
@@ -142,15 +146,19 @@ func newTable(
 		return float64(t.ActiveBlock().Size())
 	})
 
-	return t
+	return t, nil
 }
 
-func (t *Table) RotateBlock() {
-	tb := newTableBlock(t)
+func (t *Table) RotateBlock() error {
+	tb, err := newTableBlock(t)
+	if err != nil {
+		return err
+	}
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
 	t.active = tb
+	return nil
 }
 
 func (t *Table) ActiveBlock() *TableBlock {
@@ -177,7 +185,9 @@ func (t *Table) Insert(buf *dynparquet.Buffer) error {
 
 	if block.Size() > t.config.activeMemoryLimit {
 		level.Debug(t.logger).Log("msg", "rotating block")
-		t.RotateBlock()
+		if err := t.RotateBlock(); err != nil {
+			return fmt.Errorf("failed to rotate block: %w", err)
+		}
 		level.Debug(t.logger).Log("msg", "done rotating block")
 		go func() {
 			level.Debug(t.logger).Log("msg", "syncing block")
@@ -283,7 +293,7 @@ func (t *Table) SchemaIterator(
 	return err
 }
 
-func newTableBlock(table *Table) *TableBlock {
+func newTableBlock(table *Table) (*TableBlock, error) {
 	index := btree.New(2) // TODO make the degree a setting
 	tb := &TableBlock{
 		table: table,
@@ -293,10 +303,13 @@ func newTableBlock(table *Table) *TableBlock {
 		size:  atomic.NewInt64(0),
 	}
 
-	g := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)
+	g, err := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)
+	if err != nil {
+		return nil, fmt.Errorf("new granule failed: %w", err)
+	}
 	(*btree.BTree)(tb.index.Load()).ReplaceOrInsert(g)
 
-	return tb
+	return tb, nil
 }
 
 // Sync the table. This will return once all split operations have completed.
@@ -327,7 +340,11 @@ func (t *TableBlock) Insert(buf *dynparquet.Buffer) error {
 	}
 
 	for granule, serBuf := range rowsToInsertPerGranule {
-		if granule.AddPart(NewPart(tx, serBuf)) >= uint64(t.table.config.granuleSize) {
+		card, err := granule.AddPart(NewPart(tx, serBuf))
+		if err != nil {
+			return fmt.Errorf("failed to add part to granule: %w", err)
+		}
+		if card >= uint64(t.table.config.granuleSize) {
 			t.wg.Add(1)
 			go t.compact(granule)
 		}
@@ -376,14 +393,18 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	merge, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
-		panic(err)
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "failed to merge dynamic row groups", "err", err)
+		return
 	}
 
 	b := bytes.NewBuffer(nil)
 	cols := merge.DynamicColumns()
 	w, err := t.table.config.schema.NewWriter(b, cols)
 	if err != nil {
-		panic(err)
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "failed to create new schema writer", "err", err)
+		return
 	}
 
 	rows := merge.Rows()
@@ -394,18 +415,24 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 			break
 		}
 		if err != nil {
-			panic(err)
+			t.abort(commit, granule)
+			level.Error(t.logger).Log("msg", "error reading rows", "err", err)
+			return
 		}
 		err = w.WriteRow(row)
 		if err != nil {
-			panic(err)
+			t.abort(commit, granule)
+			level.Error(t.logger).Log("msg", "error writing rows", "err", err)
+			return
 		}
 		n++
 	}
 
 	err = w.Close()
 	if err != nil {
-		panic(err)
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "error closing schema writer", "err", err)
+		return
 	}
 
 	if n < t.table.config.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
@@ -415,19 +442,31 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
 	if err != nil {
-		panic(err)
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "failed to create reader from bytes", "err", err)
+		return
 	}
 
-	g := NewGranule(t.table.metrics.granulesCreated, t.table.config, NewPart(tx, serBuf))
+	g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, NewPart(tx, serBuf))
+	if err != nil {
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "failed to create granule", "err", err)
+		return
+	}
 
 	granules, err := g.split(tx, t.table.config.granuleSize/2) // TODO magic numbers
 	if err != nil {
-		panic(err)
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "failed to split granule", "err", err)
+		return
 	}
 
 	// add remaining parts onto new granules
 	for _, p := range remain {
-		addPartToGranule(granules, p)
+		err = addPartToGranule(granules, p)
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
+		return
 	}
 
 	// set the newGranules pointer, so new writes will propogate into these new granules
@@ -438,9 +477,17 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	// Now we need to copy any new parts that happened while we were compacting
 	parts.Iterate(func(p *Part) bool {
-		addPartToGranule(granules, p)
+		err = addPartToGranule(granules, p)
+		if err != nil {
+			return false
+		}
 		return true
 	})
+	if err != nil {
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
+		return
+	}
 
 	// commit our compacted writes.
 	// Do this here to avoid a small race condition where we swap the index, and before what was previously a defer commit() would allow a read
@@ -681,21 +728,23 @@ func (t *TableBlock) compact(g *Granule) {
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
-func addPartToGranule(granules []*Granule, p *Part) {
+func addPartToGranule(granules []*Granule, p *Part) error {
 	row, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 	if err == io.EOF {
-		return
+		return nil
 	}
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	var prev *Granule
 	for _, g := range granules {
 		if g.tableConfig.schema.RowLessThan(row, g.Least()) {
 			if prev != nil {
-				prev.AddPart(p)
-				return
+				if _, err := prev.AddPart(p); err != nil {
+					return err
+				}
+				return nil
 			}
 		}
 		prev = g
@@ -703,8 +752,12 @@ func addPartToGranule(granules []*Granule, p *Part) {
 
 	if prev != nil {
 		// Save part to prev
-		prev.AddPart(p)
+		if _, err := prev.AddPart(p); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // abort a compaction transaction.
