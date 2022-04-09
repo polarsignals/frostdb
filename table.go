@@ -296,11 +296,12 @@ func (t *Table) SchemaIterator(
 func newTableBlock(table *Table) (*TableBlock, error) {
 	index := btree.New(2) // TODO make the degree a setting
 	tb := &TableBlock{
-		table: table,
-		index: atomic.NewUnsafePointer(unsafe.Pointer(index)),
-		wg:    &sync.WaitGroup{},
-		mtx:   &sync.Mutex{},
-		size:  atomic.NewInt64(0),
+		table:  table,
+		index:  atomic.NewUnsafePointer(unsafe.Pointer(index)),
+		wg:     &sync.WaitGroup{},
+		mtx:    &sync.Mutex{},
+		size:   atomic.NewInt64(0),
+		logger: table.logger,
 	}
 
 	g, err := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)
