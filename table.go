@@ -296,11 +296,12 @@ func (t *Table) SchemaIterator(
 func newTableBlock(table *Table) (*TableBlock, error) {
 	index := btree.New(2) // TODO make the degree a setting
 	tb := &TableBlock{
-		table: table,
-		index: atomic.NewUnsafePointer(unsafe.Pointer(index)),
-		wg:    &sync.WaitGroup{},
-		mtx:   &sync.Mutex{},
-		size:  atomic.NewInt64(0),
+		table:  table,
+		index:  atomic.NewUnsafePointer(unsafe.Pointer(index)),
+		wg:     &sync.WaitGroup{},
+		mtx:    &sync.Mutex{},
+		size:   atomic.NewInt64(0),
+		logger: table.logger,
 	}
 
 	g, err := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)
@@ -463,10 +464,12 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	// add remaining parts onto new granules
 	for _, p := range remain {
-		err = addPartToGranule(granules, p)
-		t.abort(commit, granule)
-		level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
-		return
+		err := addPartToGranule(granules, p)
+		if err != nil {
+			t.abort(commit, granule)
+			level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
+			return
+		}
 	}
 
 	// set the newGranules pointer, so new writes will propogate into these new granules
