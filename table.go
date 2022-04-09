@@ -464,10 +464,12 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	// add remaining parts onto new granules
 	for _, p := range remain {
-		err = addPartToGranule(granules, p)
-		t.abort(commit, granule)
-		level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
-		return
+		err := addPartToGranule(granules, p)
+		if err != nil {
+			t.abort(commit, granule)
+			level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
+			return
+		}
 	}
 
 	// set the newGranules pointer, so new writes will propogate into these new granules
