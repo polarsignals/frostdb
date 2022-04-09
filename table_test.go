@@ -43,7 +43,8 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 
 	c := New(nil)
 	db := c.DB("test")
-	table := db.Table("test", config, newTestLogger(t))
+	table, err := db.Table("test", config, newTestLogger(t))
+	require.NoError(t, err)
 
 	return table
 }

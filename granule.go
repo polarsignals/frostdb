@@ -34,7 +34,7 @@ type Granule struct {
 	newGranules []*Granule
 }
 
-func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) *Granule {
+func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
 	g := &Granule{
 		granulesCreated: granulesCreated,
 		parts:           NewPartList(nil, 0, None),
@@ -52,29 +52,27 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		// Since we assume a part is sorted, we need only to look at the first row in each Part
 		row, err := firstPart.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 		if err != nil {
-			// TODO(brancz): handle error
-			panic(err)
+			return nil, err
 		}
 		g.least.Store(unsafe.Pointer(row))
 	}
 
 	granulesCreated.Inc()
-	return g
+	return g, nil
 }
 
 // AddPart returns the new cardinality of the Granule.
-func (g *Granule) AddPart(p *Part) uint64 {
+func (g *Granule) AddPart(p *Part) (uint64, error) {
 	rows := p.Buf.NumRows()
 	if rows == 0 {
-		return g.card.Load()
+		return g.card.Load(), nil
 	}
 	node := g.parts.Prepend(p)
 
 	newcard := g.card.Add(uint64(p.Buf.NumRows()))
 	r, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 	if err != nil {
-		// TODO(brancz): handle error
-		panic(err)
+		return 0, err
 	}
 
 	for {
@@ -90,10 +88,13 @@ func (g *Granule) AddPart(p *Part) uint64 {
 
 	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
 	if node.sentinel == Compacted {
-		addPartToGranule(g.newGranules, p)
+		err := addPartToGranule(g.newGranules, p)
+		if err != nil {
+			return 0, err
+		}
 	}
 
-	return newcard
+	return newcard, nil
 }
 
 // split a granule into n sized granules. With the last granule containing the remainder.
@@ -156,7 +157,11 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 				if err != nil {
 					return nil, fmt.Errorf("create reader: %w", err)
 				}
-				granules = append(granules, NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r)))
+				gran, err := NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r))
+				if err != nil {
+					return nil, fmt.Errorf("new granule failed: %w", err)
+				}
+				granules = append(granules, gran)
 				b = bytes.NewBuffer(nil)
 				w, err = g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
 				if err != nil {
@@ -177,7 +182,11 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 		if err != nil {
 			return nil, fmt.Errorf("create last reader: %w", err)
 		}
-		granules = append(granules, NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r)))
+		gran, err := NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r))
+		if err != nil {
+			return nil, fmt.Errorf("new granule failed: %w", err)
+		}
+		granules = append(granules, gran)
 	}
 
 	return granules, nil
