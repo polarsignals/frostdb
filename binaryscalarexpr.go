@@ -16,9 +16,7 @@ type ColumnRef struct {
 }
 
 func (c *ColumnRef) Column(rg dynparquet.DynamicRowGroup) (parquet.ColumnChunk, bool, error) {
-	s := rg.Schema()
-	children := s.ChildNames()
-	columnIndex := findColumnIndex(children, c.ColumnName)
+	columnIndex := findColumnIndex(rg.Schema(), c.ColumnName)
 	var columnChunk parquet.ColumnChunk
 	// columnChunk can be nil if the column is not present in the row group.
 	if columnIndex != -1 {
@@ -28,9 +26,9 @@ func (c *ColumnRef) Column(rg dynparquet.DynamicRowGroup) (parquet.ColumnChunk, 
 	return columnChunk, columnIndex != -1, nil
 }
 
-func findColumnIndex(children []string, columnName string) int {
-	for i, child := range children {
-		if child == columnName {
+func findColumnIndex(s *parquet.Schema, columnName string) int {
+	for i, field := range s.Fields() {
+		if field.Name() == columnName {
 			return i
 		}
 	}

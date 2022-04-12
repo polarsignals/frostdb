@@ -1,6 +1,7 @@
 package dynparquet
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"sort"
@@ -361,6 +362,27 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 
 // NewWriter returns a new parquet writer with a concrete parquet schema
 // generated using the given concrete dynamic column names.
+func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
+	b := bytes.NewBuffer(nil)
+	w, err := s.NewWriter(b, buffer.DynamicColumns())
+	if err != nil {
+		return nil, fmt.Errorf("create writer: %w", err)
+	}
+
+	_, err = parquet.CopyRows(w, buffer.Rows())
+	if err != nil {
+		return nil, fmt.Errorf("copy rows: %w", err)
+	}
+
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("close writer: %w", err)
+	}
+
+	return b.Bytes(), nil
+}
+
+// NewWriter returns a new parquet writer with a concrete parquet schema
+// generated using the given concrete dynamic column names.
 func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*parquet.Writer, error) {
 	ps, err := s.parquetSchema(dynamicColumns)
 	if err != nil {
@@ -517,10 +539,19 @@ func newDynamicRowGroupMergeAdapter(
 		mergedDynamicColumns: mergedDynamicColumns,
 		originalRowGroup:     originalRowGroup,
 		indexMapping: mapMergedColumnNameIndexes(
-			schema.ChildNames(),
-			originalRowGroup.Schema().ChildNames(),
+			schemaRootFieldNames(schema),
+			schemaRootFieldNames(originalRowGroup.Schema()),
 		),
 	}
+}
+
+func schemaRootFieldNames(schema *parquet.Schema) []string {
+	fields := schema.Fields()
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		names = append(names, field.Name())
+	}
+	return names
 }
 
 // mapMergedColumnNameIndexes maps the column indexes of the original row group
@@ -559,17 +590,26 @@ func (a *dynamicRowGroupMergeAdapter) NumRows() int64 {
 // Returns the number of leaf columns in the group.
 func (a *dynamicRowGroupMergeAdapter) NumColumns() int {
 	// This only works because we currently only support flat schemas.
-	return a.schema.NumChildren()
+	return len(a.schema.Fields())
+}
+
+func FieldByName(schema *parquet.Schema, name string) parquet.Field {
+	for _, field := range schema.Fields() {
+		if field.Name() == name {
+			return field
+		}
+	}
+	return nil
 }
 
 // Returns the leaf column at the given index in the group. Searches for the
 // same column in the original batch. If not found returns a column chunk
 // filled with nulls.
 func (a *dynamicRowGroupMergeAdapter) Column(i int) parquet.ColumnChunk {
-	colName := a.schema.ChildNames()[i]
+	field := a.schema.Fields()[i]
 	colIndex := a.indexMapping[i]
 	if colIndex == -1 {
-		return NewNilColumnChunk(a.schema.ChildByName(colName).Type(), i, int(a.NumRows()))
+		return NewNilColumnChunk(FieldByName(a.schema, field.Name()).Type(), i, int(a.NumRows()))
 	}
 
 	return &remappedColumnChunk{

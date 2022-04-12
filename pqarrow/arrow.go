@@ -46,11 +46,12 @@ func rowBasedParquetRowGroupToArrowRecord(
 ) (arrow.Record, error) {
 	s := rg.Schema()
 
-	children := s.ChildNames()
-	fields := make([]arrow.Field, 0, len(children))
-	newWriterFuncs := make([]func(array.Builder, int) valueWriter, 0, len(children))
-	for _, child := range children {
-		node := s.ChildByName(child)
+	parquetFields := s.Fields()
+	fields := make([]arrow.Field, 0, len(parquetFields))
+	newWriterFuncs := make([]func(array.Builder, int) valueWriter, 0, len(parquetFields))
+	for _, parquetField := range parquetFields {
+		name := parquetField.Name()
+		node := dynparquet.FieldByName(s, name)
 		typ, newValueWriter := parquetNodeToType(node)
 		nullable := false
 		if node.Optional() {
@@ -63,13 +64,13 @@ func rowBasedParquetRowGroupToArrowRecord(
 		newWriterFuncs = append(newWriterFuncs, newValueWriter)
 
 		fields = append(fields, arrow.Field{
-			Name:     child,
+			Name:     name,
 			Type:     typ,
 			Nullable: nullable,
 		})
 	}
 
-	writers := make([]valueWriter, len(children))
+	writers := make([]valueWriter, len(parquetFields))
 	b := array.NewRecordBuilder(pool, arrow.NewSchema(fields, nil))
 	for i, column := range b.Fields() {
 		writers[i] = newWriterFuncs[i](column, 0)
@@ -105,7 +106,7 @@ func contiguousParquetRowGroupToArrowRecord(
 	distinctColumns []logicalplan.ColumnMatcher,
 ) (arrow.Record, error) {
 	s := rg.Schema()
-	children := s.ChildNames()
+	parquetFields := s.Fields()
 
 	if len(distinctColumns) == 1 && filterExpr == nil {
 		// We can use the faster path for a single distinct column by just
@@ -113,11 +114,12 @@ func contiguousParquetRowGroupToArrowRecord(
 		fields := make([]arrow.Field, 0, 1)
 		cols := make([]arrow.Array, 0, 1)
 		rows := int64(0)
-		for i, child := range children {
-			if distinctColumns[0].Match(child) {
+		for i, field := range parquetFields {
+			name := field.Name()
+			if distinctColumns[0].Match(name) {
 				typ, nullable, array, err := parquetColumnToArrowArray(
 					pool,
-					s.ChildByName(child),
+					field,
 					rg.Column(i),
 					true,
 				)
@@ -125,7 +127,7 @@ func contiguousParquetRowGroupToArrowRecord(
 					return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
 				}
 				fields = append(fields, arrow.Field{
-					Name:     child,
+					Name:     name,
 					Type:     typ,
 					Nullable: nullable,
 				})
@@ -138,14 +140,14 @@ func contiguousParquetRowGroupToArrowRecord(
 		return array.NewRecord(schema, cols, rows), nil
 	}
 
-	fields := make([]arrow.Field, 0, len(children))
-	cols := make([]array.Interface, 0, len(children))
+	fields := make([]arrow.Field, 0, len(parquetFields))
+	cols := make([]array.Interface, 0, len(parquetFields))
 
-	for i, child := range children {
-		if includedProjection(projections, child) {
+	for i, parquetField := range parquetFields {
+		if includedProjection(projections, parquetField.Name()) {
 			typ, nullable, array, err := parquetColumnToArrowArray(
 				pool,
-				s.ChildByName(child),
+				parquetField,
 				rg.Column(i),
 				false,
 			)
@@ -153,7 +155,7 @@ func contiguousParquetRowGroupToArrowRecord(
 				return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
 			}
 			fields = append(fields, arrow.Field{
-				Name:     child,
+				Name:     parquetField.Name(),
 				Type:     typ,
 				Nullable: nullable,
 			})

@@ -12,25 +12,47 @@ import (
 )
 
 type ColumnStore struct {
-	mtx *sync.RWMutex
-	dbs map[string]*DB
-	reg prometheus.Registerer
+	mtx              *sync.RWMutex
+	dbs              map[string]*DB
+	reg              prometheus.Registerer
+	granuleSize      int
+	activeMemorySize int64
 }
 
-func New(reg prometheus.Registerer) *ColumnStore {
+func New(
+	reg prometheus.Registerer,
+	granuleSize int,
+	activeMemorySize int64,
+) *ColumnStore {
 	if reg == nil {
 		reg = prometheus.NewRegistry()
 	}
 
 	return &ColumnStore{
-		mtx: &sync.RWMutex{},
-		dbs: map[string]*DB{},
-		reg: reg,
+		mtx:              &sync.RWMutex{},
+		dbs:              map[string]*DB{},
+		reg:              reg,
+		granuleSize:      granuleSize,
+		activeMemorySize: activeMemorySize,
 	}
 }
 
+func (s *ColumnStore) Close() error {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	for _, db := range s.dbs {
+		if err := db.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 type DB struct {
-	name string
+	columnStore *ColumnStore
+	name        string
 
 	mtx    *sync.RWMutex
 	tables map[string]*Table
@@ -46,12 +68,12 @@ type DB struct {
 	highWatermark *atomic.Uint64
 }
 
-func (s *ColumnStore) DB(name string) *DB {
+func (s *ColumnStore) DB(name string) (*DB, error) {
 	s.mtx.RLock()
 	db, ok := s.dbs[name]
 	s.mtx.RUnlock()
 	if ok {
-		return db
+		return db, nil
 	}
 
 	s.mtx.Lock()
@@ -61,10 +83,11 @@ func (s *ColumnStore) DB(name string) *DB {
 	// wasn't concurrently created.
 	db, ok = s.dbs[name]
 	if ok {
-		return db
+		return db, nil
 	}
 
 	db = &DB{
+		columnStore:   s,
 		name:          name,
 		mtx:           &sync.RWMutex{},
 		tables:        map[string]*Table{},
@@ -76,7 +99,11 @@ func (s *ColumnStore) DB(name string) *DB {
 	db.txPool = NewTxPool(db.highWatermark)
 
 	s.dbs[name] = db
-	return db
+	return db, nil
+}
+
+func (db *DB) Close() error {
+	return nil
 }
 
 func (db *DB) Table(name string, config *TableConfig, logger log.Logger) (*Table, error) {
@@ -97,11 +124,11 @@ func (db *DB) Table(name string, config *TableConfig, logger log.Logger) (*Table
 		return table, nil
 	}
 
-	var err error
-	table, err = newTable(db, name, config, db.reg, logger)
+	table, err := newTable(db, name, config, db.reg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
+
 	db.tables[name] = table
 	return table, nil
 }

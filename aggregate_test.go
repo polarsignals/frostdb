@@ -17,12 +17,15 @@ import (
 func TestAggregate(t *testing.T) {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
+	)
+
+	c := New(
+		nil,
 		8192,
 		512*1024*1024,
 	)
-
-	c := New(nil)
-	db := c.DB("test")
+	db, err := c.DB("test")
+	require.NoError(t, err)
 	table, err := db.Table("test", config, newTestLogger(t))
 	require.NoError(t, err)
 
@@ -66,7 +69,7 @@ func TestAggregate(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	// Ensure all transactions are completed
@@ -101,12 +104,15 @@ func TestAggregate(t *testing.T) {
 func TestAggregateNils(t *testing.T) {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
+	)
+
+	c := New(
+		nil,
 		8192,
 		512*1024*1024,
 	)
-
-	c := New(nil)
-	db := c.DB("test")
+	db, err := c.DB("test")
+	require.NoError(t, err)
 	table, err := db.Table("test", config, newTestLogger(t))
 	require.NoError(t, err)
 
@@ -145,7 +151,7 @@ func TestAggregateNils(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	engine := query.NewEngine(
@@ -177,12 +183,15 @@ func TestAggregateNils(t *testing.T) {
 func TestAggregateInconsistentSchema(t *testing.T) {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
+	)
+
+	c := New(
+		nil,
 		8192,
 		512*1024*1024,
 	)
-
-	c := New(nil)
-	db := c.DB("test")
+	db, err := c.DB("test")
+	require.NoError(t, err)
 	table, err := db.Table("test", config, newTestLogger(t))
 	require.NoError(t, err)
 
@@ -222,7 +231,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		buf, err := samples[i : i+1].ToBuffer(table.Schema())
 		require.NoError(t, err)
 
-		err = table.Insert(buf)
+		_, err = table.InsertBuffer(buf)
 		require.NoError(t, err)
 	}
 
