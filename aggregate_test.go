@@ -173,3 +173,81 @@ func TestAggregateNils(t *testing.T) {
 	}
 	require.Equal(t, []int64{1, 5}, cols[len(cols)-1].(*array.Int64).Int64Values())
 }
+
+func TestAggregateInconsistentSchema(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+		8192,
+		512*1024*1024,
+	)
+
+	c := New(nil)
+	db := c.DB("test")
+	table, err := db.Table("test", config, newTestLogger(t))
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	for i := range samples {
+		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		require.NoError(t, err)
+
+		err = table.Insert(buf)
+		require.NoError(t, err)
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	var res arrow.Record
+	err = engine.ScanTable("test").
+		Aggregate(
+			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
+			logicalplan.Col("labels.label2"),
+		).Execute(func(r arrow.Record) error {
+		r.Retain()
+		res = r
+		return nil
+	})
+	require.NoError(t, err)
+	defer res.Release()
+
+	cols := res.Columns()
+	require.Equal(t, 2, len(cols))
+	for i, col := range cols {
+		require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
+	}
+	require.Equal(t, []int64{5, 1}, cols[len(cols)-1].(*array.Int64).Int64Values())
+}

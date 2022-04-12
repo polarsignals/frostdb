@@ -315,16 +315,25 @@ func appendValue(b array.Builder, arr arrow.Array, i int) error {
 
 func (a *HashAggregate) Finish() error {
 	numCols := len(a.groupByCols) + 1
+	numRows := len(a.arraysToAggregate)
 
 	groupByFields := make([]arrow.Field, 0, numCols)
 	groupByArrays := make([]arrow.Array, 0, numCols)
 	for fieldName, groupByCol := range a.groupByCols {
+		for groupByCol.Len() < numRows {
+			// It's possible that columns that are grouped by haven't occurred
+			// in all aggregated rows which causes them to not be of equal size
+			// as the total number of rows so we need to backfill. This happens
+			// for example when there are different sets of dynamic columns in
+			// different row-groups of the table.
+			groupByCol.AppendNull()
+		}
 		arr := groupByCol.NewArray()
 		groupByFields = append(groupByFields, arrow.Field{Name: fieldName, Type: arr.DataType()})
 		groupByArrays = append(groupByArrays, arr)
 	}
 
-	arrs := make([]arrow.Array, 0, len(a.arraysToAggregate))
+	arrs := make([]arrow.Array, 0, numRows)
 	for _, arr := range a.arraysToAggregate {
 		arrs = append(arrs, arr.NewArray())
 	}
@@ -335,11 +344,12 @@ func (a *HashAggregate) Finish() error {
 	}
 
 	aggregateField := arrow.Field{Name: a.resultColumnName, Type: aggregateArray.DataType()}
+	cols := append(groupByArrays, aggregateArray)
 
 	return a.nextCallback(array.NewRecord(
 		arrow.NewSchema(append(groupByFields, aggregateField), nil),
-		append(groupByArrays, aggregateArray),
-		int64(aggregateArray.Len()),
+		cols,
+		int64(numRows),
 	))
 }
 
