@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/RoaringBitmap/roaring v0.9.4
-	github.com/apache/arrow/go/v8 v8.0.0-20220330100019-c515a6924f60
+	github.com/apache/arrow/go/v8 v8.0.0-20220414050214-b61fb727fcc9
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140
 	github.com/go-kit/log v0.2.0
 	github.com/google/btree v1.0.1
@@ -40,5 +40,3 @@ require (
 	google.golang.org/protobuf v1.27.1 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c // indirect
 )
-
-replace github.com/apache/arrow/go/v8 => github.com/brancz/arrow/go/v8 v8.0.0-20220331075317-4a90e3994fc9
