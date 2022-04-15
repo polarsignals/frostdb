@@ -13,9 +13,8 @@ type DynamicRow struct {
 }
 
 // Intersection returns the intersection of two schemas
-// This is useful when comparing two rows of different schemas to only compare the columns that intersect
+// This is useful when comparing two rows of different schemas to only compare the columns that intersect.
 func Intersection(a, b *parquet.Schema) *parquet.Schema {
-
 	aChildren := a.ChildNames()
 	bChildren := b.ChildNames()
 	aChildMap := map[string]bool{}

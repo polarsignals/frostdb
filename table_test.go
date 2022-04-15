@@ -942,7 +942,7 @@ func Test_Table_AscendRange(t *testing.T) {
 }
 
 // Test_Table_AscendRange_NoIntersection performs an ascned range with a search schema that has no consecutive overlap with the soreting columns.
-// What this means is that we can't make a valid comparison, and have to return all objects in the tree
+// What this means is that we can't make a valid comparison, and have to return all objects in the tree.
 func Test_Table_AscendRange_NoIntersection(t *testing.T) {
 	table := basicTable(t, 4)
 
@@ -1024,6 +1024,7 @@ func Test_Table_AscendRange_NoIntersection(t *testing.T) {
 		logicalplan.LessThan(bufToRow(t, lessBuf, pivotSchema)),
 		logicalplan.GreaterOrEqual(bufToRow(t, greaterOrEqualBuf, pivotSchema)),
 	)
+	require.NoError(t, err)
 
 	var row2 int64
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
