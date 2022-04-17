@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -85,6 +86,7 @@ type tableMetrics struct {
 	rowsInserted     prometheus.Counter
 	zeroRowsInserted prometheus.Counter
 	rowInsertSize    prometheus.Histogram
+	insertDuration   prometheus.Histogram
 }
 
 func newTable(
@@ -122,6 +124,11 @@ func newTable(
 				Name:    "row_insert_size",
 				Help:    "Size of batch inserts into table.",
 				Buckets: prometheus.ExponentialBuckets(1, 2, 10),
+			}),
+			insertDuration: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+				Name:    "row_insert_duration_ms",
+				Help:    "Duration of batch inserts into table in milliseconds.",
+				Buckets: prometheus.ExponentialBuckets(1, 3, 10),
 			}),
 		},
 	}
@@ -323,9 +330,11 @@ func (t *TableBlock) Sync() {
 }
 
 func (t *TableBlock) Insert(buf *dynparquet.Buffer) error {
+	start := time.Now()
 	defer func() {
 		t.table.metrics.rowsInserted.Add(float64(buf.NumRows()))
 		t.table.metrics.rowInsertSize.Observe(float64(buf.NumRows()))
+		t.table.metrics.insertDuration.Observe(float64(time.Since(start).Milliseconds()))
 	}()
 
 	if buf.NumRows() == 0 {
@@ -650,7 +659,6 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.Buffer) (map[*Granule]*d
 	writerByGranule := map[*Granule]*parquet.Writer{}
 	bufByGranule := map[*Granule]*bytes.Buffer{}
 
-	// TODO: we might be able to do ascend less than or ascend greater than here?
 	rows := buf.DynamicRows()
 	var prev *Granule
 	exhaustedAllRows := false
@@ -662,7 +670,12 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.Buffer) (map[*Granule]*d
 
 	var ascendErr error
 
-	index.Ascend(func(i btree.Item) bool {
+	index.AscendGreaterOrEqual(&Granule{
+		isGreaterThan: true,
+		least:         atomic.NewUnsafePointer(unsafe.Pointer(row)),
+		parts:         &PartList{},
+		tableConfig:   t.table.config,
+	}, func(i btree.Item) bool {
 		g := i.(*Granule)
 
 		for {
@@ -710,6 +723,9 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.Buffer) (map[*Granule]*d
 	}
 
 	if !exhaustedAllRows {
+		if prev == nil {
+			prev = index.Max().(*Granule)
+		}
 		w, ok := writerByGranule[prev]
 		if !ok {
 			b := bytes.NewBuffer(nil)
