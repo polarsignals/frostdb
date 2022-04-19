@@ -145,6 +145,8 @@ func hashCombine(lhs, rhs uint64) uint64 {
 
 func hashArray(arr arrow.Array) []uint64 {
 	switch arr.(type) {
+	case *array.String:
+		return hashStringArray(arr.(*array.String))
 	case *array.Binary:
 		return hashBinaryArray(arr.(*array.Binary))
 	case *array.Int64:
@@ -159,6 +161,16 @@ func hashBinaryArray(arr *array.Binary) []uint64 {
 	for i := 0; i < arr.Len(); i++ {
 		if !arr.IsNull(i) {
 			res[i] = metro.Hash64(arr.Value(i), 0)
+		}
+	}
+	return res
+}
+
+func hashStringArray(arr *array.String) []uint64 {
+	res := make([]uint64, arr.Len())
+	for i := 0; i < arr.Len(); i++ {
+		if !arr.IsNull(i) {
+			res[i] = metro.Hash64([]byte(arr.Value(i)), 0)
 		}
 	}
 	return res

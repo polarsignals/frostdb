@@ -7,7 +7,6 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
-	"github.com/dgryski/go-metro"
 
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
@@ -35,12 +34,14 @@ func (d *Distinction) SetNextCallback(callback func(r arrow.Record) error) {
 
 func (d *Distinction) Callback(r arrow.Record) error {
 	distinctFields := make([]arrow.Field, 0, 10)
+	distinctFieldHashes := make([]uint64, 0, 10)
 	distinctArrays := make([]arrow.Array, 0, 10)
 
 	for i, field := range r.Schema().Fields() {
 		for _, col := range d.columns {
 			if col.Match(field.Name) {
 				distinctFields = append(distinctFields, field)
+				distinctFieldHashes = append(distinctFieldHashes, scalar.Hash(d.hashSeed, scalar.NewStringScalar(field.Name)))
 				distinctArrays = append(distinctArrays, r.Column(i))
 			}
 		}
@@ -53,28 +54,26 @@ func (d *Distinction) Callback(r arrow.Record) error {
 	rows := int64(0)
 
 	numRows := int(r.NumRows())
-	colScalars := make([]scalar.Scalar, len(distinctFields))
+
+	colHashes := make([][]uint64, len(distinctFields))
+	for i, arr := range distinctArrays {
+		colHashes[i] = hashArray(arr)
+	}
+
 	for i := 0; i < numRows; i++ {
-		colScalars = colScalars[:0]
-
-		for _, arr := range distinctArrays {
-			colScalar, err := scalar.GetScalar(arr, i)
-			if err != nil {
-				return err
-			}
-
-			colScalars = append(colScalars, colScalar)
-		}
-
 		hash := uint64(0)
-		for j, colScalar := range colScalars {
-			if colScalar == nil || !colScalar.IsValid() {
+		for j := range colHashes {
+			if colHashes[j][i] == 0 {
 				continue
 			}
 
-			// TODO: This is extremely naive and will probably cause a ton of collisions.
-			hash ^= metro.Hash64Str(distinctFields[j].Name, 0)
-			hash ^= scalar.Hash(d.hashSeed, colScalar)
+			hash = hashCombine(
+				hash,
+				hashCombine(
+					distinctFieldHashes[j],
+					colHashes[j][i],
+				),
+			)
 		}
 
 		if _, ok := d.seen[hash]; ok {
