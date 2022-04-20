@@ -43,3 +43,12 @@ func TestDynamicColumnsDeserialization(t *testing.T) {
 	}
 	require.Equal(t, expected, output)
 }
+
+func TestDynamicColumnsDeserialization_NoDynamicColumns(t *testing.T) {
+	input := ""
+	output, err := deserializeDynamicColumns(input)
+	require.NoError(t, err)
+
+	expected := map[string][]string{}
+	require.Equal(t, expected, output)
+}
