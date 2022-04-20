@@ -29,6 +29,11 @@ func serializeDynamicColumns(dynamicColumns map[string][]string) string {
 func deserializeDynamicColumns(dynColString string) (map[string][]string, error) {
 	dynCols := map[string][]string{}
 
+	// handle case where the schema has no dynamic columnns
+	if len(dynColString) == 0 {
+		return dynCols, nil
+	}
+
 	for _, dynString := range strings.Split(dynColString, ";") {
 		split := strings.Split(dynString, ":")
 		if len(split) != 2 {
