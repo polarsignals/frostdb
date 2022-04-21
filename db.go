@@ -17,6 +17,11 @@ type ColumnStore struct {
 	reg              prometheus.Registerer
 	granuleSize      int
 	activeMemorySize int64
+
+	// indexDegree is the degree of the btree index (default = 2)
+	indexDegree int
+	// splitSize is the number of new granules that are created when granules are split (default =2)
+	splitSize int
 }
 
 func New(
@@ -34,7 +39,19 @@ func New(
 		reg:              reg,
 		granuleSize:      granuleSize,
 		activeMemorySize: activeMemorySize,
+		indexDegree:      2,
+		splitSize:        2,
 	}
+}
+
+func (s *ColumnStore) WithIndexDegree(indexDegree int) *ColumnStore {
+	s.indexDegree = indexDegree
+	return s
+}
+
+func (s *ColumnStore) WithSplitSize(splitSize int) *ColumnStore {
+	s.splitSize = splitSize
+	return s
 }
 
 func (s *ColumnStore) Close() error {

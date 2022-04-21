@@ -854,3 +854,39 @@ func Test_Table_ReadIsolation(t *testing.T) {
 //
 //	require.NotEqual(t, g.Less(g1), g1.Less(g))
 //}
+
+func Test_Table_NewTableValidIndexDegree(t *testing.T) {
+	config := NewTableConfig(dynparquet.NewSampleSchema())
+	c := New(nil, 512, 512*1024*1024).WithIndexDegree(-1)
+	db, err := c.DB("test")
+	require.NoError(t, err)
+
+	_, err = db.Table("test", config, newTestLogger(t))
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "failed to create table: Table's columnStore index degree must be a positive integer (received -1)")
+}
+
+func Test_Table_NewTableValidSplitSize(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	c := New(nil, 512, 512*1024*1024).WithSplitSize(1)
+	db, err := c.DB("test")
+	require.NoError(t, err)
+	_, err = db.Table("test", config, newTestLogger(t))
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received 1)")
+
+	c = New(nil, 512, 512*1024*1024).WithSplitSize(-1)
+	db, err = c.DB("test")
+	require.NoError(t, err)
+	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()), newTestLogger(t))
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received -1)")
+
+	c = New(nil, 512, 512*1024*1024).WithSplitSize(2)
+	db, err = c.DB("test")
+	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()), newTestLogger(t))
+	require.NoError(t, err)
+}
