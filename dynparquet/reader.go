@@ -15,7 +15,6 @@ const (
 var ErrNoDynamicColumns = errors.New("no dynamic columns metadata found, it must be present")
 
 type SerializedBuffer struct {
-	*parquet.Reader
 	f       *parquet.File
 	dynCols map[string][]string
 }
@@ -41,18 +40,35 @@ func NewSerializedBuffer(f *parquet.File) (*SerializedBuffer, error) {
 	}
 
 	return &SerializedBuffer{
-		Reader:  parquet.NewReader(f),
 		f:       f,
 		dynCols: dynCols,
 	}, nil
+}
+
+func (b *SerializedBuffer) Reader() *parquet.Reader {
+	return parquet.NewReader(b.ParquetFile())
 }
 
 func (b *SerializedBuffer) ParquetFile() *parquet.File {
 	return b.f
 }
 
+func (b *SerializedBuffer) NumRows() int64 {
+	return b.Reader().NumRows()
+}
+
 func (b *SerializedBuffer) NumRowGroups() int {
 	return b.f.NumRowGroups()
+}
+
+func (b *SerializedBuffer) DynamicRows() DynamicRows {
+	num := b.NumRowGroups()
+	drg := make([]DynamicRowGroup, num)
+	for i := 0; i < num; i++ {
+		drg[i] = b.DynamicRowGroup(i)
+	}
+
+	return Concat(drg...).DynamicRows()
 }
 
 type serializedRowGroup struct {

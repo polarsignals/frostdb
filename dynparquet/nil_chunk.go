@@ -72,6 +72,7 @@ func (p *nilPages) ReadPage() (parquet.Page, error) {
 		return nil, io.EOF
 	}
 	p.read = true
+
 	return &nilPage{
 		numValues:   p.numValues,
 		columnIndex: p.columnIndex,
@@ -119,8 +120,8 @@ func (p *nilPage) NumNulls() int64 {
 
 // Bounds returns the minimum and maximum values of the page, since all values
 // in the page are null, both the minimum and maximum values are null.
-func (p *nilPage) Bounds() (min, max parquet.Value) {
-	return parquet.ValueOf(nil).Level(0, 0, p.columnIndex), parquet.ValueOf(nil).Level(0, 0, p.columnIndex)
+func (p *nilPage) Bounds() (min, max parquet.Value, ok bool) {
+	return parquet.ValueOf(nil).Level(0, 0, p.columnIndex), parquet.ValueOf(nil).Level(0, 0, p.columnIndex), true
 }
 
 // Size returns the physical size of the page. Since this page is virtual,

@@ -37,12 +37,15 @@ func newTestLogger(t *testing.T) log.Logger {
 func basicTable(t *testing.T, granuleSize int) *Table {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
+	)
+
+	c := New(
+		nil,
 		granuleSize,
 		512*1024*1024,
 	)
-
-	c := New(nil)
-	db := c.DB("test")
+	db, err := c.DB("test")
+	require.NoError(t, err)
 	table, err := db.Table("test", config, newTestLogger(t))
 	require.NoError(t, err)
 
@@ -95,7 +98,7 @@ func TestTable(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -115,7 +118,7 @@ func TestTable(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -136,7 +139,7 @@ func TestTable(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
@@ -212,7 +215,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -231,7 +234,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -251,7 +254,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
@@ -345,7 +348,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 
 	// Since we are inserting 4 elements and the granule size is 4, the granule
 	// will immediately split.
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
@@ -355,6 +358,10 @@ func Test_Table_InsertLowest(t *testing.T) {
 		table.active.compact(table.active.Index().Min().(*Granule))
 		table.Sync()
 	}
+
+	require.Equal(t, 2, table.active.Index().Len())
+	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).card.Load()) // [13, 12]
+	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).card.Load()) // [11, 10]
 
 	samples = dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -371,15 +378,15 @@ func Test_Table_InsertLowest(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [10,11]
-	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).card.Load()) // [12,13,14]
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [14, 13, 12]
+	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).card.Load()) // [11, 10]
 
 	// Insert a new column that is the lowest column yet; expect it to be added to the minimum column
 	samples = dynparquet.Samples{{
@@ -397,8 +404,11 @@ func Test_Table_InsertLowest(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
+
+	// Wait for the index to be updated by the asynchronous granule split.
+	table.Sync()
 
 	table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
 		defer r.Release()
@@ -407,8 +417,8 @@ func Test_Table_InsertLowest(t *testing.T) {
 	})
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [1,10,11]
-	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).card.Load()) // [12,13,14]
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [14,13,12]
+	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).card.Load()) // [11,10,1]
 }
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
@@ -457,7 +467,7 @@ func Test_Table_Concurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < inserts; i++ {
-				if err := table.Insert(generateRows(rows)); err != nil {
+				if _, err := table.InsertBuffer(generateRows(rows)); err != nil {
 					fmt.Println("Received error on insert: ", err)
 				}
 			}
@@ -615,7 +625,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	// Perform a new insert that will have a higher tx id
@@ -635,7 +645,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	table.Sync()

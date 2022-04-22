@@ -16,12 +16,15 @@ import (
 func TestDistinct(t *testing.T) {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
+	)
+
+	c := New(
+		nil,
 		8192,
 		512*1024*1024,
 	)
-
-	c := New(nil)
-	db := c.DB("test")
+	db, err := c.DB("test")
+	require.NoError(t, err)
 	table, err := db.Table("test", config, newTestLogger(t))
 	require.NoError(t, err)
 
@@ -65,7 +68,7 @@ func TestDistinct(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	err = table.Insert(buf)
+	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
 	tests := map[string]struct {
