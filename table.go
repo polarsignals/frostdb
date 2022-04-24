@@ -383,7 +383,7 @@ func (t *TableBlock) Insert(tx uint64, buf *dynparquet.SerializedBuffer) error {
 
 func (t *TableBlock) splitGranule(granule *Granule) {
 	// Recheck to ensure the granule still needs to be split
-	if !granule.pruned.CAS(0, 1) {
+	if !granule.metadata.pruned.CAS(0, 1) {
 		return
 	}
 
@@ -560,6 +560,8 @@ func (t *TableBlock) RowGroupIterator(
 	var err error
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
+
+		// TODO check granule metadata against filters
 
 		g.PartBuffersForTx(watermark, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
@@ -793,7 +795,7 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 // abort a compaction transaction.
 func (t *TableBlock) abort(commit func(), granule *Granule) {
 	for {
-		if granule.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
+		if granule.metadata.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
 			commit()
 			return
 		}

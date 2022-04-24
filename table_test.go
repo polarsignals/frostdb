@@ -158,7 +158,7 @@ func TestTable(t *testing.T) {
 	// One granule with 3 parts
 	require.Equal(t, 1, table.active.Index().Len())
 	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).parts.total.Load())
-	require.Equal(t, uint64(5), table.active.Index().Min().(*Granule).card.Load())
+	require.Equal(t, uint64(5), table.active.Index().Min().(*Granule).metadata.card.Load())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
@@ -168,7 +168,7 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
-	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).least.Load()).Row)
+	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least.Load()).Row)
 	require.Equal(t, 1, table.active.Index().Len())
 }
 
@@ -277,8 +277,8 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	})
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).card.Load())
-	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).card.Load())
+	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).metadata.card.Load())
+	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).metadata.card.Load())
 }
 
 /*
@@ -360,8 +360,8 @@ func Test_Table_InsertLowest(t *testing.T) {
 	}
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).card.Load()) // [13, 12]
-	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).card.Load()) // [11, 10]
+	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).metadata.card.Load()) // [13, 12]
+	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11, 10]
 
 	samples = dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -385,8 +385,8 @@ func Test_Table_InsertLowest(t *testing.T) {
 	table.Sync()
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [14, 13, 12]
-	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).card.Load()) // [11, 10]
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).metadata.card.Load()) // [14, 13, 12]
+	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11, 10]
 
 	// Insert a new column that is the lowest column yet; expect it to be added to the minimum column
 	samples = dynparquet.Samples{{
@@ -417,8 +417,8 @@ func Test_Table_InsertLowest(t *testing.T) {
 	})
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [14,13,12]
-	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).card.Load()) // [11,10,1]
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).metadata.card.Load()) // [14,13,12]
+	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11,10,1]
 }
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
