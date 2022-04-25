@@ -102,8 +102,6 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 
 	// Set the minmaxes for the granule
 	g.minmaxes(p)
-	fmt.Println("min: ", g.metadata.min) // TODO(THOR): remove me
-	fmt.Println("max: ", g.metadata.max) // TODO(THOR): remove me
 
 	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
 	if node.sentinel == Compacted {
