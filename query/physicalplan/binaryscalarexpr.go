@@ -26,6 +26,10 @@ func (a *ArrayRef) ArrowArray(r arrow.Record) (arrow.Array, bool, error) {
 	return r.Column(fields[0]), true, nil
 }
 
+func (a *ArrayRef) String() string {
+	return a.ColumnName
+}
+
 type BinaryScalarExpr struct {
 	Left  *ArrayRef
 	Op    logicalplan.Operator
@@ -50,6 +54,10 @@ func (e BinaryScalarExpr) Eval(r arrow.Record) (*Bitmap, error) {
 	}
 
 	return BinaryScalarOperation(leftData, e.Right, e.Op)
+}
+
+func (e BinaryScalarExpr) String() string {
+	return e.Left.String() + " " + e.Op.String() + " " + e.Right.String()
 }
 
 var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")

@@ -133,8 +133,7 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 			}
 			return false
 		case plan.Projection != nil:
-			// TODO this causes projections to be skipped, implement projections.
-			return true
+			phyPlan, err = Project(pool, plan.Projection.Exprs)
 		case plan.Distinct != nil:
 			matchers := make([]logicalplan.ColumnMatcher, 0, len(plan.Distinct.Columns))
 			for _, col := range plan.Distinct.Columns {

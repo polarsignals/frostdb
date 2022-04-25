@@ -27,6 +27,7 @@ func NewBitmap() *Bitmap {
 
 type BooleanExpression interface {
 	Eval(r arrow.Record) (*Bitmap, error)
+	String() string
 }
 
 var ErrUnsupportedBooleanExpression = errors.New("unsupported boolean expression")
@@ -137,6 +138,10 @@ func (a *AndExpr) Eval(r arrow.Record) (*Bitmap, error) {
 	// This stores the result in place to avoid allocations.
 	left.And(right)
 	return left, nil
+}
+
+func (a *AndExpr) String() string {
+	return "(" + a.Left.String() + " AND " + a.Right.String() + ")"
 }
 
 func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {

@@ -10,10 +10,10 @@ import (
 )
 
 type Builder interface {
-	Aggregate(aggExpr logicalplan.Expr, groupExprs ...logicalplan.ColumnExpr) Builder
+	Aggregate(aggExpr logicalplan.Expr, groupExprs ...logicalplan.Expr) Builder
 	Filter(expr logicalplan.Expr) Builder
-	Distinct(expr ...logicalplan.ColumnExpr) Builder
-	Project(projections ...string) Builder
+	Distinct(expr ...logicalplan.Expr) Builder
+	Project(projections ...logicalplan.Expr) Builder
 	Execute(callback func(r arrow.Record) error) error
 }
 
@@ -53,7 +53,7 @@ func (e *LocalEngine) ScanSchema(name string) Builder {
 
 func (b LocalQueryBuilder) Aggregate(
 	aggExpr logicalplan.Expr,
-	groupExprs ...logicalplan.ColumnExpr,
+	groupExprs ...logicalplan.Expr,
 ) Builder {
 	return LocalQueryBuilder{
 		pool:        b.pool,
@@ -71,7 +71,7 @@ func (b LocalQueryBuilder) Filter(
 }
 
 func (b LocalQueryBuilder) Distinct(
-	expr ...logicalplan.ColumnExpr,
+	expr ...logicalplan.Expr,
 ) Builder {
 	return LocalQueryBuilder{
 		pool:        b.pool,
@@ -80,7 +80,7 @@ func (b LocalQueryBuilder) Distinct(
 }
 
 func (b LocalQueryBuilder) Project(
-	projections ...string,
+	projections ...logicalplan.Expr,
 ) Builder {
 	return LocalQueryBuilder{
 		pool:        b.pool,
@@ -92,13 +92,14 @@ func (b LocalQueryBuilder) Execute(callback func(r arrow.Record) error) error {
 	logicalPlan := b.planBuilder.Build()
 
 	optimizers := []logicalplan.Optimizer{
-		&logicalplan.ProjectionPushDown{},
+		&logicalplan.PhysicalProjectionPushDown{},
 		&logicalplan.FilterPushDown{},
 		&logicalplan.DistinctPushDown{},
+		&logicalplan.ProjectionPushDown{},
 	}
 
 	for _, optimizer := range optimizers {
-		optimizer.Optimize(logicalPlan)
+		logicalPlan = optimizer.Optimize(logicalPlan)
 	}
 
 	phyPlan, err := physicalplan.Build(

@@ -2,6 +2,7 @@ package physicalplan
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -38,6 +39,13 @@ func (f *RegExpFilter) Eval(r arrow.Record) (*Bitmap, error) {
 	}
 
 	return ArrayScalarRegexMatch(leftData, f.right)
+}
+
+func (f *RegExpFilter) String() string {
+	if f.notMatch {
+		return fmt.Sprintf("%s !~ \"%s\"", f.left.String(), f.right.String())
+	}
+	return fmt.Sprintf("%s =~ \"%s\"", f.left.String(), f.right.String())
 }
 
 func ArrayScalarRegexMatch(left arrow.Array, right *regexp.Regexp) (*Bitmap, error) {

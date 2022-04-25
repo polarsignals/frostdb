@@ -18,11 +18,11 @@ func TestBuildPhysicalPlan(t *testing.T) {
 			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
 			logicalplan.Col("stacktrace"),
 		).
-		Project("stacktrace", "value_sum").
+		Project(logicalplan.Col("stacktrace"), logicalplan.Col("value_sum")).
 		Build()
 
 	optimizers := []logicalplan.Optimizer{
-		&logicalplan.ProjectionPushDown{},
+		&logicalplan.PhysicalProjectionPushDown{},
 		&logicalplan.FilterPushDown{},
 	}
 

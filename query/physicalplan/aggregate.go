@@ -151,6 +151,8 @@ func hashArray(arr arrow.Array) []uint64 {
 		return hashBinaryArray(arr.(*array.Binary))
 	case *array.Int64:
 		return hashInt64Array(arr.(*array.Int64))
+	case *array.Boolean:
+		return hashBooleanArray(arr.(*array.Boolean))
 	default:
 		panic("unsupported array type " + fmt.Sprintf("%T", arr))
 	}
@@ -161,6 +163,22 @@ func hashBinaryArray(arr *array.Binary) []uint64 {
 	for i := 0; i < arr.Len(); i++ {
 		if !arr.IsNull(i) {
 			res[i] = metro.Hash64(arr.Value(i), 0)
+		}
+	}
+	return res
+}
+
+func hashBooleanArray(arr *array.Boolean) []uint64 {
+	res := make([]uint64, arr.Len())
+	for i := 0; i < arr.Len(); i++ {
+		if arr.IsNull(i) {
+			res[i] = 0
+			continue
+		}
+		if arr.Value(i) {
+			res[i] = 2
+		} else {
+			res[i] = 1
 		}
 	}
 	return res
@@ -300,6 +318,9 @@ func appendValue(b array.Builder, arr arrow.Array, i int) error {
 	case *array.FixedSizeBinary:
 		b.(*array.FixedSizeBinaryBuilder).Append(arr.Value(i))
 		return nil
+	case *array.Boolean:
+		b.(*array.BooleanBuilder).Append(arr.Value(i))
+		return nil
 	// case *array.List:
 	//	// TODO: This seems horribly inefficient, we already have the whole
 	//	// array and are just doing an expensive copy, but arrow doesn't seem
@@ -321,7 +342,7 @@ func appendValue(b array.Builder, arr arrow.Array, i int) error {
 	//	}
 	//	return nil
 	default:
-		return errors.New("unsupported type")
+		return errors.New("unsupported type for arrow append")
 	}
 }
 

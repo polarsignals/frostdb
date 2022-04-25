@@ -41,13 +41,8 @@ func (b Builder) ScanSchema(
 }
 
 func (b Builder) Project(
-	projections ...string,
+	exprs ...Expr,
 ) Builder {
-	exprs := make([]Expr, len(projections))
-	for i, name := range projections {
-		exprs[i] = Col(name)
-	}
-
 	return Builder{
 		plan: &LogicalPlan{
 			Input: b.plan,
@@ -88,10 +83,14 @@ type Expr interface {
 	Accept(Visitor) bool
 	Name() string
 	ColumnsUsed() []ColumnMatcher
-}
-
-type ColumnExpr interface {
-	Expr
+	// Matcher returns a ColumnMatcher that can be used to identify a column by
+	// a downstream plan. In contrast to the ColumnUsed function from the Expr
+	// interface, it is not useful to identify which columns are to be read
+	// physically. This is necessary to distinguish between projections.
+	//
+	// Take the example of a column that projects `XYZ > 0`. Matcher can be
+	// used to identify the column in the resulting Apache Arrow frames, while
+	// ColumnsUsed will return `XYZ` to be necessary to be loaded physically.
 	Matcher() ColumnMatcher
 }
 
@@ -109,7 +108,7 @@ func (b Builder) Filter(
 }
 
 func (b Builder) Distinct(
-	columns ...ColumnExpr,
+	columns ...Expr,
 ) Builder {
 	return Builder{
 		plan: &LogicalPlan{
@@ -123,7 +122,7 @@ func (b Builder) Distinct(
 
 func (b Builder) Aggregate(
 	aggExpr Expr,
-	groupExprs ...ColumnExpr,
+	groupExprs ...Expr,
 ) Builder {
 	return Builder{
 		plan: &LogicalPlan{
