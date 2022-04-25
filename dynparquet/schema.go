@@ -369,9 +369,27 @@ func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
 		return nil, fmt.Errorf("create writer: %w", err)
 	}
 
-	_, err = parquet.CopyRows(w, buffer.Rows())
-	if err != nil {
-		return nil, fmt.Errorf("copy rows: %w", err)
+	// TODO: This copying should be possible, but it's not at the time of
+	// writing this. This is likely a bug in the parquet-go library.
+	//_, err = parquet.CopyRows(w, buffer.Rows())
+	//if err != nil {
+	//	return nil, fmt.Errorf("copy rows: %w", err)
+	//}
+
+	var row parquet.Row
+	rows := buffer.Rows()
+	for {
+		row, err := rows.ReadRow(row)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read row: %w", err)
+		}
+		err = w.WriteRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("write row: %w", err)
+		}
 	}
 
 	if err := w.Close(); err != nil {
