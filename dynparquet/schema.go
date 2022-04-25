@@ -507,12 +507,12 @@ func mergeDynamicColumns(dyn [][]string) []string {
 // deduplicated slice of strings.
 func mergeStrings(str [][]string) []string {
 	result := []string{}
-	seen := map[string]bool{}
+	seen := map[string]struct{}{}
 	for _, s := range str {
 		for _, n := range s {
-			if !seen[n] {
+			if _, ok := seen[n]; !ok {
 				result = append(result, n)
-				seen[n] = true
+				seen[n] = struct{}{}
 			}
 		}
 	}
