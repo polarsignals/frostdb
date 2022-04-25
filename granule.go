@@ -32,6 +32,11 @@ type GranuleMetadata struct {
 	// This is used for quick insertion into the btree, without requiring an iterator
 	least *atomic.UnsafePointer
 
+	// min contains the minimum value found for each column in the granule. It is used during iteration to validate if the granule contains interesting data
+	min map[string]*parquet.Value
+	// max contains the maximum value found for each column in the granule. It is used during iteration to validate if the granule contains interesting data
+	max map[string]*parquet.Value
+
 	// card is the raw commited, and uncommited cardinality of the granule. It is used as a suggestion for potential compaction
 	card *atomic.Uint64
 
@@ -46,6 +51,8 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		tableConfig:     tableConfig,
 
 		metadata: GranuleMetadata{
+			min:    map[string]*parquet.Value{},
+			max:    map[string]*parquet.Value{},
 			least:  atomic.NewUnsafePointer(nil),
 			card:   atomic.NewUint64(0),
 			pruned: atomic.NewUint64(0),
@@ -92,6 +99,11 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 			break
 		}
 	}
+
+	// Set the minmaxes for the granule
+	g.minmaxes(p)
+	fmt.Println("min: ", g.metadata.min) // TODO(THOR): remove me
+	fmt.Println("max: ", g.metadata.max) // TODO(THOR): remove me
 
 	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
 	if node.sentinel == Compacted {
@@ -219,4 +231,118 @@ func (g *Granule) Less(than btree.Item) bool {
 // Least returns the least row in a Granule.
 func (g *Granule) Least() *dynparquet.DynamicRow {
 	return (*dynparquet.DynamicRow)(g.metadata.least.Load())
+}
+
+var err error
+
+// minmaxes finds the mins and maxes of every column in a part
+func (g *Granule) minmaxes(p *Part) bool {
+
+	// Seed the min columns with the dynamic column names
+	for column, vals := range p.Buf.DynamicColumns() {
+		for _, val := range vals {
+			g.metadata.min[column+"."+val] = nil
+		}
+	}
+
+	f := p.Buf.ParquetFile()
+	numRowGroups := f.NumRowGroups()
+	for i := 0; i < numRowGroups; i++ {
+		rowGroup := f.RowGroup(i)
+
+		numColumns := rowGroup.NumColumns()
+		for j := 0; j < numColumns; j++ {
+			columnChunk := rowGroup.Column(j)
+
+			pages := columnChunk.Pages()
+			for {
+				p, err := pages.ReadPage()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return false
+				}
+
+				page := p.Values()
+				values := make([]parquet.Value, p.NumValues())
+				page.ReadValues(values)
+
+				switch values[0].Kind() {
+				default:
+					// Check for min
+					min := findMin(values)
+					if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *min) == 1 {
+						g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
+					}
+
+					// Check for max
+					max := findMax(values)
+					if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *max) == -1 {
+						g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func find(minmax int, values []parquet.Value) *parquet.Value {
+	if len(values) == 0 {
+		return nil
+	}
+
+	val := values[0]
+	for i := 1; i < len(values); i++ {
+		if Compare(val, values[i]) == minmax {
+			val = values[i]
+		}
+	}
+
+	return &val
+}
+
+func findMax(values []parquet.Value) *parquet.Value {
+	return find(1, values)
+}
+
+func findMin(values []parquet.Value) *parquet.Value {
+	return find(-1, values)
+}
+
+func Compare(v1, v2 parquet.Value) int {
+	if v1.Kind() != v2.Kind() {
+		return -2
+	}
+	switch v1.Kind() {
+	case parquet.Int32:
+		switch {
+		case v1.Int32() > v2.Int32():
+			return 1
+		case v1.Int32() < v2.Int32():
+			return -1
+		}
+	case parquet.Int64:
+		switch {
+		case v1.Int64() > v2.Int64():
+			return 1
+		case v1.Int64() < v2.Int64():
+			return -1
+		}
+	case parquet.Float:
+		switch {
+		case v1.Float() > v2.Float():
+			return 1
+		case v1.Float() < v2.Float():
+			return -1
+		}
+	case parquet.ByteArray, parquet.FixedLenByteArray:
+		return bytes.Compare(v1.ByteArray(), v2.ByteArray())
+	case -1: // null
+		return 0
+	}
+
+	return 0
 }
