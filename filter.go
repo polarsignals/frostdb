@@ -118,6 +118,9 @@ func (a *AndExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if !left {
+		return false, nil
+	}
 
 	right, err := a.Right.Eval(rg)
 	if err != nil {
