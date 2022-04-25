@@ -238,13 +238,6 @@ var err error
 // minmaxes finds the mins and maxes of every column in a part
 func (g *Granule) minmaxes(p *Part) bool {
 
-	// Seed the min columns with the dynamic column names
-	for column, vals := range p.Buf.DynamicColumns() {
-		for _, val := range vals {
-			g.metadata.min[column+"."+val] = nil
-		}
-	}
-
 	f := p.Buf.ParquetFile()
 	numRowGroups := f.NumRowGroups()
 	for i := 0; i < numRowGroups; i++ {
@@ -270,16 +263,22 @@ func (g *Granule) minmaxes(p *Part) bool {
 
 				switch values[0].Kind() {
 				default:
+					// TODO(THOR): the accesses to the min/max maps are not threadsafe
+
 					// Check for min
 					min := findMin(values)
 					if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *min) == 1 {
-						g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
+						if !min.IsNull() {
+							g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
+						}
 					}
 
 					// Check for max
 					max := findMax(values)
 					if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *max) == -1 {
-						g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
+						if !max.IsNull() {
+							g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
+						}
 					}
 				}
 			}
@@ -296,7 +295,7 @@ func find(minmax int, values []parquet.Value) *parquet.Value {
 
 	val := values[0]
 	for i := 1; i < len(values); i++ {
-		if Compare(val, values[i]) == minmax {
+		if Compare(val, values[i]) != minmax {
 			val = values[i]
 		}
 	}
