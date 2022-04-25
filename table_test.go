@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
 type testOutput struct {
@@ -142,7 +143,12 @@ func TestTable(t *testing.T) {
 	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
-	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+	filterExpr := logicalplan.And(
+		logicalplan.Col("timestamp").GT(logicalplan.Literal(-10)),
+		logicalplan.Col("timestamp").LT(logicalplan.Literal(1)),
+	)
+
+	err = table.Iterator(memory.NewGoAllocator(), nil, filterExpr, nil, func(ar arrow.Record) error {
 		t.Log(ar)
 		defer ar.Release()
 

@@ -11,6 +11,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
@@ -235,7 +236,7 @@ func (t *Table) Iterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(filter, func(rg dynparquet.DynamicRowGroup) bool {
+	err = t.ActiveBlock().RowGroupIterator(filterExpr, filter, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -285,7 +286,7 @@ func (t *Table) SchemaIterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(filter, func(rg dynparquet.DynamicRowGroup) bool {
+	err = t.ActiveBlock().RowGroupIterator(nil, filter, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -551,6 +552,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *TableBlock) RowGroupIterator(
+	filterExpr logicalplan.Expr,
 	filter TrueNegativeFilter,
 	iterator func(rg dynparquet.DynamicRowGroup) bool,
 ) error {
@@ -562,6 +564,61 @@ func (t *TableBlock) RowGroupIterator(
 		g := i.(*Granule)
 
 		// TODO check granule metadata against filters
+		if filterExpr != nil {
+			switch expr := filterExpr.(type) {
+			case logicalplan.BinaryExpr:
+				matchers := expr.Left.ColumnsUsed()
+				for column, min := range g.metadata.min {
+					for _, matcher := range matchers {
+						if matcher.Match(column) {
+							switch leftExpr := expr.Left.(type) {
+							case logicalplan.BinaryExpr:
+								switch leftExpr.Op {
+								case logicalplan.GTOp:
+									switch literal := leftExpr.Right.(type) {
+									case logicalplan.LiteralExpr:
+										v := literal.Value.(*scalar.Int64)
+										if g.metadata.max[column].Int64() <= v.Value {
+											return true
+										}
+									}
+								case logicalplan.LTOp:
+									switch literal := leftExpr.Right.(type) {
+									case logicalplan.LiteralExpr:
+										v := literal.Value.(*scalar.Int64)
+										fmt.Println(leftExpr)
+										if min.Int64() >= v.Value {
+											return true
+										}
+									}
+								}
+							}
+							switch rightExpr := expr.Right.(type) {
+							case logicalplan.BinaryExpr:
+								switch rightExpr.Op {
+								case logicalplan.GTOp:
+									switch literal := rightExpr.Right.(type) {
+									case logicalplan.LiteralExpr:
+										v := literal.Value.(*scalar.Int64)
+										if g.metadata.max[column].Int64() <= v.Value {
+											return true
+										}
+									}
+								case logicalplan.LTOp:
+									switch literal := rightExpr.Right.(type) {
+									case logicalplan.LiteralExpr:
+										v := literal.Value.(*scalar.Int64)
+										if min.Int64() >= v.Value {
+											return true
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 
 		g.PartBuffersForTx(watermark, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
