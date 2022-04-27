@@ -563,61 +563,9 @@ func (t *TableBlock) RowGroupIterator(
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
-		// TODO check granule metadata against filters
-		if filterExpr != nil {
-			switch expr := filterExpr.(type) {
-			case logicalplan.BinaryExpr:
-				matchers := expr.Left.ColumnsUsed()
-				for column, min := range g.metadata.min {
-					for _, matcher := range matchers {
-						if matcher.Match(column) {
-							switch leftExpr := expr.Left.(type) {
-							case logicalplan.BinaryExpr:
-								switch leftExpr.Op {
-								case logicalplan.GTOp:
-									switch literal := leftExpr.Right.(type) {
-									case logicalplan.LiteralExpr:
-										v := literal.Value.(*scalar.Int64)
-										if g.metadata.max[column].Int64() <= v.Value {
-											return true
-										}
-									}
-								case logicalplan.LTOp:
-									switch literal := leftExpr.Right.(type) {
-									case logicalplan.LiteralExpr:
-										v := literal.Value.(*scalar.Int64)
-										fmt.Println(leftExpr)
-										if min.Int64() >= v.Value {
-											return true
-										}
-									}
-								}
-							}
-							switch rightExpr := expr.Right.(type) {
-							case logicalplan.BinaryExpr:
-								switch rightExpr.Op {
-								case logicalplan.GTOp:
-									switch literal := rightExpr.Right.(type) {
-									case logicalplan.LiteralExpr:
-										v := literal.Value.(*scalar.Int64)
-										if g.metadata.max[column].Int64() <= v.Value {
-											return true
-										}
-									}
-								case logicalplan.LTOp:
-									switch literal := rightExpr.Right.(type) {
-									case logicalplan.LiteralExpr:
-										v := literal.Value.(*scalar.Int64)
-										if min.Int64() >= v.Value {
-											return true
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+		// Check if the entire granule can be skipped due to the filter expr
+		if filterGranule(filterExpr, g) {
+			return true
 		}
 
 		g.PartBuffersForTx(watermark, func(buf *dynparquet.SerializedBuffer) bool {
@@ -857,4 +805,66 @@ func (t *TableBlock) abort(commit func(), granule *Granule) {
 			return
 		}
 	}
+}
+
+func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
+	if filterExpr == nil {
+		return false
+	}
+
+	switch expr := filterExpr.(type) {
+	case logicalplan.BinaryExpr:
+		matchers := expr.Left.ColumnsUsed()
+		for column, min := range g.metadata.min {
+			for _, matcher := range matchers {
+				if matcher.Match(column) {
+					switch leftExpr := expr.Left.(type) {
+					case logicalplan.BinaryExpr:
+						switch leftExpr.Op {
+						case logicalplan.GTOp:
+							switch literal := leftExpr.Right.(type) {
+							case logicalplan.LiteralExpr:
+								v := literal.Value.(*scalar.Int64)
+								if g.metadata.max[column].Int64() <= v.Value {
+									return true
+								}
+							}
+						case logicalplan.LTOp:
+							switch literal := leftExpr.Right.(type) {
+							case logicalplan.LiteralExpr:
+								v := literal.Value.(*scalar.Int64)
+								fmt.Println(leftExpr)
+								if min.Int64() >= v.Value {
+									return true
+								}
+							}
+						}
+					}
+					switch rightExpr := expr.Right.(type) {
+					case logicalplan.BinaryExpr:
+						switch rightExpr.Op {
+						case logicalplan.GTOp:
+							switch literal := rightExpr.Right.(type) {
+							case logicalplan.LiteralExpr:
+								v := literal.Value.(*scalar.Int64)
+								if g.metadata.max[column].Int64() <= v.Value {
+									return true
+								}
+							}
+						case logicalplan.LTOp:
+							switch literal := rightExpr.Right.(type) {
+							case logicalplan.LiteralExpr:
+								v := literal.Value.(*scalar.Int64)
+								if min.Int64() >= v.Value {
+									return true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return false
 }
