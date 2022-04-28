@@ -267,37 +267,33 @@ func (g *Granule) minmaxes(p *Part) error {
 					break
 				}
 
-				switch values[0].Kind() {
-				default:
-
-					// Check for min
-					min := findMin(values)
-					g.metadata.minlock.RLock()
-					val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
-					g.metadata.minlock.RUnlock()
-					if val == nil || Compare(*val, *min) == 1 {
-						if !min.IsNull() {
-							g.metadata.minlock.Lock() // Check again after acquiring the write lock
-							if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *min) == 1 {
-								g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
-							}
-							g.metadata.minlock.Unlock()
+				// Check for min
+				min := findMin(values)
+				g.metadata.minlock.RLock()
+				val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
+				g.metadata.minlock.RUnlock()
+				if val == nil || Compare(*val, *min) == 1 {
+					if !min.IsNull() {
+						g.metadata.minlock.Lock() // Check again after acquiring the write lock
+						if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *min) == 1 {
+							g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
 						}
+						g.metadata.minlock.Unlock()
 					}
+				}
 
-					// Check for max
-					max := findMax(values)
-					g.metadata.maxlock.RLock()
-					val = g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
-					g.metadata.maxlock.RUnlock()
-					if val == nil || Compare(*val, *max) == -1 {
-						if !max.IsNull() {
-							g.metadata.maxlock.Lock() // Check again after acquiring the write lock
-							if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *max) == -1 {
-								g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
-							}
-							g.metadata.maxlock.Unlock()
+				// Check for max
+				max := findMax(values)
+				g.metadata.maxlock.RLock()
+				val = g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
+				g.metadata.maxlock.RUnlock()
+				if val == nil || Compare(*val, *max) == -1 {
+					if !max.IsNull() {
+						g.metadata.maxlock.Lock() // Check again after acquiring the write lock
+						if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *max) == -1 {
+							g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
 						}
+						g.metadata.maxlock.Unlock()
 					}
 				}
 			}
