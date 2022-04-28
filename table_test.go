@@ -143,12 +143,7 @@ func TestTable(t *testing.T) {
 	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
-	filterExpr := logicalplan.And(
-		logicalplan.Col("timestamp").GT(logicalplan.Literal(-10)),
-		logicalplan.Col("timestamp").LT(logicalplan.Literal(1)),
-	)
-
-	err = table.Iterator(memory.NewGoAllocator(), nil, filterExpr, nil, func(ar arrow.Record) error {
+	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		t.Log(ar)
 		defer ar.Release()
 
@@ -895,4 +890,111 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	db, err = c.DB("test")
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()), newTestLogger(t))
 	require.NoError(t, err)
+}
+
+func Test_Table_Filter(t *testing.T) {
+	table := basicTable(t, 2^12)
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(buf)
+	require.NoError(t, err)
+
+	filterExpr := logicalplan.And( // Filter that excludes the granule
+		logicalplan.Col("timestamp").GT(logicalplan.Literal(-10)),
+		logicalplan.Col("timestamp").LT(logicalplan.Literal(1)),
+	)
+
+	iterated := false
+	err = table.Iterator(memory.NewGoAllocator(), nil, filterExpr, nil, func(ar arrow.Record) error {
+		defer ar.Release()
+
+		iterated = true
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.False(t, iterated)
 }
