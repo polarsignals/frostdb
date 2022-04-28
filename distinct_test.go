@@ -72,7 +72,7 @@ func TestDistinct(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := map[string]struct {
-		columns []logicalplan.ColumnExpr
+		columns []logicalplan.Expr
 		rows    int64
 	}{
 		"label1": {
@@ -118,4 +118,70 @@ func TestDistinct(t *testing.T) {
 			require.Equal(t, test.rows, rows)
 		})
 	}
+}
+
+func TestDistinctProjection(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	c := New(
+		nil,
+		8192,
+		512*1024*1024,
+	)
+	db, err := c.DB("test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config, newTestLogger(t))
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(buf)
+	require.NoError(t, err)
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	var r arrow.Record
+	err = engine.ScanTable("test").
+		Distinct(logicalplan.Col("labels.label1"), logicalplan.Col("labels.label2"), logicalplan.Col("timestamp").GT(logicalplan.Literal(1))).
+		Execute(func(ar arrow.Record) error {
+			ar.Retain()
+			r = ar
+
+			return nil
+		})
+	require.NoError(t, err)
+	defer r.Release()
+
+	t.Log(r)
+	require.Equal(t, int64(3), r.NumCols())
 }

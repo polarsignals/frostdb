@@ -39,6 +39,8 @@ func (plan *LogicalPlan) string(indent int) string {
 		res = plan.Projection.String()
 	case plan.Aggregation != nil:
 		res = plan.Aggregation.String()
+	case plan.Distinct != nil:
+		res = plan.Distinct.String()
 	default:
 		res = "Unknown LogicalPlan"
 	}
@@ -132,7 +134,7 @@ type SchemaScan struct {
 	Distinct []ColumnMatcher
 }
 
-func (scan *SchemaScan) String() string {
+func (s *SchemaScan) String() string {
 	return "SchemaScan"
 }
 
@@ -140,15 +142,15 @@ type Filter struct {
 	Expr Expr
 }
 
-func (filter *Filter) String() string {
-	return "Filter" + " Expr: " + fmt.Sprint(filter.Expr)
+func (f *Filter) String() string {
+	return "Filter" + " Expr: " + fmt.Sprint(f.Expr)
 }
 
 type Distinct struct {
-	Columns []ColumnExpr
+	Columns []Expr
 }
 
-func (distinct *Distinct) String() string {
+func (d *Distinct) String() string {
 	return "Distinct"
 }
 
@@ -156,15 +158,15 @@ type Projection struct {
 	Exprs []Expr
 }
 
-func (projection *Projection) String() string {
+func (p *Projection) String() string {
 	return "Projection"
 }
 
 type Aggregation struct {
-	GroupExprs []ColumnExpr
+	GroupExprs []Expr
 	AggExpr    Expr
 }
 
-func (aggregation *Aggregation) String() string {
-	return "Aggregation " + fmt.Sprint(aggregation.AggExpr) + " Group: " + fmt.Sprint(aggregation.GroupExprs)
+func (a *Aggregation) String() string {
+	return "Aggregation " + fmt.Sprint(a.AggExpr) + " Group: " + fmt.Sprint(a.GroupExprs)
 }

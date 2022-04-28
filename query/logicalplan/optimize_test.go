@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOptimizeProjectionPushDown(t *testing.T) {
+func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 	p := (&Builder{}).
 		Scan(nil, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
@@ -15,13 +15,12 @@ func TestOptimizeProjectionPushDown(t *testing.T) {
 			Sum(Col("value")).Alias("value_sum"),
 			Col("stacktrace"),
 		).
-		Project("stacktrace").
+		Project(Col("stacktrace")).
 		Build()
 
-	optimizer := &ProjectionPushDown{}
+	optimizer := &PhysicalProjectionPushDown{}
 	optimizer.Optimize(p)
 
-	// Projection -> Aggregate -> Filter -> TableScan
 	require.Equal(t, &TableScan{
 		TableName: "table1",
 		// Only these columns are needed to compute the result. There can be
@@ -34,7 +33,10 @@ func TestOptimizeProjectionPushDown(t *testing.T) {
 			StaticColumnMatcher{ColumnName: "value"},
 			StaticColumnMatcher{ColumnName: "labels.test"},
 		},
-	}, p.Input.Input.Input.TableScan)
+	},
+		// Projection -> Aggregate -> Filter -> TableScan
+		p.Input.Input.Input.TableScan,
+	)
 }
 
 func TestOptimizeDistinctPushDown(t *testing.T) {
@@ -44,15 +46,17 @@ func TestOptimizeDistinctPushDown(t *testing.T) {
 		Build()
 
 	optimizer := &DistinctPushDown{}
-	optimizer.Optimize(p)
+	p = optimizer.Optimize(p)
 
-	// Projection -> Aggregate -> Filter -> TableScan
 	require.Equal(t, &TableScan{
 		TableName: "table1",
 		Distinct: []ColumnMatcher{
 			StaticColumnMatcher{ColumnName: "labels.test"},
 		},
-	}, p.Input.TableScan)
+	},
+		// Distinct -> TableScan
+		p.Input.TableScan,
+	)
 }
 
 func TestOptimizeFilterPushDown(t *testing.T) {
@@ -63,13 +67,12 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 			Sum(Col("value")).Alias("value_sum"),
 			Col("stacktrace"),
 		).
-		Project("stacktrace").
+		Project(Col("stacktrace")).
 		Build()
 
 	optimizer := &FilterPushDown{}
 	optimizer.Optimize(p)
 
-	// Projection -> Aggregate -> Filter -> TableScan
 	require.Equal(t, &TableScan{
 		TableName: "table1",
 		// Only these columns are needed to compute the result.
@@ -80,7 +83,85 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 				Value: scalar.MakeScalar("abc"),
 			},
 		},
-	}, p.Input.Input.Input.TableScan)
+	},
+		// Projection -> Aggregate -> Filter -> TableScan
+		p.Input.Input.Input.TableScan,
+	)
+}
+
+func TestRemoveProjectionAtRoot(t *testing.T) {
+	p := (&Builder{}).
+		Scan(nil, "table1").
+		Filter(Col("labels.test").Eq(Literal("abc"))).
+		Aggregate(
+			Sum(Col("value")).Alias("value_sum"),
+			Col("stacktrace"),
+		).
+		Project(Col("stacktrace")).
+		Build()
+
+	p = removeProjection(p)
+
+	require.True(t, p.Projection == nil)
+}
+
+func TestRemoveMiddleProjection(t *testing.T) {
+	p := (&Builder{}).
+		Scan(nil, "table1").
+		Filter(Col("labels.test").Eq(Literal("abc"))).
+		Project(Col("stacktrace")).
+		Aggregate(
+			Sum(Col("value")).Alias("value_sum"),
+			Col("stacktrace"),
+		).
+		Build()
+
+	p = removeProjection(p)
+
+	require.True(t, p.Input.Projection == nil)
+}
+
+func TestRemoveLowestProjection(t *testing.T) {
+	p := (&Builder{}).
+		Scan(nil, "table1").
+		Project(Col("stacktrace")).
+		Filter(Col("labels.test").Eq(Literal("abc"))).
+		Aggregate(
+			Sum(Col("value")).Alias("value_sum"),
+			Col("stacktrace"),
+		).
+		Build()
+
+	p = removeProjection(p)
+
+	require.True(t, p.Input.Input.Projection == nil)
+}
+
+func TestProjectionPushDown(t *testing.T) {
+	p := (&Builder{}).
+		Scan(nil, "table1").
+		Filter(Col("labels.test").Eq(Literal("abc"))).
+		Aggregate(
+			Sum(Col("value")).Alias("value_sum"),
+			Col("stacktrace"),
+		).
+		Project(Col("stacktrace")).
+		Build()
+
+	p = (&ProjectionPushDown{}).Optimize(p)
+
+	require.True(t, p.Input.Input.Projection != nil)
+}
+
+func TestProjectionPushDownOfDistinct(t *testing.T) {
+	p := (&Builder{}).
+		Scan(nil, "table1").
+		Distinct(DynCol("labels")).
+		Build()
+
+	p = (&ProjectionPushDown{}).Optimize(p)
+
+	require.True(t, p.Input.Projection != nil)
 }
 
 func TestAllOptimizers(t *testing.T) {
@@ -91,20 +172,20 @@ func TestAllOptimizers(t *testing.T) {
 			Sum(Col("value")).Alias("value_sum"),
 			Col("stacktrace"),
 		).
-		Project("stacktrace").
+		Project(Col("stacktrace")).
 		Build()
 
 	optimizers := []Optimizer{
-		&ProjectionPushDown{},
+		&PhysicalProjectionPushDown{},
 		&FilterPushDown{},
 		&DistinctPushDown{},
+		&ProjectionPushDown{},
 	}
 
 	for _, optimizer := range optimizers {
-		optimizer.Optimize(p)
+		p = optimizer.Optimize(p)
 	}
 
-	// Projection -> Aggregate -> Filter -> TableScan
 	require.Equal(t, &TableScan{
 		TableName: "table1",
 		// Only these columns are needed to compute the result. There can be
@@ -124,5 +205,8 @@ func TestAllOptimizers(t *testing.T) {
 				Value: scalar.MakeScalar("abc"),
 			},
 		},
-	}, p.Input.Input.Input.TableScan)
+	},
+		// Aggregate -> Filter -> Projection -> TableScan
+		p.Input.Input.Input.TableScan,
+	)
 }

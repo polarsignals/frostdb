@@ -84,6 +84,14 @@ func (e BinaryExpr) ColumnsUsed() []ColumnMatcher {
 	return append(e.Left.ColumnsUsed(), e.Right.ColumnsUsed()...)
 }
 
+func (e BinaryExpr) Matcher() ColumnMatcher {
+	return StaticColumnMatcher{ColumnName: e.Name()}
+}
+
+func (e BinaryExpr) Alias(alias string) AliasExpr {
+	return AliasExpr{Expr: e, Alias: alias}
+}
+
 type Column struct {
 	ColumnName string
 }
@@ -110,6 +118,10 @@ func (c Column) DataType(s *dynparquet.Schema) arrow.DataType {
 	return ParquetNodeToType(colDef.StorageLayout)
 }
 
+func (c Column) Alias(alias string) AliasExpr {
+	return AliasExpr{Expr: c, Alias: alias}
+}
+
 // ParquetNodeToType converts a parquet node to an arrow type and a function to
 // create a value writer.
 func ParquetNodeToType(n parquet.Node) arrow.DataType {
@@ -133,7 +145,7 @@ func ParquetNodeToType(n parquet.Node) arrow.DataType {
 			panic("unsupported int bit width")
 		}
 	default:
-		panic("unsupported type")
+		panic("unsupported type for parquet to arrow conversion")
 	}
 }
 
@@ -213,8 +225,8 @@ func Col(name string) Column {
 	return Column{ColumnName: name}
 }
 
-func And(left, right Expr, exprs ...Expr) Expr {
-	return and(append([]Expr{left, right}, exprs...))
+func And(exprs ...Expr) Expr {
+	return and(exprs)
 }
 
 func and(exprs []Expr) Expr {
@@ -272,8 +284,8 @@ func (c DynamicColumn) Accept(visitor Visitor) bool {
 	return visitor.PreVisit(c) && visitor.PostVisit(c)
 }
 
-func Cols(names ...string) []ColumnExpr {
-	exprs := make([]ColumnExpr, len(names))
+func Cols(names ...string) []Expr {
+	exprs := make([]Expr, len(names))
 	for i, name := range names {
 		exprs[i] = Col(name)
 	}
@@ -309,6 +321,8 @@ func (e LiteralExpr) Accept(visitor Visitor) bool {
 
 func (e LiteralExpr) ColumnsUsed() []ColumnMatcher { return nil }
 
+func (e LiteralExpr) Matcher() ColumnMatcher { return StaticColumnMatcher{ColumnName: e.Name()} }
+
 type AggregationFunction struct {
 	Func AggFunc
 	Expr Expr
@@ -338,6 +352,10 @@ func (f AggregationFunction) Name() string {
 
 func (f AggregationFunction) ColumnsUsed() []ColumnMatcher {
 	return f.Expr.ColumnsUsed()
+}
+
+func (f AggregationFunction) Matcher() ColumnMatcher {
+	return StaticColumnMatcher{ColumnName: f.Name()}
 }
 
 type AggFunc int
@@ -379,6 +397,10 @@ func (e AliasExpr) ColumnsUsed() []ColumnMatcher {
 	return e.Expr.ColumnsUsed()
 }
 
+func (e AliasExpr) Matcher() ColumnMatcher {
+	return StaticColumnMatcher{ColumnName: e.Name()}
+}
+
 func (e AliasExpr) Accept(visitor Visitor) bool {
 	continu := visitor.PreVisit(e)
 	if !continu {
@@ -393,7 +415,7 @@ func (e AliasExpr) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(e)
 }
 
-func (f AggregationFunction) Alias(alias string) Expr {
+func (f AggregationFunction) Alias(alias string) AliasExpr {
 	return AliasExpr{
 		Expr:  f,
 		Alias: alias,
