@@ -564,8 +564,7 @@ func (t *TableBlock) RowGroupIterator(
 		g := i.(*Granule)
 
 		// Check if the entire granule can be skipped due to the filter expr
-		fmt.Println("filterExpr: ", filterExpr)
-		if filterGranule(filterExpr, g) {
+		if !filterGranule(filterExpr, g) {
 			return true
 		}
 
@@ -808,14 +807,15 @@ func (t *TableBlock) abort(commit func(), granule *Granule) {
 	}
 }
 
+// filterGranule returns false if this granule does not contain useful data
 func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 	if filterExpr == nil {
-		return false
+		return true
 	}
 
 	switch expr := filterExpr.(type) {
-	default:
-		return false
+	default: // unsupported filter
+		return true
 	case logicalplan.BinaryExpr:
 
 		var min, max *parquet.Value
@@ -829,7 +829,7 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 			min, max, found = findColumnValues(left.ColumnsUsed(), g)
 			if !found {
 				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
-				return true
+				return false
 			}
 		case logicalplan.LiteralExpr:
 			switch left.Value.(type) {
@@ -844,30 +844,30 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 		case logicalplan.BinaryExpr:
 			switch expr.Op {
 			case logicalplan.AndOp:
-				return leftresult || filterGranule(right, g)
+				return leftresult && filterGranule(right, g)
 			}
 		case logicalplan.Column:
 			var found bool
 			min, max, found = findColumnValues(right.ColumnsUsed(), g)
 			if !found {
 				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
-				return true
+				return false
 			}
 
 			switch expr.Op {
 			case logicalplan.LTOp:
 				switch val := v.(type) {
 				case *scalar.Int64:
-					return val.Value >= max.Int64()
+					return val.Value < max.Int64()
 				case *scalar.String:
-					return string(val.Value.Bytes()) >= max.String()
+					return string(val.Value.Bytes()) < max.String()
 				}
 			case logicalplan.GTOp:
 				switch val := v.(type) {
 				case *scalar.Int64:
-					return val.Value <= min.Int64()
+					return val.Value > min.Int64()
 				case *scalar.String:
-					return string(val.Value.Bytes()) <= min.String()
+					return string(val.Value.Bytes()) > min.String()
 				}
 			}
 
@@ -876,22 +876,22 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 			case *scalar.Int64:
 				switch expr.Op {
 				case logicalplan.LTOp:
-					return min.Int64() >= v.Value
+					return min.Int64() < v.Value
 				case logicalplan.GTOp:
-					return max.Int64() <= v.Value
+					return max.Int64() > v.Value
 				}
 			case *scalar.String:
 				switch expr.Op {
 				case logicalplan.LTOp:
-					return min.String() >= string(v.Value.Bytes())
+					return min.String() < string(v.Value.Bytes())
 				case logicalplan.GTOp:
-					return max.String() <= string(v.Value.Bytes())
+					return max.String() > string(v.Value.Bytes())
 				}
 			}
 		}
 	}
 
-	return false
+	return true
 }
 
 func findColumnValues(matchers []logicalplan.ColumnMatcher, g *Granule) (*parquet.Value, *parquet.Value, bool) {
