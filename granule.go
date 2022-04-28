@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sync"
 	"unsafe"
 
 	"github.com/google/btree"
@@ -33,9 +34,11 @@ type GranuleMetadata struct {
 	least *atomic.UnsafePointer
 
 	// min contains the minimum value found for each column in the granule. It is used during iteration to validate if the granule contains interesting data
-	min map[string]*parquet.Value
+	minlock sync.RWMutex
+	min     map[string]*parquet.Value
 	// max contains the maximum value found for each column in the granule. It is used during iteration to validate if the granule contains interesting data
-	max map[string]*parquet.Value
+	maxlock sync.RWMutex
+	max     map[string]*parquet.Value
 
 	// card is the raw commited, and uncommited cardinality of the granule. It is used as a suggestion for potential compaction
 	card *atomic.Uint64
@@ -261,21 +264,34 @@ func (g *Granule) minmaxes(p *Part) bool {
 
 				switch values[0].Kind() {
 				default:
-					// TODO(THOR): the accesses to the min/max maps are not threadsafe
 
 					// Check for min
 					min := findMin(values)
-					if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *min) == 1 {
+					g.metadata.minlock.RLock()
+					val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
+					g.metadata.minlock.RUnlock()
+					if val == nil || Compare(*val, *min) == 1 {
 						if !min.IsNull() {
-							g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
+							g.metadata.minlock.Lock() // Check again after acquiring the write lock
+							if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *min) == 1 {
+								g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
+							}
+							g.metadata.minlock.Unlock()
 						}
 					}
 
 					// Check for max
 					max := findMax(values)
-					if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *max) == -1 {
+					g.metadata.maxlock.RLock()
+					val = g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
+					g.metadata.maxlock.RUnlock()
+					if val == nil || Compare(*val, *max) == -1 {
 						if !max.IsNull() {
-							g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
+							g.metadata.maxlock.Lock() // Check again after acquiring the write lock
+							if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *max) == -1 {
+								g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
+							}
+							g.metadata.maxlock.Unlock()
 						}
 					}
 				}
