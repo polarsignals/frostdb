@@ -813,58 +813,70 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 	}
 
 	switch expr := filterExpr.(type) {
+	default:
+		return false
 	case logicalplan.BinaryExpr:
-		matchers := expr.Left.ColumnsUsed()
-		for column, min := range g.metadata.min {
-			for _, matcher := range matchers {
-				if matcher.Match(column) {
-					switch leftExpr := expr.Left.(type) {
-					case logicalplan.BinaryExpr:
-						switch leftExpr.Op {
-						case logicalplan.GTOp:
-							switch literal := leftExpr.Right.(type) {
-							case logicalplan.LiteralExpr:
-								v := literal.Value.(*scalar.Int64)
-								if g.metadata.max[column].Int64() <= v.Value {
-									return true
-								}
-							}
-						case logicalplan.LTOp:
-							switch literal := leftExpr.Right.(type) {
-							case logicalplan.LiteralExpr:
-								v := literal.Value.(*scalar.Int64)
-								fmt.Println(leftExpr)
-								if min.Int64() >= v.Value {
-									return true
-								}
-							}
-						}
-					}
-					switch rightExpr := expr.Right.(type) {
-					case logicalplan.BinaryExpr:
-						switch rightExpr.Op {
-						case logicalplan.GTOp:
-							switch literal := rightExpr.Right.(type) {
-							case logicalplan.LiteralExpr:
-								v := literal.Value.(*scalar.Int64)
-								if g.metadata.max[column].Int64() <= v.Value {
-									return true
-								}
-							}
-						case logicalplan.LTOp:
-							switch literal := rightExpr.Right.(type) {
-							case logicalplan.LiteralExpr:
-								v := literal.Value.(*scalar.Int64)
-								if min.Int64() >= v.Value {
-									return true
-								}
-							}
-						}
-					}
-				}
+
+		var min, max *parquet.Value
+		var v scalar.Scalar
+		var leftresult bool
+		switch left := expr.Left.(type) {
+		case logicalplan.BinaryExpr:
+			leftresult = filterGranule(left, g)
+		case logicalplan.Column:
+			var found bool
+			min, max, found = findColumnValues(left.ColumnsUsed(), g)
+			if !found {
+				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
+				return true
+			}
+		case logicalplan.LiteralExpr:
+			v = left.Value.(*scalar.Int64) // TODO handle other types
+		}
+
+		switch right := expr.Right.(type) {
+		case logicalplan.BinaryExpr:
+			switch expr.Op {
+			case logicalplan.AndOp:
+				return leftresult || filterGranule(right, g)
+			}
+		case logicalplan.Column:
+			var found bool
+			min, max, found = findColumnValues(right.ColumnsUsed(), g)
+			if !found {
+				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
+				return true
+			}
+
+			switch expr.Op {
+			case logicalplan.LTOp:
+				return v.(*scalar.Int64).Value >= max.Int64() // TODO handle other types
+			case logicalplan.GTOp:
+				return v.(*scalar.Int64).Value <= min.Int64()
+			}
+
+		case logicalplan.LiteralExpr:
+			v = right.Value.(*scalar.Int64) // TODO handle other types
+			switch expr.Op {
+			case logicalplan.LTOp:
+				return min.Int64() >= v.(*scalar.Int64).Value
+			case logicalplan.GTOp:
+				return max.Int64() <= v.(*scalar.Int64).Value
 			}
 		}
 	}
 
 	return false
+}
+
+func findColumnValues(matchers []logicalplan.ColumnMatcher, g *Granule) (*parquet.Value, *parquet.Value, bool) {
+	for _, matcher := range matchers {
+		for column, min := range g.metadata.min {
+			if matcher.Match(column) {
+				return min, g.metadata.max[column], true
+			}
+		}
+	}
+
+	return nil, nil, false
 }
