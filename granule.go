@@ -258,7 +258,7 @@ func (g *Granule) minmaxes(p *Part) bool {
 				page := p.Values()
 				values := make([]parquet.Value, p.NumValues())
 				_, err = page.ReadValues(values)
-				if err != nil {
+				if err != nil && err != io.EOF {
 					return false
 				}
 
