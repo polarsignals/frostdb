@@ -564,6 +564,7 @@ func (t *TableBlock) RowGroupIterator(
 		g := i.(*Granule)
 
 		// Check if the entire granule can be skipped due to the filter expr
+		fmt.Println("filterExpr: ", filterExpr)
 		if filterGranule(filterExpr, g) {
 			return true
 		}
@@ -831,7 +832,12 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 				return true
 			}
 		case logicalplan.LiteralExpr:
-			v = left.Value.(*scalar.Int64) // TODO handle other types
+			switch left.Value.(type) {
+			case *scalar.Int64:
+				v = left.Value.(*scalar.Int64)
+			case *scalar.String:
+				v = left.Value.(*scalar.String)
+			}
 		}
 
 		switch right := expr.Right.(type) {
@@ -850,18 +856,37 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 
 			switch expr.Op {
 			case logicalplan.LTOp:
-				return v.(*scalar.Int64).Value >= max.Int64() // TODO handle other types
+				switch val := v.(type) {
+				case *scalar.Int64:
+					return val.Value >= max.Int64()
+				case *scalar.String:
+					return string(val.Value.Bytes()) >= max.String()
+				}
 			case logicalplan.GTOp:
-				return v.(*scalar.Int64).Value <= min.Int64()
+				switch val := v.(type) {
+				case *scalar.Int64:
+					return val.Value <= min.Int64()
+				case *scalar.String:
+					return string(val.Value.Bytes()) <= min.String()
+				}
 			}
 
 		case logicalplan.LiteralExpr:
-			v = right.Value.(*scalar.Int64) // TODO handle other types
-			switch expr.Op {
-			case logicalplan.LTOp:
-				return min.Int64() >= v.(*scalar.Int64).Value
-			case logicalplan.GTOp:
-				return max.Int64() <= v.(*scalar.Int64).Value
+			switch v := right.Value.(type) {
+			case *scalar.Int64:
+				switch expr.Op {
+				case logicalplan.LTOp:
+					return min.Int64() >= v.Value
+				case logicalplan.GTOp:
+					return max.Int64() <= v.Value
+				}
+			case *scalar.String:
+				switch expr.Op {
+				case logicalplan.LTOp:
+					return min.String() >= string(v.Value.Bytes())
+				case logicalplan.GTOp:
+					return max.String() <= string(v.Value.Bytes())
+				}
 			}
 		}
 	}
