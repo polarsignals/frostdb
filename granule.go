@@ -27,7 +27,7 @@ type Granule struct {
 	newGranules []*Granule
 }
 
-// GranuleMetadata is the metadata for a granule
+// GranuleMetadata is the metadata for a granule.
 type GranuleMetadata struct {
 	// least is the row that exists within the Granule that is the least.
 	// This is used for quick insertion into the btree, without requiring an iterator
@@ -234,11 +234,8 @@ func (g *Granule) Least() *dynparquet.DynamicRow {
 	return (*dynparquet.DynamicRow)(g.metadata.least.Load())
 }
 
-var err error
-
-// minmaxes finds the mins and maxes of every column in a part
+// minmaxes finds the mins and maxes of every column in a part.
 func (g *Granule) minmaxes(p *Part) bool {
-
 	f := p.Buf.ParquetFile()
 	numRowGroups := f.NumRowGroups()
 	for i := 0; i < numRowGroups; i++ {
@@ -260,7 +257,10 @@ func (g *Granule) minmaxes(p *Part) bool {
 
 				page := p.Values()
 				values := make([]parquet.Value, p.NumValues())
-				page.ReadValues(values)
+				_, err = page.ReadValues(values)
+				if err != nil {
+					return false
+				}
 
 				switch values[0].Kind() {
 				default:

@@ -807,7 +807,7 @@ func (t *TableBlock) abort(commit func(), granule *Granule) {
 	}
 }
 
-// filterGranule returns false if this granule does not contain useful data
+// filterGranule returns false if this granule does not contain useful data.
 func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 	if filterExpr == nil {
 		return true
