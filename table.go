@@ -564,7 +564,7 @@ func (t *TableBlock) RowGroupIterator(
 		g := i.(*Granule)
 
 		// Check if the entire granule can be skipped due to the filter expr
-		if !filterGranule(filterExpr, g) {
+		if !filterGranule(t.logger, filterExpr, g) {
 			return true
 		}
 
@@ -808,13 +808,14 @@ func (t *TableBlock) abort(commit func(), granule *Granule) {
 }
 
 // filterGranule returns false if this granule does not contain useful data.
-func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
+func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) bool {
 	if filterExpr == nil {
 		return true
 	}
 
 	switch expr := filterExpr.(type) {
 	default: // unsupported filter
+		level.Info(logger).Log("msg", "unsupported filter")
 		return true
 	case logicalplan.BinaryExpr:
 
@@ -823,7 +824,7 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 		var leftresult bool
 		switch left := expr.Left.(type) {
 		case logicalplan.BinaryExpr:
-			leftresult = filterGranule(left, g)
+			leftresult = filterGranule(logger, left, g)
 		case logicalplan.Column:
 			var found bool
 			min, max, found = findColumnValues(left.ColumnsUsed(), g)
@@ -844,7 +845,8 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 		case logicalplan.BinaryExpr:
 			switch expr.Op {
 			case logicalplan.AndOp:
-				return leftresult && filterGranule(right, g)
+				rightresult := filterGranule(logger, right, g)
+				return leftresult && rightresult
 			}
 		case logicalplan.Column:
 			var found bool
@@ -872,9 +874,10 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 			case logicalplan.EqOp:
 				switch val := v.(type) {
 				case *scalar.Int64:
-					return val.Value == min.Int64()
+					return val.Value >= min.Int64() && val.Value <= max.Int64()
 				case *scalar.String:
-					return string(val.Value.Bytes()) == min.String()
+					s := string(val.Value.Bytes())
+					return s >= min.String() && s <= max.String()
 				}
 			}
 
@@ -887,7 +890,7 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 				case logicalplan.GTOp:
 					return max.Int64() > v.Value
 				case logicalplan.EqOp:
-					return max.Int64() == v.Value
+					return v.Value >= min.Int64() && v.Value <= max.Int64()
 				}
 			case *scalar.String:
 				switch expr.Op {
@@ -896,7 +899,8 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 				case logicalplan.GTOp:
 					return max.String() > string(v.Value.Bytes())
 				case logicalplan.EqOp:
-					return max.String() == string(v.Value.Bytes())
+					s := string(v.Value.Bytes())
+					return s >= min.String() && s <= max.String()
 				}
 			}
 		}

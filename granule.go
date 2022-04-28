@@ -104,7 +104,9 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 	}
 
 	// Set the minmaxes for the granule
-	g.minmaxes(p)
+	if err := g.minmaxes(p); err != nil {
+		return 0, err
+	}
 
 	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
 	if node.sentinel == Compacted {
@@ -235,7 +237,7 @@ func (g *Granule) Least() *dynparquet.DynamicRow {
 }
 
 // minmaxes finds the mins and maxes of every column in a part.
-func (g *Granule) minmaxes(p *Part) bool {
+func (g *Granule) minmaxes(p *Part) error {
 	f := p.Buf.ParquetFile()
 	numRowGroups := f.NumRowGroups()
 	for i := 0; i < numRowGroups; i++ {
@@ -252,14 +254,17 @@ func (g *Granule) minmaxes(p *Part) bool {
 					if err == io.EOF {
 						break
 					}
-					return false
+					return err
 				}
 
 				page := p.Values()
 				values := make([]parquet.Value, p.NumValues())
-				_, err = page.ReadValues(values)
+				n, err := page.ReadValues(values)
 				if err != nil && err != io.EOF {
-					return false
+					return err
+				}
+				if n == 0 {
+					break
 				}
 
 				switch values[0].Kind() {
@@ -299,7 +304,7 @@ func (g *Granule) minmaxes(p *Part) bool {
 		}
 	}
 
-	return false
+	return nil
 }
 
 func find(minmax int, values []parquet.Value) *parquet.Value {
