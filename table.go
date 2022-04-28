@@ -895,18 +895,27 @@ func filterGranule(filterExpr logicalplan.Expr, g *Granule) bool {
 }
 
 func findColumnValues(matchers []logicalplan.ColumnMatcher, g *Granule) (*parquet.Value, *parquet.Value, bool) {
-	g.metadata.minlock.RLock()
-	for _, matcher := range matchers {
-		for column, min := range g.metadata.min {
-			if matcher.Match(column) {
-				g.metadata.maxlock.RLock()
-				max := g.metadata.max[column]
-				g.metadata.maxlock.RUnlock()
-				return min, max, true
+	findMinColumn := func() (*parquet.Value, string) {
+		g.metadata.minlock.RLock()
+		defer g.metadata.minlock.RUnlock()
+		for _, matcher := range matchers {
+			for column, min := range g.metadata.min {
+				if matcher.Match(column) {
+					return min, column
+				}
 			}
 		}
+		return nil, ""
 	}
-	g.metadata.minlock.RLock()
 
-	return nil, nil, false
+	min, column := findMinColumn()
+	if min == nil {
+		return nil, nil, false
+	}
+
+	g.metadata.maxlock.RLock()
+	max := g.metadata.max[column]
+	g.metadata.maxlock.RUnlock()
+
+	return min, max, true
 }
