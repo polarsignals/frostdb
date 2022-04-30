@@ -74,7 +74,9 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		g.metadata.least.Store(unsafe.Pointer(row))
 
 		// Set the minmaxes on the new granule
-		g.minmaxes(firstPart)
+		if err := g.minmaxes(firstPart); err != nil {
+			return nil, err
+		}
 	}
 
 	granulesCreated.Inc()
