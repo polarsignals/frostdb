@@ -415,6 +415,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 
 	return parquet.NewWriter(w,
 		ps,
+		parquet.ColumnIndexSizeLimit(32),
 		parquet.BloomFilters(bloomFilterColumns...),
 		parquet.KeyValueMetadata(
 			DynamicColumnsKey,
