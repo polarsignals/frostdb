@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	// The size of the column indicies in parquet files
+	// The size of the column indicies in parquet files.
 	ColumnIndexSize = 16
 )
 
