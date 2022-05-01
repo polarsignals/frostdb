@@ -9,6 +9,11 @@ import (
 	"github.com/segmentio/parquet-go"
 )
 
+const (
+	// The size of the column indicies in parquet files
+	ColumnIndexSize = 16
+)
+
 // ColumnDefinition describes a column in a dynamic parquet schema.
 type ColumnDefinition struct {
 	Name          string
@@ -415,7 +420,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 
 	return parquet.NewWriter(w,
 		ps,
-		parquet.ColumnIndexSizeLimit(32),
+		parquet.ColumnIndexSizeLimit(ColumnIndexSize),
 		parquet.BloomFilters(bloomFilterColumns...),
 		parquet.KeyValueMetadata(
 			DynamicColumnsKey,

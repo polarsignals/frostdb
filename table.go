@@ -856,27 +856,27 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 				return false
 			}
 
-			switch expr.Op {
-			case logicalplan.LTOp:
-				switch val := v.(type) {
-				case *scalar.Int64:
+			switch val := v.(type) {
+			case *scalar.Int64:
+				switch expr.Op {
+				case logicalplan.LTOp:
 					return val.Value < max.Int64()
-				case *scalar.String:
-					return string(val.Value.Bytes()) < max.String()
-				}
-			case logicalplan.GTOp:
-				switch val := v.(type) {
-				case *scalar.Int64:
+				case logicalplan.GTOp:
 					return val.Value > min.Int64()
-				case *scalar.String:
-					return string(val.Value.Bytes()) > min.String()
-				}
-			case logicalplan.EqOp:
-				switch val := v.(type) {
-				case *scalar.Int64:
+				case logicalplan.EqOp:
 					return val.Value >= min.Int64() && val.Value <= max.Int64()
-				case *scalar.String:
-					s := string(val.Value.Bytes())
+				}
+			case *scalar.String:
+				s := string(val.Value.Bytes())
+				if len(val.Value.Bytes()) > dynparquet.ColumnIndexSize {
+					s = string(val.Value.Bytes()[:dynparquet.ColumnIndexSize])
+				}
+				switch expr.Op {
+				case logicalplan.LTOp:
+					return string(val.Value.Bytes()[:dynparquet.ColumnIndexSize]) < max.String()
+				case logicalplan.GTOp:
+					return string(val.Value.Bytes()[:dynparquet.ColumnIndexSize]) > min.String()
+				case logicalplan.EqOp:
 					return s >= min.String() && s <= max.String()
 				}
 			}
@@ -893,13 +893,16 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 					return v.Value >= min.Int64() && v.Value <= max.Int64()
 				}
 			case *scalar.String:
+				s := string(v.Value.Bytes())
+				if len(v.Value.Bytes()) > dynparquet.ColumnIndexSize {
+					s = string(v.Value.Bytes()[:dynparquet.ColumnIndexSize])
+				}
 				switch expr.Op {
 				case logicalplan.LTOp:
-					return min.String() < string(v.Value.Bytes())
+					return min.String() < s
 				case logicalplan.GTOp:
-					return max.String() > string(v.Value.Bytes())
+					return max.String() > s
 				case logicalplan.EqOp:
-					s := string(v.Value.Bytes())
 					return s >= min.String() && s <= max.String()
 				}
 			}
