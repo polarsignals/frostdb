@@ -2,6 +2,7 @@ package arcticdb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -88,6 +89,16 @@ func newTable(
 	reg prometheus.Registerer,
 	logger log.Logger,
 ) (*Table, error) {
+	if db.columnStore.indexDegree <= 0 {
+		msg := fmt.Sprintf("Table's columnStore index degree must be a positive integer (received %d)", db.columnStore.indexDegree)
+		return nil, errors.New(msg)
+	}
+
+	if db.columnStore.splitSize < 2 {
+		msg := fmt.Sprintf("Table's columnStore splitSize must be a positive integer > 1 (received %d)", db.columnStore.splitSize)
+		return nil, errors.New(msg)
+	}
+
 	reg = prometheus.WrapRegistererWith(prometheus.Labels{"table": name}, reg)
 
 	t := &Table{
@@ -312,7 +323,7 @@ func (t *Table) SchemaIterator(
 }
 
 func newTableBlock(table *Table) (*TableBlock, error) {
-	index := btree.New(2) // TODO make the degree a setting
+	index := btree.New(table.db.columnStore.indexDegree)
 	tb := &TableBlock{
 		table:  table,
 		index:  atomic.NewUnsafePointer(unsafe.Pointer(index)),
@@ -470,7 +481,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		return
 	}
 
-	granules, err := g.split(tx, t.table.db.columnStore.granuleSize/2) // TODO magic numbers
+	granules, err := g.split(tx, t.table.db.columnStore.granuleSize/t.table.db.columnStore.splitSize)
 	if err != nil {
 		t.abort(commit, granule)
 		level.Error(t.logger).Log("msg", "failed to split granule", "err", err)
