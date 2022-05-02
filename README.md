@@ -28,7 +28,9 @@ Observability data is most useful when highly dimensional and those dimensions c
 
 ### Dynamic Columns
 
-While columnar databases already exist, most require a static schema, however, Observability workloads differ in that their schemas are not static meaning not all columns are pre-defined. Take a [Prometheus](https://prometheus.io/) time-series for example. Prometheus time-series are uniquely identified by the combination of their label-sets:
+While columnar databases already exist, most require a static schema, however, Observability workloads differ in that their schemas are not static, meaning not all columns are pre-defined. On the other hand, wide column databases also already exist, but typically are not strictly typed, and most wide-column databases are row-based databases, not columnar databases.
+
+Take a [Prometheus](https://prometheus.io/) time-series for example. Prometheus time-series are uniquely identified by the combination of their label-sets:
 
 ```
 http_requests_total{path="/api/v1/users", code="200"} 12
