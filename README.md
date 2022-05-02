@@ -7,9 +7,9 @@
 
 > This project is still in its infancy, consider it not production-ready, probably has various consistency and correctness problems and all API will change!
 
-ArcticDB is an embeddable columnar database written in Go. It features semi-structured schemas, and uses [Apache Parquet](https://parquet.apache.org/) for storage, and [Apache Arrow](https://arrow.apache.org/) at query time. Building on top of Apache Arrow, ArcticDB provides a query builder and various optimizers.
+ArcticDB is an embeddable columnar database written in Go. It features semi-structured schemas (could also be described as typed wide-columns), and uses [Apache Parquet](https://parquet.apache.org/) for storage, and [Apache Arrow](https://arrow.apache.org/) at query time. Building on top of Apache Arrow, ArcticDB provides a query builder and various optimizers (it reminds of DataFrame-like APIs).
 
-ArcticDB is optimized for use cases where the majority of interactions are writes, and when data is queried, a lot of data is queried at once (our use case at Polar Signals can be broadly described as Observability and specifically for [Parca](https://parca.dev/)).
+ArcticDB is optimized for use cases where the majority of interactions are writes, and when data is queried, a lot of data is queried at once (our use case at Polar Signals can be broadly described as Observability and specifically for [Parca](https://parca.dev/)). It could also be described as a wide-column columnar database.
 
 ## Design choices
 
