@@ -1,9 +1,12 @@
+<p align="center">
+  <img width="500" src="https://user-images.githubusercontent.com/4546722/166553238-ae7b1ffb-a709-4196-b207-16055c3e1bc3.png">
+</p>
+
+---
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/polarsignals/arcticdb.svg)](https://pkg.go.dev/github.com/polarsignals/arcticdb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/polarsignals/arcticdb)](https://goreportcard.com/report/github.com/polarsignals/arcticdb)
 ![Build](https://github.com/polarsignals/arcticdb/actions/workflows/go.yml/badge.svg)
-
-
-# ArcticDB
 
 > This project is still in its infancy, consider it not production-ready, probably has various consistency and correctness problems and all API will change!
 
