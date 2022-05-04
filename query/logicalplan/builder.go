@@ -62,16 +62,25 @@ type StaticColumnMatcher struct {
 	ColumnName string
 }
 
+func (m StaticColumnMatcher) Name() string {
+	return m.ColumnName
+}
+
 func (m StaticColumnMatcher) Match(columnName string) bool {
 	return m.ColumnName == columnName
 }
 
 type ColumnMatcher interface {
 	Match(columnName string) bool
+	Name() string
 }
 
 type DynamicColumnMatcher struct {
 	ColumnName string
+}
+
+func (m DynamicColumnMatcher) Name() string {
+	return m.ColumnName
 }
 
 func (m DynamicColumnMatcher) Match(columnName string) bool {
