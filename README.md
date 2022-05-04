@@ -14,6 +14,8 @@ ArcticDB is an embeddable columnar database written in Go. It features semi-stru
 
 ArcticDB is optimized for use cases where the majority of interactions are writes, and when data is queried, a lot of data is queried at once (our use case at Polar Signals can be broadly described as Observability and specifically for [Parca](https://parca.dev/)). It could also be described as a wide-column columnar database.
 
+Read the annoucement blog post to learn about what made us create it: https://www.polarsignals.com/blog/posts/2022/05/04/introducing-arcticdb/
+
 ## Design choices
 
 ArcticDB was specifically built for Observability workloads. This resulted in several characteristics that make it unique in its combination.
