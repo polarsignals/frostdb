@@ -25,7 +25,7 @@ Table Of Contents:
 * [Columnar Layout](#columnar-layout)
 * [Dynamic Columns](#dynamic-columns)
 * [Immutable & Sorted](#immutable--sorted)
-* [Consistency trade-offs](#consistency-trade-offs)
+* [Snapshot isolation](#snapshot-isolation)
 
 ### Columnar layout
 
@@ -97,11 +97,13 @@ Under the hood, Granules are a list of sorted Parts, and only if a query require
 
 ![A Granule is organized in Parts](https://docs.google.com/drawings/d/1Ex4hKLwoQ_IgYARj0aEjoFEjQRt6-B0fO8K9E7syyHc/export/svg)
 
-### Consistency trade-offs
+### Snapshot isolation
 
-ArcticDB has a weak consistency model. It does not have read-after-write consistency as the intended use is for users reading data that are not the same as the entity writing data to it. To see new data the user re-runs a query. Choosing to trade-off read-after-write consistency allows for mechanisms to increase throughput significantly. ArcticDB releases write transactions in batches. It essentially only ensures write atomicity and that writes are not torn when reading.
+ArcticDB has snapshot isolation, however, it comes with a few caveats that should be well understood. It does not have read-after-write consistency as the intended use is for users reading data that are not the same as the entity writing data to it. To see new data the user re-runs a query. Choosing to trade-off read-after-write consistency allows for mechanisms to increase throughput significantly. ArcticDB releases write transactions in batches. It essentially only ensures write atomicity and that writes are not torn when reading. Since data is immutable, those characteristics together result in snapshot isolation. 
 
-ArcticDB maintains a watermark indicating that all transactions equal and lower to the watermark are safe to be read. Only write transactions obtain a _new_ transaction ID, while reads use the transaction ID of the watermark to identify data that is safe to be read. The watermark is only increased when strictly monotonic, consecutive transactions have finished. This means that a low write transaction can block higher write transactions to become available to be read. To ensure progress is made, write transactions have a timeout.
+More concretely, arcticDB maintains a watermark indicating that all transactions equal and lower to the watermark are safe to be read. Only write transactions obtain a _new_ transaction ID, while reads use the transaction ID of the watermark to identify data that is safe to be read. The watermark is only increased when strictly monotonic, consecutive transactions have finished. This means that a low write transaction can block higher write transactions to become available to be read. To ensure progress is made, write transactions have a timeout.
+
+This mechanism inspired by a mix of [Google Spanner](https://research.google/pubs/pub39966/), [Google Percolator](https://research.google/pubs/pub36726/) and [Highly Available Transactions](https://www.vldb.org/pvldb/vol7/p181-bailis.pdf).
 
 ![Transactions are released in batches indicated by the watermark](https://docs.google.com/drawings/d/1qmcMg9sXnDZix9eWSvOtWJD06yHsLpgho8M-DGF84bU/export/svg)
 
