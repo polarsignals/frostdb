@@ -159,7 +159,7 @@ type Column struct {
 	ColumnName string
 }
 
-func (c Column) MarshalJSON() ([]byte, error) {
+func (c *Column) MarshalJSON() ([]byte, error) {
 	type columnJSON struct {
 		Expr       string
 		ColumnName string
@@ -184,20 +184,20 @@ func (c *Column) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (c Column) Accept(visitor Visitor) bool {
-	continu := visitor.PreVisit(&c)
+func (c *Column) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(c)
 	if !continu {
 		return false
 	}
 
-	return visitor.PostVisit(&c)
+	return visitor.PostVisit(c)
 }
 
-func (c Column) Name() string {
+func (c *Column) Name() string {
 	return c.ColumnName
 }
 
-func (c Column) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
+func (c *Column) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
 	colDef, found := s.ColumnByName(c.ColumnName)
 	if !found {
 		return nil, errors.New("column not found")
@@ -206,77 +206,77 @@ func (c Column) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
 	return convert.ParquetNodeToType(colDef.StorageLayout)
 }
 
-func (c Column) Alias(alias string) AliasExpr {
-	return AliasExpr{Expr: &c, Alias: alias}
+func (c *Column) Alias(alias string) AliasExpr {
+	return AliasExpr{Expr: c, Alias: alias}
 }
 
-func (c Column) ColumnsUsed() []ColumnMatcher {
+func (c *Column) ColumnsUsed() []ColumnMatcher {
 	return []ColumnMatcher{c.Matcher()}
 }
 
-func (c Column) Matcher() ColumnMatcher {
+func (c *Column) Matcher() ColumnMatcher {
 	return StaticColumnMatcher{ColumnName: c.ColumnName}
 }
 
-func (c Column) Eq(e Expr) *BinaryExpr {
+func (c *Column) Eq(e Expr) *BinaryExpr {
 	return &BinaryExpr{
-		Left:  &c,
+		Left:  c,
 		Op:    EqOp,
 		Right: e,
 	}
 }
 
-func (c Column) NotEq(e Expr) BinaryExpr {
-	return BinaryExpr{
-		Left:  &c,
+func (c *Column) NotEq(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
 		Op:    NotEqOp,
 		Right: e,
 	}
 }
 
-func (c Column) GT(e Expr) BinaryExpr {
-	return BinaryExpr{
-		Left:  &c,
+func (c *Column) GT(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
 		Op:    GTOp,
 		Right: e,
 	}
 }
 
-func (c Column) GTE(e Expr) BinaryExpr {
-	return BinaryExpr{
-		Left:  &c,
+func (c *Column) GTE(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
 		Op:    GTEOp,
 		Right: e,
 	}
 }
 
-func (c Column) LT(e Expr) BinaryExpr {
-	return BinaryExpr{
-		Left:  &c,
+func (c *Column) LT(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
 		Op:    LTOp,
 		Right: e,
 	}
 }
 
-func (c Column) LTE(e Expr) BinaryExpr {
-	return BinaryExpr{
-		Left:  &c,
+func (c *Column) LTE(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
 		Op:    LTEOp,
 		Right: e,
 	}
 }
 
-func (c Column) RegexMatch(pattern string) *BinaryExpr {
+func (c *Column) RegexMatch(pattern string) *BinaryExpr {
 	return &BinaryExpr{
-		Left:  &c,
+		Left:  c,
 		Op:    RegExpOp,
 		Right: Literal(pattern),
 	}
 }
 
-func (c Column) RegexNotMatch(pattern string) BinaryExpr {
-	return BinaryExpr{
-		Left:  &c,
+func (c *Column) RegexNotMatch(pattern string) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
 		Op:    NotRegExpOp,
 		Right: Literal(pattern),
 	}

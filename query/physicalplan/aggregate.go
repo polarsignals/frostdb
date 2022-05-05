@@ -36,10 +36,10 @@ func Aggregate(
 
 	agg.AggExpr.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 		switch e := expr.(type) {
-		case logicalplan.AggregationFunction:
+		case *logicalplan.AggregationFunction:
 			aggFunc = e.Func
 			aggFuncFound = true
-		case logicalplan.Column:
+		case *logicalplan.Column:
 			aggColumnMatcher = e.Matcher()
 			aggColumnFound = true
 		}

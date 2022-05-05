@@ -173,7 +173,11 @@ func TestDistinctProjection(t *testing.T) {
 
 	var r arrow.Record
 	err = engine.ScanTable("test").
-		Distinct(logicalplan.Col("labels.label1"), logicalplan.Col("labels.label2"), logicalplan.Col("timestamp").GT(logicalplan.Literal(1))).
+		Distinct(
+			logicalplan.Col("labels.label1"),
+			logicalplan.Col("labels.label2"),
+			logicalplan.Col("timestamp").GT(logicalplan.Literal(1)),
+		).
 		Execute(context.Background(), func(ar arrow.Record) error {
 			ar.Retain()
 			r = ar

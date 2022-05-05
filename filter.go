@@ -48,7 +48,7 @@ func arrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 	}
 }
 
-func binaryBooleanExpr(expr logicalplan.BinaryExpr) (TrueNegativeFilter, error) {
+func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error) {
 	switch expr.Op {
 	case logicalplan.EqOp: //, logicalplan.NotEqOp, logicalplan.LTOp, logicalplan.LTEOp, logicalplan.GTOp, logicalplan.GTEOp, logicalplan.RegExpOp, logicalplan.NotRegExpOp:
 		var leftColumnRef *ColumnRef
