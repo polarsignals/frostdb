@@ -1,6 +1,7 @@
 package logicalplan
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -101,6 +102,11 @@ type Expr interface {
 	// used to identify the column in the resulting Apache Arrow frames, while
 	// ColumnsUsed will return `XYZ` to be necessary to be loaded physically.
 	Matcher() ColumnMatcher
+
+	// Expr implements these two interfaces
+	// so that queries can be transported as JSON.
+	json.Marshaler
+	json.Unmarshaler
 }
 
 func (b Builder) Filter(
