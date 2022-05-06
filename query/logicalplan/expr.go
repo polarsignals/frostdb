@@ -99,8 +99,15 @@ func (e *BinaryExpr) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		e.Left = &c
+	case "*logicalplan.BinaryExpr":
+		var be BinaryExpr
+		err := json.Unmarshal(bej.Left, &be)
+		if err != nil {
+			return err
+		}
+		e.Left = &be
 	default:
-		panic("unmarshalling for expr hasn't been implemented")
+		panic(fmt.Sprintf("BinaryExpr unmarshalling for %s hasn't been implemented", bej.LeftType))
 	}
 	switch bej.RightType {
 	case "*logicalplan.LiteralExpr":
@@ -110,8 +117,15 @@ func (e *BinaryExpr) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		e.Right = &literal
+	case "*logicalplan.BinaryExpr":
+		var be BinaryExpr
+		err := json.Unmarshal(bej.Right, &be)
+		if err != nil {
+			return err
+		}
+		e.Right = &be
 	default:
-		panic("unmarshalling for expr hasn't been implemented")
+		panic(fmt.Sprintf("BinaryExpr unmarshalling for %s hasn't been implemented", bej.RightType))
 	}
 	return nil
 }
