@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sync"
 	"unsafe"
 
 	"github.com/google/btree"
@@ -15,23 +16,35 @@ import (
 )
 
 type Granule struct {
-	// least is the row that exists within the Granule that is the least.
-	// This is used for quick insertion into the btree, without requiring an iterator
-	least *atomic.UnsafePointer
-	parts *PartList
+	metadata GranuleMetadata
 
-	// card is the raw commited, and uncommited cardinality of the granule. It is used as a suggestion for potential compaction
-	card *atomic.Uint64
-
+	parts       *PartList
 	tableConfig *TableConfig
 
 	granulesCreated prometheus.Counter
 
-	// pruned indicates if this Granule is longer found in the index
-	pruned *atomic.Uint64
-
 	// newGranules are the granules that were created after a split
 	newGranules []*Granule
+}
+
+// GranuleMetadata is the metadata for a granule.
+type GranuleMetadata struct {
+	// least is the row that exists within the Granule that is the least.
+	// This is used for quick insertion into the btree, without requiring an iterator
+	least *atomic.UnsafePointer
+
+	// min contains the minimum value found for each column in the granule. It is used during iteration to validate if the granule contains interesting data
+	minlock sync.RWMutex
+	min     map[string]*parquet.Value
+	// max contains the maximum value found for each column in the granule. It is used during iteration to validate if the granule contains interesting data
+	maxlock sync.RWMutex
+	max     map[string]*parquet.Value
+
+	// card is the raw commited, and uncommited cardinality of the granule. It is used as a suggestion for potential compaction
+	card *atomic.Uint64
+
+	// pruned indicates if this Granule is longer found in the index
+	pruned *atomic.Uint64
 }
 
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
@@ -40,21 +53,30 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		parts:           NewPartList(nil, 0, None),
 		tableConfig:     tableConfig,
 
-		least:  atomic.NewUnsafePointer(nil),
-		card:   atomic.NewUint64(0),
-		pruned: atomic.NewUint64(0),
+		metadata: GranuleMetadata{
+			min:    map[string]*parquet.Value{},
+			max:    map[string]*parquet.Value{},
+			least:  atomic.NewUnsafePointer(nil),
+			card:   atomic.NewUint64(0),
+			pruned: atomic.NewUint64(0),
+		},
 	}
 
 	// Find the least column
 	if firstPart != nil {
-		g.card = atomic.NewUint64(uint64(firstPart.Buf.NumRows()))
+		g.metadata.card = atomic.NewUint64(uint64(firstPart.Buf.NumRows()))
 		g.parts.Prepend(firstPart)
 		// Since we assume a part is sorted, we need only to look at the first row in each Part
 		row, err := firstPart.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 		if err != nil {
 			return nil, err
 		}
-		g.least.Store(unsafe.Pointer(row))
+		g.metadata.least.Store(unsafe.Pointer(row))
+
+		// Set the minmaxes on the new granule
+		if err := g.minmaxes(firstPart); err != nil {
+			return nil, err
+		}
 	}
 
 	granulesCreated.Inc()
@@ -65,25 +87,30 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 func (g *Granule) AddPart(p *Part) (uint64, error) {
 	rows := p.Buf.NumRows()
 	if rows == 0 {
-		return g.card.Load(), nil
+		return g.metadata.card.Load(), nil
 	}
 	node := g.parts.Prepend(p)
 
-	newcard := g.card.Add(uint64(p.Buf.NumRows()))
+	newcard := g.metadata.card.Add(uint64(p.Buf.NumRows()))
 	r, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
 	if err != nil {
 		return 0, err
 	}
 
 	for {
-		least := g.least.Load()
+		least := g.metadata.least.Load()
 		if least == nil || g.tableConfig.schema.RowLessThan(r, (*dynparquet.DynamicRow)(least)) {
-			if g.least.CAS(least, unsafe.Pointer(r)) {
+			if g.metadata.least.CAS(least, unsafe.Pointer(r)) {
 				break
 			}
 		} else {
 			break
 		}
+	}
+
+	// Set the minmaxes for the granule
+	if err := g.minmaxes(p); err != nil {
+		return 0, err
 	}
 
 	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
@@ -211,5 +238,82 @@ func (g *Granule) Less(than btree.Item) bool {
 
 // Least returns the least row in a Granule.
 func (g *Granule) Least() *dynparquet.DynamicRow {
-	return (*dynparquet.DynamicRow)(g.least.Load())
+	return (*dynparquet.DynamicRow)(g.metadata.least.Load())
+}
+
+// minmaxes finds the mins and maxes of every column in a part.
+func (g *Granule) minmaxes(p *Part) error {
+	f := p.Buf.ParquetFile()
+	numRowGroups := f.NumRowGroups()
+	for i := 0; i < numRowGroups; i++ {
+		rowGroup := f.RowGroup(i)
+
+		numColumns := rowGroup.NumColumns()
+		for j := 0; j < numColumns; j++ {
+			columnChunk := rowGroup.Column(j)
+
+			idx := columnChunk.ColumnIndex()
+			minvalues := make([]parquet.Value, 0, idx.NumPages())
+			maxvalues := make([]parquet.Value, 0, idx.NumPages())
+			for k := 0; k < idx.NumPages(); k++ {
+				minvalues = append(minvalues, idx.MinValue(k))
+				maxvalues = append(maxvalues, idx.MaxValue(k))
+			}
+
+			// Check for min
+			min := findMin(columnChunk.Type(), minvalues)
+			g.metadata.minlock.RLock()
+			val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
+			g.metadata.minlock.RUnlock()
+			if val == nil || columnChunk.Type().Compare(*val, *min) == 1 {
+				if !min.IsNull() {
+					g.metadata.minlock.Lock() // Check again after acquiring the write lock
+					if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || columnChunk.Type().Compare(*val, *min) == 1 {
+						g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
+					}
+					g.metadata.minlock.Unlock()
+				}
+			}
+
+			// Check for max
+			max := findMax(columnChunk.Type(), maxvalues)
+			g.metadata.maxlock.RLock()
+			val = g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
+			g.metadata.maxlock.RUnlock()
+			if val == nil || columnChunk.Type().Compare(*val, *max) == -1 {
+				if !max.IsNull() {
+					g.metadata.maxlock.Lock() // Check again after acquiring the write lock
+					if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || columnChunk.Type().Compare(*val, *max) == -1 {
+						g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
+					}
+					g.metadata.maxlock.Unlock()
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func find(minmax int, t parquet.Type, values []parquet.Value) *parquet.Value {
+	if len(values) == 0 {
+		return nil
+	}
+
+	val := values[0]
+	for i := 1; i < len(values); i++ {
+		if t.Compare(val, values[i]) != minmax {
+			val = values[i]
+		}
+	}
+
+	return &val
+}
+
+func findMax(t parquet.Type, values []parquet.Value) *parquet.Value {
+	return find(1, t, values)
+}
+
+func findMin(t parquet.Type, values []parquet.Value) *parquet.Value {
+	return find(-1, t, values)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
 type testOutput struct {
@@ -158,7 +159,7 @@ func TestTable(t *testing.T) {
 	// One granule with 3 parts
 	require.Equal(t, 1, table.active.Index().Len())
 	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).parts.total.Load())
-	require.Equal(t, uint64(5), table.active.Index().Min().(*Granule).card.Load())
+	require.Equal(t, uint64(5), table.active.Index().Min().(*Granule).metadata.card.Load())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
@@ -168,7 +169,7 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
-	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).least.Load()).Row)
+	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least.Load()).Row)
 	require.Equal(t, 1, table.active.Index().Len())
 }
 
@@ -277,8 +278,8 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	})
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).card.Load())
-	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).card.Load())
+	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).metadata.card.Load())
+	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).metadata.card.Load())
 }
 
 /*
@@ -360,8 +361,8 @@ func Test_Table_InsertLowest(t *testing.T) {
 	}
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).card.Load()) // [13, 12]
-	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).card.Load()) // [11, 10]
+	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).metadata.card.Load()) // [13, 12]
+	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11, 10]
 
 	samples = dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -385,8 +386,8 @@ func Test_Table_InsertLowest(t *testing.T) {
 	table.Sync()
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [14, 13, 12]
-	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).card.Load()) // [11, 10]
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).metadata.card.Load()) // [14, 13, 12]
+	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11, 10]
 
 	// Insert a new column that is the lowest column yet; expect it to be added to the minimum column
 	samples = dynparquet.Samples{{
@@ -417,8 +418,8 @@ func Test_Table_InsertLowest(t *testing.T) {
 	})
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).card.Load()) // [14,13,12]
-	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).card.Load()) // [11,10,1]
+	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).metadata.card.Load()) // [14,13,12]
+	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11,10,1]
 }
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
@@ -889,4 +890,111 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	db, err = c.DB("test")
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()), newTestLogger(t))
 	require.NoError(t, err)
+}
+
+func Test_Table_Filter(t *testing.T) {
+	table := basicTable(t, 2^12)
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(buf)
+	require.NoError(t, err)
+
+	filterExpr := logicalplan.And( // Filter that excludes the granule
+		logicalplan.Col("timestamp").GT(logicalplan.Literal(-10)),
+		logicalplan.Col("timestamp").LT(logicalplan.Literal(1)),
+	)
+
+	iterated := false
+	err = table.Iterator(memory.NewGoAllocator(), nil, filterExpr, nil, func(ar arrow.Record) error {
+		defer ar.Release()
+
+		iterated = true
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.False(t, iterated)
 }

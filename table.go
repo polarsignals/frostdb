@@ -11,6 +11,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
@@ -235,7 +236,7 @@ func (t *Table) Iterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(filter, func(rg dynparquet.DynamicRowGroup) bool {
+	err = t.ActiveBlock().RowGroupIterator(filterExpr, filter, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -285,7 +286,7 @@ func (t *Table) SchemaIterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(filter, func(rg dynparquet.DynamicRowGroup) bool {
+	err = t.ActiveBlock().RowGroupIterator(nil, filter, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -383,7 +384,7 @@ func (t *TableBlock) Insert(tx uint64, buf *dynparquet.SerializedBuffer) error {
 
 func (t *TableBlock) splitGranule(granule *Granule) {
 	// Recheck to ensure the granule still needs to be split
-	if !granule.pruned.CAS(0, 1) {
+	if !granule.metadata.pruned.CAS(0, 1) {
 		return
 	}
 
@@ -551,6 +552,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *TableBlock) RowGroupIterator(
+	filterExpr logicalplan.Expr,
 	filter TrueNegativeFilter,
 	iterator func(rg dynparquet.DynamicRowGroup) bool,
 ) error {
@@ -560,6 +562,11 @@ func (t *TableBlock) RowGroupIterator(
 	var err error
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
+
+		// Check if the entire granule can be skipped due to the filter expr
+		if !filterGranule(t.logger, filterExpr, g) {
+			return true
+		}
 
 		g.PartBuffersForTx(watermark, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
@@ -793,9 +800,140 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 // abort a compaction transaction.
 func (t *TableBlock) abort(commit func(), granule *Granule) {
 	for {
-		if granule.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
+		if granule.metadata.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
 			commit()
 			return
 		}
 	}
+}
+
+// filterGranule returns false if this granule does not contain useful data.
+func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) bool {
+	if filterExpr == nil {
+		return true
+	}
+
+	switch expr := filterExpr.(type) {
+	default: // unsupported filter
+		level.Info(logger).Log("msg", "unsupported filter")
+		return true
+	case logicalplan.BinaryExpr:
+
+		var min, max *parquet.Value
+		var v scalar.Scalar
+		var leftresult bool
+		switch left := expr.Left.(type) {
+		case logicalplan.BinaryExpr:
+			leftresult = filterGranule(logger, left, g)
+		case logicalplan.Column:
+			var found bool
+			min, max, found = findColumnValues(left.ColumnsUsed(), g)
+			if !found {
+				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
+				return false
+			}
+		case logicalplan.LiteralExpr:
+			switch left.Value.(type) {
+			case *scalar.Int64:
+				v = left.Value.(*scalar.Int64)
+			case *scalar.String:
+				v = left.Value.(*scalar.String)
+			}
+		}
+
+		switch right := expr.Right.(type) {
+		case logicalplan.BinaryExpr:
+			switch expr.Op {
+			case logicalplan.AndOp:
+				rightresult := filterGranule(logger, right, g)
+				return leftresult && rightresult
+			}
+		case logicalplan.Column:
+			var found bool
+			min, max, found = findColumnValues(right.ColumnsUsed(), g)
+			if !found {
+				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
+				return false
+			}
+
+			switch val := v.(type) {
+			case *scalar.Int64:
+				switch expr.Op {
+				case logicalplan.LTOp:
+					return val.Value < max.Int64()
+				case logicalplan.GTOp:
+					return val.Value > min.Int64()
+				case logicalplan.EqOp:
+					return val.Value >= min.Int64() && val.Value <= max.Int64()
+				}
+			case *scalar.String:
+				s := string(val.Value.Bytes())
+				if len(val.Value.Bytes()) > dynparquet.ColumnIndexSize {
+					s = string(val.Value.Bytes()[:dynparquet.ColumnIndexSize])
+				}
+				switch expr.Op {
+				case logicalplan.LTOp:
+					return string(val.Value.Bytes()[:dynparquet.ColumnIndexSize]) < max.String()
+				case logicalplan.GTOp:
+					return string(val.Value.Bytes()[:dynparquet.ColumnIndexSize]) > min.String()
+				case logicalplan.EqOp:
+					return s >= min.String() && s <= max.String()
+				}
+			}
+
+		case logicalplan.LiteralExpr:
+			switch v := right.Value.(type) {
+			case *scalar.Int64:
+				switch expr.Op {
+				case logicalplan.LTOp:
+					return min.Int64() < v.Value
+				case logicalplan.GTOp:
+					return max.Int64() > v.Value
+				case logicalplan.EqOp:
+					return v.Value >= min.Int64() && v.Value <= max.Int64()
+				}
+			case *scalar.String:
+				s := string(v.Value.Bytes())
+				if len(v.Value.Bytes()) > dynparquet.ColumnIndexSize {
+					s = string(v.Value.Bytes()[:dynparquet.ColumnIndexSize])
+				}
+				switch expr.Op {
+				case logicalplan.LTOp:
+					return min.String() < s
+				case logicalplan.GTOp:
+					return max.String() > s
+				case logicalplan.EqOp:
+					return s >= min.String() && s <= max.String()
+				}
+			}
+		}
+	}
+
+	return true
+}
+
+func findColumnValues(matchers []logicalplan.ColumnMatcher, g *Granule) (*parquet.Value, *parquet.Value, bool) {
+	findMinColumn := func() (*parquet.Value, string) {
+		g.metadata.minlock.RLock()
+		defer g.metadata.minlock.RUnlock()
+		for _, matcher := range matchers {
+			for column, min := range g.metadata.min {
+				if matcher.Match(column) {
+					return min, column
+				}
+			}
+		}
+		return nil, ""
+	}
+
+	min, column := findMinColumn()
+	if min == nil {
+		return nil, nil, false
+	}
+
+	g.metadata.maxlock.RLock()
+	max := g.metadata.max[column]
+	g.metadata.maxlock.RUnlock()
+
+	return min, max, true
 }
