@@ -2,6 +2,7 @@ package physicalplan
 
 import (
 	"hash/maphash"
+	"sync"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -13,18 +14,22 @@ import (
 
 type Distinction struct {
 	pool     memory.Allocator
-	seen     map[uint64]struct{}
 	next     func(r arrow.Record) error
 	columns  []logicalplan.ColumnMatcher
 	hashSeed maphash.Seed
+
+	mtx  *sync.RWMutex
+	seen map[uint64]struct{}
 }
 
 func Distinct(pool memory.Allocator, columns []logicalplan.ColumnMatcher) *Distinction {
 	return &Distinction{
 		pool:     pool,
 		columns:  columns,
-		seen:     make(map[uint64]struct{}),
 		hashSeed: maphash.MakeSeed(),
+
+		mtx:  &sync.RWMutex{},
+		seen: make(map[uint64]struct{}),
 	}
 }
 
@@ -76,7 +81,9 @@ func (d *Distinction) Callback(r arrow.Record) error {
 			)
 		}
 
+		d.mtx.RLock()
 		if _, ok := d.seen[hash]; ok {
+			d.mtx.RUnlock()
 			continue
 		}
 
@@ -88,7 +95,9 @@ func (d *Distinction) Callback(r arrow.Record) error {
 		}
 
 		rows++
+		d.mtx.Lock()
 		d.seen[hash] = struct{}{}
+		d.mtx.Unlock()
 	}
 
 	if rows == 0 {
