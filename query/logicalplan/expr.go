@@ -107,7 +107,7 @@ func (e *BinaryExpr) UnmarshalJSON(data []byte) error {
 		}
 		e.Left = &be
 	default:
-		panic(fmt.Sprintf("BinaryExpr unmarshalling for %s hasn't been implemented", bej.LeftType))
+		return fmt.Errorf("BinaryExpr.Left unmarshalling for %s hasn't been implemented", bej.LeftType)
 	}
 	switch bej.RightType {
 	case "*logicalplan.LiteralExpr":
@@ -125,7 +125,7 @@ func (e *BinaryExpr) UnmarshalJSON(data []byte) error {
 		}
 		e.Right = &be
 	default:
-		panic(fmt.Sprintf("BinaryExpr unmarshalling for %s hasn't been implemented", bej.RightType))
+		return fmt.Errorf("BinaryExpr.Right unmarshalling for %s hasn't been implemented", bej.LeftType)
 	}
 	return nil
 }
@@ -486,12 +486,12 @@ func (f *AggregationFunction) UnmarshalJSON(data []byte) error {
 	}
 	switch afj.ExprType {
 	default:
-		panic(fmt.Sprintf("implement Unmarshalling for %v", afj.ExprType))
+		return fmt.Errorf("AggregationFunction.Expr unmarshalling for %s hasn't been implemented", afj.ExprType)
 	}
 
 	switch afj.FuncType {
 	default:
-		panic(fmt.Sprintf("implement Unmarshalling for %v", afj.FuncType))
+		return fmt.Errorf("AggregationFunction.Func unmarshalling for %s hasn't been implemented", afj.FuncType)
 	}
 
 	return nil
