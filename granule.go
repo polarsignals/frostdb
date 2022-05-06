@@ -261,14 +261,14 @@ func (g *Granule) minmaxes(p *Part) error {
 			}
 
 			// Check for min
-			min := findMin(minvalues)
+			min := findMin(columnChunk.Type(), minvalues)
 			g.metadata.minlock.RLock()
 			val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
 			g.metadata.minlock.RUnlock()
-			if val == nil || Compare(*val, *min) == 1 {
+			if val == nil || columnChunk.Type().Compare(*val, *min) == 1 {
 				if !min.IsNull() {
 					g.metadata.minlock.Lock() // Check again after acquiring the write lock
-					if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *min) == 1 {
+					if val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || columnChunk.Type().Compare(*val, *min) == 1 {
 						g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = min
 					}
 					g.metadata.minlock.Unlock()
@@ -276,14 +276,14 @@ func (g *Granule) minmaxes(p *Part) error {
 			}
 
 			// Check for max
-			max := findMax(maxvalues)
+			max := findMax(columnChunk.Type(), maxvalues)
 			g.metadata.maxlock.RLock()
 			val = g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
 			g.metadata.maxlock.RUnlock()
-			if val == nil || Compare(*val, *max) == -1 {
+			if val == nil || columnChunk.Type().Compare(*val, *max) == -1 {
 				if !max.IsNull() {
 					g.metadata.maxlock.Lock() // Check again after acquiring the write lock
-					if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || Compare(*val, *max) == -1 {
+					if val := g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]; val == nil || columnChunk.Type().Compare(*val, *max) == -1 {
 						g.metadata.max[rowGroup.Schema().Fields()[columnChunk.Column()].Name()] = max
 					}
 					g.metadata.maxlock.Unlock()
@@ -295,14 +295,14 @@ func (g *Granule) minmaxes(p *Part) error {
 	return nil
 }
 
-func find(minmax int, values []parquet.Value) *parquet.Value {
+func find(minmax int, t parquet.Type, values []parquet.Value) *parquet.Value {
 	if len(values) == 0 {
 		return nil
 	}
 
 	val := values[0]
 	for i := 1; i < len(values); i++ {
-		if Compare(val, values[i]) != minmax {
+		if t.Compare(val, values[i]) != minmax {
 			val = values[i]
 		}
 	}
@@ -310,45 +310,10 @@ func find(minmax int, values []parquet.Value) *parquet.Value {
 	return &val
 }
 
-func findMax(values []parquet.Value) *parquet.Value {
-	return find(1, values)
+func findMax(t parquet.Type, values []parquet.Value) *parquet.Value {
+	return find(1, t, values)
 }
 
-func findMin(values []parquet.Value) *parquet.Value {
-	return find(-1, values)
-}
-
-func Compare(v1, v2 parquet.Value) int {
-	if v1.Kind() != v2.Kind() {
-		return -2
-	}
-	switch v1.Kind() {
-	case parquet.Int32:
-		switch {
-		case v1.Int32() > v2.Int32():
-			return 1
-		case v1.Int32() < v2.Int32():
-			return -1
-		}
-	case parquet.Int64:
-		switch {
-		case v1.Int64() > v2.Int64():
-			return 1
-		case v1.Int64() < v2.Int64():
-			return -1
-		}
-	case parquet.Float:
-		switch {
-		case v1.Float() > v2.Float():
-			return 1
-		case v1.Float() < v2.Float():
-			return -1
-		}
-	case parquet.ByteArray, parquet.FixedLenByteArray:
-		return bytes.Compare(v1.ByteArray(), v2.ByteArray())
-	case -1: // null
-		return 0
-	}
-
-	return 0
+func findMin(t parquet.Type, values []parquet.Value) *parquet.Value {
+	return find(-1, t, values)
 }
