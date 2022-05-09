@@ -818,7 +818,6 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 		level.Info(logger).Log("msg", "unsupported filter")
 		return true
 	case logicalplan.BinaryExpr:
-
 		var min, max *parquet.Value
 		var v scalar.Scalar
 		var leftresult bool
@@ -845,6 +844,9 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 		case logicalplan.BinaryExpr:
 			switch expr.Op {
 			case logicalplan.AndOp:
+				if !leftresult {
+					return false
+				}
 				rightresult := filterGranule(logger, right, g)
 				return leftresult && rightresult
 			}
