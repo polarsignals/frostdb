@@ -1,6 +1,7 @@
 package physicalplan
 
 import (
+	"context"
 	"errors"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -64,11 +65,13 @@ type TableScan struct {
 }
 
 func (s *TableScan) Execute(pool memory.Allocator) error {
+	ctx := context.Background() // TODO needs to be passed in
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
 		return errors.New("table not found")
 	}
 	err := table.Iterator(
+		ctx,
 		pool,
 		s.options.Projection,
 		s.options.Filter,
@@ -89,11 +92,13 @@ type SchemaScan struct {
 }
 
 func (s *SchemaScan) Execute(pool memory.Allocator) error {
+	ctx := context.Background() // TODO needs to be passed in
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
 		return errors.New("table not found")
 	}
 	err := table.SchemaIterator(
+		ctx,
 		pool,
 		s.options.Projection,
 		s.options.Filter,
