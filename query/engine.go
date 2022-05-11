@@ -1,6 +1,8 @@
 package query
 
 import (
+	"context"
+
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 
@@ -14,7 +16,7 @@ type Builder interface {
 	Filter(expr logicalplan.Expr) Builder
 	Distinct(expr ...logicalplan.Expr) Builder
 	Project(projections ...logicalplan.Expr) Builder
-	Execute(callback func(r arrow.Record) error) error
+	Execute(ctx context.Context, callback func(r arrow.Record) error) error
 }
 
 type LocalEngine struct {
@@ -88,7 +90,7 @@ func (b LocalQueryBuilder) Project(
 	}
 }
 
-func (b LocalQueryBuilder) Execute(callback func(r arrow.Record) error) error {
+func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Record) error) error {
 	logicalPlan := b.planBuilder.Build()
 
 	optimizers := []logicalplan.Optimizer{
@@ -111,5 +113,5 @@ func (b LocalQueryBuilder) Execute(callback func(r arrow.Record) error) error {
 		return err
 	}
 
-	return phyPlan.Execute(b.pool, callback)
+	return phyPlan.Execute(ctx, b.pool, callback)
 }

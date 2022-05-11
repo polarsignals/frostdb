@@ -1,6 +1,7 @@
 package arcticdb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -85,7 +86,7 @@ func TestAggregate(t *testing.T) {
 		Aggregate(
 			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
 			logicalplan.Col("labels.label2"),
-		).Execute(func(r arrow.Record) error {
+		).Execute(context.Background(), func(r arrow.Record) error {
 		r.Retain()
 		res = r
 		return nil
@@ -164,7 +165,7 @@ func TestAggregateNils(t *testing.T) {
 		Aggregate(
 			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
 			logicalplan.Col("labels.label2"),
-		).Execute(func(r arrow.Record) error {
+		).Execute(context.Background(), func(r arrow.Record) error {
 		r.Retain()
 		res = r
 		return nil
@@ -245,7 +246,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		Aggregate(
 			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
 			logicalplan.Col("labels.label2"),
-		).Execute(func(r arrow.Record) error {
+		).Execute(context.Background(), func(r arrow.Record) error {
 		r.Retain()
 		res = r
 		return nil

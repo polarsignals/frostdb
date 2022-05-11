@@ -1,6 +1,7 @@
 package arcticdb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -108,7 +109,7 @@ func TestDistinct(t *testing.T) {
 			rows := int64(0)
 			err := engine.ScanTable("test").
 				Distinct(test.columns...).
-				Execute(func(ar arrow.Record) error {
+				Execute(context.Background(), func(ar arrow.Record) error {
 					rows += ar.NumRows()
 					defer ar.Release()
 
@@ -173,7 +174,7 @@ func TestDistinctProjection(t *testing.T) {
 	var r arrow.Record
 	err = engine.ScanTable("test").
 		Distinct(logicalplan.Col("labels.label1"), logicalplan.Col("labels.label2"), logicalplan.Col("timestamp").GT(logicalplan.Literal(1))).
-		Execute(func(ar arrow.Record) error {
+		Execute(context.Background(), func(ar arrow.Record) error {
 			ar.Retain()
 			r = ar
 
