@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"path/filepath"
 
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
 	"github.com/polarsignals/arcticdb/dynparquet"
 )
@@ -65,5 +68,55 @@ func WriteBlock(block *TableBlock) error {
 		return err
 	}
 
+	return nil
+}
+
+func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool) error {
+	n := 0
+	err := filepath.Walk("data", func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() { // Skip reading directories
+			return nil
+		}
+
+		// Read the file into memory
+		b, err := ioutil.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		// Get a reader from the file bytes
+		buf, err := dynparquet.ReaderFromBytes(b)
+		if err != nil {
+			return err
+		}
+
+		n++
+		f := buf.ParquetFile()
+		for i := 0; i < f.NumRowGroups(); i++ {
+			rg := buf.DynamicRowGroup(i)
+			var mayContainUsefulData bool
+			mayContainUsefulData, err = filter.Eval(rg)
+			if err != nil {
+				return err
+			}
+			if mayContainUsefulData {
+				continu := iterator(rg)
+				if !continu {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	level.Info(logger).Log("msg", "read blocks", "n", n)
 	return nil
 }

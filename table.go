@@ -579,6 +579,10 @@ func (t *TableBlock) RowGroupIterator(
 	index := t.Index()
 	watermark := t.table.db.beginRead()
 
+	if err := ReadAllBlocks(t.logger, filter, iterator); err != nil {
+		return err
+	}
+
 	var err error
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
