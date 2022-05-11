@@ -217,6 +217,11 @@ func (t *Table) Insert(buf []byte) (uint64, error) {
 			level.Debug(t.logger).Log("msg", "syncing block")
 			block.wg.Wait()
 			level.Debug(t.logger).Log("msg", "done syncing block")
+
+			// Persist the block
+			if err := WriteBlock(block); err != nil {
+				level.Error(t.logger).Log("msg", "failed to persist block")
+			}
 		}()
 	}
 
