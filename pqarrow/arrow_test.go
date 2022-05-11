@@ -1,6 +1,7 @@
 package pqarrow
 
 import (
+	"context"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -89,7 +90,7 @@ func TestMergeToArrow(t *testing.T) {
 	merge, err := schema.MergeDynamicRowGroups([]dynparquet.DynamicRowGroup{buf1, buf2, buf3})
 	require.NoError(t, err)
 
-	ar, err := ParquetRowGroupToArrowRecord(memory.DefaultAllocator, merge, nil, nil, nil)
+	ar, err := ParquetRowGroupToArrowRecord(context.Background(), memory.DefaultAllocator, merge, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), ar.NumRows())
 	require.Equal(t, int64(8), ar.NumCols())
@@ -120,7 +121,7 @@ func BenchmarkParquetToArrow(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err = ParquetRowGroupToArrowRecord(memory.DefaultAllocator, buf, nil, nil, nil)
+		_, err = ParquetRowGroupToArrowRecord(context.Background(), memory.DefaultAllocator, buf, nil, nil, nil)
 		require.NoError(b, err)
 	}
 }
