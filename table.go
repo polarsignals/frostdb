@@ -242,8 +242,8 @@ func (t *Table) Iterator(
 		return err
 	}
 
-	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, filterExpr, filter, func(rg dynparquet.DynamicRowGroup) bool {
+	rowGroups := []dynparquet.DynamicCloserRowGroup{}
+	err = t.ActiveBlock().RowGroupIterator(ctx, filterExpr, filter, func(rg dynparquet.DynamicCloserRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -270,6 +270,9 @@ func (t *Table) Iterator(
 				filterExpr,
 				distinctColumns,
 			)
+			if err := rg.Close(); err != nil {
+				level.Error(t.logger).Log("msg", "failed to close row group", "err", err)
+			}
 			if err != nil {
 				return err
 			}
@@ -299,8 +302,8 @@ func (t *Table) SchemaIterator(
 		return err
 	}
 
-	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, func(rg dynparquet.DynamicRowGroup) bool {
+	rowGroups := []dynparquet.DynamicCloserRowGroup{}
+	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, func(rg dynparquet.DynamicCloserRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -322,6 +325,9 @@ func (t *Table) SchemaIterator(
 			b := array.NewRecordBuilder(pool, schema)
 
 			parquetFields := rg.Schema().Fields()
+			if err := rg.Close(); err != nil {
+				level.Error(t.logger).Log("msg", "failed to closer row group", "err", err)
+			}
 			fieldNames := make([]string, 0, len(parquetFields))
 			for _, f := range parquetFields {
 				fieldNames = append(fieldNames, f.Name())
@@ -574,7 +580,7 @@ func (t *TableBlock) RowGroupIterator(
 	ctx context.Context,
 	filterExpr logicalplan.Expr,
 	filter TrueNegativeFilter,
-	iterator func(rg dynparquet.DynamicRowGroup) bool,
+	iterator func(rg dynparquet.DynamicCloserRowGroup) bool,
 ) error {
 	index := t.Index()
 	watermark := t.table.db.beginRead()
@@ -602,7 +608,9 @@ func (t *TableBlock) RowGroupIterator(
 					return false
 				}
 				if mayContainUsefulData {
-					continu := iterator(rg)
+					continu := iterator(MemDynamicRowGroup{
+						DynamicRowGroup: rg,
+					})
 					if !continu {
 						return false
 					}

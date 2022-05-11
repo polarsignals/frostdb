@@ -22,7 +22,7 @@ func WriteBlock(block *TableBlock) error {
 
 	// Read all row groups
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err := block.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicRowGroup) bool {
+	err := block.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicCloserRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -73,7 +73,23 @@ func WriteBlock(block *TableBlock) error {
 	return nil
 }
 
-func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool) error {
+// FileDynamicRowGroup is a dynamic row group that is backed by a file object
+type FileDynamicRowGroup struct {
+	dynparquet.DynamicRowGroup
+	io.Closer
+}
+
+// MemDynamicRowGroup is a row group that is in memory and nop the close function
+type MemDynamicRowGroup struct {
+	dynparquet.DynamicRowGroup
+	io.Closer
+}
+
+func (MemDynamicRowGroup) Close() error {
+	return nil
+}
+
+func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool) error {
 	n := 0
 	err := filepath.Walk("data", func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
@@ -88,15 +104,6 @@ func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(r
 		if err != nil {
 			return err
 		}
-		/* // TODO CLOSE?
-		fmt.Println(path)
-		defer func() {
-			err := pf.Close()
-			if err != nil {
-				level.Error(logger).Log("msg", "failed to close block file", "err", err)
-			}
-		}()
-		*/
 
 		file, err := parquet.OpenFile(pf, info.Size())
 		if err != nil {
@@ -119,7 +126,10 @@ func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(r
 				return err
 			}
 			if mayContainUsefulData {
-				continu := iterator(rg)
+				continu := iterator(&FileDynamicRowGroup{
+					DynamicRowGroup: rg,
+					Closer:          pf,
+				})
 				if !continu {
 					return err
 				}
