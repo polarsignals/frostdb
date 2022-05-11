@@ -6,12 +6,14 @@ import (
 	"io"
 	"io/fs"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
 	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/segmentio/parquet-go"
 )
 
 // WriteBlock writes a block somewhere
@@ -82,14 +84,27 @@ func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(r
 			return nil
 		}
 
-		// Read the file into memory
-		b, err := ioutil.ReadFile(path)
+		pf, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		/* // TODO CLOSE?
+		fmt.Println(path)
+		defer func() {
+			err := pf.Close()
+			if err != nil {
+				level.Error(logger).Log("msg", "failed to close block file", "err", err)
+			}
+		}()
+		*/
+
+		file, err := parquet.OpenFile(pf, info.Size())
 		if err != nil {
 			return err
 		}
 
 		// Get a reader from the file bytes
-		buf, err := dynparquet.ReaderFromBytes(b)
+		buf, err := dynparquet.NewSerializedBuffer(file)
 		if err != nil {
 			return err
 		}
