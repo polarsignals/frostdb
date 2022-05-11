@@ -20,7 +20,7 @@ func (c *ColumnRef) Column(rg dynparquet.DynamicRowGroup) (parquet.ColumnChunk, 
 	var columnChunk parquet.ColumnChunk
 	// columnChunk can be nil if the column is not present in the row group.
 	if columnIndex != -1 {
-		columnChunk = rg.Column(columnIndex)
+		columnChunk = rg.ColumnChunks()[columnIndex]
 	}
 
 	return columnChunk, columnIndex != -1, nil
