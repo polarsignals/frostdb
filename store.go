@@ -16,7 +16,7 @@ func WriteBlock(block *TableBlock) error {
 
 	// Read all row groups
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err := block.RowGroupIterator(ctx, nil, nil, func(rg dynparquet.DynamicRowGroup) bool {
+	err := block.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
