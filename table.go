@@ -2,6 +2,7 @@ package arcticdb
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -224,6 +225,7 @@ func (t *Table) Insert(buf []byte) (uint64, error) {
 
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *Table) Iterator(
+	ctx context.Context,
 	pool memory.Allocator,
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
@@ -236,7 +238,7 @@ func (t *Table) Iterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(filterExpr, filter, func(rg dynparquet.DynamicRowGroup) bool {
+	err = t.ActiveBlock().RowGroupIterator(ctx, filterExpr, filter, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -250,21 +252,27 @@ func (t *Table) Iterator(
 	// can decide to sort if they need to in order to exploit the
 	// characteristics of sorted data.
 	for _, rg := range rowGroups {
-		var record arrow.Record
-		record, err = pqarrow.ParquetRowGroupToArrowRecord(
-			pool,
-			rg,
-			projections,
-			filterExpr,
-			distinctColumns,
-		)
-		if err != nil {
-			return err
-		}
-		err = iterator(record)
-		record.Release()
-		if err != nil {
-			return err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			var record arrow.Record
+			record, err = pqarrow.ParquetRowGroupToArrowRecord(
+				ctx,
+				pool,
+				rg,
+				projections,
+				filterExpr,
+				distinctColumns,
+			)
+			if err != nil {
+				return err
+			}
+			err = iterator(record)
+			record.Release()
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -274,6 +282,7 @@ func (t *Table) Iterator(
 // SchemaIterator iterates in order over all granules in the table and returns
 // all the schemas seen across the table.
 func (t *Table) SchemaIterator(
+	ctx context.Context,
 	pool memory.Allocator,
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
@@ -286,7 +295,7 @@ func (t *Table) SchemaIterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(nil, filter, func(rg dynparquet.DynamicRowGroup) bool {
+	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -301,22 +310,27 @@ func (t *Table) SchemaIterator(
 		nil,
 	)
 	for _, rg := range rowGroups {
-		b := array.NewRecordBuilder(pool, schema)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			b := array.NewRecordBuilder(pool, schema)
 
-		parquetFields := rg.Schema().Fields()
-		fieldNames := make([]string, 0, len(parquetFields))
-		for _, f := range parquetFields {
-			fieldNames = append(fieldNames, f.Name())
-		}
+			parquetFields := rg.Schema().Fields()
+			fieldNames := make([]string, 0, len(parquetFields))
+			for _, f := range parquetFields {
+				fieldNames = append(fieldNames, f.Name())
+			}
 
-		b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
+			b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
 
-		record := b.NewRecord()
-		err = iterator(record)
-		record.Release()
-		b.Release()
-		if err != nil {
-			return err
+			record := b.NewRecord()
+			err = iterator(record)
+			record.Release()
+			b.Release()
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -552,6 +566,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *TableBlock) RowGroupIterator(
+	ctx context.Context,
 	filterExpr logicalplan.Expr,
 	filter TrueNegativeFilter,
 	iterator func(rg dynparquet.DynamicRowGroup) bool,

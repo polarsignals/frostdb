@@ -1,6 +1,7 @@
 package arcticdb
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -143,7 +144,7 @@ func TestTable(t *testing.T) {
 	_, err = table.InsertBuffer(buf)
 	require.NoError(t, err)
 
-	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+	err = table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		t.Log(ar)
 		defer ar.Release()
 
@@ -271,7 +272,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 			return false
 		})
 	}
-	table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
+	table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
 		defer r.Release()
 		t.Log(r)
 		return nil
@@ -411,7 +412,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
-	table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
+	table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
 		defer r.Release()
 		t.Log(r)
 		return nil
@@ -484,7 +485,7 @@ func Test_Table_Concurrency(t *testing.T) {
 	}
 
 	totalrows := int64(0)
-	err := table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+	err := table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		totalrows += ar.NumRows()
 		defer ar.Release()
 
@@ -661,7 +662,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.highWatermark.Store(1)
 
 	rows := int64(0)
-	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+	err = table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		rows += ar.NumRows()
 		defer ar.Release()
 
@@ -675,7 +676,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.highWatermark.Store(2)
 
 	rows = int64(0)
-	err = table.Iterator(memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+	err = table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
 		rows += ar.NumRows()
 		defer ar.Release()
 
@@ -988,7 +989,7 @@ func Test_Table_Filter(t *testing.T) {
 	)
 
 	iterated := false
-	err = table.Iterator(memory.NewGoAllocator(), nil, filterExpr, nil, func(ar arrow.Record) error {
+	err = table.Iterator(context.Background(), memory.NewGoAllocator(), nil, filterExpr, nil, func(ar arrow.Record) error {
 		defer ar.Release()
 
 		iterated = true

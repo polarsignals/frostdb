@@ -1,6 +1,7 @@
 package arcticdb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -121,7 +122,7 @@ func TestFilter(t *testing.T) {
 			rows := int64(0)
 			err := engine.ScanTable("test").
 				Filter(test.filterExpr).
-				Execute(func(ar arrow.Record) error {
+				Execute(context.Background(), func(ar arrow.Record) error {
 					rows += ar.NumRows()
 					defer ar.Release()
 

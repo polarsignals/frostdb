@@ -1,6 +1,7 @@
 package physicalplan
 
 import (
+	"context"
 	"errors"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -16,7 +17,7 @@ type PhysicalPlan interface {
 }
 
 type ScanPhysicalPlan interface {
-	Execute(pool memory.Allocator) error
+	Execute(ctx context.Context, pool memory.Allocator) error
 }
 
 type PrePlanVisitorFunc func(plan *logicalplan.LogicalPlan) bool
@@ -52,9 +53,9 @@ func (e *OutputPlan) SetNextCallback(next func(r arrow.Record) error) {
 	e.callback = next
 }
 
-func (e *OutputPlan) Execute(pool memory.Allocator, callback func(r arrow.Record) error) error {
+func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, callback func(r arrow.Record) error) error {
 	e.callback = callback
-	return e.scan.Execute(pool)
+	return e.scan.Execute(ctx, pool)
 }
 
 type TableScan struct {
@@ -63,12 +64,13 @@ type TableScan struct {
 	finisher func() error
 }
 
-func (s *TableScan) Execute(pool memory.Allocator) error {
+func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
 		return errors.New("table not found")
 	}
 	err := table.Iterator(
+		ctx,
 		pool,
 		s.options.Projection,
 		s.options.Filter,
@@ -88,12 +90,13 @@ type SchemaScan struct {
 	finisher func() error
 }
 
-func (s *SchemaScan) Execute(pool memory.Allocator) error {
+func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
 		return errors.New("table not found")
 	}
 	err := table.SchemaIterator(
+		ctx,
 		pool,
 		s.options.Projection,
 		s.options.Filter,

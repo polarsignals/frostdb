@@ -1,6 +1,7 @@
 package logicalplan
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -75,6 +76,7 @@ func (plan *LogicalPlan) Accept(visitor PlanVisitor) bool {
 
 type TableReader interface {
 	Iterator(
+		ctx context.Context,
 		pool memory.Allocator,
 		projection []ColumnMatcher,
 		filter Expr,
@@ -82,6 +84,7 @@ type TableReader interface {
 		callback func(r arrow.Record) error,
 	) error
 	SchemaIterator(
+		ctx context.Context,
 		pool memory.Allocator,
 		projection []ColumnMatcher,
 		filter Expr,
