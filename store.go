@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"io/ioutil"
+	"path/filepath"
 
 	"github.com/google/uuid"
 	"github.com/polarsignals/arcticdb/dynparquet"
@@ -36,7 +37,6 @@ func WriteBlock(block *TableBlock) error {
 		return err
 	}
 
-	// TODO do something with the merged row group
 	rows := merged.Rows()
 	n := 0
 	for {
@@ -60,7 +60,7 @@ func WriteBlock(block *TableBlock) error {
 	}
 
 	// Write the serialized buffer to disk
-	err = ioutil.WriteFile(uuid.New().String(), b.Bytes(), 0666)
+	err = ioutil.WriteFile(filepath.Join("data", uuid.New().String()), b.Bytes(), 0666)
 	if err != nil {
 		return err
 	}
