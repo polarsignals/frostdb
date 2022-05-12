@@ -1,6 +1,7 @@
 package arcticdb
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"io/ioutil"
@@ -89,7 +90,8 @@ func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(r
 
 		return nil
 	})
-	if err != nil {
+
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
