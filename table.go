@@ -839,6 +839,53 @@ func (t *TableBlock) abort(commit func(), granule *Granule) {
 	}
 }
 
+func (block *TableBlock) Serialize() ([]byte, error) {
+	ctx := context.Background()
+
+	// Read all row groups
+	rowGroups := []dynparquet.DynamicRowGroup{}
+	err := block.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicCloserRowGroup) bool {
+		rowGroups = append(rowGroups, rg)
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	merged, err := block.table.config.schema.MergeDynamicRowGroups(rowGroups)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := bytes.NewBuffer(nil)
+	cols := merged.DynamicColumns()
+	w, err := block.table.config.schema.NewWriter(buf, cols)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := merged.Rows()
+	n := 0
+	for {
+		row, err := rows.ReadRow(nil)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		err = w.WriteRow(row)
+		if err != nil {
+			return nil, err
+		}
+		n++
+	}
+
+	err = w.Close()
+
+	return buf.Bytes(), err
+}
+
 // filterGranule returns false if this granule does not contain useful data.
 func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) bool {
 	if filterExpr == nil {
