@@ -56,6 +56,7 @@ func NewTableConfig(
 
 type Table struct {
 	db      *DB
+	name    string
 	metrics *tableMetrics
 	logger  log.Logger
 
@@ -106,6 +107,7 @@ func newTable(
 	t := &Table{
 		db:     db,
 		config: tableConfig,
+		name:   name,
 		logger: logger,
 		mtx:    &sync.RWMutex{},
 		metrics: &tableMetrics{
