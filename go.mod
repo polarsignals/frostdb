@@ -10,7 +10,7 @@ require (
 	github.com/google/btree v1.0.1
 	github.com/google/uuid v1.3.0
 	github.com/prometheus/client_golang v1.12.1
-	github.com/segmentio/parquet-go v0.0.0-20220511171108-414f4f5a699b
+	github.com/segmentio/parquet-go v0.0.0-20220511210326-4f4d804bcd3a
 	github.com/stretchr/testify v1.7.1
 	go.uber.org/atomic v1.9.0
 )
