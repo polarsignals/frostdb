@@ -163,10 +163,25 @@ func (t *Table) RotateBlock() error {
 	if err != nil {
 		return err
 	}
-	t.mtx.Lock()
-	defer t.mtx.Unlock()
 
+	t.mtx.Lock()
+
+	block := t.active
 	t.active = tb
+
+	t.mtx.Unlock()
+
+	go func() {
+		level.Debug(t.logger).Log("msg", "syncing block")
+		block.wg.Wait()
+		level.Debug(t.logger).Log("msg", "done syncing block")
+
+		// Persist the block
+		if err := block.WriteToDisk(); err != nil {
+			level.Error(t.logger).Log("msg", "failed to persist block")
+		}
+	}()
+
 	return nil
 }
 
@@ -215,16 +230,6 @@ func (t *Table) Insert(buf []byte) (uint64, error) {
 			return 0, fmt.Errorf("failed to rotate block: %w", err)
 		}
 		level.Debug(t.logger).Log("msg", "done rotating block")
-		go func() {
-			level.Debug(t.logger).Log("msg", "syncing block")
-			block.wg.Wait()
-			level.Debug(t.logger).Log("msg", "done syncing block")
-
-			// Persist the block
-			if err := WriteBlock(block); err != nil {
-				level.Error(t.logger).Log("msg", "failed to persist block")
-			}
-		}()
 	}
 
 	return tx, nil

@@ -16,7 +16,7 @@ import (
 )
 
 // WriteBlock writes a block somewhere
-func WriteBlock(block *TableBlock) error {
+func (block *TableBlock) WriteToDisk() error {
 	data, err := block.Serialize()
 	if err != nil {
 		return err
