@@ -16,7 +16,7 @@ ArcticDB is optimized for use cases where the majority of interactions are write
 
 Read the annoucement blog post to learn about what made us create it: https://www.polarsignals.com/blog/posts/2022/05/04/introducing-arcticdb/
 
-## Why you should use arcticdb
+## Why you should use ArcticDB
 
 Columnar data stores have become incredibly popular for analytics data. Structuring data in columns instead of rows leverages the architecture of modern hardware, allowing for efficient processing of data.
 A columnar data store might be right for you if you have workloads where you write a lot of data and need to perform analytics on that data.
