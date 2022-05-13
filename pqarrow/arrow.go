@@ -118,6 +118,7 @@ func contiguousParquetRowGroupToArrowRecord(
 	distinctColumns []logicalplan.ColumnMatcher,
 ) (arrow.Record, error) {
 	s := rg.Schema()
+	parquetColumns := rg.ColumnChunks()
 	parquetFields := s.Fields()
 
 	if len(distinctColumns) == 1 && filterExpr == nil {
@@ -136,7 +137,7 @@ func contiguousParquetRowGroupToArrowRecord(
 					typ, nullable, array, err := parquetColumnToArrowArray(
 						pool,
 						field,
-						rg.Column(i),
+						parquetColumns[i],
 						true,
 					)
 					if err != nil {
@@ -169,7 +170,7 @@ func contiguousParquetRowGroupToArrowRecord(
 				typ, nullable, array, err := parquetColumnToArrowArray(
 					pool,
 					parquetField,
-					rg.Column(i),
+					parquetColumns[i],
 					false,
 				)
 				if err != nil {

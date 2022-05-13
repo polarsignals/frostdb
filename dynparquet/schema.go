@@ -253,11 +253,11 @@ func (r *dynamicRowGroupReader) ReadRow(row *DynamicRow) (*DynamicRow, error) {
 	return row, nil
 }
 
-// Column returns the parquet.ColumnChunk for the given index. It contains all
-// the pages associated with this row group's column. Implements the
-// parquet.RowGroup interface.
-func (b *Buffer) Column(i int) parquet.ColumnChunk {
-	return b.buffer.Column(i)
+// ColumnChunks returns the list of parquet.ColumnChunk for the given index.
+// It contains all the pages associated with this row group's column.
+// Implements the parquet.RowGroup interface.
+func (b *Buffer) ColumnChunks() []parquet.ColumnChunk {
+	return b.buffer.ColumnChunks()
 }
 
 // NumRows returns the number of rows in the buffer. Implements the
@@ -299,12 +299,6 @@ func (b *Buffer) Clone() (*Buffer, error) {
 		buffer:         buf,
 		dynamicColumns: b.dynamicColumns,
 	}, nil
-}
-
-// NumColumns returns the number of columns in the buffer. Implements the
-// parquet.RowGroup interface.
-func (b *Buffer) NumColumns() int {
-	return b.buffer.NumColumns()
 }
 
 // Schema returns the concrete parquet.Schema of the buffer. Implements the
@@ -611,12 +605,6 @@ func (a *dynamicRowGroupMergeAdapter) NumRows() int64 {
 	return a.originalRowGroup.NumRows()
 }
 
-// Returns the number of leaf columns in the group.
-func (a *dynamicRowGroupMergeAdapter) NumColumns() int {
-	// This only works because we currently only support flat schemas.
-	return len(a.schema.Fields())
-}
-
 func FieldByName(schema *parquet.Schema, name string) parquet.Field {
 	for _, field := range schema.Fields() {
 		if field.Name() == name {
@@ -629,17 +617,24 @@ func FieldByName(schema *parquet.Schema, name string) parquet.Field {
 // Returns the leaf column at the given index in the group. Searches for the
 // same column in the original batch. If not found returns a column chunk
 // filled with nulls.
-func (a *dynamicRowGroupMergeAdapter) Column(i int) parquet.ColumnChunk {
-	field := a.schema.Fields()[i]
-	colIndex := a.indexMapping[i]
-	if colIndex == -1 {
-		return NewNilColumnChunk(FieldByName(a.schema, field.Name()).Type(), i, int(a.NumRows()))
+func (a *dynamicRowGroupMergeAdapter) ColumnChunks() []parquet.ColumnChunk {
+	// This only works because we currently only support flat schemas.
+	fields := a.schema.Fields()
+	columnChunks := a.originalRowGroup.ColumnChunks()
+	remappedColumnChunks := make([]parquet.ColumnChunk, len(fields))
+	for i, field := range fields {
+		colIndex := a.indexMapping[i]
+		if colIndex == -1 {
+			schemaField := FieldByName(a.schema, field.Name())
+			remappedColumnChunks[i] = NewNilColumnChunk(schemaField.Type(), i, int(a.NumRows()))
+		} else {
+			remappedColumnChunks[i] = &remappedColumnChunk{
+				ColumnChunk:   columnChunks[colIndex],
+				remappedIndex: i,
+			}
+		}
 	}
-
-	return &remappedColumnChunk{
-		ColumnChunk:   a.originalRowGroup.Column(colIndex),
-		remappedIndex: i,
-	}
+	return remappedColumnChunks
 }
 
 // Returns the schema of rows in the group. The schema is the configured

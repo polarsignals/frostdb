@@ -213,7 +213,7 @@ func (p *nilPage) Slice(i, j int64) parquet.BufferedPage {
 // WriteTo is unimplemented, since the page is virtual and does not need to be
 // written in its current usage in this package. If that changes this method
 // needs to be implemented. Implements the parquet.BufferedPage interface.
-func (p *nilPage) WriteTo(encoding.Encoder) error {
+func (p *nilPage) Encode([]byte, encoding.Encoding) ([]byte, error) {
 	panic("not implemented")
 }
 

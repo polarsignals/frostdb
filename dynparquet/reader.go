@@ -58,16 +58,15 @@ func (b *SerializedBuffer) NumRows() int64 {
 }
 
 func (b *SerializedBuffer) NumRowGroups() int {
-	return b.f.NumRowGroups()
+	return len(b.f.RowGroups())
 }
 
 func (b *SerializedBuffer) DynamicRows() DynamicRows {
-	num := b.NumRowGroups()
-	drg := make([]DynamicRowGroup, num)
-	for i := 0; i < num; i++ {
-		drg[i] = b.DynamicRowGroup(i)
+	rowGroups := b.f.RowGroups()
+	drg := make([]DynamicRowGroup, len(rowGroups))
+	for i, rowGroup := range rowGroups {
+		drg[i] = b.newDynamicRowGroup(rowGroup)
 	}
-
 	return Concat(drg...).DynamicRows()
 }
 
@@ -77,8 +76,12 @@ type serializedRowGroup struct {
 }
 
 func (b *SerializedBuffer) DynamicRowGroup(i int) DynamicRowGroup {
+	return b.newDynamicRowGroup(b.f.RowGroups()[i])
+}
+
+func (b *SerializedBuffer) newDynamicRowGroup(rowGroup parquet.RowGroup) DynamicRowGroup {
 	return &serializedRowGroup{
-		RowGroup: b.f.RowGroup(i),
+		RowGroup: rowGroup,
 		dynCols:  b.dynCols,
 	}
 }
