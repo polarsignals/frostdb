@@ -46,6 +46,5 @@ func TestLogFile(t *testing.T) {
 		require.Equal(t, data, bufs[i])
 		i++
 	}
-
 	require.Equal(t, i, len(bufs))
 }

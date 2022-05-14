@@ -6,11 +6,12 @@ import (
 	"errors"
 	"hash/crc32"
 	"os"
+	"sync/atomic"
 )
 
 type LogFile struct {
 	*os.File
-	size uint32
+	size uint64
 }
 
 func OpenLogFile(name string) (*LogFile, error) {
@@ -19,10 +20,10 @@ func OpenLogFile(name string) (*LogFile, error) {
 		return nil, err
 	}
 
-	size := uint32(0)
+	size := uint64(0)
 	fstat, err := os.Stat(name)
 	if err == nil {
-		size = uint32(fstat.Size())
+		size = uint64(fstat.Size())
 	}
 
 	if errors.Is(err, os.ErrNotExist) {
@@ -81,7 +82,11 @@ func (lf *LogFile) WriteRecord(data []byte) error {
 		return err
 	}
 	n, err := lf.File.Write(encoded)
-	lf.size += uint32(n)
+	if err != nil {
+		return err
+	}
+
+	atomic.AddUint64(&lf.size, uint64(n))
 	return err
 }
 
@@ -109,21 +114,27 @@ func (lf *LogFile) ReadRecord(offset uint64) (int, []byte, error) {
 func (lf *LogFile) NewIterator() *LogFileIterator {
 	return &LogFileIterator{
 		lf:             lf,
+		limit:          lf.size,
 		currReadOffset: 0,
 	}
 }
 
+func (lf *LogFile) Size() int {
+	return int(atomic.LoadUint64(&lf.size))
+}
+
 type LogFileIterator struct {
-	currReadOffset uint32
+	currReadOffset uint64
+	limit          uint64
 	lf             *LogFile
 }
 
 func (it *LogFileIterator) HasNext() bool {
-	return it.currReadOffset < it.lf.size
+	return it.currReadOffset < it.limit
 }
 
 func (it *LogFileIterator) NextRecord() ([]byte, error) {
 	n, data, err := it.lf.ReadRecord(uint64(it.currReadOffset))
-	it.currReadOffset += uint32(n)
+	it.currReadOffset += uint64(n)
 	return data, err
 }
