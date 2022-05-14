@@ -44,7 +44,8 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 	c := New(
 		nil,
 		granuleSize,
-		512*1024*1024,
+		1024*1024*1.25,
+		//512*1024*1024,
 	)
 	db, err := c.DB("test")
 	require.NoError(t, err)

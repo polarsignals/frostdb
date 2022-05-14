@@ -15,7 +15,7 @@ type LogFile struct {
 }
 
 func OpenLogFile(name string) (*LogFile, error) {
-	file, err := os.OpenFile(name, os.O_RDONLY, 0666)
+	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, err
 	}
@@ -33,18 +33,6 @@ func OpenLogFile(name string) (*LogFile, error) {
 	return &LogFile{
 		File: file,
 		size: size,
-	}, err
-}
-
-func CreateLogFile(name string) (*LogFile, error) {
-	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		return nil, err
-	}
-
-	return &LogFile{
-		File: file,
-		size: 0,
 	}, err
 }
 

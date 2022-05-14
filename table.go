@@ -176,7 +176,7 @@ func (t *Table) createBlockFileIfNeeded() error {
 	defer t.mtx.Unlock()
 
 	if t.blockFile == nil {
-		lf, err := CreateLogFile(t.name + ".block")
+		lf, err := OpenLogFile(t.name + ".block")
 		if err != nil {
 			return err
 		}

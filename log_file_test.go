@@ -15,7 +15,7 @@ func TestLogFile(t *testing.T) {
 	require.NoError(t, file.Close())
 	defer os.Remove(file.Name())
 
-	lf, err := CreateLogFile(file.Name())
+	lf, err := OpenLogFile(file.Name())
 	require.NoError(t, err)
 
 	bufs := make([][]byte, 0)
