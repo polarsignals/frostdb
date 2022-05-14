@@ -1,16 +1,12 @@
 package arcticdb
 
 import (
-	"errors"
+	"bytes"
+	"fmt"
 	"io"
-	"io/fs"
-	"io/ioutil"
-	"os"
-	"path/filepath"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/google/uuid"
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/segmentio/parquet-go"
 )
@@ -22,7 +18,7 @@ func (block *TableBlock) WriteToDisk() error {
 		return err
 	}
 	// Write the serialized buffer to disk
-	return ioutil.WriteFile(filepath.Join("data", uuid.New().String()), data, 0666)
+	return block.table.blockFile.WriteRecord(data)
 }
 
 // FileDynamicRowGroup is a dynamic row group that is backed by a file object
@@ -41,23 +37,24 @@ func (MemDynamicRowGroup) Close() error {
 	return nil
 }
 
-func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool) error {
+func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool) error {
+	if t.blockFile == nil {
+		return nil
+	}
+
+	it := t.blockFile.NewIterator()
+
 	n := 0
-	err := filepath.Walk("data", func(path string, info fs.FileInfo, err error) error {
+	for it.HasNext() {
+		nextRecord, err := it.NextRecord()
 		if err != nil {
 			return err
 		}
 
-		if info.IsDir() { // Skip reading directories
-			return nil
-		}
+		fmt.Println("iterating on data: ", len(nextRecord))
 
-		pf, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-
-		file, err := parquet.OpenFile(pf, info.Size())
+		reader := bytes.NewReader(nextRecord)
+		file, err := parquet.OpenFile(reader, int64(len(nextRecord)))
 		if err != nil {
 			return err
 		}
@@ -78,23 +75,15 @@ func ReadAllBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(r
 				return err
 			}
 			if mayContainUsefulData {
-				continu := iterator(&FileDynamicRowGroup{
+				continu := iterator(&MemDynamicRowGroup{
 					DynamicRowGroup: rg,
-					Closer:          pf,
 				})
 				if !continu {
 					return err
 				}
 			}
 		}
-
-		return nil
-	})
-
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
 	}
-
 	level.Info(logger).Log("msg", "read blocks", "n", n)
 	return nil
 }
