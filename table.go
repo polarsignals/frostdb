@@ -294,8 +294,6 @@ func (t *Table) Insert(buf []byte) (uint64, error) {
 	return tx, nil
 }
 
-var ErrNotReady = errors.New("not ready for read")
-
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *Table) Iterator(
 	ctx context.Context,
@@ -316,6 +314,10 @@ func (t *Table) Iterator(
 		return true
 	}
 
+	// pending blocks could be written to disk while we iterate on them.
+	// to avoid to iterate on them again while reading the block file
+	// we keep the last block timestamp to be read from disk and pass it to the IterateDiskBlocks() function
+	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while reading from disk.
 	lastReadBlockTimestamp := int64(-1)
 
 	pendingBlocks := make([]*TableBlock, 0)
