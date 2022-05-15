@@ -491,9 +491,19 @@ func Test_Table_Concurrency(t *testing.T) {
 			wg.Wait()
 			table.Sync()
 
-			// Sync has happened so all transactions are complete. We should be able to wait unti the watermark is equal to the the number of tx
-			for watermark := table.db.highWatermark.Load(); watermark < uint64(n*inserts); watermark = table.db.highWatermark.Load() {
-				time.Sleep(time.Millisecond)
+			// Wait for the transaction pool to drain before iterating
+			pending := 0
+			table.db.txPool.Iterate(func(tx uint64) bool {
+				pending++
+				return false
+			})
+			for pending > 1 {
+				time.Sleep(30 * time.Millisecond) // sleep wait for pool to drain
+				pending = 0
+				table.db.txPool.Iterate(func(tx uint64) bool {
+					pending++
+					return false
+				})
 			}
 
 			totalrows := int64(0)
