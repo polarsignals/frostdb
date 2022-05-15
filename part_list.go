@@ -80,11 +80,15 @@ func (l *PartList) Iterate(iterate func(*Part) bool) {
 		if node == nil {
 			return
 		}
-		if node.part == nil && node.sentinel != l.listType { // if we've encountererd a sentinel node from a different type of list we must exit
-			return
-		}
-		if node.part != nil && !iterate(node.part) { // if the part == nil then this is a sentinel node, and we can skip it
-			return
+		switch node.part {
+		case nil: // sentinel node
+			if l.listType != None && node.sentinel != l.listType { // if we've encountererd a sentinel node from a different type of list we must exit
+				return
+			}
+		default: // normal node
+			if !iterate(node.part) { // if the part == nil then this is a sentinel node, and we can skip it
+				return
+			}
 		}
 		next = node.next.Load()
 	}

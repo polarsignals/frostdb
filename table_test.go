@@ -425,74 +425,97 @@ func Test_Table_InsertLowest(t *testing.T) {
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
 func Test_Table_Concurrency(t *testing.T) {
-	table := basicTable(t, 1<<13)
-
-	generateRows := func(n int) *dynparquet.Buffer {
-		rows := make(dynparquet.Samples, 0, n)
-		for i := 0; i < n; i++ {
-			rows = append(rows, dynparquet.Sample{
-				Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-				},
-				Stacktrace: []uuid.UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-				},
-				Timestamp: rand.Int63(),
-				Value:     rand.Int63(),
-			})
-		}
-		buf, err := rows.ToBuffer(table.Schema())
-		require.NoError(t, err)
-
-		buf.Sort()
-
-		// This is necessary because sorting a buffer makes concurrent reading not
-		// safe as the internal pages are cyclically sorted at read time. Cloning
-		// executes the cyclic sort once and makes the resulting buffer safe for
-		// concurrent reading as it no longer has to perform the cyclic sorting at
-		// read time. This should probably be improved in the parquet library.
-		buf, err = buf.Clone()
-		require.NoError(t, err)
-
-		return buf
+	tests := map[string]struct {
+		granuleSize int
+	}{
+		"8192": {8192},
+		"4096": {4096},
+		"2048": {2048},
+		"1024": {1024},
 	}
 
-	// Spawn n workers that will insert values into the table
-	n := 8
-	inserts := 100
-	rows := 10
-	wg := &sync.WaitGroup{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < inserts; i++ {
-				if _, err := table.InsertBuffer(generateRows(rows)); err != nil {
-					fmt.Println("Received error on insert: ", err)
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			table := basicTable(t, test.granuleSize)
+
+			generateRows := func(n int) *dynparquet.Buffer {
+				rows := make(dynparquet.Samples, 0, n)
+				for i := 0; i < n; i++ {
+					rows = append(rows, dynparquet.Sample{
+						Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
+							{Name: "label1", Value: "value1"},
+							{Name: "label2", Value: "value2"},
+						},
+						Stacktrace: []uuid.UUID{
+							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+						},
+						Timestamp: rand.Int63(),
+						Value:     rand.Int63(),
+					})
 				}
+				buf, err := rows.ToBuffer(table.Schema())
+				require.NoError(t, err)
+
+				buf.Sort()
+
+				// This is necessary because sorting a buffer makes concurrent reading not
+				// safe as the internal pages are cyclically sorted at read time. Cloning
+				// executes the cyclic sort once and makes the resulting buffer safe for
+				// concurrent reading as it no longer has to perform the cyclic sorting at
+				// read time. This should probably be improved in the parquet library.
+				buf, err = buf.Clone()
+				require.NoError(t, err)
+
+				return buf
 			}
-		}()
+
+			// Spawn n workers that will insert values into the table
+			n := 8
+			inserts := 100
+			rows := 10
+			wg := &sync.WaitGroup{}
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for i := 0; i < inserts; i++ {
+						if _, err := table.InsertBuffer(generateRows(rows)); err != nil {
+							fmt.Println("Received error on insert: ", err)
+						}
+					}
+				}()
+			}
+
+			wg.Wait()
+			table.Sync()
+
+			// Wait for the transaction pool to drain before iterating
+			pending := 0
+			table.db.txPool.Iterate(func(tx uint64) bool {
+				pending++
+				return false
+			})
+			for pending > 1 {
+				time.Sleep(30 * time.Millisecond) // sleep wait for pool to drain
+				pending = 0
+				table.db.txPool.Iterate(func(tx uint64) bool {
+					pending++
+					return false
+				})
+			}
+
+			totalrows := int64(0)
+			err := table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+				totalrows += ar.NumRows()
+				defer ar.Release()
+
+				return nil
+			})
+			require.NoError(t, err)
+			require.Equal(t, int64(n*inserts*rows), totalrows)
+		})
 	}
-
-	wg.Wait()
-	table.Sync()
-
-	// Sync has happened so all transactions are complete. We should be able to wait unti the watermark is equal to the the number of tx
-	for watermark := table.db.highWatermark.Load(); watermark < uint64(n*inserts); watermark = table.db.highWatermark.Load() {
-		time.Sleep(time.Millisecond)
-	}
-
-	totalrows := int64(0)
-	err := table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
-		totalrows += ar.NumRows()
-		defer ar.Release()
-
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, int64(n*inserts*rows), totalrows)
 }
 
 //func Benchmark_Table_Insert_10Rows_10Iter_10Writers(b *testing.B) {
