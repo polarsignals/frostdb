@@ -9,12 +9,12 @@ import (
 	"sync/atomic"
 )
 
-type LogFile struct {
+type BlockFile struct {
 	*os.File
 	size uint64
 }
 
-func OpenLogFile(name string) (*LogFile, error) {
+func OpenBlockFile(name string) (*BlockFile, error) {
 	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, err
@@ -30,7 +30,7 @@ func OpenLogFile(name string) (*LogFile, error) {
 		err = nil
 	}
 
-	return &LogFile{
+	return &BlockFile{
 		File: file,
 		size: size,
 	}, err
@@ -45,13 +45,19 @@ func computeChecksum(data []byte) uint32 {
 	return crc.Sum32()
 }
 
-func (lf *LogFile) encodeRecord(data []byte) ([]byte, error) {
-	hdr := &struct {
-		Checksum uint32
-		Size     uint32
-	}{
-		Checksum: computeChecksum(data),
-		Size:     uint32(len(data)),
+const headerSize = 16
+
+type blockHeader struct {
+	Checksum  uint32
+	Timestamp uint64
+	Size      uint32
+}
+
+func (lf *BlockFile) encodeBlock(timestamp uint64, data []byte) ([]byte, error) {
+	hdr := &blockHeader{
+		Checksum:  computeChecksum(data),
+		Size:      uint32(len(data)),
+		Timestamp: timestamp,
 	}
 
 	var buf bytes.Buffer
@@ -64,8 +70,8 @@ func (lf *LogFile) encodeRecord(data []byte) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
-func (lf *LogFile) WriteRecord(data []byte) error {
-	encoded, err := lf.encodeRecord(data)
+func (lf *BlockFile) WriteBlock(timestamp uint64, data []byte) error {
+	encoded, err := lf.encodeBlock(timestamp, data)
 	if err != nil {
 		return err
 	}
@@ -78,51 +84,48 @@ func (lf *LogFile) WriteRecord(data []byte) error {
 	return err
 }
 
-func (lf *LogFile) ReadRecord(offset uint64) (int, []byte, error) {
-	hdr := &struct {
-		Checksum uint32
-		Size     uint32
-	}{}
+func (lf *BlockFile) ReadBlock(offset uint64) (uint64, []byte, error) {
+	hdr := &blockHeader{}
 
 	hdrBuf := make([]byte, binary.Size(hdr))
-	n, err := lf.ReadAt(hdrBuf, int64(offset))
+	_, err := lf.ReadAt(hdrBuf, int64(offset))
 	if err != nil {
-		return n, nil, err
+		return 0, nil, err
 	}
 
 	if err := binary.Read(bytes.NewBuffer(hdrBuf), binary.BigEndian, hdr); err != nil {
-		return n, nil, err
+		return 0, nil, err
 	}
 
 	buf := make([]byte, hdr.Size)
-	m, err := lf.ReadAt(buf, int64(offset)+int64(n))
-	return n + m, buf, err
+	_, err = lf.ReadAt(buf, int64(offset)+int64(headerSize))
+	return hdr.Timestamp, buf, err
 }
 
-func (lf *LogFile) NewIterator() *LogFileIterator {
-	return &LogFileIterator{
+func (lf *BlockFile) NewIterator() *BlockFileIterator {
+	return &BlockFileIterator{
 		lf:             lf,
 		limit:          lf.size,
 		currReadOffset: 0,
 	}
 }
 
-func (lf *LogFile) Size() int {
+func (lf *BlockFile) Size() int {
 	return int(atomic.LoadUint64(&lf.size))
 }
 
-type LogFileIterator struct {
+type BlockFileIterator struct {
 	currReadOffset uint64
 	limit          uint64
-	lf             *LogFile
+	lf             *BlockFile
 }
 
-func (it *LogFileIterator) HasNext() bool {
+func (it *BlockFileIterator) HasNext() bool {
 	return it.currReadOffset < it.limit
 }
 
-func (it *LogFileIterator) NextRecord() ([]byte, error) {
-	n, data, err := it.lf.ReadRecord(uint64(it.currReadOffset))
-	it.currReadOffset += uint64(n)
-	return data, err
+func (it *BlockFileIterator) NextBlock() (uint64, []byte, error) {
+	timestamp, data, err := it.lf.ReadBlock(uint64(it.currReadOffset))
+	it.currReadOffset += uint64(len(data) + headerSize)
+	return timestamp, data, err
 }

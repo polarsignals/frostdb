@@ -15,7 +15,7 @@ func TestLogFile(t *testing.T) {
 	require.NoError(t, file.Close())
 	defer os.Remove(file.Name())
 
-	lf, err := OpenLogFile(file.Name())
+	lf, err := OpenBlockFile(file.Name())
 	require.NoError(t, err)
 
 	bufs := make([][]byte, 0)
@@ -25,13 +25,13 @@ func TestLogFile(t *testing.T) {
 
 		bufs = append(bufs, buf)
 
-		err := lf.WriteRecord(buf)
+		err := lf.WriteBlock(0, buf)
 		require.NoError(t, err)
 	}
 
 	require.NoError(t, lf.Close())
 
-	lfRead, err := OpenLogFile(file.Name())
+	lfRead, err := OpenBlockFile(file.Name())
 	require.NoError(t, err)
 
 	it := lfRead.NewIterator()
@@ -40,7 +40,7 @@ func TestLogFile(t *testing.T) {
 	for it.HasNext() {
 		require.Less(t, i, len(bufs))
 
-		data, err := it.NextRecord()
+		_, data, err := it.NextBlock()
 		require.NoError(t, err)
 
 		require.Equal(t, data, bufs[i])
