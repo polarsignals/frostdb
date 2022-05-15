@@ -2,7 +2,6 @@ package arcticdb
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 
 	"github.com/go-kit/log"
@@ -18,7 +17,7 @@ func (block *TableBlock) WriteToDisk() error {
 		return err
 	}
 	// Write the serialized buffer to disk
-	return block.table.blockFile.WriteRecord(data)
+	return block.table.blockFile.WriteBlock(block.timestamp, data)
 }
 
 // FileDynamicRowGroup is a dynamic row group that is backed by a file object
@@ -37,7 +36,7 @@ func (MemDynamicRowGroup) Close() error {
 	return nil
 }
 
-func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool) error {
+func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp int64) error {
 	if t.blockFile == nil {
 		return nil
 	}
@@ -46,15 +45,17 @@ func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, 
 
 	n := 0
 	for it.HasNext() {
-		nextRecord, err := it.NextRecord()
+		timestamp, blockData, err := it.NextBlock()
 		if err != nil {
 			return err
 		}
 
-		fmt.Println("iterating on data: ", len(nextRecord))
+		if lastBlockTimestamp >= 0 && timestamp >= uint64(lastBlockTimestamp) {
+			return nil
+		}
 
-		reader := bytes.NewReader(nextRecord)
-		file, err := parquet.OpenFile(reader, int64(len(nextRecord)))
+		reader := bytes.NewReader(blockData)
+		file, err := parquet.OpenFile(reader, int64(len(blockData)))
 		if err != nil {
 			return err
 		}

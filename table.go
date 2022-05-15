@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -62,9 +63,10 @@ type Table struct {
 
 	config *TableConfig
 
-	lastBlockWrittenSeqNumber *atomic.Int64
-	nextBlockSeqNumber        *atomic.Int64
-	blockFile                 *LogFile
+	blockFile *BlockFile
+
+	pendingBlocks map[*TableBlock]struct{}
+	blockChan     chan *TableBlock
 
 	mtx    *sync.RWMutex
 	active *TableBlock
@@ -74,7 +76,7 @@ type TableBlock struct {
 	table  *Table
 	logger log.Logger
 
-	seqNumber int64
+	timestamp uint64
 	size      *atomic.Int64
 	index     *atomic.UnsafePointer // *btree.BTree
 
@@ -112,13 +114,13 @@ func newTable(
 	reg = prometheus.WrapRegistererWith(prometheus.Labels{"table": name}, reg)
 
 	t := &Table{
-		db:                        db,
-		config:                    tableConfig,
-		name:                      name,
-		logger:                    logger,
-		lastBlockWrittenSeqNumber: atomic.NewInt64(0),
-		nextBlockSeqNumber:        atomic.NewInt64(0),
-		mtx:                       &sync.RWMutex{},
+		db:            db,
+		config:        tableConfig,
+		name:          name,
+		blockChan:     make(chan *TableBlock, 100),
+		pendingBlocks: make(map[*TableBlock]struct{}),
+		logger:        logger,
+		mtx:           &sync.RWMutex{},
 		metrics: &tableMetrics{
 			granulesCreated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "granules_created",
@@ -164,11 +166,13 @@ func newTable(
 		return float64(t.ActiveBlock().Size())
 	})
 
+	go t.writeBlocks()
 	return t, nil
 }
 
 const (
 	maxBlockFileSize = 1024 * 1024 * 1024 // 1 GB
+	blockFileExt     = ".block"
 )
 
 func (t *Table) createBlockFileIfNeeded() error {
@@ -176,7 +180,7 @@ func (t *Table) createBlockFileIfNeeded() error {
 	defer t.mtx.Unlock()
 
 	if t.blockFile == nil {
-		lf, err := OpenLogFile(t.name + ".block")
+		lf, err := OpenBlockFile(t.name + blockFileExt)
 		if err != nil {
 			return err
 		}
@@ -185,42 +189,59 @@ func (t *Table) createBlockFileIfNeeded() error {
 	return nil
 }
 
+func (t *Table) writeBlocks() {
+	for {
+		select {
+		case block := <-t.blockChan:
+			level.Debug(t.logger).Log("msg", "syncing block")
+
+			block.pendingWritersWg.Wait()
+			block.wg.Wait()
+
+			// from now on, the block will no more be modified, we can write it to disk
+
+			level.Debug(t.logger).Log("msg", "done syncing block")
+
+			if err := t.createBlockFileIfNeeded(); err != nil {
+				level.Error(t.logger).Log("msg", "failed to create block file for table: "+t.name)
+				return
+			}
+
+			// Persist the block
+			if err := block.WriteToDisk(); err != nil {
+				level.Error(t.logger).Log("msg", "failed to persist block")
+				level.Error(t.logger).Log("msg", err.Error())
+			}
+
+			t.mtx.Lock()
+
+			delete(t.pendingBlocks, block)
+
+			t.mtx.Unlock()
+		}
+	}
+}
+
 func (t *Table) RotateBlock() error {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
+	if t.active.Size() == 0 {
+		return nil
+	}
+
 	tb, err := newTableBlock(t)
 	if err != nil {
 		return err
 	}
 
-	t.mtx.Lock()
-
 	block := t.active
 	t.active = tb
 
-	t.mtx.Unlock()
+	t.pendingBlocks[block] = struct{}{}
 
-	go func() {
-		level.Debug(t.logger).Log("msg", "syncing block")
+	t.blockChan <- block
 
-		block.pendingWritersWg.Wait()
-		block.wg.Wait()
-
-		// from now on, the block will no more be modified, we can write it to disk
-
-		level.Debug(t.logger).Log("msg", "done syncing block")
-
-		if t.createBlockFileIfNeeded(); err != nil {
-			level.Error(t.logger).Log("msg", "failed to create block file for table: "+t.name)
-			return
-		}
-
-		// Persist the block
-		if err := block.WriteToDisk(); err != nil {
-			level.Error(t.logger).Log("msg", "failed to persist block")
-			level.Error(t.logger).Log("msg", err.Error())
-		}
-
-		t.lastBlockWrittenSeqNumber.Store(tb.seqNumber)
-	}()
 	return nil
 }
 
@@ -263,7 +284,7 @@ func (t *Table) Insert(buf []byte) (uint64, error) {
 	}
 
 	if block.Size() > t.db.columnStore.activeMemorySize {
-		level.Debug(t.logger).Log("msg", "rotating block")
+		level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size())
 		if err := t.RotateBlock(); err != nil {
 			return 0, fmt.Errorf("failed to rotate block: %w", err)
 		}
@@ -289,14 +310,28 @@ func (t *Table) Iterator(
 		return err
 	}
 
-	if t.lastBlockWrittenSeqNumber.Load() < t.ActiveBlock().seqNumber-1 {
-		return ErrNotReady
-	}
-
 	rowGroups := []dynparquet.DynamicCloserRowGroup{}
 	iteratorFunc := func(rg dynparquet.DynamicCloserRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
+	}
+
+	lastReadBlockTimestamp := int64(-1)
+
+	pendingBlocks := make([]*TableBlock, 0)
+	t.mtx.RLock()
+	for block := range t.pendingBlocks {
+		pendingBlocks = append(pendingBlocks, block)
+		if lastReadBlockTimestamp < 0 || int64(block.timestamp) < lastReadBlockTimestamp {
+			lastReadBlockTimestamp = int64(block.timestamp)
+		}
+	}
+	t.mtx.RUnlock()
+
+	for _, block := range pendingBlocks {
+		if err := block.RowGroupIterator(ctx, filterExpr, filter, false, iteratorFunc); err != nil {
+			return err
+		}
 	}
 
 	err = t.ActiveBlock().RowGroupIterator(ctx, filterExpr, filter, false, iteratorFunc)
@@ -304,7 +339,7 @@ func (t *Table) Iterator(
 		return err
 	}
 
-	if err := t.IterateDiskBlocks(t.logger, filter, iteratorFunc); err != nil {
+	if err := t.IterateDiskBlocks(t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
 		return err
 	}
 
@@ -412,8 +447,8 @@ func newTableBlock(table *Table) (*TableBlock, error) {
 		index:     atomic.NewUnsafePointer(unsafe.Pointer(index)),
 		wg:        &sync.WaitGroup{},
 		mtx:       &sync.RWMutex{},
+		timestamp: uint64(time.Now().Unix()),
 		size:      atomic.NewInt64(0),
-		seqNumber: table.nextBlockSeqNumber.Inc(),
 		logger:    table.logger,
 	}
 
