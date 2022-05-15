@@ -436,7 +436,6 @@ func Test_Table_Concurrency(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-
 			table := basicTable(t, test.granuleSize)
 
 			generateRows := func(n int) *dynparquet.Buffer {
