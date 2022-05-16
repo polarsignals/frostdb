@@ -55,7 +55,7 @@ func TestInputSchemaGetter(t *testing.T) {
 	schema := dynparquet.NewSampleSchema()
 
 	// test we can get the table by traversing to find the TableScan
-	plan := (&Builder{}).
+	plan, _ := (&Builder{}).
 		Scan(&mockTableProvider{schema}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
@@ -67,7 +67,7 @@ func TestInputSchemaGetter(t *testing.T) {
 	require.Equal(t, schema, plan.InputSchema())
 
 	// test we can get the table by traversing to find SchemaScan
-	plan = (&Builder{}).
+	plan, _ = (&Builder{}).
 		ScanSchema(&mockTableProvider{schema}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
@@ -80,7 +80,7 @@ func TestInputSchemaGetter(t *testing.T) {
 
 	// test it returns null in case where we built a logical plan w/ no
 	// TableScan or SchemaScan
-	plan = (&Builder{}).
+	plan, _ = (&Builder{}).
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
 			Sum(Col("value")).Alias("value_sum"),

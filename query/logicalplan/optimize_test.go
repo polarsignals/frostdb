@@ -3,13 +3,16 @@ package logicalplan
 import (
 	"testing"
 
+	"github.com/polarsignals/arcticdb/dynparquet"
+
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/stretchr/testify/require"
 )
 
 func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+	p, _ := (&Builder{}).
+		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
 			Sum(Col("value")).Alias("value_sum"),
@@ -22,7 +25,8 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 	optimizer.Optimize(p)
 
 	require.Equal(t, &TableScan{
-		TableName: "table1",
+		TableName:     "table1",
+		TableProvider: tableProvider,
 		// Only these columns are needed to compute the result. There can be
 		// duplicates because the statements just add the matchers for the
 		// columns they access. The optimizer could potentially deduplicate or
@@ -40,7 +44,7 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 }
 
 func TestOptimizeDistinctPushDown(t *testing.T) {
-	p := (&Builder{}).
+	p, _ := (&Builder{}).
 		Scan(nil, "table1").
 		Distinct(Col("labels.test")).
 		Build()
@@ -60,8 +64,9 @@ func TestOptimizeDistinctPushDown(t *testing.T) {
 }
 
 func TestOptimizeFilterPushDown(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+	p, _ := (&Builder{}).
+		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
 			Sum(Col("value")).Alias("value_sum"),
@@ -74,7 +79,8 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 	optimizer.Optimize(p)
 
 	require.Equal(t, &TableScan{
-		TableName: "table1",
+		TableName:     "table1",
+		TableProvider: tableProvider,
 		// Only these columns are needed to compute the result.
 		Filter: BinaryExpr{
 			Left: Column{ColumnName: "labels.test"},
@@ -90,8 +96,8 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 }
 
 func TestRemoveProjectionAtRoot(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	p, _ := (&Builder{}).
+		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
 			Sum(Col("value")).Alias("value_sum"),
@@ -106,8 +112,8 @@ func TestRemoveProjectionAtRoot(t *testing.T) {
 }
 
 func TestRemoveMiddleProjection(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	p, _ := (&Builder{}).
+		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Project(Col("stacktrace")).
 		Aggregate(
@@ -122,8 +128,8 @@ func TestRemoveMiddleProjection(t *testing.T) {
 }
 
 func TestRemoveLowestProjection(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	p, _ := (&Builder{}).
+		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Project(Col("stacktrace")).
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
@@ -138,8 +144,8 @@ func TestRemoveLowestProjection(t *testing.T) {
 }
 
 func TestProjectionPushDown(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	p, _ := (&Builder{}).
+		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
 			Sum(Col("value")).Alias("value_sum"),
@@ -154,8 +160,8 @@ func TestProjectionPushDown(t *testing.T) {
 }
 
 func TestProjectionPushDownOfDistinct(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	p, _ := (&Builder{}).
+		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Distinct(DynCol("labels")).
 		Build()
 
@@ -165,8 +171,9 @@ func TestProjectionPushDownOfDistinct(t *testing.T) {
 }
 
 func TestAllOptimizers(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+	p, _ := (&Builder{}).
+		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
 			Sum(Col("value")).Alias("value_sum"),
@@ -187,7 +194,8 @@ func TestAllOptimizers(t *testing.T) {
 	}
 
 	require.Equal(t, &TableScan{
-		TableName: "table1",
+		TableName:     "table1",
+		TableProvider: tableProvider,
 		// Only these columns are needed to compute the result. There can be
 		// duplicates because the statements just add the matchers for the
 		// columns they access. The optimizer could potentially deduplicate or
