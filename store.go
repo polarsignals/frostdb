@@ -67,8 +67,7 @@ func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, 
 		}
 
 		n++
-		f := buf.ParquetFile()
-		for i := 0; i < f.NumRowGroups(); i++ {
+		for i := 0; i < buf.NumRowGroups(); i++ {
 			rg := buf.DynamicRowGroup(i)
 			var mayContainUsefulData bool
 			mayContainUsefulData, err = filter.Eval(rg)
