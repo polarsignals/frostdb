@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"time"
 	"unsafe"
@@ -684,7 +685,11 @@ func (t *TableBlock) RowGroupIterator(
 	iterator func(rg dynparquet.DynamicCloserRowGroup) bool,
 ) error {
 	index := t.Index()
-	watermark := t.table.db.beginRead()
+
+	watermark := uint64(math.MaxUint64)
+	if !ignoreWatermark {
+		watermark = t.table.db.beginRead()
+	}
 
 	var err error
 	index.Ascend(func(i btree.Item) bool {
@@ -695,7 +700,7 @@ func (t *TableBlock) RowGroupIterator(
 			return true
 		}
 
-		g.PartBuffersForTx(watermark, ignoreWatermark, func(buf *dynparquet.SerializedBuffer) bool {
+		g.PartBuffersForTx(watermark, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
 			for i := range f.RowGroups() {
 				rg := buf.DynamicRowGroup(i)
