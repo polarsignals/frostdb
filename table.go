@@ -319,27 +319,23 @@ func (t *Table) Iterator(
 	// to avoid to iterate on them again while reading the block file
 	// we keep the last block timestamp to be read from disk and pass it to the IterateDiskBlocks() function
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while reading from disk.
-	lastReadBlockTimestamp := int64(-1)
 
-	pendingBlocks := make([]*TableBlock, 0)
 	t.mtx.RLock()
+	lastReadBlockTimestamp := t.active.timestamp
+	memoryBlocks := []*TableBlock{t.active}
 	for block := range t.pendingBlocks {
-		pendingBlocks = append(pendingBlocks, block)
-		if lastReadBlockTimestamp < 0 || int64(block.timestamp) < lastReadBlockTimestamp {
-			lastReadBlockTimestamp = int64(block.timestamp)
+		memoryBlocks = append(memoryBlocks, block)
+
+		if block.timestamp < lastReadBlockTimestamp {
+			lastReadBlockTimestamp = block.timestamp
 		}
 	}
 	t.mtx.RUnlock()
 
-	for _, block := range pendingBlocks {
+	for _, block := range memoryBlocks {
 		if err := block.RowGroupIterator(ctx, filterExpr, filter, false, iteratorFunc); err != nil {
 			return err
 		}
-	}
-
-	err = t.ActiveBlock().RowGroupIterator(ctx, filterExpr, filter, false, iteratorFunc)
-	if err != nil {
-		return err
 	}
 
 	if err := t.IterateDiskBlocks(t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
@@ -450,7 +446,7 @@ func newTableBlock(table *Table) (*TableBlock, error) {
 		index:     atomic.NewUnsafePointer(unsafe.Pointer(index)),
 		wg:        &sync.WaitGroup{},
 		mtx:       &sync.RWMutex{},
-		timestamp: uint64(time.Now().Unix()),
+		timestamp: uint64(time.Now().UnixNano()),
 		size:      atomic.NewInt64(0),
 		logger:    table.logger,
 	}

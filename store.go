@@ -36,7 +36,7 @@ func (MemDynamicRowGroup) Close() error {
 	return nil
 }
 
-func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp int64) error {
+func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp uint64) error {
 	if t.blockFile == nil {
 		return nil
 	}
@@ -50,7 +50,7 @@ func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, 
 			return err
 		}
 
-		if lastBlockTimestamp >= 0 && timestamp >= uint64(lastBlockTimestamp) {
+		if timestamp >= lastBlockTimestamp {
 			return nil
 		}
 
