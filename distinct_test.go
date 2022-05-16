@@ -69,7 +69,7 @@ func TestDistinct(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	tests := map[string]struct {
@@ -163,7 +163,7 @@ func TestDistinctProjection(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	engine := query.NewEngine(
