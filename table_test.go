@@ -1111,7 +1111,6 @@ func Test_Table_InsertCancellation(t *testing.T) {
 }
 
 func Test_Table_CancelBasic(t *testing.T) {
-
 	table := basicTable(t, 8192)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
