@@ -16,6 +16,25 @@ ArcticDB is optimized for use cases where the majority of interactions are write
 
 Read the annoucement blog post to learn about what made us create it: https://www.polarsignals.com/blog/posts/2022/05/04/introducing-arcticdb/
 
+## Why you should use ArcticDB
+
+Columnar data stores have become incredibly popular for analytics data. Structuring data in columns instead of rows leverages the architecture of modern hardware, allowing for efficient processing of data.
+A columnar data store might be right for you if you have workloads where you write a lot of data and need to perform analytics on that data.
+
+ArcticDB is similar to many other in-memory columnar databases such as [DuckDB](https://duckdb.org/) or [InfluxDB IOx](https://github.com/influxdata/influxdb_iox). 
+
+ArcticDB may be a better fit for you if:
+- Are developing a Go program
+- Want to embed a columnar database in your program instead of running a separate server
+- Have immutable datasets that don't require updating or deleting
+- Your data contains dynamic columns, where a column may expand during runtime
+
+ArcticDB is likely not suitable for your needs if:
+- You aren't developing in Go
+- You require a standalone database server
+- You need to modify or delete your data
+- You query by rows instead of columns
+
 ## Design choices
 
 ArcticDB was specifically built for Observability workloads. This resulted in several characteristics that make it unique in its combination.

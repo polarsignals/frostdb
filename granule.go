@@ -157,9 +157,8 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	rowsWritten := 0
 
 	f := p.Buf.ParquetFile()
-	rowGroups := f.NumRowGroups()
-	for i := 0; i < rowGroups; i++ {
-		rows := f.RowGroup(i).Rows()
+	for _, rowGroup := range f.RowGroups() {
+		rows := rowGroup.Rows()
 		for {
 			row, err = rows.ReadRow(row[:0])
 			if err == io.EOF {
@@ -244,14 +243,9 @@ func (g *Granule) Least() *dynparquet.DynamicRow {
 // minmaxes finds the mins and maxes of every column in a part.
 func (g *Granule) minmaxes(p *Part) error {
 	f := p.Buf.ParquetFile()
-	numRowGroups := f.NumRowGroups()
-	for i := 0; i < numRowGroups; i++ {
-		rowGroup := f.RowGroup(i)
 
-		numColumns := rowGroup.NumColumns()
-		for j := 0; j < numColumns; j++ {
-			columnChunk := rowGroup.Column(j)
-
+	for _, rowGroup := range f.RowGroups() {
+		for _, columnChunk := range rowGroup.ColumnChunks() {
 			idx := columnChunk.ColumnIndex()
 			minvalues := make([]parquet.Value, 0, idx.NumPages())
 			maxvalues := make([]parquet.Value, 0, idx.NumPages())

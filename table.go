@@ -529,7 +529,9 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 			return true
 		}
 
-		for i := 0; i < p.Buf.NumRowGroups(); i++ {
+		// TODO: should there be a method on p.Buf to get the list of dynamic
+		// row groups instead of having to do this conversion?
+		for i, n := 0, p.Buf.NumRowGroups(); i < n; i++ {
 			bufs = append(bufs, p.Buf.DynamicRowGroup(i))
 		}
 
@@ -695,7 +697,7 @@ func (t *TableBlock) RowGroupIterator(
 
 		g.PartBuffersForTx(watermark, ignoreWatermark, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
-			for i := 0; i < f.NumRowGroups(); i++ {
+			for i := range f.RowGroups() {
 				rg := buf.DynamicRowGroup(i)
 				var mayContainUsefulData bool
 				mayContainUsefulData, err = filter.Eval(rg)
