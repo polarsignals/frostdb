@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -438,6 +439,7 @@ func Test_Table_Concurrency(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			table := basicTable(t, test.granuleSize)
+			defer os.Remove("test.block")
 
 			generateRows := func(n int) *dynparquet.Buffer {
 				rows := make(dynparquet.Samples, 0, n)
