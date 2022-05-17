@@ -6,7 +6,6 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/polarsignals/arcticdb/query/physicalplan"
 )
@@ -106,7 +105,7 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Re
 
 	phyPlan, err := physicalplan.Build(
 		b.pool,
-		dynparquet.NewSampleSchema(),
+		logicalPlan.InputSchema(),
 		logicalPlan,
 	)
 	if err != nil {

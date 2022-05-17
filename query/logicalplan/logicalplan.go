@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/polarsignals/arcticdb/dynparquet"
+
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 )
@@ -53,6 +55,29 @@ func (plan *LogicalPlan) string(indent int) string {
 	return res
 }
 
+// TableReader returns the table reader.
+func (plan *LogicalPlan) TableReader() TableReader {
+	if plan.TableScan != nil {
+		return plan.TableScan.TableProvider.GetTable(plan.TableScan.TableName)
+	}
+	if plan.SchemaScan != nil {
+		return plan.SchemaScan.TableProvider.GetTable(plan.SchemaScan.TableName)
+	}
+	if plan.Input != nil {
+		return plan.Input.TableReader()
+	}
+	return nil
+}
+
+// InputSchema returns the schema that the query will execute against.
+func (plan *LogicalPlan) InputSchema() *dynparquet.Schema {
+	tableReader := plan.TableReader()
+	if tableReader != nil {
+		return tableReader.Schema()
+	}
+	return nil
+}
+
 type PlanVisitor interface {
 	PreVisit(plan *LogicalPlan) bool
 	PostVisit(plan *LogicalPlan) bool
@@ -91,6 +116,7 @@ type TableReader interface {
 		distinctColumns []ColumnMatcher,
 		callback func(r arrow.Record) error,
 	) error
+	Schema() *dynparquet.Schema
 }
 
 type TableProvider interface {
