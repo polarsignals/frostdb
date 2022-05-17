@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
+	"os"
+	"path"
 	"sync"
 	"time"
 	"unsafe"
@@ -64,10 +67,9 @@ type Table struct {
 
 	config *TableConfig
 
-	blockFile *BlockFile
-
 	pendingBlocks map[*TableBlock]struct{}
-	blockChan     chan *TableBlock
+
+	blockFiles map[uint64]*BlockFile
 
 	mtx    *sync.RWMutex
 	active *TableBlock
@@ -115,13 +117,11 @@ func newTable(
 	reg = prometheus.WrapRegistererWith(prometheus.Labels{"table": name}, reg)
 
 	t := &Table{
-		db:            db,
-		config:        tableConfig,
-		name:          name,
-		blockChan:     make(chan *TableBlock, 100),
-		pendingBlocks: make(map[*TableBlock]struct{}),
-		logger:        logger,
-		mtx:           &sync.RWMutex{},
+		db:     db,
+		config: tableConfig,
+		name:   name,
+		logger: logger,
+		mtx:    &sync.RWMutex{},
 		metrics: &tableMetrics{
 			granulesCreated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "granules_created",
@@ -147,6 +147,21 @@ func newTable(
 		},
 	}
 
+	if db.columnStore.enablePersistency {
+		t.pendingBlocks = make(map[*TableBlock]struct{})
+		t.blockFiles = make(map[uint64]*BlockFile)
+
+		// create table folder
+		err := os.Mkdir(t.StorePath(), 0777)
+		if os.IsExist(err) {
+			if err := t.openBlockFilesForReading(); err != nil {
+				return nil, err
+			}
+		} else if err != nil {
+			return nil, err
+		}
+	}
+
 	var err error
 	t.active, err = newTableBlock(t)
 	if err != nil {
@@ -167,60 +182,65 @@ func newTable(
 		return float64(t.ActiveBlock().Size())
 	})
 
-	go t.writeBlocks()
 	return t, nil
 }
 
-const (
-	maxBlockFileSize = 1024 * 1024 * 1024 // 1 GB
-	blockFileExt     = ".block"
-)
+func (t *Table) StorePath() string {
+	return path.Join(t.db.StorePath(), t.name)
+}
 
-func (t *Table) createBlockFileIfNeeded() error {
-	t.mtx.Lock()
-	defer t.mtx.Unlock()
+func (t *Table) openBlockFilesForReading() error {
+	files, err := ioutil.ReadDir(t.StorePath())
+	if err != nil {
+		return err
+	}
 
-	if t.blockFile == nil {
-		lf, err := OpenBlockFile(t.name + blockFileExt)
-		if err != nil {
-			return err
+	for _, fInfo := range files {
+		timestamp, err := parseBlockFileName(fInfo.Name())
+
+		if err == nil {
+			file, err := OpenBlockFile(path.Join(t.StorePath(), fInfo.Name()))
+			if err != nil {
+				return err
+			}
+			t.blockFiles[timestamp] = file
 		}
-		t.blockFile = lf
 	}
 	return nil
 }
 
-func (t *Table) writeBlocks() {
-	for {
-		select {
-		case block := <-t.blockChan:
-			level.Debug(t.logger).Log("msg", "syncing block")
+func (t *Table) writeBlock(block *TableBlock) {
+	level.Debug(t.logger).Log("msg", "syncing block")
 
-			block.pendingWritersWg.Wait()
-			block.wg.Wait()
+	block.pendingWritersWg.Wait()
+	block.wg.Wait()
 
-			// from now on, the block will no more be modified, we can write it to disk
+	// from now on, the block will no more be modified, we can write it to disk
 
-			level.Debug(t.logger).Log("msg", "done syncing block")
+	level.Debug(t.logger).Log("msg", "done syncing block")
 
-			if err := t.createBlockFileIfNeeded(); err != nil {
-				level.Error(t.logger).Log("msg", "failed to create block file for table: "+t.name)
-				return
-			}
-
-			// Persist the block
-			if err := block.WriteToDisk(); err != nil {
-				level.Error(t.logger).Log("msg", "failed to persist block")
-				level.Error(t.logger).Log("msg", err.Error())
-			}
-
-			t.mtx.Lock()
-
-			delete(t.pendingBlocks, block)
-
-			t.mtx.Unlock()
-		}
+	// Persist the block
+	n, err := block.WriteToDisk()
+	if err != nil {
+		level.Error(t.logger).Log("msg", "failed to persist block")
+		level.Error(t.logger).Log("msg", err.Error())
 	}
+
+	fileName := path.Join(block.table.StorePath(), getBlockFileName(block))
+	blockFile, err := os.Open(fileName)
+	if err != nil {
+		level.Error(t.logger).Log("msg", "unable to to open file after writing", "fileName", fileName)
+	}
+
+	t.mtx.Lock()
+
+	delete(t.pendingBlocks, block)
+
+	if err == nil {
+		t.blockFiles[block.timestamp] = &BlockFile{File: blockFile, size: uint64(n)}
+	}
+
+	t.mtx.Unlock()
 }
 
 func (t *Table) RotateBlock() error {
@@ -239,10 +259,10 @@ func (t *Table) RotateBlock() error {
 	block := t.active
 	t.active = tb
 
-	t.pendingBlocks[block] = struct{}{}
-
-	t.blockChan <- block
-
+	if t.db.columnStore.enablePersistency {
+		t.pendingBlocks[block] = struct{}{}
+		go t.writeBlock(block)
+	}
 	return nil
 }
 

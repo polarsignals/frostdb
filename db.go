@@ -2,6 +2,8 @@ package arcticdb
 
 import (
 	"fmt"
+	"os"
+	"path"
 	"sync"
 
 	"github.com/go-kit/log"
@@ -12,11 +14,13 @@ import (
 )
 
 type ColumnStore struct {
-	mtx              *sync.RWMutex
-	dbs              map[string]*DB
-	reg              prometheus.Registerer
-	granuleSize      int
-	activeMemorySize int64
+	mtx               *sync.RWMutex
+	dbs               map[string]*DB
+	reg               prometheus.Registerer
+	granuleSize       int
+	activeMemorySize  int64
+	storagePath       string
+	enablePersistency bool
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
@@ -51,6 +55,16 @@ func (s *ColumnStore) WithIndexDegree(indexDegree int) *ColumnStore {
 
 func (s *ColumnStore) WithSplitSize(splitSize int) *ColumnStore {
 	s.splitSize = splitSize
+	return s
+}
+
+func (s *ColumnStore) WithPersistency(enabled bool) *ColumnStore {
+	s.enablePersistency = enabled
+	return s
+}
+
+func (s *ColumnStore) WithStoragePath(storagePath string) *ColumnStore {
+	s.storagePath = storagePath
 	return s
 }
 
@@ -113,10 +127,21 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 		highWatermark: atomic.NewUint64(0),
 	}
 
+	if s.enablePersistency {
+		// create root database folder
+		if err := os.Mkdir(db.StorePath(), 0777); err != nil && !os.IsExist(err) {
+			return nil, err
+		}
+	}
+
 	db.txPool = NewTxPool(db.highWatermark)
 
 	s.dbs[name] = db
 	return db, nil
+}
+
+func (db *DB) StorePath() string {
+	return path.Join(db.columnStore.storagePath, db.name)
 }
 
 func (db *DB) Close() error {

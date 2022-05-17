@@ -46,7 +46,8 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 		nil,
 		granuleSize,
 		512*1024*1024,
-	)
+	).WithPersistency(true)
+
 	db, err := c.DB("test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config, newTestLogger(t))
@@ -438,7 +439,7 @@ func Test_Table_Concurrency(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			table := basicTable(t, test.granuleSize)
-			defer os.Remove("test.block")
+			defer os.RemoveAll("test")
 
 			generateRows := func(n int) *dynparquet.Buffer {
 				rows := make(dynparquet.Samples, 0, n)
