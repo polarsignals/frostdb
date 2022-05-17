@@ -38,38 +38,31 @@ func main() {
 		log.NewNopLogger(),
 	)
 
-	// Create values to insert into the database these first rows havel dynamic label names of 'firstname' and 'surname'
-	buf, _ := schema.NewBuffer(map[string][]string{
-		"names": {"firstname", "surname"},
+	_, err := table.Write([]arcticdb.Row{
+		{
+			"names": map[string]interface{}{
+				"firstname": "Frederic",
+				"surname":   "Brancz",
+			},
+			"value": 60,
+		}, {
+			"names": map[string]interface{}{
+				"firstname": "Thor",
+				"surname":   "Hansen",
+			},
+			"value": 10,
+		}, {
+			"names": map[string]interface{}{
+				"firstname":  "Matthias",
+				"middlename": "Oliver",
+				"surname":    "Loibl",
+			},
+			"value": 100,
+		},
 	})
-
-	// firstname:Frederic surname:Brancz 100
-	buf.WriteRow([]parquet.Value{
-		parquet.ValueOf("Frederic").Level(0, 1, 0),
-		parquet.ValueOf("Brancz").Level(0, 1, 1),
-		parquet.ValueOf(100).Level(0, 0, 2),
-	})
-
-	// firstname:Thor surname:Hansen 10
-	buf.WriteRow([]parquet.Value{
-		parquet.ValueOf("Thor").Level(0, 1, 0),
-		parquet.ValueOf("Hansen").Level(0, 1, 1),
-		parquet.ValueOf(10).Level(0, 0, 2),
-	})
-	table.InsertBuffer(buf)
-
-	// Now we can insert rows that have middle names into our dynamic column
-	buf, _ = schema.NewBuffer(map[string][]string{
-		"names": {"firstname", "middlename", "surname"},
-	})
-	// firstname:Matthias middlename:Oliver surname:Loibl 1
-	buf.WriteRow([]parquet.Value{
-		parquet.ValueOf("Matthias").Level(0, 1, 0),
-		parquet.ValueOf("Oliver").Level(0, 1, 1),
-		parquet.ValueOf("Loibl").Level(0, 1, 2),
-		parquet.ValueOf(1).Level(0, 0, 3),
-	})
-	table.InsertBuffer(buf)
+	if err != nil {
+		panic(err.Error())
+	}
 
 	// Create a new query engine to retrieve data and print the results
 	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())

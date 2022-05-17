@@ -138,6 +138,15 @@ func (s *Schema) Columns() []ColumnDefinition {
 	return s.columns
 }
 
+func (s *Schema) DynamicColumns() []ColumnDefinition {
+	dynamic := make([]ColumnDefinition, 0, len(s.dynamicColumns))
+	for _, i := range s.dynamicColumns {
+		dynamic = append(dynamic, s.columns[i])
+	}
+
+	return dynamic
+}
+
 // parquetSchema returns the parquet schema for the dynamic schema with the
 // concrete dynamic column names given in the argument.
 func (s Schema) parquetSchema(
