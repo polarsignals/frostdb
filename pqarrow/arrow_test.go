@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
+	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
@@ -123,5 +125,42 @@ func BenchmarkParquetToArrow(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err = ParquetRowGroupToArrowRecord(context.Background(), memory.DefaultAllocator, buf, nil, nil, nil)
 		require.NoError(b, err)
+	}
+}
+
+func TestParquetNodeToType(t *testing.T) {
+	cases := []struct {
+		parquetNode parquet.Node
+		arrowType   arrow.DataType
+	}{
+		{
+			parquetNode: parquet.String(),
+			arrowType:   &arrow.BinaryType{},
+		},
+		{
+			parquetNode: parquet.Int(64),
+			arrowType:   &arrow.Int64Type{},
+		},
+		{
+			parquetNode: parquet.Uint(64),
+			arrowType:   &arrow.Uint64Type{},
+		},
+	}
+
+	for _, c := range cases {
+		require.Equal(t, c.arrowType, ParquetNodeToType(c.parquetNode))
+	}
+
+	panicCases := []struct {
+		parquetNode parquet.Node
+		value       string
+	}{
+		{
+			parquetNode: parquet.Leaf(parquet.DoubleType),
+			value:       "unsupported type",
+		},
+	}
+	for _, c := range panicCases {
+		require.PanicsWithValue(t, c.value, func() { ParquetNodeToType(c.parquetNode) })
 	}
 }

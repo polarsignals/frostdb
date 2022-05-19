@@ -372,6 +372,11 @@ func ParquetNodeToType(n parquet.Node) arrow.DataType {
 func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder, numValues int) valueWriter) {
 	t := n.Type()
 	lt := t.LogicalType()
+
+	if lt == nil {
+		panic("unsupported type")
+	}
+
 	switch {
 	case lt.UTF8 != nil:
 		return &arrow.BinaryType{}, newBinaryValueWriter
