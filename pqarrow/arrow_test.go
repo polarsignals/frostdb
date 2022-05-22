@@ -148,19 +148,22 @@ func TestParquetNodeToType(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		require.Equal(t, c.arrowType, ParquetNodeToType(c.parquetNode))
+		typ, err := ParquetNodeToType(c.parquetNode)
+		require.NoError(t, err)
+		require.Equal(t, c.arrowType, typ)
 	}
 
-	panicCases := []struct {
+	errCases := []struct {
 		parquetNode parquet.Node
-		value       string
+		msg         string
 	}{
 		{
 			parquetNode: parquet.Leaf(parquet.DoubleType),
-			value:       "unsupported type",
+			msg:         "unsupported type",
 		},
 	}
-	for _, c := range panicCases {
-		require.PanicsWithValue(t, c.value, func() { ParquetNodeToType(c.parquetNode) })
+	for _, c := range errCases {
+		_, err := ParquetNodeToType(c.parquetNode)
+		require.EqualError(t, err, c.msg)
 	}
 }
