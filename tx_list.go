@@ -13,13 +13,15 @@ type TxNode struct {
 }
 
 type TxPool struct {
-	next *atomic.UnsafePointer
+	next  *atomic.UnsafePointer
+	drain chan interface{}
 }
 
 // NewTxPool returns a new TxPool and starts the pool cleaner routine.
 func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	txpool := &TxPool{
-		next: atomic.NewUnsafePointer(unsafe.Pointer(nil)),
+		next:  atomic.NewUnsafePointer(unsafe.Pointer(nil)),
+		drain: make(chan interface{}, 1),
 	}
 	go txpool.cleaner(watermark)
 	return txpool
@@ -34,7 +36,12 @@ func (l *TxPool) Prepend(tx uint64) *TxNode {
 		next := l.next.Load()
 		node.next = atomic.NewUnsafePointer(next)
 		if l.next.CAS(next, unsafe.Pointer(node)) {
-			return node
+			select {
+			case l.drain <- true:
+				return node
+			default:
+				return node
+			}
 		}
 	}
 }
@@ -69,20 +76,26 @@ func (l *TxPool) cleaner(watermark *atomic.Uint64) {
 	defer ticker.Stop()
 
 	for {
-		select {
+		select { // sweep whenever notified or when ticker
+		case <-l.drain:
+			l.sweep(watermark)
 		case <-ticker.C:
-			l.Iterate(func(tx uint64) bool {
-				mark := watermark.Load()
-				switch {
-				case mark+1 == tx:
-					watermark.Inc()
-					return true // return true to indicate that this node should be removed from the tx list.
-				case mark >= tx:
-					return true
-				default:
-					return false
-				}
-			})
+			l.sweep(watermark)
 		}
 	}
+}
+
+func (l *TxPool) sweep(watermark *atomic.Uint64) {
+	l.Iterate(func(tx uint64) bool {
+		mark := watermark.Load()
+		switch {
+		case mark+1 == tx:
+			watermark.Inc()
+			return true // return true to indicate that this node should be removed from the tx list.
+		case mark >= tx:
+			return true
+		default:
+			return false
+		}
+	})
 }

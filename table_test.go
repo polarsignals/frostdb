@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -16,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
@@ -471,6 +471,7 @@ func Test_Table_Concurrency(t *testing.T) {
 			}
 
 			// Spawn n workers that will insert values into the table
+			maxTxID := atomic.NewUint64(0)
 			n := 8
 			inserts := 100
 			rows := 10
@@ -480,30 +481,24 @@ func Test_Table_Concurrency(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					for i := 0; i < inserts; i++ {
-						if _, err := table.InsertBuffer(generateRows(rows)); err != nil {
+						tx, err := table.InsertBuffer(generateRows(rows))
+						if err != nil {
 							fmt.Println("Received error on insert: ", err)
+						}
+
+						//	 Set the max tx id that we've seen
+						if maxTX := maxTxID.Load(); tx > maxTX {
+							maxTxID.CAS(maxTX, tx)
 						}
 					}
 				}()
 			}
 
+			// Wait for all our writes to exit
 			wg.Wait()
-			table.Sync()
 
-			// Wait for the transaction pool to drain before iterating
-			pending := 0
-			table.db.txPool.Iterate(func(tx uint64) bool {
-				pending++
-				return false
-			})
-			for pending > 1 {
-				time.Sleep(30 * time.Millisecond) // sleep wait for pool to drain
-				pending = 0
-				table.db.txPool.Iterate(func(tx uint64) bool {
-					pending++
-					return false
-				})
-			}
+			// Wait for our last tx to be marked as complete
+			table.db.Wait(maxTxID.Load())
 
 			totalrows := int64(0)
 			err := table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
@@ -670,15 +665,10 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	tx, err := table.InsertBuffer(buf)
 	require.NoError(t, err)
 
-	table.Sync()
-
-	// Wait for all tx to be committed
-	for watermark := table.db.highWatermark.Load(); watermark != 2; watermark = table.db.highWatermark.Load() {
-		time.Sleep(time.Millisecond)
-	}
+	table.db.Wait(tx)
 
 	// Now we cheat and reset our tx and watermark
 	table.db.tx.Store(1)
