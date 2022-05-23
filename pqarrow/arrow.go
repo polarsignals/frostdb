@@ -57,7 +57,10 @@ func rowBasedParquetRowGroupToArrowRecord(
 		default:
 			name := parquetField.Name()
 			node := dynparquet.FieldByName(s, name)
-			typ, newValueWriter := parquetNodeToType(node)
+			typ, newValueWriter, err := parquetNodeToType(node)
+			if err != nil {
+				return nil, err
+			}
 			nullable := false
 			if node.Optional() {
 				nullable = true
@@ -218,7 +221,10 @@ func parquetColumnToArrowArray(
 	arrow.Array,
 	error,
 ) {
-	at, newValueWriter := parquetNodeToType(n)
+	at, newValueWriter, err := parquetNodeToType(n)
+	if err != nil {
+		return nil, false, nil, err
+	}
 
 	var (
 		w  valueWriter
@@ -259,7 +265,7 @@ func parquetColumnToArrowArray(
 	}
 	defer b.Release()
 
-	err := writePagesToArray(
+	err = writePagesToArray(
 		c.Pages(),
 		optional,
 		repeated,
@@ -362,31 +368,39 @@ func writePagesToArray(
 }
 
 // ParquetNodeToType converts a parquet node to an arrow type.
-func ParquetNodeToType(n parquet.Node) arrow.DataType {
-	typ, _ := parquetNodeToType(n)
-	return typ
+func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
+	typ, _, err := parquetNodeToType(n)
+	if err != nil {
+		return nil, err
+	}
+	return typ, nil
 }
 
 // parquetNodeToType converts a parquet node to an arrow type and a function to
 // create a value writer.
-func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder, numValues int) valueWriter) {
+func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder, numValues int) valueWriter, error) {
 	t := n.Type()
 	lt := t.LogicalType()
+
+	if lt == nil {
+		return nil, nil, errors.New("unsupported type")
+	}
+
 	switch {
 	case lt.UTF8 != nil:
-		return &arrow.BinaryType{}, newBinaryValueWriter
+		return &arrow.BinaryType{}, newBinaryValueWriter, nil
 	case lt.Integer != nil:
 		switch lt.Integer.BitWidth {
 		case 64:
 			if lt.Integer.IsSigned {
-				return &arrow.Int64Type{}, newInt64ValueWriter
+				return &arrow.Int64Type{}, newInt64ValueWriter, nil
 			}
-			return &arrow.Uint64Type{}, newUint64ValueWriter
+			return &arrow.Uint64Type{}, newUint64ValueWriter, nil
 		default:
-			panic("unsupported int bit width")
+			return nil, nil, errors.New("unsupported int bit width")
 		}
 	default:
-		panic("unsupported type")
+		return nil, nil, errors.New("unsupported type")
 	}
 }
 
