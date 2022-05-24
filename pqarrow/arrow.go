@@ -68,6 +68,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 
 			if node.Repeated() {
 				typ = arrow.ListOf(typ)
+				newValueWriter = newListValueWriter(newValueWriter)
 			}
 			newWriterFuncs = append(newWriterFuncs, newValueWriter)
 
@@ -569,6 +570,50 @@ func (w *uint64ValueWriter) Write(values []parquet.Value) {
 
 // TODO: implement fast path of writing the whole page directly.
 func (w *uint64ValueWriter) WritePage(p parquet.Page) error {
+	reader := p.Values()
+
+	values := make([]parquet.Value, p.NumValues())
+	_, err := reader.ReadValues(values)
+	// We're reading all values in the page so we always expect an io.EOF.
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("read values: %w", err)
+	}
+
+	w.Write(values)
+
+	return nil
+}
+
+type repeatedValueWriter struct {
+	b      *array.ListBuilder
+	values valueWriter
+}
+
+func newListValueWriter(newValueWriter func(b array.Builder, numValues int) valueWriter) func(b array.Builder, numValues int) valueWriter {
+	return func(b array.Builder, numValues int) valueWriter {
+		builder := b.(*array.ListBuilder)
+
+		return &repeatedValueWriter{
+			b:      builder,
+			values: newValueWriter(builder.ValueBuilder(), numValues),
+		}
+	}
+}
+
+func (w *repeatedValueWriter) Write(values []parquet.Value) {
+	v0 := values[0]
+	rep := v0.RepetitionLevel()
+	def := v0.DefinitionLevel()
+	if rep == 0 && def == 0 {
+		w.b.AppendNull()
+	}
+
+	w.b.Append(true)
+	w.values.Write(values)
+}
+
+// TODO: implement fast path of writing the whole page directly.
+func (w *repeatedValueWriter) WritePage(p parquet.Page) error {
 	reader := p.Values()
 
 	values := make([]parquet.Value, p.NumValues())
