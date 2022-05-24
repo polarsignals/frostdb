@@ -88,21 +88,17 @@ func (s Sample) ToParquetRow(labelNames []string) parquet.Row {
 			i++
 		}
 	}
-	row = append(row, parquet.ValueOf(extractLocationIDs(s.Stacktrace)).Level(0, 0, nameNumber+1))
+	for i, location := range s.Stacktrace {
+		if i == 0 {
+			row = append(row, parquet.ValueOf(location).Level(0, 1, nameNumber+1))
+			continue
+		}
+		row = append(row, parquet.ValueOf(location).Level(1, 1, nameNumber+1))
+	}
 	row = append(row, parquet.ValueOf(s.Timestamp).Level(0, 0, nameNumber+2))
 	row = append(row, parquet.ValueOf(s.Value).Level(0, 0, nameNumber+3))
 
 	return row
-}
-
-func extractLocationIDs(locs []uuid.UUID) []byte {
-	b := make([]byte, len(locs)*16) // UUID are 16 bytes thus multiply by 16
-	index := 0
-	for i := len(locs) - 1; i >= 0; i-- {
-		copy(b[index:index+16], locs[i][:])
-		index += 16
-	}
-	return b
 }
 
 func NewSampleSchema() *Schema {
@@ -118,7 +114,7 @@ func NewSampleSchema() *Schema {
 			Dynamic:       true,
 		}, {
 			Name:          "stacktrace",
-			StorageLayout: parquet.Encoded(parquet.String(), &parquet.RLEDictionary),
+			StorageLayout: parquet.Encoded(parquet.Repeated(parquet.String()), &parquet.RLEDictionary),
 			Dynamic:       false,
 		}, {
 			Name:          "timestamp",

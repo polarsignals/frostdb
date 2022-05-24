@@ -167,7 +167,8 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf("value2").Level(0, 1, 2),
 		parquet.ValueOf(nil).Level(0, 0, 3),
 		parquet.ValueOf(nil).Level(0, 0, 4),
-		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
+		parquet.ValueOf(uuid1[:]).Level(0, 1, 5),
+		parquet.ValueOf(uuid2[:]).Level(1, 1, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
 	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least.Load()).Row)
