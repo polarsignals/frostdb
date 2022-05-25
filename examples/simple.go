@@ -56,7 +56,7 @@ func main() {
 		parquet.ValueOf("Hansen").Level(0, 1, 1),
 		parquet.ValueOf(10).Level(0, 0, 2),
 	})
-	table.InsertBuffer(buf)
+	table.InsertBuffer(context.Background(), buf)
 
 	// Now we can insert rows that have middle names into our dynamic column
 	buf, _ = schema.NewBuffer(map[string][]string{
@@ -69,7 +69,7 @@ func main() {
 		parquet.ValueOf("Loibl").Level(0, 1, 2),
 		parquet.ValueOf(1).Level(0, 0, 3),
 	})
-	table.InsertBuffer(buf)
+	table.InsertBuffer(context.Background(), buf)
 
 	// Create a new query engine to retrieve data and print the results
 	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
