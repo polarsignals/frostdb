@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"unsafe"
 
@@ -181,6 +182,71 @@ func (t *Table) Schema() *dynparquet.Schema {
 
 func (t *Table) Sync() {
 	t.ActiveBlock().Sync()
+}
+
+type Row map[string]interface{}
+
+// Write a set of rows as a single buffer into the table
+func (t *Table) Write(rows []Row) (uint64, error) {
+
+	dynCols := t.config.schema.DynamicColumns()
+
+	// Create the full list of dynamic columns
+	mapping := map[string][]string{}
+	for _, dc := range dynCols {
+		found := map[string]bool{}
+		for _, row := range rows {
+			format, ok := row[dc.Name].(map[string]interface{})
+			if !ok {
+				return math.MaxUint64, fmt.Errorf("unexpected format for dynamic columns")
+			}
+			for k := range format {
+				found[k] = true
+			}
+		}
+
+		// Flatten found into mapping
+		mapping[dc.Name] = make([]string, 0, len(found))
+		for v := range found {
+			mapping[dc.Name] = append(mapping[dc.Name], v)
+		}
+	}
+
+	buf, err := t.config.schema.NewBuffer(mapping)
+	if err != nil {
+		return math.MaxUint64, err
+	}
+
+	// Iterate over all rows and create a buffer to insert
+	for _, row := range rows {
+		r := []parquet.Value{}
+		i := 0
+		cols := t.config.schema.Columns()
+		for index, col := range cols {
+			coldata, ok := row[col.Name]
+			if !ok && !col.StorageLayout.Optional() {
+				return math.MaxUint64, fmt.Errorf("required column %s not found in row", col.Name)
+			}
+
+			if col.Dynamic {
+				dyn, ok := coldata.(map[string]interface{})
+				if !ok {
+					return math.MaxUint64, fmt.Errorf("dynamic column %s not of map[string]interface{}", col.Name)
+				}
+
+				for _, v := range dyn {
+					r = append(r, parquet.ValueOf(v).Level(0, 1, index+i)) // TODO definition level shouldn't always be 1
+					i++
+				}
+			} else {
+				r = append(r, parquet.ValueOf(coldata).Level(0, 0, index+i-1))
+			}
+		}
+		buf.WriteRow(r)
+	}
+
+	// Insert the buffer
+	return t.InsertBuffer(buf)
 }
 
 func (t *Table) InsertBuffer(buf *dynparquet.Buffer) (uint64, error) {
