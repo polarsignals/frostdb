@@ -7,6 +7,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/polarsignals/arcticdb.svg)](https://pkg.go.dev/github.com/polarsignals/arcticdb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/polarsignals/arcticdb)](https://goreportcard.com/report/github.com/polarsignals/arcticdb)
 ![Build](https://github.com/polarsignals/arcticdb/actions/workflows/go.yml/badge.svg)
+![Discord](https://img.shields.io/discord/813669360513056790?label=Discord)
 
 > This project is still in its infancy, consider it not production-ready, probably has various consistency and correctness problems and all API will change!
 
@@ -34,6 +35,75 @@ ArcticDB is likely not suitable for your needs if:
 - You require a standalone database server
 - You need to modify or delete your data
 - You query by rows instead of columns
+
+## Getting Started
+
+You can explore the [examples](https://github.com/polarsignals/arcticdb/tree/main/examples) directory for sample code using ArcticDB. Below is a snippet from the simple database example. It creates a database with a dynamic column schema, inserts some data, and queries it back out.
+
+```go
+// Create a new column store
+columnstore := arcticdb.New(
+    prometheus.NewRegistry(),
+    8192,
+    10*1024*1024, // 10MiB
+)
+
+// Open up a database in the column store
+database, _ := columnstore.DB("simple_db")
+
+// Define our simple schema of labels and values
+schema := simpleSchema()
+
+// Create a table named simple in our database
+table, _ := database.Table(
+    "simple_table",
+    arcticdb.NewTableConfig(schema),
+    log.NewNopLogger(),
+)
+
+// Create values to insert into the database these first rows havel dynamic label names of 'firstname' and 'surname'
+buf, _ := schema.NewBuffer(map[string][]string{
+    "names": {"firstname", "surname"},
+})
+
+// firstname:Frederic surname:Brancz 100
+buf.WriteRow([]parquet.Value{
+    parquet.ValueOf("Frederic").Level(0, 1, 0),
+    parquet.ValueOf("Brancz").Level(0, 1, 1),
+    parquet.ValueOf(100).Level(0, 0, 2),
+})
+
+// firstname:Thor surname:Hansen 10
+buf.WriteRow([]parquet.Value{
+    parquet.ValueOf("Thor").Level(0, 1, 0),
+    parquet.ValueOf("Hansen").Level(0, 1, 1),
+    parquet.ValueOf(10).Level(0, 0, 2),
+})
+table.InsertBuffer(buf)
+
+// Now we can insert rows that have middle names into our dynamic column
+buf, _ = schema.NewBuffer(map[string][]string{
+    "names": {"firstname", "middlename", "surname"},
+})
+// firstname:Matthias middlename:Oliver surname:Loibl 1
+buf.WriteRow([]parquet.Value{
+    parquet.ValueOf("Matthias").Level(0, 1, 0),
+    parquet.ValueOf("Oliver").Level(0, 1, 1),
+    parquet.ValueOf("Loibl").Level(0, 1, 2),
+    parquet.ValueOf(1).Level(0, 0, 3),
+})
+table.InsertBuffer(buf)
+
+// Create a new query engine to retrieve data and print the results
+engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
+engine.ScanTable("simple_table").
+    Filter(
+        logicalplan.Col("names.firstname").Eq(logicalplan.Literal("Frederic")),
+    ).Execute(context.Background(), func(r arrow.Record) error {
+    fmt.Println(r)
+    return nil
+})
+```
 
 ## Design choices
 

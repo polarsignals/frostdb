@@ -57,7 +57,10 @@ func rowBasedParquetRowGroupToArrowRecord(
 		default:
 			name := parquetField.Name()
 			node := dynparquet.FieldByName(s, name)
-			typ, newValueWriter := parquetNodeToType(node)
+			typ, newValueWriter, err := parquetNodeToType(node)
+			if err != nil {
+				return nil, err
+			}
 			nullable := false
 			if node.Optional() {
 				nullable = true
@@ -65,6 +68,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 
 			if node.Repeated() {
 				typ = arrow.ListOf(typ)
+				newValueWriter = newListValueWriter(newValueWriter)
 			}
 			newWriterFuncs = append(newWriterFuncs, newValueWriter)
 
@@ -159,7 +163,7 @@ func contiguousParquetRowGroupToArrowRecord(
 	}
 
 	fields := make([]arrow.Field, 0, len(parquetFields))
-	cols := make([]array.Interface, 0, len(parquetFields))
+	cols := make([]arrow.Array, 0, len(parquetFields))
 
 	for i, parquetField := range parquetFields {
 		select {
@@ -218,7 +222,10 @@ func parquetColumnToArrowArray(
 	arrow.Array,
 	error,
 ) {
-	at, newValueWriter := parquetNodeToType(n)
+	at, newValueWriter, err := parquetNodeToType(n)
+	if err != nil {
+		return nil, false, nil, err
+	}
 
 	var (
 		w  valueWriter
@@ -259,7 +266,7 @@ func parquetColumnToArrowArray(
 	}
 	defer b.Release()
 
-	err := writePagesToArray(
+	err = writePagesToArray(
 		c.Pages(),
 		optional,
 		repeated,
@@ -362,31 +369,39 @@ func writePagesToArray(
 }
 
 // ParquetNodeToType converts a parquet node to an arrow type.
-func ParquetNodeToType(n parquet.Node) arrow.DataType {
-	typ, _ := parquetNodeToType(n)
-	return typ
+func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
+	typ, _, err := parquetNodeToType(n)
+	if err != nil {
+		return nil, err
+	}
+	return typ, nil
 }
 
 // parquetNodeToType converts a parquet node to an arrow type and a function to
 // create a value writer.
-func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder, numValues int) valueWriter) {
+func parquetNodeToType(n parquet.Node) (arrow.DataType, func(b array.Builder, numValues int) valueWriter, error) {
 	t := n.Type()
 	lt := t.LogicalType()
+
+	if lt == nil {
+		return nil, nil, errors.New("unsupported type")
+	}
+
 	switch {
 	case lt.UTF8 != nil:
-		return &arrow.BinaryType{}, newBinaryValueWriter
+		return &arrow.BinaryType{}, newBinaryValueWriter, nil
 	case lt.Integer != nil:
 		switch lt.Integer.BitWidth {
 		case 64:
 			if lt.Integer.IsSigned {
-				return &arrow.Int64Type{}, newInt64ValueWriter
+				return &arrow.Int64Type{}, newInt64ValueWriter, nil
 			}
-			return &arrow.Uint64Type{}, newUint64ValueWriter
+			return &arrow.Uint64Type{}, newUint64ValueWriter, nil
 		default:
-			panic("unsupported int bit width")
+			return nil, nil, errors.New("unsupported int bit width")
 		}
 	default:
-		panic("unsupported type")
+		return nil, nil, errors.New("unsupported type")
 	}
 }
 
@@ -555,6 +570,50 @@ func (w *uint64ValueWriter) Write(values []parquet.Value) {
 
 // TODO: implement fast path of writing the whole page directly.
 func (w *uint64ValueWriter) WritePage(p parquet.Page) error {
+	reader := p.Values()
+
+	values := make([]parquet.Value, p.NumValues())
+	_, err := reader.ReadValues(values)
+	// We're reading all values in the page so we always expect an io.EOF.
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("read values: %w", err)
+	}
+
+	w.Write(values)
+
+	return nil
+}
+
+type repeatedValueWriter struct {
+	b      *array.ListBuilder
+	values valueWriter
+}
+
+func newListValueWriter(newValueWriter func(b array.Builder, numValues int) valueWriter) func(b array.Builder, numValues int) valueWriter {
+	return func(b array.Builder, numValues int) valueWriter {
+		builder := b.(*array.ListBuilder)
+
+		return &repeatedValueWriter{
+			b:      builder,
+			values: newValueWriter(builder.ValueBuilder(), numValues),
+		}
+	}
+}
+
+func (w *repeatedValueWriter) Write(values []parquet.Value) {
+	v0 := values[0]
+	rep := v0.RepetitionLevel()
+	def := v0.DefinitionLevel()
+	if rep == 0 && def == 0 {
+		w.b.AppendNull()
+	}
+
+	w.b.Append(true)
+	w.values.Write(values)
+}
+
+// TODO: implement fast path of writing the whole page directly.
+func (w *repeatedValueWriter) WritePage(p parquet.Page) error {
 	reader := p.Values()
 
 	values := make([]parquet.Value, p.NumValues())

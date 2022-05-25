@@ -281,16 +281,16 @@ func (t *Table) Sync() {
 	t.ActiveBlock().Sync()
 }
 
-func (t *Table) InsertBuffer(buf *dynparquet.Buffer) (uint64, error) {
-	b, err := t.config.schema.SerializeBuffer(buf)
+func (t *Table) InsertBuffer(ctx context.Context, buf *dynparquet.Buffer) (uint64, error) {
+	b, err := t.config.schema.SerializeBuffer(buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
 	if err != nil {
 		return 0, fmt.Errorf("serialize buffer: %w", err)
 	}
 
-	return t.Insert(b)
+	return t.Insert(ctx, b)
 }
 
-func (t *Table) Insert(buf []byte) (uint64, error) {
+func (t *Table) Insert(ctx context.Context, buf []byte) (uint64, error) {
 	tx, _, commit := t.db.begin()
 	defer commit()
 
@@ -300,7 +300,7 @@ func (t *Table) Insert(buf []byte) (uint64, error) {
 	}
 
 	block := t.ActiveBlock()
-	if err := block.Insert(tx, serBuf); err != nil {
+	if err := block.Insert(ctx, tx, serBuf); err != nil {
 		return 0, err
 	}
 
@@ -488,7 +488,7 @@ func (t *TableBlock) Sync() {
 	t.wg.Wait()
 }
 
-func (t *TableBlock) Insert(tx uint64, buf *dynparquet.SerializedBuffer) error {
+func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.SerializedBuffer) error {
 	t.pendingWritersWg.Add(1)
 	defer t.pendingWritersWg.Done()
 
@@ -507,16 +507,25 @@ func (t *TableBlock) Insert(tx uint64, buf *dynparquet.SerializedBuffer) error {
 		return fmt.Errorf("failed to split rows by granule: %w", err)
 	}
 
+	parts := []*Part{}
 	for granule, serBuf := range rowsToInsertPerGranule {
-		card, err := granule.AddPart(NewPart(tx, serBuf))
-		if err != nil {
-			return fmt.Errorf("failed to add part to granule: %w", err)
+		select {
+		case <-ctx.Done():
+			tombstone(parts)
+			return ctx.Err()
+		default:
+			part := NewPart(tx, serBuf)
+			card, err := granule.AddPart(part)
+			if err != nil {
+				return fmt.Errorf("failed to add part to granule: %w", err)
+			}
+			parts = append(parts, part)
+			if card >= uint64(t.table.db.columnStore.granuleSize) {
+				t.wg.Add(1)
+				go t.compact(granule)
+			}
+			t.size.Add(serBuf.ParquetFile().Size())
 		}
-		if card >= uint64(t.table.db.columnStore.granuleSize) {
-			t.wg.Add(1)
-			go t.compact(granule)
-		}
-		t.size.Add(serBuf.ParquetFile().Size())
 	}
 
 	return nil
@@ -542,12 +551,12 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	parts.Iterate(func(p *Part) bool {
 		// Don't merge uncompleted transactions
 		if p.tx > watermark {
-			remain = append(remain, p)
+			if p.tx < math.MaxUint64 { // drop tombstoned parts
+				remain = append(remain, p)
+			}
 			return true
 		}
 
-		// TODO: should there be a method on p.Buf to get the list of dynamic
-		// row groups instead of having to do this conversion?
 		for i, n := 0, p.Buf.NumRowGroups(); i < n; i++ {
 			bufs = append(bufs, p.Buf.DynamicRowGroup(i))
 		}
@@ -1136,4 +1145,12 @@ func findColumnValues(matchers []logicalplan.ColumnMatcher, g *Granule) (*parque
 	g.metadata.maxlock.RUnlock()
 
 	return min, max, true
+}
+
+// tombstone marks all the parts with the max tx id to ensure they aren't included in reads.
+// Tombstoned parts will be eventually dropped from the database during compaction.
+func tombstone(parts []*Part) {
+	for _, part := range parts {
+		part.tx = math.MaxUint64
+	}
 }

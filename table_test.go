@@ -2,6 +2,7 @@ package arcticdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/polarsignals/arcticdb/query/logicalplan"
@@ -102,7 +104,7 @@ func TestTable(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -122,7 +124,7 @@ func TestTable(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -143,7 +145,7 @@ func TestTable(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	err = table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
@@ -169,7 +171,8 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf("value2").Level(0, 1, 2),
 		parquet.ValueOf(nil).Level(0, 0, 3),
 		parquet.ValueOf(nil).Level(0, 0, 4),
-		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
+		parquet.ValueOf(uuid1[:]).Level(0, 1, 5),
+		parquet.ValueOf(uuid2[:]).Level(1, 1, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
 	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least.Load()).Row)
@@ -219,7 +222,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -238,7 +241,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -258,7 +261,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
@@ -352,7 +355,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 
 	// Since we are inserting 4 elements and the granule size is 4, the granule
 	// will immediately split.
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
@@ -382,7 +385,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
@@ -408,7 +411,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
@@ -474,6 +477,7 @@ func Test_Table_Concurrency(t *testing.T) {
 			}
 
 			// Spawn n workers that will insert values into the table
+			maxTxID := atomic.NewUint64(0)
 			n := 8
 			inserts := 100
 			rows := 10
@@ -483,30 +487,24 @@ func Test_Table_Concurrency(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					for i := 0; i < inserts; i++ {
-						if _, err := table.InsertBuffer(generateRows(rows)); err != nil {
+						tx, err := table.InsertBuffer(context.Background(), generateRows(rows))
+						if err != nil {
 							fmt.Println("Received error on insert: ", err)
+						}
+
+						//	 Set the max tx id that we've seen
+						if maxTX := maxTxID.Load(); tx > maxTX {
+							maxTxID.CAS(maxTX, tx)
 						}
 					}
 				}()
 			}
 
+			// Wait for all our writes to exit
 			wg.Wait()
-			table.Sync()
 
-			// Wait for the transaction pool to drain before iterating
-			pending := 0
-			table.db.txPool.Iterate(func(tx uint64) bool {
-				pending++
-				return false
-			})
-			for pending > 1 {
-				time.Sleep(30 * time.Millisecond) // sleep wait for pool to drain
-				pending = 0
-				table.db.txPool.Iterate(func(tx uint64) bool {
-					pending++
-					return false
-				})
-			}
+			// Wait for our last tx to be marked as complete
+			table.db.Wait(maxTxID.Load())
 
 			totalrows := int64(0)
 			err := table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
@@ -653,7 +651,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	// Perform a new insert that will have a higher tx id
@@ -673,15 +671,10 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	tx, err := table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
-	table.Sync()
-
-	// Wait for all tx to be committed
-	for watermark := table.db.highWatermark.Load(); watermark != 2; watermark = table.db.highWatermark.Load() {
-		time.Sleep(time.Millisecond)
-	}
+	table.db.Wait(tx)
 
 	// Now we cheat and reset our tx and watermark
 	table.db.tx.Store(1)
@@ -965,7 +958,7 @@ func Test_Table_Filter(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -985,7 +978,7 @@ func Test_Table_Filter(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -1006,7 +999,7 @@ func Test_Table_Filter(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(buf)
+	_, err = table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	filterExpr := logicalplan.And( // Filter that excludes the granule
@@ -1024,4 +1017,161 @@ func Test_Table_Filter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.False(t, iterated)
+}
+
+func Test_Table_InsertCancellation(t *testing.T) {
+	tests := map[string]struct {
+		granuleSize int
+	}{
+		"1024": {1024},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			table := basicTable(t, test.granuleSize)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+
+			generateRows := func(n int) *dynparquet.Buffer {
+				rows := make(dynparquet.Samples, 0, n)
+				for i := 0; i < n; i++ {
+					rows = append(rows, dynparquet.Sample{
+						Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
+							{Name: "label1", Value: "value1"},
+							{Name: "label2", Value: "value2"},
+						},
+						Stacktrace: []uuid.UUID{
+							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+						},
+						Timestamp: rand.Int63(),
+						Value:     rand.Int63(),
+					})
+				}
+				buf, err := rows.ToBuffer(table.Schema())
+				require.NoError(t, err)
+
+				buf.Sort()
+
+				// This is necessary because sorting a buffer makes concurrent reading not
+				// safe as the internal pages are cyclically sorted at read time. Cloning
+				// executes the cyclic sort once and makes the resulting buffer safe for
+				// concurrent reading as it no longer has to perform the cyclic sorting at
+				// read time. This should probably be improved in the parquet library.
+				buf, err = buf.Clone()
+				require.NoError(t, err)
+
+				return buf
+			}
+
+			// Spawn n workers that will insert values into the table
+			n := 4
+			inserts := 10
+			rows := 10
+			wg := &sync.WaitGroup{}
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for i := 0; i < inserts; i++ {
+						if _, err := table.InsertBuffer(ctx, generateRows(rows)); err != nil {
+							if !errors.Is(err, context.DeadlineExceeded) {
+								fmt.Println("Received error on insert: ", err)
+							}
+						}
+					}
+				}()
+			}
+
+			wg.Wait()
+			table.Sync()
+
+			// Wait for the transaction pool to drain before iterating
+			pending := 0
+			table.db.txPool.Iterate(func(tx uint64) bool {
+				pending++
+				return false
+			})
+			for pending > 1 {
+				time.Sleep(30 * time.Millisecond) // sleep wait for pool to drain
+				pending = 0
+				table.db.txPool.Iterate(func(tx uint64) bool {
+					pending++
+					return false
+				})
+			}
+
+			totalrows := int64(0)
+			err := table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+				totalrows += ar.NumRows()
+				defer ar.Release()
+
+				return nil
+			})
+			require.NoError(t, err)
+			require.Less(t, totalrows, int64(n*inserts*rows)) // We expect to cancel some subset of our writes
+		})
+	}
+}
+
+func Test_Table_CancelBasic(t *testing.T) {
+	table := basicTable(t, 8192)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(ctx, buf)
+	require.True(t, errors.Is(err, context.Canceled))
+
+	totalrows := int64(0)
+	err = table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+		totalrows += ar.NumRows()
+		defer ar.Release()
+
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), totalrows)
 }

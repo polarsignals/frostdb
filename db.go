@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"time"
 
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -215,5 +216,16 @@ func (db *DB) begin() (uint64, uint64, func()) {
 
 		// place completed transaction in the waiting pool
 		db.txPool.Prepend(tx)
+	}
+}
+
+// Wait is a blocking function that returns once the high watermark has equaled or exceeded the transaction id.
+// Wait makes no differentiation between completed and aborted transactions.
+func (db *DB) Wait(tx uint64) {
+	for {
+		if db.highWatermark.Load() >= tx {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
