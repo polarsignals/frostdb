@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
-	"os"
 	"path"
 	"sync"
 	"time"
@@ -68,8 +66,6 @@ type Table struct {
 	config *TableConfig
 
 	pendingBlocks map[*TableBlock]struct{}
-
-	blockFiles map[uint64]*BlockFile
 
 	mtx    *sync.RWMutex
 	active *TableBlock
@@ -147,19 +143,8 @@ func newTable(
 		},
 	}
 
-	if db.columnStore.enablePersistency {
+	if db.columnStore.bucket != nil {
 		t.pendingBlocks = make(map[*TableBlock]struct{})
-		t.blockFiles = make(map[uint64]*BlockFile)
-
-		// create table folder
-		err := os.Mkdir(t.StorePath(), 0777)
-		if os.IsExist(err) {
-			if err := t.openBlockFilesForReading(); err != nil {
-				return nil, err
-			}
-		} else if err != nil {
-			return nil, err
-		}
 	}
 
 	var err error
@@ -189,26 +174,6 @@ func (t *Table) StorePath() string {
 	return path.Join(t.db.StorePath(), t.name)
 }
 
-func (t *Table) openBlockFilesForReading() error {
-	files, err := ioutil.ReadDir(t.StorePath())
-	if err != nil {
-		return err
-	}
-
-	for _, fInfo := range files {
-		timestamp, err := parseBlockFileName(fInfo.Name())
-
-		if err == nil {
-			file, err := OpenBlockFile(path.Join(t.StorePath(), fInfo.Name()))
-			if err != nil {
-				return err
-			}
-			t.blockFiles[timestamp] = file
-		}
-	}
-	return nil
-}
-
 func (t *Table) writeBlock(block *TableBlock) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 
@@ -220,25 +185,14 @@ func (t *Table) writeBlock(block *TableBlock) {
 	level.Debug(t.logger).Log("msg", "done syncing block")
 
 	// Persist the block
-	n, err := block.WriteToDisk()
-	if err != nil {
+	if err := block.WriteToDisk(); err != nil {
 		level.Error(t.logger).Log("msg", "failed to persist block")
 		level.Error(t.logger).Log("msg", err.Error())
-	}
-
-	fileName := path.Join(block.table.StorePath(), getBlockFileName(block))
-	blockFile, err := os.Open(fileName)
-	if err != nil {
-		level.Error(t.logger).Log("msg", "unable to to open file after writing", "fileName", fileName)
 	}
 
 	t.mtx.Lock()
 
 	delete(t.pendingBlocks, block)
-
-	if err == nil {
-		t.blockFiles[block.timestamp] = &BlockFile{File: blockFile, size: uint64(n)}
-	}
 
 	t.mtx.Unlock()
 }
@@ -259,7 +213,7 @@ func (t *Table) RotateBlock() error {
 	block := t.active
 	t.active = tb
 
-	if t.db.columnStore.enablePersistency {
+	if t.db.columnStore.bucket != nil {
 		t.pendingBlocks[block] = struct{}{}
 		go t.writeBlock(block)
 	}

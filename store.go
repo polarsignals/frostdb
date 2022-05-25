@@ -1,9 +1,12 @@
 package arcticdb
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -43,12 +46,13 @@ func parseBlockFileName(name string) (uint64, error) {
 }
 
 // WriteBlock writes a block somewhere
-func (block *TableBlock) WriteToDisk() (int, error) {
+func (block *TableBlock) WriteToDisk() error {
 	data, err := block.Serialize()
 	if err != nil {
-		return -1, err
+		return err
 	}
-	return len(data), writeToFile(data, block.table.StorePath(), getBlockFileName(block))
+	fileName := filepath.Join(block.table.StorePath(), getBlockFileName(block))
+	return block.table.db.columnStore.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
 }
 
 // FileDynamicRowGroup is a dynamic row group that is backed by a file object
@@ -67,22 +71,48 @@ func (MemDynamicRowGroup) Close() error {
 	return nil
 }
 
-func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp uint64) error {
-	t.mtx.RLock()
-	// make a copy of the blockFiles map
-	blockFiles := make(map[uint64]*BlockFile)
-	for timestamp, file := range t.blockFiles {
-		blockFiles[timestamp] = file
+func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes.Reader, error) {
+	attribs, err := t.db.columnStore.bucket.Attributes(ctx, fileName)
+	if err != nil {
+		return nil, err
 	}
-	t.mtx.RUnlock()
+
+	reader, err := t.db.columnStore.bucket.Get(ctx, fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	data := make([]byte, attribs.Size)
+	if _, err := reader.Read(data); err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(data), err
+}
+
+func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp uint64) error {
+	if t.db.columnStore.bucket == nil {
+		return nil
+	}
 
 	n := 0
-	for timestamp, file := range blockFiles {
-		if timestamp >= lastBlockTimestamp {
-			continue
+
+	ctx := context.Background()
+	err := t.db.columnStore.bucket.Iter(ctx, t.StorePath(), func(fileName string) error {
+		timestamp, err := parseBlockFileName(path.Base(fileName))
+		if err != nil {
+			return err
 		}
 
-		file, err := parquet.OpenFile(file, int64(file.size))
+		if timestamp >= lastBlockTimestamp {
+			return nil
+		}
+
+		reader, err := t.readFileFromBucket(ctx, fileName)
+		if err != nil {
+			return err
+		}
+
+		file, err := parquet.OpenFile(reader, int64(reader.Len()))
 		if err != nil {
 			return err
 		}
@@ -110,7 +140,8 @@ func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, 
 				}
 			}
 		}
-	}
+		return nil
+	})
 	level.Info(logger).Log("msg", "read blocks", "n", n)
-	return nil
+	return err
 }

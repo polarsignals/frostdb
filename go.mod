@@ -12,6 +12,7 @@ require (
 	github.com/prometheus/client_golang v1.12.1
 	github.com/segmentio/parquet-go v0.0.0-20220511210326-4f4d804bcd3a
 	github.com/stretchr/testify v1.7.1
+	github.com/thanos-io/objstore v0.0.0-20220324141029-c4f11442aa33
 	go.uber.org/atomic v1.9.0
 )
 
@@ -30,6 +31,7 @@ require (
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.12 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common v0.32.1 // indirect
@@ -40,5 +42,6 @@ require (
 	golang.org/x/tools v0.1.9 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c // indirect
 )

@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/objstore/filesystem"
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
@@ -44,11 +45,14 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 		dynparquet.NewSampleSchema(),
 	)
 
+	bucket, err := filesystem.NewBucket(".")
+	require.NoError(t, err)
+
 	c := New(
 		nil,
 		granuleSize,
 		512*1024*1024,
-	).WithPersistency(true)
+	).WithStorageBucket(bucket)
 
 	db, err := c.DB("test")
 	require.NoError(t, err)
