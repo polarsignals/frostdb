@@ -23,6 +23,6 @@ func (c *concatenatedDynamicRowGroup) DynamicColumns() map[string][]string {
 	return c.dynamicColumns
 }
 
-func (c *concatenatedDynamicRowGroup) DynamicRows() DynamicRows {
+func (c *concatenatedDynamicRowGroup) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(c)
 }

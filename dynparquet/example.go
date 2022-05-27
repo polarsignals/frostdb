@@ -32,12 +32,14 @@ func (s Samples) ToBuffer(schema *Schema) (*Buffer, error) {
 		return nil, err
 	}
 
-	for _, sample := range s {
-		r := sample.ToParquetRow(names)
-		err := pb.WriteRow(r)
-		if err != nil {
-			return nil, err
-		}
+	rows := make([]parquet.Row, len(s))
+	for i, sample := range s {
+		rows[i] = sample.ToParquetRow(names)
+	}
+
+	_, err = pb.WriteRows(rows)
+	if err != nil {
+		return nil, err
 	}
 
 	return pb, nil
@@ -88,17 +90,21 @@ func (s Sample) ToParquetRow(labelNames []string) parquet.Row {
 			i++
 		}
 	}
-	for i, location := range s.Stacktrace {
-		if i == 0 {
-			row = append(row, parquet.ValueOf(location).Level(0, 1, nameNumber+1))
-			continue
-		}
-		row = append(row, parquet.ValueOf(location).Level(1, 1, nameNumber+1))
-	}
+	row = append(row, parquet.ValueOf(extractLocationIDs(s.Stacktrace)).Level(0, 0, nameNumber+1))
 	row = append(row, parquet.ValueOf(s.Timestamp).Level(0, 0, nameNumber+2))
 	row = append(row, parquet.ValueOf(s.Value).Level(0, 0, nameNumber+3))
 
 	return row
+}
+
+func extractLocationIDs(locs []uuid.UUID) []byte {
+	b := make([]byte, len(locs)*16) // UUID are 16 bytes thus multiply by 16
+	index := 0
+	for i := len(locs) - 1; i >= 0; i-- {
+		copy(b[index:index+16], locs[i][:])
+		index += 16
+	}
+	return b
 }
 
 func NewSampleSchema() *Schema {
@@ -114,7 +120,7 @@ func NewSampleSchema() *Schema {
 			Dynamic:       true,
 		}, {
 			Name:          "stacktrace",
-			StorageLayout: parquet.Encoded(parquet.Repeated(parquet.String()), &parquet.RLEDictionary),
+			StorageLayout: parquet.Encoded(parquet.String(), &parquet.RLEDictionary),
 			Dynamic:       false,
 		}, {
 			Name:          "timestamp",
