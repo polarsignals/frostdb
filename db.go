@@ -127,13 +127,6 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 		highWatermark: atomic.NewUint64(0),
 	}
 
-	/*if s.enablePersistency {
-		// create root database folder
-		if err := os.Mkdir(db.StorePath(), 0777); err != nil && !os.IsExist(err) {
-			return nil, err
-		}
-	}*/
-
 	db.txPool = NewTxPool(db.highWatermark)
 
 	s.dbs[name] = db
