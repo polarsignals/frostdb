@@ -3,13 +3,16 @@ package logicalplan
 import (
 	"testing"
 
+	"github.com/polarsignals/arcticdb/dynparquet"
+
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLogicalPlanBuilder(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+	p, err := (&Builder{}).
+		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
 			Sum(Col("value")).Alias("value_sum"),
@@ -17,6 +20,8 @@ func TestLogicalPlanBuilder(t *testing.T) {
 		).
 		Project(Col("stacktrace")).
 		Build()
+
+	require.Nil(t, err)
 
 	require.Equal(t, &LogicalPlan{
 		Projection: &Projection{
@@ -42,7 +47,7 @@ func TestLogicalPlanBuilder(t *testing.T) {
 				},
 				Input: &LogicalPlan{
 					TableScan: &TableScan{
-						TableProvider: TableProvider(nil),
+						TableProvider: tableProvider,
 						TableName:     "table1",
 					},
 				},
@@ -52,8 +57,9 @@ func TestLogicalPlanBuilder(t *testing.T) {
 }
 
 func TestLogicalPlanBuilderWithoutProjection(t *testing.T) {
-	p := (&Builder{}).
-		Scan(nil, "table1").
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+	p, _ := (&Builder{}).
+		Scan(tableProvider, "table1").
 		Distinct(Col("labels.test")).
 		Build()
 
@@ -63,7 +69,7 @@ func TestLogicalPlanBuilderWithoutProjection(t *testing.T) {
 		},
 		Input: &LogicalPlan{
 			TableScan: &TableScan{
-				TableProvider: TableProvider(nil),
+				TableProvider: tableProvider,
 				TableName:     "table1",
 			},
 		},
