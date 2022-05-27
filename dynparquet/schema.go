@@ -207,16 +207,16 @@ type DynamicRowGroup interface {
 	// create its concrete parquet schema with a dynamic parquet schema.
 	DynamicColumns() map[string][]string
 	// DynamicRows return an iterator over the rows in the row group.
-	DynamicRows() DynamicRows
+	DynamicRows() DynamicRowReader
 }
 
-// DynamicRows is an iterator over the rows in a DynamicRowGroup.
-type DynamicRows interface {
-	ReadRow(*DynamicRow) (*DynamicRow, error)
+// DynamicRowReaders is an iterator over the rows in a DynamicRowGroup.
+type DynamicRowReader interface {
+	ReadRows(*DynamicRows) (int, error)
+	Close() error
 }
 
 type dynamicRowGroupReader struct {
-	rg             DynamicRowGroup
 	schema         *parquet.Schema
 	dynamicColumns map[string][]string
 	rows           parquet.Rows
@@ -224,7 +224,6 @@ type dynamicRowGroupReader struct {
 
 func newDynamicRowGroupReader(rg DynamicRowGroup) *dynamicRowGroupReader {
 	return &dynamicRowGroupReader{
-		rg:             rg,
 		schema:         rg.Schema(),
 		dynamicColumns: rg.DynamicColumns(),
 		rows:           rg.Rows(),
@@ -232,25 +231,29 @@ func newDynamicRowGroupReader(rg DynamicRowGroup) *dynamicRowGroupReader {
 }
 
 // Implements the DynamicRows interface.
-func (r *dynamicRowGroupReader) ReadRow(row *DynamicRow) (*DynamicRow, error) {
-	if row == nil {
-		row = &DynamicRow{
-			DynamicColumns: r.dynamicColumns,
-			Schema:         r.schema,
-			Row:            make(parquet.Row, 0, 50), // randomly chosen number
-		}
+func (r *dynamicRowGroupReader) ReadRows(rows *DynamicRows) (int, error) {
+	if rows.DynamicColumns == nil {
+		rows.DynamicColumns = r.dynamicColumns
+	}
+	if rows.Schema == nil {
+		rows.Schema = r.schema
 	}
 
-	var err error
-	row.Row, err = r.rows.ReadRow(row.Row[:0])
+	n, err := r.rows.ReadRows(rows.Rows)
 	if err == io.EOF {
-		return row, io.EOF
+		rows.Rows = rows.Rows[:n]
+		return n, io.EOF
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read row: %w", err)
+		return n, fmt.Errorf("read row: %w", err)
 	}
+	rows.Rows = rows.Rows[:n]
 
-	return row, nil
+	return n, nil
+}
+
+func (r *dynamicRowGroupReader) Close() error {
+	return r.rows.Close()
 }
 
 // ColumnChunks returns the list of parquet.ColumnChunk for the given index.
@@ -276,22 +279,23 @@ func (b *Buffer) Clone() (*Buffer, error) {
 		parquet.SortingColumns(b.buffer.SortingColumns()...),
 	)
 
-	var (
-		row parquet.Row
-		err error
-	)
 	rows := b.buffer.Rows()
 	for {
-		row, err = rows.ReadRow(row[:0])
-		if err == io.EOF {
+		rowBuf := make([]parquet.Row, 64)
+		n, err := rows.ReadRows(rowBuf)
+		if err == io.EOF && n == 0 {
 			break
 		}
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		rowBuf = rowBuf[:n]
+		_, err = buf.WriteRows(rowBuf)
 		if err != nil {
 			return nil, err
 		}
-		err = buf.WriteRow(row)
-		if err != nil {
-			return nil, err
+		if err == io.EOF {
+			break
 		}
 	}
 
@@ -320,8 +324,8 @@ func (b *Buffer) DynamicColumns() map[string][]string {
 }
 
 // WriteRow writes a single row to the buffer.
-func (b *Buffer) WriteRow(row parquet.Row) error {
-	return b.buffer.WriteRow(row)
+func (b *Buffer) WriteRows(rows []parquet.Row) (int, error) {
+	return b.buffer.WriteRows(rows)
 }
 
 // WriteRowGroup writes a single row to the buffer.
@@ -337,7 +341,7 @@ func (b *Buffer) Rows() parquet.Rows {
 
 // DynamicRows returns an iterator for the rows in the buffer. It implements the
 // DynamicRowGroup interface.
-func (b *Buffer) DynamicRows() DynamicRows {
+func (b *Buffer) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(b)
 }
 
@@ -375,19 +379,23 @@ func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
 	//	return nil, fmt.Errorf("copy rows: %w", err)
 	//}
 
-	var row parquet.Row
 	rows := buffer.Rows()
 	for {
-		row, err := rows.ReadRow(row)
-		if err == io.EOF {
+		rowBuf := make([]parquet.Row, 64)
+		n, err := rows.ReadRows(rowBuf)
+		if err == io.EOF && n == 0 {
 			break
 		}
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return nil, fmt.Errorf("read row: %w", err)
 		}
-		err = w.WriteRow(row)
+		rowBuf = rowBuf[:n]
+		_, err = w.WriteRows(rowBuf)
 		if err != nil {
 			return nil, fmt.Errorf("write row: %w", err)
+		}
+		if err == io.EOF {
+			break
 		}
 	}
 
@@ -440,7 +448,7 @@ func (r *MergedRowGroup) DynamicColumns() map[string][]string {
 
 // DynamicRows returns an iterator over the rows in the row group. Implements
 // the DynamicRowGroup interface.
-func (r *MergedRowGroup) DynamicRows() DynamicRows {
+func (r *MergedRowGroup) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(r)
 }
 

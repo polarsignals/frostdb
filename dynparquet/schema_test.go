@@ -43,15 +43,24 @@ func TestMergeRowBatches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check that the first label column has the exected values.
+	rowBuf := make([]parquet.Row, 1)
 	rows := buf.Rows()
-	row, err := rows.ReadRow(nil)
+	n, err := rows.ReadRows(rowBuf)
 	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	row := rowBuf[0]
 	require.Equal(t, "test3", string(row[3].ByteArray()))
-	row, err = rows.ReadRow(nil)
+
+	n, err = rows.ReadRows(rowBuf)
 	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	row = rowBuf[0]
 	require.True(t, row[3].IsNull())
-	row, err = rows.ReadRow(nil)
+
+	n, err = rows.ReadRows(rowBuf)
 	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	row = rowBuf[0]
 	require.True(t, row[3].IsNull())
 }
 
@@ -194,21 +203,30 @@ func TestMultipleIterations(t *testing.T) {
 
 	buf := dbuf.buffer
 
+	rowBuf := make([]parquet.Row, 1)
 	rows := buf.Rows()
+	i := 0
 	for {
-		_, err := rows.ReadRow(nil)
+		n, err := rows.ReadRows(rowBuf)
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
+		i += n
 	}
+	require.Equal(t, 3, i)
+	require.NoError(t, rows.Close())
 
 	rows = buf.Rows()
+	i = 0
 	for {
-		_, err := rows.ReadRow(nil)
+		n, err := rows.ReadRows(rowBuf)
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
+		i += n
 	}
+	require.Equal(t, 3, i)
+	require.NoError(t, rows.Close())
 }

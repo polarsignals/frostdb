@@ -44,18 +44,18 @@ func main() {
 	})
 
 	// firstname:Frederic surname:Brancz 100
-	buf.WriteRow([]parquet.Value{
+	buf.WriteRows([]parquet.Row{{
 		parquet.ValueOf("Frederic").Level(0, 1, 0),
 		parquet.ValueOf("Brancz").Level(0, 1, 1),
 		parquet.ValueOf(100).Level(0, 0, 2),
-	})
+	}})
 
 	// firstname:Thor surname:Hansen 10
-	buf.WriteRow([]parquet.Value{
+	buf.WriteRows([]parquet.Row{{
 		parquet.ValueOf("Thor").Level(0, 1, 0),
 		parquet.ValueOf("Hansen").Level(0, 1, 1),
 		parquet.ValueOf(10).Level(0, 0, 2),
-	})
+	}})
 	table.InsertBuffer(context.Background(), buf)
 
 	// Now we can insert rows that have middle names into our dynamic column
@@ -63,12 +63,12 @@ func main() {
 		"names": {"firstname", "middlename", "surname"},
 	})
 	// firstname:Matthias middlename:Oliver surname:Loibl 1
-	buf.WriteRow([]parquet.Value{
+	buf.WriteRows([]parquet.Row{{
 		parquet.ValueOf("Matthias").Level(0, 1, 0),
 		parquet.ValueOf("Oliver").Level(0, 1, 1),
 		parquet.ValueOf("Loibl").Level(0, 1, 2),
 		parquet.ValueOf(1).Level(0, 0, 3),
-	})
+	}})
 	table.InsertBuffer(context.Background(), buf)
 
 	// Create a new query engine to retrieve data and print the results

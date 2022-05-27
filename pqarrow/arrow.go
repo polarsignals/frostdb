@@ -87,25 +87,31 @@ func rowBasedParquetRowGroupToArrowRecord(
 	}
 
 	rows := rg.Rows()
-	row := make(parquet.Row, 0, 50) // Random guess.
-	var err error
+	defer rows.Close()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
-		row, err = rows.ReadRow(row[:0])
-		if err == io.EOF {
+		rowBuf := make([]parquet.Row, 64) // Random guess.
+		n, err := rows.ReadRows(rowBuf)
+		if err == io.EOF && n == 0 {
 			break
 		}
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return nil, fmt.Errorf("read row: %w", err)
 		}
+		rowBuf = rowBuf[:n]
 
 		for i, writer := range writers {
-			values := dynparquet.ValuesForIndex(row, i)
-			writer.Write(values)
+			for _, row := range rowBuf {
+				values := dynparquet.ValuesForIndex(row, i)
+				writer.Write(values)
+			}
+		}
+		if err == io.EOF {
+			break
 		}
 	}
 
@@ -302,6 +308,7 @@ func writePagesToArray(
 	w valueWriter,
 	dictionaryOnly bool,
 ) error {
+	defer pages.Close()
 	// We are potentially writing multiple pages to the same array, so we need
 	// to keep track of the index of the offsets in case this is a List-type.
 	i := 0
@@ -510,7 +517,7 @@ func (w *int64ValueWriter) Write(values []parquet.Value) {
 func (w *int64ValueWriter) WritePage(p parquet.Page) error {
 	reader := p.Values()
 
-	ireader, ok := reader.(parquet.RequiredReader[int64])
+	ireader, ok := reader.(parquet.Int64Reader)
 	if ok {
 		// fast path
 		if w.buf == nil {
@@ -518,7 +525,7 @@ func (w *int64ValueWriter) WritePage(p parquet.Page) error {
 		}
 		values := w.buf
 		for {
-			n, err := ireader.ReadRequired(values)
+			n, err := ireader.ReadInt64s(values)
 			if err != nil && err != io.EOF {
 				return fmt.Errorf("read values: %w", err)
 			}

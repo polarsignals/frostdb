@@ -62,16 +62,25 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		},
 	}
 
-	// Find the least column
+	// Find the "smallest" row
 	if firstPart != nil {
 		g.metadata.card = atomic.NewUint64(uint64(firstPart.Buf.NumRows()))
 		g.parts.Prepend(firstPart)
 		// Since we assume a part is sorted, we need only to look at the first row in each Part
-		row, err := firstPart.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
+		rows := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
+		reader := firstPart.Buf.DynamicRowGroup(0).DynamicRows()
+		n, err := reader.ReadRows(rows)
 		if err != nil {
 			return nil, err
 		}
-		g.metadata.least.Store(unsafe.Pointer(row))
+		if err := reader.Close(); err != nil {
+			return nil, err
+		}
+		if n != 1 {
+			return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
+		}
+		r := rows.GetCopy(0)
+		g.metadata.least.Store(unsafe.Pointer(r))
 
 		// Set the minmaxes on the new granule
 		if err := g.minmaxes(firstPart); err != nil {
@@ -92,8 +101,17 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 	node := g.parts.Prepend(p)
 
 	newcard := g.metadata.card.Add(uint64(p.Buf.NumRows()))
-	r, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
+	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
+	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
+	n, err := reader.ReadRows(rowBuf)
 	if err != nil {
+		return 0, fmt.Errorf("read first row of part: %w", err)
+	}
+	if n != 1 {
+		return 0, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
+	}
+	r := rowBuf.GetCopy(0)
+	if err := reader.Close(); err != nil {
 		return 0, err
 	}
 
@@ -144,13 +162,12 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 
 	// TODO: Buffers should be able to efficiently slice themselves.
 	var (
-		row parquet.Row
-		b   *bytes.Buffer
-		w   *parquet.Writer
-		err error
+		rowBuf = make([]parquet.Row, 1)
+		b      *bytes.Buffer
+		w      *parquet.Writer
 	)
 	b = bytes.NewBuffer(nil)
-	w, err = g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
+	w, err := g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
 	if err != nil {
 		return nil, ErrCreateSchemaWriter{err}
 	}
@@ -160,7 +177,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	for _, rowGroup := range f.RowGroups() {
 		rows := rowGroup.Rows()
 		for {
-			row, err = rows.ReadRow(row[:0])
+			_, err = rows.ReadRows(rowBuf)
 			if err == io.EOF {
 				break
 			}
@@ -168,7 +185,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 				return nil, ErrReadRow{err}
 			}
 
-			err = w.WriteRow(row)
+			_, err = w.WriteRows(rowBuf)
 			if err != nil {
 				return nil, ErrWriteRow{err}
 			}
@@ -195,6 +212,9 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 				}
 				rowsWritten = 0
 			}
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -256,6 +276,7 @@ func (g *Granule) minmaxes(p *Part) error {
 
 			// Check for min
 			min := findMin(columnChunk.Type(), minvalues)
+
 			g.metadata.minlock.RLock()
 			val := g.metadata.min[rowGroup.Schema().Fields()[columnChunk.Column()].Name()]
 			g.metadata.minlock.RUnlock()
