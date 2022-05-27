@@ -75,7 +75,7 @@ type TableBlock struct {
 	table  *Table
 	logger log.Logger
 
-	timestamp uint64
+	timestamp time.Time
 	size      *atomic.Int64
 	index     *atomic.UnsafePointer // *btree.BTree
 
@@ -174,7 +174,7 @@ func (t *Table) StorePath() string {
 	return path.Join(t.db.StorePath(), t.name)
 }
 
-func (t *Table) writeBlock(block *TableBlock) {
+func (t *Table) writeBlock(block *TableBlock, fileName string) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 
 	block.pendingWritersWg.Wait()
@@ -185,7 +185,7 @@ func (t *Table) writeBlock(block *TableBlock) {
 	level.Debug(t.logger).Log("msg", "done syncing block")
 
 	// Persist the block
-	if err := block.WriteToDisk(); err != nil {
+	if err := block.WriteToDisk(fileName); err != nil {
 		level.Error(t.logger).Log("msg", "failed to persist block")
 		level.Error(t.logger).Log("msg", err.Error())
 	}
@@ -215,7 +215,10 @@ func (t *Table) RotateBlock() error {
 
 	if t.db.columnStore.bucket != nil {
 		t.pendingBlocks[block] = struct{}{}
-		go t.writeBlock(block)
+
+		// we generate filename here because ulid generation is not thread safe (since it uses rand.Source)
+		fileName := getBlockFileName(block)
+		go t.writeBlock(block, fileName)
 	}
 	return nil
 }
@@ -300,7 +303,7 @@ func (t *Table) Iterator(
 	for block := range t.pendingBlocks {
 		memoryBlocks = append(memoryBlocks, block)
 
-		if block.timestamp < lastReadBlockTimestamp {
+		if block.timestamp.Before(lastReadBlockTimestamp) {
 			lastReadBlockTimestamp = block.timestamp
 		}
 	}
@@ -420,7 +423,7 @@ func newTableBlock(table *Table) (*TableBlock, error) {
 		index:     atomic.NewUnsafePointer(unsafe.Pointer(index)),
 		wg:        &sync.WaitGroup{},
 		mtx:       &sync.RWMutex{},
-		timestamp: uint64(time.Now().UnixNano()),
+		timestamp: time.Now(),
 		size:      atomic.NewInt64(0),
 		logger:    table.logger,
 	}

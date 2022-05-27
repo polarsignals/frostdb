@@ -4,33 +4,41 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math/rand"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/oklog/ulid"
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/segmentio/parquet-go"
 )
 
-func getBlockFileName(block *TableBlock) string {
-	return strconv.FormatUint(block.timestamp, 10) + ".parquet"
+func generateULID(t time.Time) string {
+	entropy := ulid.Monotonic(rand.New(rand.NewSource(t.UnixNano())), 0)
+	ul := ulid.MustNew(ulid.Timestamp(t), entropy)
+	return ul.String()
 }
 
-func parseBlockFileName(name string) (uint64, error) {
-	return strconv.ParseUint(strings.TrimSuffix(name, ".parquet"), 0, 0)
+func getBlockFileName(block *TableBlock) string {
+	return generateULID(block.timestamp) + ".parquet"
+}
+
+func parseBlockFileName(name string) (ulid.ULID, error) {
+	return ulid.Parse(strings.TrimSuffix(name, ".parquet"))
 }
 
 // WriteBlock writes a block somewhere
-func (block *TableBlock) WriteToDisk() error {
+func (block *TableBlock) WriteToDisk(fileName string) error {
 	data, err := block.Serialize()
 	if err != nil {
 		return err
 	}
-	fileName := filepath.Join(block.table.StorePath(), getBlockFileName(block))
-	return block.table.db.columnStore.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
+	fullName := filepath.Join(block.table.StorePath(), fileName)
+	return block.table.db.columnStore.bucket.Upload(context.Background(), fullName, bytes.NewReader(data))
 }
 
 // FileDynamicRowGroup is a dynamic row group that is backed by a file object
@@ -67,7 +75,7 @@ func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes
 	return bytes.NewReader(data), err
 }
 
-func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp uint64) error {
+func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp time.Time) error {
 	if t.db.columnStore.bucket == nil {
 		return nil
 	}
@@ -76,12 +84,12 @@ func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, 
 
 	ctx := context.Background()
 	err := t.db.columnStore.bucket.Iter(ctx, t.StorePath(), func(fileName string) error {
-		timestamp, err := parseBlockFileName(path.Base(fileName))
+		blockUlid, err := parseBlockFileName(path.Base(fileName))
 		if err != nil {
 			return err
 		}
 
-		if timestamp >= lastBlockTimestamp {
+		if blockUlid.Time() >= uint64(lastBlockTimestamp.UnixMilli()) {
 			return nil
 		}
 
