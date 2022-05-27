@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"path"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
+	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/segmentio/parquet-go"
@@ -75,9 +77,9 @@ type TableBlock struct {
 	table  *Table
 	logger log.Logger
 
-	timestamp time.Time
-	size      *atomic.Int64
-	index     *atomic.UnsafePointer // *btree.BTree
+	ulid  ulid.ULID
+	size  *atomic.Int64
+	index *atomic.UnsafePointer // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
 
@@ -174,7 +176,7 @@ func (t *Table) StorePath() string {
 	return path.Join(t.db.StorePath(), t.name)
 }
 
-func (t *Table) writeBlock(block *TableBlock, fileName string) {
+func (t *Table) writeBlock(block *TableBlock) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 
 	block.pendingWritersWg.Wait()
@@ -185,7 +187,7 @@ func (t *Table) writeBlock(block *TableBlock, fileName string) {
 	level.Debug(t.logger).Log("msg", "done syncing block")
 
 	// Persist the block
-	if err := block.WriteToDisk(fileName); err != nil {
+	if err := block.WriteToDisk(); err != nil {
 		level.Error(t.logger).Log("msg", "failed to persist block")
 		level.Error(t.logger).Log("msg", err.Error())
 	}
@@ -216,9 +218,7 @@ func (t *Table) RotateBlock() error {
 	if t.db.columnStore.bucket != nil {
 		t.pendingBlocks[block] = struct{}{}
 
-		// we generate filename here because ulid generation is not thread safe (since it uses rand.Source)
-		fileName := getBlockFileName(block)
-		go t.writeBlock(block, fileName)
+		go t.writeBlock(block)
 	}
 	return nil
 }
@@ -298,13 +298,13 @@ func (t *Table) Iterator(
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while reading from disk.
 
 	t.mtx.RLock()
-	lastReadBlockTimestamp := t.active.timestamp
+	lastReadBlockTimestamp := t.active.ulid.Time()
 	memoryBlocks := []*TableBlock{t.active}
 	for block := range t.pendingBlocks {
 		memoryBlocks = append(memoryBlocks, block)
 
-		if block.timestamp.Before(lastReadBlockTimestamp) {
-			lastReadBlockTimestamp = block.timestamp
+		if block.ulid.Time() < lastReadBlockTimestamp {
+			lastReadBlockTimestamp = block.ulid.Time()
 		}
 	}
 	t.mtx.RUnlock()
@@ -416,16 +416,22 @@ func (t *Table) SchemaIterator(
 	return err
 }
 
+func generateULID() ulid.ULID {
+	t := time.Now()
+	entropy := ulid.Monotonic(rand.New(rand.NewSource(t.UnixNano())), 0)
+	return ulid.MustNew(ulid.Timestamp(t), entropy)
+}
+
 func newTableBlock(table *Table) (*TableBlock, error) {
 	index := btree.New(table.db.columnStore.indexDegree)
 	tb := &TableBlock{
-		table:     table,
-		index:     atomic.NewUnsafePointer(unsafe.Pointer(index)),
-		wg:        &sync.WaitGroup{},
-		mtx:       &sync.RWMutex{},
-		timestamp: time.Now(),
-		size:      atomic.NewInt64(0),
-		logger:    table.logger,
+		table:  table,
+		index:  atomic.NewUnsafePointer(unsafe.Pointer(index)),
+		wg:     &sync.WaitGroup{},
+		mtx:    &sync.RWMutex{},
+		ulid:   generateULID(),
+		size:   atomic.NewInt64(0),
+		logger: table.logger,
 	}
 
 	g, err := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)

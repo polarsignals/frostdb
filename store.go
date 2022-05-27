@@ -4,11 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"math/rand"
 	"path"
 	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -17,27 +14,13 @@ import (
 	"github.com/segmentio/parquet-go"
 )
 
-func generateULID(t time.Time) string {
-	entropy := ulid.Monotonic(rand.New(rand.NewSource(t.UnixNano())), 0)
-	ul := ulid.MustNew(ulid.Timestamp(t), entropy)
-	return ul.String()
-}
-
-func getBlockFileName(block *TableBlock) string {
-	return generateULID(block.timestamp) + ".parquet"
-}
-
-func parseBlockFileName(name string) (ulid.ULID, error) {
-	return ulid.Parse(strings.TrimSuffix(name, ".parquet"))
-}
-
 // WriteBlock writes a block somewhere
-func (block *TableBlock) WriteToDisk(fileName string) error {
+func (block *TableBlock) WriteToDisk() error {
 	data, err := block.Serialize()
 	if err != nil {
 		return err
 	}
-	fullName := filepath.Join(block.table.StorePath(), fileName)
+	fullName := filepath.Join(block.table.StorePath(), block.ulid.String(), "data.parquet")
 	return block.table.db.columnStore.bucket.Upload(context.Background(), fullName, bytes.NewReader(data))
 }
 
@@ -69,7 +52,7 @@ func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes
 	return bytes.NewReader(data), err
 }
 
-func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp time.Time) error {
+func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp uint64) error {
 	if t.db.columnStore.bucket == nil {
 		return nil
 	}
@@ -77,17 +60,17 @@ func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, 
 	n := 0
 
 	ctx := context.Background()
-	err := t.db.columnStore.bucket.Iter(ctx, t.StorePath(), func(fileName string) error {
-		blockUlid, err := parseBlockFileName(path.Base(fileName))
+	err := t.db.columnStore.bucket.Iter(ctx, t.StorePath(), func(blockDir string) error {
+		blockUlid, err := ulid.Parse(path.Base(blockDir))
 		if err != nil {
 			return err
 		}
 
-		if blockUlid.Time() >= uint64(lastBlockTimestamp.UnixMilli()) {
+		if blockUlid.Time() >= lastBlockTimestamp {
 			return nil
 		}
 
-		reader, err := t.readFileFromBucket(ctx, fileName)
+		reader, err := t.readFileFromBucket(ctx, filepath.Join(blockDir, "data.parquet"))
 		if err != nil {
 			return err
 		}
