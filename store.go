@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -15,27 +14,6 @@ import (
 	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/segmentio/parquet-go"
 )
-
-func writeToFile(data []byte, dir string, fileName string) error {
-	tempFile, err := os.CreateTemp(dir, fileName)
-	if err != nil {
-		return err
-	}
-
-	if _, err := tempFile.Write(data); err != nil {
-		return err
-	}
-
-	if err := tempFile.Sync(); err != nil {
-		return err
-	}
-
-	if err := tempFile.Close(); err != nil {
-		return err
-	}
-
-	return os.Rename(tempFile.Name(), path.Join(dir, fileName))
-}
 
 func getBlockFileName(block *TableBlock) string {
 	return strconv.FormatUint(block.timestamp, 10) + ".parquet"
