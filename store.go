@@ -41,12 +41,6 @@ func (block *TableBlock) WriteToDisk(fileName string) error {
 	return block.table.db.columnStore.bucket.Upload(context.Background(), fullName, bytes.NewReader(data))
 }
 
-// FileDynamicRowGroup is a dynamic row group that is backed by a file object
-type FileDynamicRowGroup struct {
-	dynparquet.DynamicRowGroup
-	io.Closer
-}
-
 // MemDynamicRowGroup is a row group that is in memory and nop the close function
 type MemDynamicRowGroup struct {
 	dynparquet.DynamicRowGroup
