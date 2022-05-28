@@ -13,8 +13,8 @@ import (
 	"github.com/segmentio/parquet-go"
 )
 
-// WriteBlock writes a block somewhere
-func (block *TableBlock) WriteToDisk() error {
+// Persist uploads the block to the underlying bucket.
+func (block *TableBlock) Persist() error {
 	data, err := block.Serialize()
 	if err != nil {
 		return err
@@ -41,7 +41,7 @@ func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes
 	return bytes.NewReader(data), err
 }
 
-func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
+func (t *Table) IterateBucketBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
 	if t.db.columnStore.bucket == nil {
 		return nil
 	}

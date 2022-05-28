@@ -182,12 +182,12 @@ func (t *Table) writeBlock(block *TableBlock) {
 	block.pendingWritersWg.Wait()
 	block.wg.Wait()
 
-	// from now on, the block will no more be modified, we can write it to disk
+	// from now on, the block will no longer be modified, we can persist it to disk
 
 	level.Debug(t.logger).Log("msg", "done syncing block")
 
 	// Persist the block
-	if err := block.WriteToDisk(); err != nil {
+	if err := block.Persist(); err != nil {
 		level.Error(t.logger).Log("msg", "failed to persist block")
 		level.Error(t.logger).Log("msg", err.Error())
 	}
@@ -292,10 +292,10 @@ func (t *Table) Iterator(
 		return true
 	}
 
-	// pending blocks could be written to disk while we iterate on them.
+	// pending blocks could be uploaded to the bucket while we iterate on them.
 	// to avoid to iterate on them again while reading the block file
-	// we keep the last block timestamp to be read from disk and pass it to the IterateDiskBlocks() function
-	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while reading from disk.
+	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
+	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
 
 	t.mtx.RLock()
 	lastReadBlockTimestamp := t.active.ulid.Time()
@@ -315,7 +315,7 @@ func (t *Table) Iterator(
 		}
 	}
 
-	if err := t.IterateDiskBlocks(t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
+	if err := t.IterateBucketBlocks(t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
 		return err
 	}
 
