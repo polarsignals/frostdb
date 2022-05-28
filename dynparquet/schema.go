@@ -210,12 +210,6 @@ type DynamicRowGroup interface {
 	DynamicRows() DynamicRows
 }
 
-// DynamicCloserRowGroup is a DyanmicRowGroup that has an underlying resource that requires being closed
-type DynamicCloserRowGroup interface {
-	DynamicRowGroup
-	io.Closer
-}
-
 // DynamicRows is an iterator over the rows in a DynamicRowGroup.
 type DynamicRows interface {
 	ReadRow(*DynamicRow) (*DynamicRow, error)

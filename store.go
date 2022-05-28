@@ -3,7 +3,6 @@ package arcticdb
 import (
 	"bytes"
 	"context"
-	"io"
 	"path"
 	"path/filepath"
 
@@ -24,16 +23,6 @@ func (block *TableBlock) WriteToDisk() error {
 	return block.table.db.columnStore.bucket.Upload(context.Background(), fullName, bytes.NewReader(data))
 }
 
-// MemDynamicRowGroup is a row group that is in memory and nop the close function
-type MemDynamicRowGroup struct {
-	dynparquet.DynamicRowGroup
-	io.Closer
-}
-
-func (MemDynamicRowGroup) Close() error {
-	return nil
-}
-
 func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes.Reader, error) {
 	attribs, err := t.db.columnStore.bucket.Attributes(ctx, fileName)
 	if err != nil {
@@ -52,7 +41,7 @@ func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes
 	return bytes.NewReader(data), err
 }
 
-func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicCloserRowGroup) bool, lastBlockTimestamp uint64) error {
+func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
 	if t.db.columnStore.bucket == nil {
 		return nil
 	}
@@ -95,16 +84,13 @@ func (t *Table) IterateDiskBlocks(logger log.Logger, filter TrueNegativeFilter, 
 				return err
 			}
 			if mayContainUsefulData {
-				continu := iterator(&MemDynamicRowGroup{
-					DynamicRowGroup: rg,
-				})
-				if !continu {
+				if continu := iterator(rg); !continu {
 					return err
 				}
 			}
 		}
 		return nil
 	})
-	level.Info(logger).Log("msg", "read blocks", "n", n)
+	level.Debug(logger).Log("msg", "read blocks", "n", n)
 	return err
 }

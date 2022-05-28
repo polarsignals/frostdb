@@ -286,8 +286,8 @@ func (t *Table) Iterator(
 		return err
 	}
 
-	rowGroups := []dynparquet.DynamicCloserRowGroup{}
-	iteratorFunc := func(rg dynparquet.DynamicCloserRowGroup) bool {
+	rowGroups := []dynparquet.DynamicRowGroup{}
+	iteratorFunc := func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	}
@@ -338,9 +338,6 @@ func (t *Table) Iterator(
 				filterExpr,
 				distinctColumns,
 			)
-			if err := rg.Close(); err != nil {
-				level.Error(t.logger).Log("msg", "failed to close row group", "err", err)
-			}
 			if err != nil {
 				return err
 			}
@@ -370,8 +367,8 @@ func (t *Table) SchemaIterator(
 		return err
 	}
 
-	rowGroups := []dynparquet.DynamicCloserRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, false, func(rg dynparquet.DynamicCloserRowGroup) bool {
+	rowGroups := []dynparquet.DynamicRowGroup{}
+	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, false, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -393,9 +390,6 @@ func (t *Table) SchemaIterator(
 			b := array.NewRecordBuilder(pool, schema)
 
 			parquetFields := rg.Schema().Fields()
-			if err := rg.Close(); err != nil {
-				level.Error(t.logger).Log("msg", "failed to closer row group", "err", err)
-			}
 			fieldNames := make([]string, 0, len(parquetFields))
 			for _, f := range parquetFields {
 				fieldNames = append(fieldNames, f.Name())
@@ -670,7 +664,7 @@ func (t *TableBlock) RowGroupIterator(
 	filterExpr logicalplan.Expr,
 	filter TrueNegativeFilter,
 	ignoreWatermark bool,
-	iterator func(rg dynparquet.DynamicCloserRowGroup) bool,
+	iterator func(rg dynparquet.DynamicRowGroup) bool,
 ) error {
 	index := t.Index()
 
@@ -698,10 +692,7 @@ func (t *TableBlock) RowGroupIterator(
 					return false
 				}
 				if mayContainUsefulData {
-					continu := iterator(MemDynamicRowGroup{
-						DynamicRowGroup: rg,
-					})
-					if !continu {
+					if continu := iterator(rg); !continu {
 						return false
 					}
 				}
@@ -934,7 +925,7 @@ func (block *TableBlock) Serialize() ([]byte, error) {
 
 	// Read all row groups
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err := block.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, true, func(rg dynparquet.DynamicCloserRowGroup) bool {
+	err := block.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, true, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
