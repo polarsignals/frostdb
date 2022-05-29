@@ -90,7 +90,10 @@ func (b LocalQueryBuilder) Project(
 }
 
 func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Record) error) error {
-	logicalPlan := b.planBuilder.Build()
+	logicalPlan, err := b.planBuilder.Build()
+	if err != nil {
+		return err
+	}
 
 	optimizers := []logicalplan.Optimizer{
 		&logicalplan.PhysicalProjectionPushDown{},

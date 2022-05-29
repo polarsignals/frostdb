@@ -61,7 +61,7 @@ func (b *SerializedBuffer) NumRowGroups() int {
 	return len(b.f.RowGroups())
 }
 
-func (b *SerializedBuffer) DynamicRows() DynamicRows {
+func (b *SerializedBuffer) DynamicRows() DynamicRowReader {
 	rowGroups := b.f.RowGroups()
 	drg := make([]DynamicRowGroup, len(rowGroups))
 	for i, rowGroup := range rowGroups {
@@ -90,7 +90,7 @@ func (g *serializedRowGroup) DynamicColumns() map[string][]string {
 	return g.dynCols
 }
 
-func (g *serializedRowGroup) DynamicRows() DynamicRows {
+func (g *serializedRowGroup) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(g)
 }
 

@@ -4,7 +4,6 @@ import (
 	"io"
 
 	"github.com/segmentio/parquet-go"
-	"github.com/segmentio/parquet-go/encoding"
 )
 
 // NilColumnChunk is a column chunk that contains a single page with all null
@@ -51,6 +50,7 @@ func (c *NilColumnChunk) Pages() parquet.Pages {
 	return &nilPages{
 		numValues:   c.numValues,
 		columnIndex: c.columnIndex,
+		typ:         c.typ,
 	}
 }
 
@@ -62,6 +62,7 @@ type nilPages struct {
 	columnIndex int
 	read        bool
 	seek        int
+	typ         parquet.Type
 }
 
 // ReadPage returns the next page in the column chunk. It will only ever return
@@ -77,7 +78,14 @@ func (p *nilPages) ReadPage() (parquet.Page, error) {
 		numValues:   p.numValues,
 		columnIndex: p.columnIndex,
 		seek:        p.seek,
+		typ:         p.typ,
 	}, nil
+}
+
+// Close implements the parquet.Pages interface. Since this is a synthetic
+// page, it's a no-op.
+func (p *nilPages) Close() error {
+	return nil
 }
 
 // nilPage is a page that contains all null values of the configured amount. It
@@ -87,12 +95,19 @@ type nilPage struct {
 	numValues   int
 	columnIndex int
 	seek        int
+	typ         parquet.Type
 }
 
 // Column returns the column index of the column in the schema the column
 // chunk's page belongs to.
 func (p *nilPage) Column() int {
 	return p.columnIndex
+}
+
+// Type returns the type of the column chunk. Implements the
+// parquet.ColumnChunk interface.
+func (p *nilPage) Type() parquet.Type {
+	return p.typ
 }
 
 // Dictionary returns the dictionary page for the column chunk. Since the page
@@ -190,15 +205,15 @@ func (p *nilPage) Buffer() parquet.BufferedPage {
 // DefinitionLevels returns the definition levels of the page. Since the page
 // contains only null values, all of them are 0. Implements the
 // parquet.BufferedPage interface.
-func (p *nilPage) DefinitionLevels() []int8 {
-	return make([]int8, p.numValues)
+func (p *nilPage) DefinitionLevels() []byte {
+	return nil
 }
 
 // RepetitionLevels returns the definition levels of the page. Since the page
 // contains only null values, all of them are 0. Implements the
 // parquet.BufferedPage interface.
-func (p *nilPage) RepetitionLevels() []int8 {
-	return make([]int8, p.numValues)
+func (p *nilPage) RepetitionLevels() []byte {
+	return nil
 }
 
 // Slice returns the nilPage with the subset of values represented by the range
@@ -210,10 +225,10 @@ func (p *nilPage) Slice(i, j int64) parquet.BufferedPage {
 	}
 }
 
-// WriteTo is unimplemented, since the page is virtual and does not need to be
+// Data is unimplemented, since the page is virtual and does not need to be
 // written in its current usage in this package. If that changes this method
 // needs to be implemented. Implements the parquet.BufferedPage interface.
-func (p *nilPage) Encode([]byte, encoding.Encoding) ([]byte, error) {
+func (p *nilPage) Data() []byte {
 	panic("not implemented")
 }
 

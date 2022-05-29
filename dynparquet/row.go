@@ -4,6 +4,33 @@ import (
 	"github.com/segmentio/parquet-go"
 )
 
+type DynamicRows struct {
+	Rows           []parquet.Row
+	Schema         *parquet.Schema
+	DynamicColumns map[string][]string
+}
+
+func (r *DynamicRows) Get(i int) *DynamicRow {
+	return &DynamicRow{
+		Schema:         r.Schema,
+		DynamicColumns: r.DynamicColumns,
+		Row:            r.Rows[i],
+	}
+}
+
+func (r *DynamicRows) GetCopy(i int) *DynamicRow {
+	rowCopy := make(parquet.Row, len(r.Rows[i]))
+	for i, v := range r.Rows[i] {
+		rowCopy[i] = v.Clone()
+	}
+
+	return &DynamicRow{
+		Schema:         r.Schema,
+		DynamicColumns: r.DynamicColumns,
+		Row:            rowCopy,
+	}
+}
+
 type DynamicRow struct {
 	Row            parquet.Row
 	Schema         *parquet.Schema

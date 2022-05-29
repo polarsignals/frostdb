@@ -257,8 +257,9 @@ func (t *Table) Insert(ctx context.Context, buf []byte) (uint64, error) {
 	}
 
 	block := t.ActiveBlock()
-	if err := block.Insert(ctx, tx, serBuf); err != nil {
-		return 0, err
+	err = block.Insert(ctx, tx, serBuf)
+	if err != nil {
+		return 0, fmt.Errorf("insert buffer into block: %w", err)
 	}
 
 	if block.Size() > t.db.columnStore.activeMemorySize {
@@ -543,10 +544,11 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		return
 	}
 
+	rowBuf := make([]parquet.Row, 1)
 	rows := merge.Rows()
 	n := 0
 	for {
-		row, err := rows.ReadRow(nil)
+		_, err := rows.ReadRows(rowBuf)
 		if err == io.EOF {
 			break
 		}
@@ -555,7 +557,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 			level.Error(t.logger).Log("msg", "error reading rows", "err", err)
 			return
 		}
-		err = w.WriteRow(row)
+		_, err = w.WriteRows(rowBuf)
 		if err != nil {
 			t.abort(commit, granule)
 			level.Error(t.logger).Log("msg", "error writing rows", "err", err)
@@ -564,8 +566,13 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		n++
 	}
 
-	err = w.Close()
-	if err != nil {
+	if err := rows.Close(); err != nil {
+		t.abort(commit, granule)
+		level.Error(t.logger).Log("msg", "error closing schema writer", "err", err)
+		return
+	}
+
+	if err := w.Close(); err != nil {
 		t.abort(commit, granule)
 		level.Error(t.logger).Log("msg", "error closing schema writer", "err", err)
 		return
@@ -735,16 +742,17 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 			return nil, ErrCreateSchemaWriter{err}
 		}
 
+		rowBuf := make([]parquet.Row, 1)
 		rows := buf.Reader()
 		for {
-			row, err := rows.ReadRow(nil)
+			_, err := rows.ReadRows(rowBuf)
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				return nil, ErrReadRow{err}
 			}
-			err = w.WriteRow(row)
+			_, err = w.WriteRows(rowBuf)
 			if err != nil {
 				return nil, ErrWriteRow{err}
 			}
@@ -773,10 +781,12 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 	var prev *Granule
 	exhaustedAllRows := false
 
-	row, err := rows.ReadRow(nil)
+	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
+	_, err := rows.ReadRows(rowBuf)
 	if err != nil {
 		return nil, ErrReadRow{err}
 	}
+	row := rowBuf.Get(0)
 
 	var ascendErr error
 
@@ -799,21 +809,22 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 						writerByGranule[prev] = w
 						bufByGranule[prev] = b
 					}
-					err = w.WriteRow(row.Row)
+					_, err = w.WriteRows([]parquet.Row{row.Row})
 					if err != nil {
 						ascendErr = ErrWriteRow{err}
 						return false
 					}
-					row, err = rows.ReadRow(row)
-					if err == io.EOF {
+					n, err := rows.ReadRows(rowBuf)
+					if err == io.EOF && n == 0 {
 						// All rows accounted for
 						exhaustedAllRows = true
 						return false
 					}
-					if err != nil {
+					if err != nil && err != io.EOF {
 						ascendErr = ErrReadRow{err}
 						return false
 					}
+					row = rowBuf.Get(0)
 					continue
 				}
 			}
@@ -842,15 +853,15 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 
 		// Save any remaining rows that belong into prev
 		for {
-			err = w.WriteRow(row.Row)
+			_, err = w.WriteRows([]parquet.Row{row.Row})
 			if err != nil {
 				return nil, ErrWriteRow{err}
 			}
-			row, err = rows.ReadRow(row)
-			if err == io.EOF {
+			n, err := rows.ReadRows(rowBuf)
+			if err == io.EOF && n == 0 {
 				break
 			}
-			if err != nil {
+			if err != nil && err != io.EOF {
 				return nil, ErrReadRow{err}
 			}
 		}
@@ -879,13 +890,19 @@ func (t *TableBlock) compact(g *Granule) {
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
 func addPartToGranule(granules []*Granule, p *Part) error {
-	row, err := p.Buf.DynamicRowGroup(0).DynamicRows().ReadRow(nil)
+	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
+	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
+	_, err := reader.ReadRows(rowBuf)
 	if err == io.EOF {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	if err := reader.Close(); err != nil {
+		return err
+	}
+	row := rowBuf.GetCopy(0)
 
 	var prev *Granule
 	for _, g := range granules {
@@ -948,14 +965,15 @@ func (block *TableBlock) Serialize() ([]byte, error) {
 	rows := merged.Rows()
 	n := 0
 	for {
-		row, err := rows.ReadRow(nil)
+		rowsBuf := make([]parquet.Row, 1)
+		_, err := rows.ReadRows(rowsBuf)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return nil, err
 		}
-		err = w.WriteRow(row)
+		_, err = w.WriteRows(rowsBuf)
 		if err != nil {
 			return nil, err
 		}

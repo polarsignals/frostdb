@@ -25,6 +25,21 @@ func TestReader(t *testing.T) {
 
 	require.NoError(t, w.Close())
 
-	_, err = ReaderFromBytes(b.Bytes())
+	serBuf, err := ReaderFromBytes(b.Bytes())
 	require.NoError(t, err)
+	require.Equal(t, int64(3), serBuf.NumRows())
+}
+
+func TestSerializedReader(t *testing.T) {
+	schema := NewSampleSchema()
+	samples := NewTestSamples()
+	buf, err := samples.ToBuffer(schema)
+	require.NoError(t, err)
+
+	b, err := schema.SerializeBuffer(buf)
+	require.NoError(t, err)
+
+	serBuf, err := ReaderFromBytes(b)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), serBuf.NumRows())
 }

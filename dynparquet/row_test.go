@@ -105,33 +105,39 @@ func TestLess(t *testing.T) {
 	}
 
 	var err error
-	row1 := &DynamicRow{
+	row1 := &DynamicRows{
 		Schema:         rowGroups[0].Schema(),
 		DynamicColumns: rowGroups[0].DynamicColumns(),
+		Rows:           make([]parquet.Row, 1),
 	}
-	row1.Row, err = rowGroups[0].Rows().ReadRow(nil)
+	n, err := rowGroups[0].Rows().ReadRows(row1.Rows)
 	require.NoError(t, err)
+	require.Equal(t, 1, n)
 
-	row2 := &DynamicRow{
+	row2 := &DynamicRows{
 		Schema:         rowGroups[1].Schema(),
 		DynamicColumns: rowGroups[1].DynamicColumns(),
+		Rows:           make([]parquet.Row, 1),
 	}
-	row2.Row, err = rowGroups[1].Rows().ReadRow(nil)
+	n, err = rowGroups[1].Rows().ReadRows(row2.Rows)
 	require.NoError(t, err)
+	require.Equal(t, 1, n)
 
-	row3 := &DynamicRow{
+	row3 := &DynamicRows{
 		Schema:         rowGroups[2].Schema(),
 		DynamicColumns: rowGroups[2].DynamicColumns(),
+		Rows:           make([]parquet.Row, 1),
 	}
-	row3.Row, err = rowGroups[2].Rows().ReadRow(nil)
+	n, err = rowGroups[2].Rows().ReadRows(row3.Rows)
 	require.NoError(t, err)
+	require.Equal(t, 1, n)
 
-	require.True(t, schema.RowLessThan(row1, row2))
-	require.True(t, schema.RowLessThan(row1, row3))
-	require.True(t, schema.RowLessThan(row2, row3))
-	require.False(t, schema.RowLessThan(row2, row1))
-	require.False(t, schema.RowLessThan(row3, row1))
-	require.False(t, schema.RowLessThan(row3, row2))
+	require.True(t, schema.RowLessThan(row1.Get(0), row2.Get(0)))
+	require.True(t, schema.RowLessThan(row1.Get(0), row3.Get(0)))
+	require.True(t, schema.RowLessThan(row2.Get(0), row3.Get(0)))
+	require.False(t, schema.RowLessThan(row2.Get(0), row1.Get(0)))
+	require.False(t, schema.RowLessThan(row3.Get(0), row1.Get(0)))
+	require.False(t, schema.RowLessThan(row3.Get(0), row2.Get(0)))
 }
 
 func TestLessWithDynamicSchemas(t *testing.T) {
@@ -167,20 +173,24 @@ func TestLessWithDynamicSchemas(t *testing.T) {
 	}
 
 	var err error
-	row1 := &DynamicRow{
+	row1 := &DynamicRows{
 		Schema:         rowGroups[0].Schema(),
 		DynamicColumns: rowGroups[0].DynamicColumns(),
+		Rows:           make([]parquet.Row, 1),
 	}
-	row1.Row, err = rowGroups[0].Rows().ReadRow(nil)
+	n, err := rowGroups[0].Rows().ReadRows(row1.Rows)
 	require.NoError(t, err)
+	require.Equal(t, 1, n)
 
-	row2 := &DynamicRow{
+	row2 := &DynamicRows{
 		Schema:         rowGroups[1].Schema(),
 		DynamicColumns: rowGroups[1].DynamicColumns(),
+		Rows:           make([]parquet.Row, 1),
 	}
-	row2.Row, err = rowGroups[1].Rows().ReadRow(nil)
+	n, err = rowGroups[1].Rows().ReadRows(row2.Rows)
 	require.NoError(t, err)
+	require.Equal(t, 1, n)
 
-	require.True(t, schema.RowLessThan(row2, row1))
-	require.False(t, schema.RowLessThan(row1, row2))
+	require.True(t, schema.RowLessThan(row2.Get(0), row1.Get(0)))
+	require.False(t, schema.RowLessThan(row1.Get(0), row2.Get(0)))
 }
