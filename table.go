@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"math/rand"
-	"path"
 	"sync"
 	"time"
 	"unsafe"
@@ -145,7 +144,7 @@ func newTable(
 		},
 	}
 
-	if db.columnStore.bucket != nil {
+	if db.bucket != nil {
 		t.pendingBlocks = make(map[*TableBlock]struct{})
 	}
 
@@ -170,10 +169,6 @@ func newTable(
 	})
 
 	return t, nil
-}
-
-func (t *Table) StorePath() string {
-	return path.Join(t.db.StorePath(), t.name)
 }
 
 func (t *Table) writeBlock(block *TableBlock) {
@@ -215,7 +210,7 @@ func (t *Table) RotateBlock() error {
 	block := t.active
 	t.active = tb
 
-	if t.db.columnStore.bucket != nil {
+	if t.db.bucket != nil {
 		t.pendingBlocks[block] = struct{}{}
 
 		go t.writeBlock(block)

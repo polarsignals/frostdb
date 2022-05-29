@@ -3,7 +3,6 @@ package arcticdb
 import (
 	"bytes"
 	"context"
-	"path"
 	"path/filepath"
 
 	"github.com/go-kit/log"
@@ -19,17 +18,17 @@ func (block *TableBlock) Persist() error {
 	if err != nil {
 		return err
 	}
-	fullName := filepath.Join(block.table.StorePath(), block.ulid.String(), "data.parquet")
-	return block.table.db.columnStore.bucket.Upload(context.Background(), fullName, bytes.NewReader(data))
+	fileName := filepath.Join(block.table.name, block.ulid.String(), "data.parquet")
+	return block.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
 }
 
 func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes.Reader, error) {
-	attribs, err := t.db.columnStore.bucket.Attributes(ctx, fileName)
+	attribs, err := t.db.bucket.Attributes(ctx, fileName)
 	if err != nil {
 		return nil, err
 	}
 
-	reader, err := t.db.columnStore.bucket.Get(ctx, fileName)
+	reader, err := t.db.bucket.Get(ctx, fileName)
 	if err != nil {
 		return nil, err
 	}
@@ -42,15 +41,14 @@ func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes
 }
 
 func (t *Table) IterateBucketBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
-	if t.db.columnStore.bucket == nil {
+	if t.db.bucket == nil {
 		return nil
 	}
 
 	n := 0
-
 	ctx := context.Background()
-	err := t.db.columnStore.bucket.Iter(ctx, t.StorePath(), func(blockDir string) error {
-		blockUlid, err := ulid.Parse(path.Base(blockDir))
+	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
+		blockUlid, err := ulid.Parse(filepath.Base(blockDir))
 		if err != nil {
 			return err
 		}

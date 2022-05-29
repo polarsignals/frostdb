@@ -89,6 +89,7 @@ type DB struct {
 	tables map[string]*Table
 	reg    prometheus.Registerer
 
+	bucket objstore.Bucket
 	// Databases monotonically increasing transaction id
 	tx *atomic.Uint64
 
@@ -125,6 +126,13 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 		reg:           prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg),
 		tx:            atomic.NewUint64(0),
 		highWatermark: atomic.NewUint64(0),
+	}
+
+	if s.bucket != nil {
+		db.bucket = &BucketPrefixDecorator{
+			Bucket: s.bucket,
+			prefix: db.StorePath(),
+		}
 	}
 
 	db.txPool = NewTxPool(db.highWatermark)
