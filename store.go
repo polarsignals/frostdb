@@ -8,18 +8,21 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
-	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/segmentio/parquet-go"
 )
 
+import (
+	"github.com/polarsignals/arcticdb/dynparquet"
+)
+
 // Persist uploads the block to the underlying bucket.
-func (block *TableBlock) Persist() error {
-	data, err := block.Serialize()
+func (t *TableBlock) Persist() error {
+	data, err := t.Serialize()
 	if err != nil {
 		return err
 	}
-	fileName := filepath.Join(block.table.name, block.ulid.String(), "data.parquet")
-	return block.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
+	fileName := filepath.Join(t.table.name, t.ulid.String(), "data.parquet")
+	return t.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
 }
 
 func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes.Reader, error) {

@@ -7,10 +7,13 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
+)
+
+import (
+	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
 type ColumnStore struct {

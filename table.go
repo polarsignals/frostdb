@@ -932,12 +932,12 @@ func (t *TableBlock) abort(commit func(), granule *Granule) {
 	}
 }
 
-func (block *TableBlock) Serialize() ([]byte, error) {
+func (t *TableBlock) Serialize() ([]byte, error) {
 	ctx := context.Background()
 
 	// Read all row groups
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err := block.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, true, func(rg dynparquet.DynamicRowGroup) bool {
+	err := t.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, true, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -945,14 +945,14 @@ func (block *TableBlock) Serialize() ([]byte, error) {
 		return nil, err
 	}
 
-	merged, err := block.table.config.schema.MergeDynamicRowGroups(rowGroups)
+	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
 	if err != nil {
 		return nil, err
 	}
 
 	buf := bytes.NewBuffer(nil)
 	cols := merged.DynamicColumns()
-	w, err := block.table.config.schema.NewWriter(buf, cols)
+	w, err := t.table.config.schema.NewWriter(buf, cols)
 	if err != nil {
 		return nil, err
 	}
