@@ -79,7 +79,7 @@ func (m DynamicColumnMatcher) Match(columnName string) bool {
 }
 
 type Expr interface {
-	DataType(*dynparquet.Schema) arrow.DataType
+	DataType(*dynparquet.Schema) (arrow.DataType, error)
 	Accept(Visitor) bool
 	Name() string
 	ColumnsUsed() []ColumnMatcher
