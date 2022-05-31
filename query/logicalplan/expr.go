@@ -1,11 +1,13 @@
 package logicalplan
 
 import (
+	"errors"
+
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
-	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/arcticdb/pqarrow/convert"
 )
 
 type Operator int
@@ -72,8 +74,8 @@ func (e BinaryExpr) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(e)
 }
 
-func (e BinaryExpr) DataType(_ *dynparquet.Schema) arrow.DataType {
-	return &arrow.BooleanType{}
+func (e BinaryExpr) DataType(_ *dynparquet.Schema) (arrow.DataType, error) {
+	return &arrow.BooleanType{}, nil
 }
 
 func (e BinaryExpr) Name() string {
@@ -109,44 +111,17 @@ func (c Column) Name() string {
 	return c.ColumnName
 }
 
-func (c Column) DataType(s *dynparquet.Schema) arrow.DataType {
+func (c Column) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
 	colDef, found := s.ColumnByName(c.ColumnName)
 	if !found {
-		panic("column not found")
+		return nil, errors.New("column not found")
 	}
 
-	return ParquetNodeToType(colDef.StorageLayout)
+	return convert.ParquetNodeToType(colDef.StorageLayout)
 }
 
 func (c Column) Alias(alias string) AliasExpr {
 	return AliasExpr{Expr: c, Alias: alias}
-}
-
-// ParquetNodeToType converts a parquet node to an arrow type and a function to
-// create a value writer.
-func ParquetNodeToType(n parquet.Node) arrow.DataType {
-	t := n.Type()
-	lt := t.LogicalType()
-	switch {
-	case lt.UUID != nil:
-		return &arrow.FixedSizeBinaryType{
-			ByteWidth: 16,
-		}
-	case lt.UTF8 != nil:
-		return &arrow.StringType{}
-	case lt.Integer != nil:
-		switch lt.Integer.BitWidth {
-		case 64:
-			if lt.Integer.IsSigned {
-				return &arrow.Int64Type{}
-			}
-			return &arrow.Uint64Type{}
-		default:
-			panic("unsupported int bit width")
-		}
-	default:
-		panic("unsupported type for parquet to arrow conversion")
-	}
 }
 
 func (c Column) ColumnsUsed() []ColumnMatcher {
@@ -259,13 +234,13 @@ func DynCol(name string) DynamicColumn {
 	return DynamicColumn{ColumnName: name}
 }
 
-func (c DynamicColumn) DataType(s *dynparquet.Schema) arrow.DataType {
+func (c DynamicColumn) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
 	colDef, found := s.ColumnByName(c.ColumnName)
 	if !found {
-		panic("column not found")
+		return nil, errors.New("column not found")
 	}
 
-	return ParquetNodeToType(colDef.StorageLayout)
+	return convert.ParquetNodeToType(colDef.StorageLayout)
 }
 
 func (c DynamicColumn) ColumnsUsed() []ColumnMatcher {
@@ -302,8 +277,8 @@ func Literal(v interface{}) LiteralExpr {
 	}
 }
 
-func (e LiteralExpr) DataType(_ *dynparquet.Schema) arrow.DataType {
-	return e.Value.DataType()
+func (e LiteralExpr) DataType(_ *dynparquet.Schema) (arrow.DataType, error) {
+	return e.Value.DataType(), nil
 }
 
 func (e LiteralExpr) Name() string {
@@ -328,7 +303,7 @@ type AggregationFunction struct {
 	Expr Expr
 }
 
-func (f AggregationFunction) DataType(s *dynparquet.Schema) arrow.DataType {
+func (f AggregationFunction) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
 	return f.Expr.DataType(s)
 }
 
@@ -385,7 +360,7 @@ type AliasExpr struct {
 	Alias string
 }
 
-func (e AliasExpr) DataType(s *dynparquet.Schema) arrow.DataType {
+func (e AliasExpr) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
 	return e.Expr.DataType(s)
 }
 

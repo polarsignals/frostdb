@@ -55,7 +55,12 @@ func Aggregate(
 		return nil, errors.New("aggregation column not found")
 	}
 
-	f, err := chooseAggregationFunction(aggFunc, agg.AggExpr.DataType(s))
+	dataType, err := agg.AggExpr.DataType(s)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := chooseAggregationFunction(aggFunc, dataType)
 	if err != nil {
 		return nil, err
 	}
