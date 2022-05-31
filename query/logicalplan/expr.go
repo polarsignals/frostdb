@@ -458,43 +458,11 @@ type AggregationFunction struct {
 }
 
 func (f AggregationFunction) MarshalJSON() ([]byte, error) {
-	type aggregationFunctionJSON struct {
-		ExprType string
-		Expr     Expr
-		FuncType string
-		Func     AggFunc
-	}
-	return json.Marshal(aggregationFunctionJSON{
-		ExprType: reflect.TypeOf(f.Expr).String(),
-		Expr:     f.Expr,
-		FuncType: reflect.TypeOf(f.Func).String(),
-		Func:     f.Func,
-	})
+	return nil, fmt.Errorf("AggregationFunction does not implement JSON marshalling")
 }
 
-func (f *AggregationFunction) UnmarshalJSON(data []byte) error {
-	type aggregationFunctionJSON struct {
-		ExprType string
-		Expr     json.RawMessage
-		FuncType string
-		Func     json.RawMessage
-	}
-	var afj aggregationFunctionJSON
-	err := json.Unmarshal(data, &afj)
-	if err != nil {
-		return err
-	}
-	switch afj.ExprType {
-	default:
-		return fmt.Errorf("AggregationFunction.Expr unmarshalling for %s hasn't been implemented", afj.ExprType)
-	}
-
-	switch afj.FuncType {
-	default:
-		return fmt.Errorf("AggregationFunction.Func unmarshalling for %s hasn't been implemented", afj.FuncType)
-	}
-
-	return nil
+func (f *AggregationFunction) UnmarshalJSON([]byte) error {
+	return fmt.Errorf("AggregationFunction does not implement JSON unmarshalling")
 }
 
 func (f AggregationFunction) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
@@ -555,42 +523,11 @@ type AliasExpr struct {
 }
 
 func (e *AliasExpr) MarshalJSON() ([]byte, error) {
-	type aliasExprJSON struct {
-		ExprType string
-		Expr     Expr
-		Alias    string
-	}
-	return json.Marshal(aliasExprJSON{
-		ExprType: reflect.TypeOf(e.Expr).String(),
-		Expr:     e.Expr,
-		Alias:    e.Alias,
-	})
+	return nil, fmt.Errorf("AliasExpr does not implement JSON marshalling")
 }
 
-func (e *AliasExpr) UnmarshalJSON(data []byte) error {
-	type aliasExprJSON struct {
-		ExprType string
-		Expr     json.RawMessage
-		Alias    string
-	}
-	var aej aliasExprJSON
-	err := json.Unmarshal(data, &aej)
-	if err != nil {
-		return err
-	}
-	e.Alias = aej.Alias
-
-	switch aej.ExprType {
-	case "*logicalplan.LiteralExpr":
-		var literal LiteralExpr
-		err := json.Unmarshal(aej.Expr, &literal)
-		if err != nil {
-			return err
-		}
-		e.Expr = &literal
-	}
-
-	return nil
+func (e *AliasExpr) UnmarshalJSON([]byte) error {
+	return fmt.Errorf("AliasExpr does not implement JSON unmarshalling")
 }
 
 func (e AliasExpr) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
