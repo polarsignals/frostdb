@@ -991,21 +991,21 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 	default: // unsupported filter
 		level.Info(logger).Log("msg", "unsupported filter")
 		return true
-	case logicalplan.BinaryExpr:
+	case *logicalplan.BinaryExpr:
 		var min, max *parquet.Value
 		var v scalar.Scalar
 		var leftresult bool
 		switch left := expr.Left.(type) {
-		case logicalplan.BinaryExpr:
+		case *logicalplan.BinaryExpr:
 			leftresult = filterGranule(logger, left, g)
-		case logicalplan.Column:
+		case *logicalplan.Column:
 			var found bool
 			min, max, found = findColumnValues(left.ColumnsUsed(), g)
 			if !found {
 				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
 				return false
 			}
-		case logicalplan.LiteralExpr:
+		case *logicalplan.LiteralExpr:
 			switch left.Value.(type) {
 			case *scalar.Int64:
 				v = left.Value.(*scalar.Int64)
@@ -1015,7 +1015,7 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 		}
 
 		switch right := expr.Right.(type) {
-		case logicalplan.BinaryExpr:
+		case *logicalplan.BinaryExpr:
 			switch expr.Op {
 			case logicalplan.AndOp:
 				if !leftresult {
@@ -1024,7 +1024,7 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 				rightresult := filterGranule(logger, right, g)
 				return leftresult && rightresult
 			}
-		case logicalplan.Column:
+		case *logicalplan.Column:
 			var found bool
 			min, max, found = findColumnValues(right.ColumnsUsed(), g)
 			if !found {
@@ -1057,7 +1057,7 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 				}
 			}
 
-		case logicalplan.LiteralExpr:
+		case *logicalplan.LiteralExpr:
 			switch v := right.Value.(type) {
 			case *scalar.Int64:
 				switch expr.Op {

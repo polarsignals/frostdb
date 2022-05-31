@@ -285,7 +285,7 @@ func ValidateFilterAndBinaryExpr(plan *LogicalPlan, expr *BinaryExpr) *ExprValid
 // NewTypeFinder returns an instance of the findExpressionForTypeVisitor for the
 // passed type. It expects to receive a pointer to the  type it is will find.
 func newTypeFinder(val interface{}) findExpressionForTypeVisitor {
-	return findExpressionForTypeVisitor{exprType: reflect.TypeOf(val).Elem()}
+	return findExpressionForTypeVisitor{exprType: reflect.TypeOf(val)}
 }
 
 // findExpressionForTypeVisitor is an instance of Visitor that will try to find
