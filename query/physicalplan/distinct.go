@@ -86,6 +86,7 @@ func (d *Distinction) Callback(r arrow.Record) error {
 			d.mtx.RUnlock()
 			continue
 		}
+		d.mtx.RUnlock()
 
 		for j, arr := range distinctArrays {
 			err := appendValue(resBuilders[j], arr, i)
