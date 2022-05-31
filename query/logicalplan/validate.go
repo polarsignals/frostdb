@@ -175,8 +175,8 @@ func ValidateFilter(plan *LogicalPlan) *PlanValidationError {
 // ValidateFilterExpr validates filter's expression.
 func ValidateFilterExpr(plan *LogicalPlan, e Expr) *ExprValidationError {
 	switch expr := e.(type) {
-	case BinaryExpr:
-		err := ValidateFilterBinaryExpr(plan, &expr)
+	case *BinaryExpr:
+		err := ValidateFilterBinaryExpr(plan, expr)
 		return err
 	}
 
@@ -200,7 +200,7 @@ func ValidateFilterBinaryExpr(plan *LogicalPlan, expr *BinaryExpr) *ExprValidati
 	}
 
 	// try to find the column in the schema
-	columnExpr := leftColumnFinder.result.(Column)
+	columnExpr := leftColumnFinder.result.(*Column)
 	schema := plan.InputSchema()
 	if schema != nil {
 		column, found := schema.ColumnByName(columnExpr.ColumnName)
@@ -211,7 +211,7 @@ func ValidateFilterBinaryExpr(plan *LogicalPlan, expr *BinaryExpr) *ExprValidati
 			if rightLiteralFinder.result != nil {
 				// ensure that the column type is compatible with the literal being compared to it
 				t := column.StorageLayout.Type()
-				literalExpr := rightLiteralFinder.result.(LiteralExpr)
+				literalExpr := rightLiteralFinder.result.(*LiteralExpr)
 				if err := ValidateComparingTypes(t.LogicalType(), literalExpr.Value); err != nil {
 					err.expr = expr
 					return err
@@ -293,7 +293,7 @@ func newTypeFinder(val interface{}) findExpressionForTypeVisitor {
 type findExpressionForTypeVisitor struct {
 	exprType reflect.Type
 	// if an expression of the type is found, it will be set on this field after
-	// visiting. Other-wise this field will be null
+	// visiting. Other-wise this field will be nil
 	result Expr
 }
 
