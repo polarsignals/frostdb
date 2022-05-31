@@ -9,9 +9,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
-)
 
-import (
 	"github.com/polarsignals/arcticdb/dynparquet"
 )
 

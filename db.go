@@ -10,9 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
-)
 
-import (
 	"github.com/polarsignals/arcticdb/query/logicalplan"
 )
 
