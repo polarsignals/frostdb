@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/objstore/filesystem"
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/arcticdb/dynparquet"
@@ -43,11 +45,15 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 		dynparquet.NewSampleSchema(),
 	)
 
+	bucket, err := filesystem.NewBucket(".")
+	require.NoError(t, err)
+
 	c := New(
 		nil,
 		granuleSize,
 		512*1024*1024,
-	)
+	).WithStorageBucket(bucket)
+
 	db, err := c.DB("test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config, newTestLogger(t))
@@ -439,6 +445,7 @@ func Test_Table_Concurrency(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			table := basicTable(t, test.granuleSize)
+			defer os.RemoveAll("test")
 
 			generateRows := func(n int) *dynparquet.Buffer {
 				rows := make(dynparquet.Samples, 0, n)

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -17,6 +19,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
+	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/segmentio/parquet-go"
@@ -57,10 +60,13 @@ func NewTableConfig(
 
 type Table struct {
 	db      *DB
+	name    string
 	metrics *tableMetrics
 	logger  log.Logger
 
 	config *TableConfig
+
+	pendingBlocks map[*TableBlock]struct{}
 
 	mtx    *sync.RWMutex
 	active *TableBlock
@@ -70,11 +76,14 @@ type TableBlock struct {
 	table  *Table
 	logger log.Logger
 
+	ulid  ulid.ULID
 	size  *atomic.Int64
 	index *atomic.UnsafePointer // *btree.BTree
 
+	pendingWritersWg sync.WaitGroup
+
 	wg  *sync.WaitGroup
-	mtx *sync.Mutex
+	mtx *sync.RWMutex
 }
 
 type tableMetrics struct {
@@ -107,6 +116,7 @@ func newTable(
 	t := &Table{
 		db:     db,
 		config: tableConfig,
+		name:   name,
 		logger: logger,
 		mtx:    &sync.RWMutex{},
 		metrics: &tableMetrics{
@@ -134,6 +144,10 @@ func newTable(
 		},
 	}
 
+	if db.bucket != nil {
+		t.pendingBlocks = make(map[*TableBlock]struct{})
+	}
+
 	var err error
 	t.active, err = newTableBlock(t)
 	if err != nil {
@@ -157,15 +171,50 @@ func newTable(
 	return t, nil
 }
 
+func (t *Table) writeBlock(block *TableBlock) {
+	level.Debug(t.logger).Log("msg", "syncing block")
+
+	block.pendingWritersWg.Wait()
+	block.wg.Wait()
+
+	// from now on, the block will no longer be modified, we can persist it to disk
+
+	level.Debug(t.logger).Log("msg", "done syncing block")
+
+	// Persist the block
+	if err := block.Persist(); err != nil {
+		level.Error(t.logger).Log("msg", "failed to persist block")
+		level.Error(t.logger).Log("msg", err.Error())
+	}
+
+	t.mtx.Lock()
+
+	delete(t.pendingBlocks, block)
+
+	t.mtx.Unlock()
+}
+
 func (t *Table) RotateBlock() error {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
+	if t.active.Size() == 0 {
+		return nil
+	}
+
 	tb, err := newTableBlock(t)
 	if err != nil {
 		return err
 	}
-	t.mtx.Lock()
-	defer t.mtx.Unlock()
 
+	block := t.active
 	t.active = tb
+
+	if t.db.bucket != nil {
+		t.pendingBlocks[block] = struct{}{}
+
+		go t.writeBlock(block)
+	}
 	return nil
 }
 
@@ -209,16 +258,11 @@ func (t *Table) Insert(ctx context.Context, buf []byte) (uint64, error) {
 	}
 
 	if block.Size() > t.db.columnStore.activeMemorySize {
-		level.Debug(t.logger).Log("msg", "rotating block")
+		level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size())
 		if err := t.RotateBlock(); err != nil {
 			return 0, fmt.Errorf("failed to rotate block: %w", err)
 		}
 		level.Debug(t.logger).Log("msg", "done rotating block")
-		go func() {
-			level.Debug(t.logger).Log("msg", "syncing block")
-			block.wg.Wait()
-			level.Debug(t.logger).Log("msg", "done syncing block")
-		}()
 	}
 
 	return tx, nil
@@ -239,11 +283,35 @@ func (t *Table) Iterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, filterExpr, filter, func(rg dynparquet.DynamicRowGroup) bool {
+	iteratorFunc := func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
-	})
-	if err != nil {
+	}
+
+	// pending blocks could be uploaded to the bucket while we iterate on them.
+	// to avoid to iterate on them again while reading the block file
+	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
+	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
+
+	t.mtx.RLock()
+	lastReadBlockTimestamp := t.active.ulid.Time()
+	memoryBlocks := []*TableBlock{t.active}
+	for block := range t.pendingBlocks {
+		memoryBlocks = append(memoryBlocks, block)
+
+		if block.ulid.Time() < lastReadBlockTimestamp {
+			lastReadBlockTimestamp = block.ulid.Time()
+		}
+	}
+	t.mtx.RUnlock()
+
+	for _, block := range memoryBlocks {
+		if err := block.RowGroupIterator(ctx, filterExpr, filter, false, iteratorFunc); err != nil {
+			return err
+		}
+	}
+
+	if err := t.IterateBucketBlocks(t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
 		return err
 	}
 
@@ -296,7 +364,7 @@ func (t *Table) SchemaIterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, func(rg dynparquet.DynamicRowGroup) bool {
+	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, false, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -338,13 +406,20 @@ func (t *Table) SchemaIterator(
 	return err
 }
 
+func generateULID() ulid.ULID {
+	t := time.Now()
+	entropy := ulid.Monotonic(rand.New(rand.NewSource(t.UnixNano())), 0)
+	return ulid.MustNew(ulid.Timestamp(t), entropy)
+}
+
 func newTableBlock(table *Table) (*TableBlock, error) {
 	index := btree.New(table.db.columnStore.indexDegree)
 	tb := &TableBlock{
 		table:  table,
 		index:  atomic.NewUnsafePointer(unsafe.Pointer(index)),
 		wg:     &sync.WaitGroup{},
-		mtx:    &sync.Mutex{},
+		mtx:    &sync.RWMutex{},
+		ulid:   generateULID(),
 		size:   atomic.NewInt64(0),
 		logger: table.logger,
 	}
@@ -367,6 +442,9 @@ func (t *TableBlock) Sync() {
 }
 
 func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.SerializedBuffer) error {
+	t.pendingWritersWg.Add(1)
+	defer t.pendingWritersWg.Done()
+
 	defer func() {
 		t.table.metrics.rowsInserted.Add(float64(buf.NumRows()))
 		t.table.metrics.rowInsertSize.Observe(float64(buf.NumRows()))
@@ -587,10 +665,15 @@ func (t *TableBlock) RowGroupIterator(
 	ctx context.Context,
 	filterExpr logicalplan.Expr,
 	filter TrueNegativeFilter,
+	ignoreWatermark bool,
 	iterator func(rg dynparquet.DynamicRowGroup) bool,
 ) error {
 	index := t.Index()
-	watermark := t.table.db.beginRead()
+
+	watermark := uint64(math.MaxUint64)
+	if !ignoreWatermark {
+		watermark = t.table.db.beginRead()
+	}
 
 	var err error
 	index.Ascend(func(i btree.Item) bool {
@@ -611,8 +694,7 @@ func (t *TableBlock) RowGroupIterator(
 					return false
 				}
 				if mayContainUsefulData {
-					continu := iterator(rg)
-					if !continu {
+					if continu := iterator(rg); !continu {
 						return false
 					}
 				}
@@ -848,6 +930,55 @@ func (t *TableBlock) abort(commit func(), granule *Granule) {
 			return
 		}
 	}
+}
+
+func (t *TableBlock) Serialize() ([]byte, error) {
+	ctx := context.Background()
+
+	// Read all row groups
+	rowGroups := []dynparquet.DynamicRowGroup{}
+	err := t.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, true, func(rg dynparquet.DynamicRowGroup) bool {
+		rowGroups = append(rowGroups, rg)
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := bytes.NewBuffer(nil)
+	cols := merged.DynamicColumns()
+	w, err := t.table.config.schema.NewWriter(buf, cols)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := merged.Rows()
+	n := 0
+	for {
+		rowsBuf := make([]parquet.Row, 1)
+		_, err := rows.ReadRows(rowsBuf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		_, err = w.WriteRows(rowsBuf)
+		if err != nil {
+			return nil, err
+		}
+		n++
+	}
+
+	err = w.Close()
+
+	fmt.Printf("writing %d rows to disk\n", n)
+	return buf.Bytes(), err
 }
 
 // filterGranule returns false if this granule does not contain useful data.
