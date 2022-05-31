@@ -95,14 +95,7 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Re
 		return err
 	}
 
-	optimizers := []logicalplan.Optimizer{
-		&logicalplan.PhysicalProjectionPushDown{},
-		&logicalplan.FilterPushDown{},
-		&logicalplan.DistinctPushDown{},
-		&logicalplan.ProjectionPushDown{},
-	}
-
-	for _, optimizer := range optimizers {
+	for _, optimizer := range logicalplan.DefaultOptimizers {
 		logicalPlan = optimizer.Optimize(logicalPlan)
 	}
 
