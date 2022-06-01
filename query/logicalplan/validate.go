@@ -77,7 +77,7 @@ func Validate(plan *LogicalPlan) error {
 		case plan.Projection != nil:
 			err = nil
 		case plan.Aggregation != nil:
-			err = nil
+			err = ValidateAggregation(plan)
 		}
 	}
 
@@ -140,6 +140,72 @@ func ValidateSingleFieldSet(plan *LogicalPlan) *PlanValidationError {
 			message: strings.Join(message, ""),
 		}
 	}
+	return nil
+}
+
+// ValidateAggregation validates the logical plan's aggregation step.
+func ValidateAggregation(plan *LogicalPlan) *PlanValidationError {
+	// check that the expression is not nil
+	if plan.Aggregation.AggExpr == nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "invalid aggregation: expression cannot be nil",
+		}
+	}
+
+	// check that the expression is valid
+	aggExprError := ValidateAggregationExpr(plan)
+	if aggExprError != nil {
+		return &PlanValidationError{
+			plan:     plan,
+			message:  "invalid aggregation",
+			children: []*ExprValidationError{aggExprError},
+		}
+	}
+
+	return nil
+}
+
+func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
+	// check that the aggregation expression has the required structure
+	colFinder := newTypeFinder((*Column)(nil))
+	plan.Aggregation.AggExpr.Accept(&colFinder)
+
+	aggFuncFinder := newTypeFinder((*AggregationFunction)(nil))
+	plan.Aggregation.AggExpr.Accept(&aggFuncFinder)
+
+	if colFinder.result == nil || aggFuncFinder.result == nil {
+		return &ExprValidationError{
+			message: "aggregation expression is invalid. must contain AggregationFunction and Column",
+			expr:    plan.Aggregation.AggExpr,
+		}
+	}
+
+	// check that column being aggregated on exists in the schema
+	colExpr := colFinder.result.(*Column)
+	schema := plan.InputSchema()
+	if schema == nil {
+		return nil // cannot check column type if there's no input schema
+	}
+
+	column, found := schema.ColumnByName(colExpr.ColumnName)
+	if !found {
+		return &ExprValidationError{
+			message: fmt.Sprintf("column not found: %s", colExpr.ColumnName),
+			expr:    plan.Aggregation.AggExpr,
+		}
+	}
+
+	// check that the column type can be aggregated by the function type
+	columnType := column.StorageLayout.Type()
+	aggFuncExpr := aggFuncFinder.result.(*AggregationFunction)
+	if aggFuncExpr.Func == SumAggFunc && columnType.LogicalType().UTF8 != nil {
+		return &ExprValidationError{
+			message: "cannot sum text column",
+			expr:    plan.Aggregation.AggExpr,
+		}
+	}
+
 	return nil
 }
 
