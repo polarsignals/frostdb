@@ -44,13 +44,13 @@ func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
 	return false
 }
 
-func binaryBooleanExpr(expr logicalplan.BinaryExpr) (BooleanExpression, error) {
+func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) {
 	switch expr.Op {
 	case logicalplan.EqOp, logicalplan.NotEqOp, logicalplan.LTOp, logicalplan.LTEOp, logicalplan.GTOp, logicalplan.GTEOp, logicalplan.RegExpOp, logicalplan.NotRegExpOp:
 		var leftColumnRef *ArrayRef
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
-			case logicalplan.Column:
+			case *logicalplan.Column:
 				leftColumnRef = &ArrayRef{
 					ColumnName: e.ColumnName,
 				}
@@ -65,7 +65,7 @@ func binaryBooleanExpr(expr logicalplan.BinaryExpr) (BooleanExpression, error) {
 		var rightScalar scalar.Scalar
 		expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
-			case logicalplan.LiteralExpr:
+			case *logicalplan.LiteralExpr:
 				rightScalar = e.Value
 				return false
 			}
@@ -146,7 +146,7 @@ func (a *AndExpr) String() string {
 
 func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
 	switch e := expr.(type) {
-	case logicalplan.BinaryExpr:
+	case *logicalplan.BinaryExpr:
 		return binaryBooleanExpr(e)
 	default:
 		return nil, ErrUnsupportedBooleanExpression

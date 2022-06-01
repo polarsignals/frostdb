@@ -73,16 +73,16 @@ func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) (arrow.F
 
 func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 	switch e := expr.(type) {
-	case logicalplan.Column:
+	case *logicalplan.Column:
 		return plainProjection{
 			matcher: e.Matcher(),
 		}, nil
-	case logicalplan.AliasExpr:
+	case *logicalplan.AliasExpr:
 		return aliasProjection{
 			matcher: e.Matcher(),
 			name:    e.Name(),
 		}, nil
-	case logicalplan.BinaryExpr:
+	case *logicalplan.BinaryExpr:
 		boolExpr, err := binaryBooleanExpr(e)
 		if err != nil {
 			return nil, err

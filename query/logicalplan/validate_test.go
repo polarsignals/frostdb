@@ -12,7 +12,7 @@ import (
 func TestOnlyOneFieldCanBeSet(t *testing.T) {
 	plan := LogicalPlan{
 		Filter: &Filter{
-			Expr: BinaryExpr{
+			Expr: &BinaryExpr{
 				Left:  Col("example_type"),
 				Op:    EqOp,
 				Right: Literal(4),
@@ -35,12 +35,12 @@ func TestOnlyOneFieldCanBeSet(t *testing.T) {
 func TestCanTraverseInputThatIsInvalid(t *testing.T) {
 	_, err := (&Builder{}).
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-		Filter(BinaryExpr{
+		Filter(&BinaryExpr{
 			Left:  Col("example_type"),
 			Op:    EqOp,
 			Right: Literal(4),
 		}).
-		Filter(BinaryExpr{
+		Filter(&BinaryExpr{
 			Left:  Col("stacktrace"),
 			Op:    EqOp,
 			Right: Literal(4),
@@ -60,7 +60,7 @@ func TestCanTraverseInputThatIsInvalid(t *testing.T) {
 func TestFilterBinaryExprLeftSideMustBeColumn(t *testing.T) {
 	_, err := (&Builder{}).
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-		Filter(BinaryExpr{
+		Filter(&BinaryExpr{
 			Left:  Literal(5),
 			Op:    EqOp,
 			Right: Literal(4),
@@ -78,7 +78,7 @@ func TestFilterBinaryExprLeftSideMustBeColumn(t *testing.T) {
 func TestFilterBinaryExprColMustMatchLiteralType(t *testing.T) {
 	_, err := (&Builder{}).
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-		Filter(BinaryExpr{
+		Filter(&BinaryExpr{
 			Left:  Col("example_type"),
 			Op:    EqOp,
 			Right: Literal(4.6),
@@ -96,7 +96,7 @@ func TestFilterBinaryExprColMustMatchLiteralType(t *testing.T) {
 	// check that it also works the other way around, can't compare number w/ string
 	_, err = (&Builder{}).
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-		Filter(BinaryExpr{
+		Filter(&BinaryExpr{
 			Left:  Col("timestamp"),
 			Op:    EqOp,
 			Right: Literal("albert"),
@@ -115,12 +115,12 @@ func TestFilterAndExprEvaluatesEachAndedRule(t *testing.T) {
 	_, err := (&Builder{}).
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
 		Filter(And(
-			BinaryExpr{
+			&BinaryExpr{
 				Left:  Col("example_type"),
 				Op:    EqOp,
 				Right: Literal(4),
 			},
-			BinaryExpr{
+			&BinaryExpr{
 				Left:  Literal("a"),
 				Op:    EqOp,
 				Right: Literal("b"),
