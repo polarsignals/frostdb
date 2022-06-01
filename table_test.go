@@ -282,7 +282,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	}
 	table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
 		defer r.Release()
-		// t.Log(r)
+		t.Log(r)
 		return nil
 	})
 
@@ -422,7 +422,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 
 	table.Iterator(context.Background(), memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
 		defer r.Release()
-		// t.Log(r)
+		t.Log(r)
 		return nil
 	})
 

@@ -187,6 +187,6 @@ func TestDistinctProjection(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Release()
 
-	// t.Log(r)
+	t.Log(r)
 	require.Equal(t, int64(3), r.NumCols())
 }
