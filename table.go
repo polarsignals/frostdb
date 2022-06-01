@@ -609,6 +609,18 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		}
 	}
 
+	// we disable compaction for new granules before allowing new insert to be propagated to them
+	for _, childGranule := range granules {
+		childGranule.metadata.pruned.Store(1)
+	}
+
+	// we restore the possibility to trigger compaction after we exited the function
+	defer func() {
+		for _, childGranule := range granules {
+			childGranule.metadata.pruned.Store(0)
+		}
+	}()
+
 	// set the newGranules pointer, so new writes will propogate into these new granules
 	granule.newGranules = granules
 
