@@ -25,7 +25,7 @@ func ParquetRowGroupToArrowRecord(
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
-) (arrow.Record, error) {
+) (arrow.Record, *arrow.Schema, error) {
 	switch rg.(type) {
 	case *dynparquet.MergedRowGroup:
 		return rowBasedParquetRowGroupToArrowRecord(ctx, pool, rg)
@@ -46,7 +46,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 	ctx context.Context,
 	pool memory.Allocator,
 	rg parquet.RowGroup,
-) (arrow.Record, error) {
+) (arrow.Record, *arrow.Schema, error) {
 	s := rg.Schema()
 
 	parquetFields := s.Fields()
@@ -55,13 +55,13 @@ func rowBasedParquetRowGroupToArrowRecord(
 	for _, parquetField := range parquetFields {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		default:
 			name := parquetField.Name()
 			node := dynparquet.FieldByName(s, name)
 			typ, newValueWriter, err := convert.ParquetNodeToTypeWithWriterFunc(node)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			nullable := false
 			if node.Optional() {
@@ -93,7 +93,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		default:
 		}
 		rowBuf := make([]parquet.Row, 64) // Random guess.
@@ -102,7 +102,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 			break
 		}
 		if err != nil && err != io.EOF {
-			return nil, fmt.Errorf("read row: %w", err)
+			return nil, nil, fmt.Errorf("read row: %w", err)
 		}
 		rowBuf = rowBuf[:n]
 
@@ -117,7 +117,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 		}
 	}
 
-	return b.NewRecord(), nil
+	return b.NewRecord(), b.Schema(), nil
 }
 
 // contiguousParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
@@ -128,7 +128,7 @@ func contiguousParquetRowGroupToArrowRecord(
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
-) (arrow.Record, error) {
+) (arrow.Record, *arrow.Schema, error) {
 	s := rg.Schema()
 	parquetColumns := rg.ColumnChunks()
 	parquetFields := s.Fields()
@@ -142,7 +142,7 @@ func contiguousParquetRowGroupToArrowRecord(
 		for i, field := range parquetFields {
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			default:
 				name := field.Name()
 				if distinctColumns[0].Match(name) {
@@ -153,7 +153,7 @@ func contiguousParquetRowGroupToArrowRecord(
 						true,
 					)
 					if err != nil {
-						return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+						return nil, nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
 					}
 					fields = append(fields, arrow.Field{
 						Name:     name,
@@ -167,7 +167,7 @@ func contiguousParquetRowGroupToArrowRecord(
 		}
 
 		schema := arrow.NewSchema(fields, nil)
-		return array.NewRecord(schema, cols, rows), nil
+		return array.NewRecord(schema, cols, rows), schema, nil
 	}
 
 	fields := make([]arrow.Field, 0, len(parquetFields))
@@ -176,7 +176,7 @@ func contiguousParquetRowGroupToArrowRecord(
 	for i, parquetField := range parquetFields {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		default:
 			if includedProjection(projections, parquetField.Name()) {
 				typ, nullable, array, err := parquetColumnToArrowArray(
@@ -186,7 +186,7 @@ func contiguousParquetRowGroupToArrowRecord(
 					false,
 				)
 				if err != nil {
-					return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+					return nil, nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
 				}
 				fields = append(fields, arrow.Field{
 					Name:     parquetField.Name(),
@@ -199,7 +199,7 @@ func contiguousParquetRowGroupToArrowRecord(
 	}
 
 	schema := arrow.NewSchema(fields, nil)
-	return array.NewRecord(schema, cols, rg.NumRows()), nil
+	return array.NewRecord(schema, cols, rg.NumRows()), schema, nil
 }
 
 func includedProjection(projections []logicalplan.ColumnMatcher, name string) bool {

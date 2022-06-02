@@ -326,7 +326,7 @@ func (t *Table) Iterator(
 			return ctx.Err()
 		default:
 			var record arrow.Record
-			record, err = pqarrow.ParquetRowGroupToArrowRecord(
+			record, _, err = pqarrow.ParquetRowGroupToArrowRecord(
 				ctx,
 				pool,
 				rg,
@@ -404,6 +404,47 @@ func (t *Table) SchemaIterator(
 	}
 
 	return err
+}
+
+func (t *Table) ArrowSchema(
+	ctx context.Context,
+	pool memory.Allocator,
+	projections []logicalplan.ColumnMatcher,
+	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
+) (*arrow.Schema, error) {
+	filter, err := booleanExpr(filterExpr)
+	if err != nil {
+		return nil, err
+	}
+
+	rowGroups := []dynparquet.DynamicRowGroup{}
+	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, false,
+		func(rg dynparquet.DynamicRowGroup) bool {
+			rowGroups = append(rowGroups, rg)
+			return true
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Will there ever be more than two rowGroups here?
+	if len(rowGroups) != 1 {
+		return nil, fmt.Errorf("expected exactly one row group but got %d", len(rowGroups))
+	}
+
+	for _, rg := range rowGroups {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			_, schema, err := pqarrow.ParquetRowGroupToArrowRecord(ctx, pool, rg, projections, filterExpr, distinctColumns)
+			return schema, err
+		}
+	}
+
+	return nil, nil
 }
 
 func generateULID() ulid.ULID {

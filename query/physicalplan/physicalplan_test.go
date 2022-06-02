@@ -43,6 +43,16 @@ func (m *mockTableReader) SchemaIterator(
 	return nil
 }
 
+func (m *mockTableReader) ArrowSchema(
+	ctx context.Context,
+	pool memory.Allocator,
+	projection []logicalplan.ColumnMatcher,
+	filter logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
+) (*arrow.Schema, error) {
+	return nil, nil
+}
+
 type mockTableProvider struct {
 	schema *dynparquet.Schema
 }

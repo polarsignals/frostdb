@@ -118,6 +118,13 @@ type TableReader interface {
 		distinctColumns []ColumnMatcher,
 		callback func(r arrow.Record) error,
 	) error
+	ArrowSchema(
+		ctx context.Context,
+		pool memory.Allocator,
+		projection []ColumnMatcher,
+		filter Expr, // TODO: We probably don't need this
+		distinctColumns []ColumnMatcher,
+	) (*arrow.Schema, error)
 	Schema() *dynparquet.Schema
 }
 

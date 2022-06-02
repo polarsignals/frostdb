@@ -1181,3 +1181,62 @@ func Test_Table_CancelBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), totalrows)
 }
+
+func Test_Table_ArrowSchema(t *testing.T) {
+	table := basicTable(t, 8192)
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	schema, err := table.ArrowSchema(
+		ctx,
+		memory.NewGoAllocator(),
+		nil, nil, nil,
+	)
+	require.NoError(t, err)
+
+	require.Len(t, schema.Fields(), 6)
+	require.Equal(t,
+		arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
+		schema.Field(0),
+	)
+	require.Equal(t,
+		arrow.Field{Name: "labels.label1", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
+		schema.Field(1),
+	)
+	require.Equal(t,
+		arrow.Field{Name: "labels.label2", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
+		schema.Field(2),
+	)
+	require.Equal(t,
+		arrow.Field{Name: "stacktrace", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
+		schema.Field(3),
+	)
+	require.Equal(t,
+		arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
+		schema.Field(4),
+	)
+	require.Equal(t,
+		arrow.Field{Name: "value", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
+		schema.Field(5),
+	)
+}
