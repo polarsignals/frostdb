@@ -264,11 +264,14 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	tx, err := table.InsertBuffer(context.Background(), buf)
 	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
+
+	// Wait for the last tx to be marked as completed
+	table.db.Wait(tx)
 
 	// Because inserts happen in parallel to compaction both of the triggered compactions may have aborted because the writes weren't completed.
 	// Manually perform the compaction if we run into this corner case.
