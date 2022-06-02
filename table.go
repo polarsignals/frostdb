@@ -430,6 +430,9 @@ func (t *Table) ArrowSchema(
 		return nil, err
 	}
 
+	// TODO: We should be able to figure out if dynamic columns are even queried.
+	// If not, then we can simply return the first schema.
+
 	fieldNames := make([]string, 0, 16)
 	fieldsMap := make(map[string]arrow.Field)
 
