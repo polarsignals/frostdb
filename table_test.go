@@ -1207,6 +1207,27 @@ func Test_Table_ArrowSchema(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
+	samples = dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3},
+		},
+		Timestamp: 1,
+		Value:     2,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
 	schema, err := table.ArrowSchema(
 		ctx,
 		memory.NewGoAllocator(),
@@ -1214,7 +1235,7 @@ func Test_Table_ArrowSchema(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	require.Len(t, schema.Fields(), 6)
+	require.Len(t, schema.Fields(), 7)
 	require.Equal(t,
 		arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
 		schema.Field(0),
@@ -1228,15 +1249,19 @@ func Test_Table_ArrowSchema(t *testing.T) {
 		schema.Field(2),
 	)
 	require.Equal(t,
-		arrow.Field{Name: "stacktrace", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
+		arrow.Field{Name: "labels.label3", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
 		schema.Field(3),
 	)
 	require.Equal(t,
-		arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
+		arrow.Field{Name: "stacktrace", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
 		schema.Field(4),
 	)
 	require.Equal(t,
-		arrow.Field{Name: "value", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
+		arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
 		schema.Field(5),
+	)
+	require.Equal(t,
+		arrow.Field{Name: "value", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
+		schema.Field(6),
 	)
 }

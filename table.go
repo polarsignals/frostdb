@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 	"unsafe"
@@ -429,10 +430,8 @@ func (t *Table) ArrowSchema(
 		return nil, err
 	}
 
-	// Will there ever be more than two rowGroups here?
-	if len(rowGroups) != 1 {
-		return nil, fmt.Errorf("expected exactly one row group but got %d", len(rowGroups))
-	}
+	fieldNames := make([]string, 0, 16)
+	fieldsMap := make(map[string]arrow.Field)
 
 	for _, rg := range rowGroups {
 		select {
@@ -440,11 +439,26 @@ func (t *Table) ArrowSchema(
 			return nil, ctx.Err()
 		default:
 			_, schema, err := pqarrow.ParquetRowGroupToArrowRecord(ctx, pool, rg, projections, filterExpr, distinctColumns)
-			return schema, err
+			if err != nil {
+				return nil, err
+			}
+			for _, f := range schema.Fields() {
+				if _, ok := fieldsMap[f.Name]; !ok {
+					fieldNames = append(fieldNames, f.Name)
+					fieldsMap[f.Name] = f
+				}
+			}
 		}
 	}
 
-	return nil, nil
+	sort.Strings(fieldNames)
+
+	fields := make([]arrow.Field, 0, len(fieldNames))
+	for _, name := range fieldNames {
+		fields = append(fields, fieldsMap[name])
+	}
+
+	return arrow.NewSchema(fields, nil), nil
 }
 
 func generateULID() ulid.ULID {
