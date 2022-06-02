@@ -264,11 +264,11 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	tx, err := table.InsertBuffer(context.Background(), buf)
-	require.NoError(t, err)
-
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
+
+	tx, err := table.InsertBuffer(context.Background(), buf)
+	require.NoError(t, err)
 
 	// Wait for the last tx to be marked as completed
 	table.db.Wait(tx)
