@@ -664,7 +664,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		}
 
 		// Point to the new index
-		if t.index.CAS(t.index.Load(), unsafe.Pointer(index)) {
+		if t.index.CAS(unsafe.Pointer(curIndex), unsafe.Pointer(index)) {
 			sizeDiff := serBuf.ParquetFile().Size() - sizeBefore
 			t.size.Add(sizeDiff)
 			return
