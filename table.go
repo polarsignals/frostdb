@@ -490,8 +490,8 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		return
 	}
 
-	// Obtain a new tx for this compaction
-	tx, watermark, commit := t.table.db.begin()
+	// Use the latest watermark as the tx id
+	tx := t.table.db.tx.Load()
 
 	// Start compaction by adding sentinel node to parts list
 	parts := granule.parts.Sentinel(Compacting)
@@ -503,7 +503,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	// Convert all the parts into a set of rows
 	parts.Iterate(func(p *Part) bool {
 		// Don't merge uncompleted transactions
-		if p.tx > watermark {
+		if p.tx > tx {
 			if p.tx < math.MaxUint64 { // drop tombstoned parts
 				remain = append(remain, p)
 			}
@@ -519,13 +519,13 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	})
 
 	if len(bufs) == 0 { // aborting; nothing to do
-		t.abort(commit, granule)
+		t.abort(granule)
 		return
 	}
 
 	merge, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
-		t.abort(commit, granule)
+		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to merge dynamic row groups", "err", err)
 		return
 	}
@@ -534,7 +534,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	cols := merge.DynamicColumns()
 	w, err := t.table.config.schema.NewWriter(b, cols)
 	if err != nil {
-		t.abort(commit, granule)
+		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to create new schema writer", "err", err)
 		return
 	}
@@ -548,13 +548,13 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 			break
 		}
 		if err != nil {
-			t.abort(commit, granule)
+			t.abort(granule)
 			level.Error(t.logger).Log("msg", "error reading rows", "err", err)
 			return
 		}
 		_, err = w.WriteRows(rowBuf)
 		if err != nil {
-			t.abort(commit, granule)
+			t.abort(granule)
 			level.Error(t.logger).Log("msg", "error writing rows", "err", err)
 			return
 		}
@@ -562,39 +562,39 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	}
 
 	if err := rows.Close(); err != nil {
-		t.abort(commit, granule)
+		t.abort(granule)
 		level.Error(t.logger).Log("msg", "error closing schema writer", "err", err)
 		return
 	}
 
 	if err := w.Close(); err != nil {
-		t.abort(commit, granule)
+		t.abort(granule)
 		level.Error(t.logger).Log("msg", "error closing schema writer", "err", err)
 		return
 	}
 
 	if n < t.table.db.columnStore.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
-		t.abort(commit, granule)
+		t.abort(granule)
 		return
 	}
 
 	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
 	if err != nil {
-		t.abort(commit, granule)
+		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to create reader from bytes", "err", err)
 		return
 	}
 
 	g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, NewPart(tx, serBuf))
 	if err != nil {
-		t.abort(commit, granule)
+		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to create granule", "err", err)
 		return
 	}
 
 	granules, err := g.split(tx, t.table.db.columnStore.granuleSize/t.table.db.columnStore.splitSize)
 	if err != nil {
-		t.abort(commit, granule)
+		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to split granule", "err", err)
 		return
 	}
@@ -603,7 +603,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	for _, p := range remain {
 		err := addPartToGranule(granules, p)
 		if err != nil {
-			t.abort(commit, granule)
+			t.abort(granule)
 			level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
 			return
 		}
@@ -636,15 +636,10 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		return true
 	})
 	if err != nil {
-		t.abort(commit, granule)
+		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
 		return
 	}
-
-	// commit our compacted writes.
-	// Do this here to avoid a small race condition where we swap the index, and before what was previously a defer commit() would allow a read
-	// to not find the compacted parts
-	commit()
 
 	for {
 		curIndex := t.Index()
@@ -935,10 +930,9 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 }
 
 // abort a compaction transaction.
-func (t *TableBlock) abort(commit func(), granule *Granule) {
+func (t *TableBlock) abort(granule *Granule) {
 	for {
 		if granule.metadata.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
-			commit()
 			return
 		}
 	}
