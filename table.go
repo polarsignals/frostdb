@@ -725,13 +725,6 @@ func (t *TableBlock) Index() *btree.BTree {
 	return (*btree.BTree)(t.index.Load())
 }
 
-func (t *TableBlock) granuleIterator(iterator func(g *Granule) bool) {
-	t.Index().Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-		return iterator(g)
-	})
-}
-
 func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*Granule]*dynparquet.SerializedBuffer, error) {
 	// Special case: if there is only one granule, insert parts into it until full.
 	index := t.Index()
