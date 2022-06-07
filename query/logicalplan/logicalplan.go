@@ -101,6 +101,10 @@ func (plan *LogicalPlan) Accept(visitor PlanVisitor) bool {
 	return visitor.PostVisit(plan)
 }
 
+type IteratorProvider interface {
+	Iterator() func(arrow.Record) error
+}
+
 type TableReader interface {
 	View(func(tx uint64) error) error
 	Iterator(
@@ -111,7 +115,7 @@ type TableReader interface {
 		projection []ColumnMatcher,
 		filter Expr,
 		distinctColumns []ColumnMatcher,
-		callback func(r arrow.Record) error,
+		callback IteratorProvider,
 	) error
 	SchemaIterator(
 		ctx context.Context,

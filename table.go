@@ -8,10 +8,13 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -293,7 +296,7 @@ func (t *Table) Iterator(
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
-	iterator func(r arrow.Record) error,
+	iteratorProvider logicalplan.IteratorProvider,
 ) error {
 	filter, err := booleanExpr(filterExpr)
 	if err != nil {
@@ -333,6 +336,49 @@ func (t *Table) Iterator(
 		return err
 	}
 
+	// convert the rowGroups to arrow records in parallel and then send call iterator
+	eg, egCtx := errgroup.WithContext(ctx)
+	numWorkers := runtime.NumCPU()
+	rgChan := make(chan dynparquet.DynamicRowGroup, numWorkers*2)
+	for i := 0; i < numWorkers; i++ {
+		iterator := iteratorProvider.Iterator()
+		eg.Go(func() error {
+			for rg := range rgChan {
+				if schema == nil {
+					schema, err = pqarrow.ParquetRowGroupToArrowSchema(
+						ctx,
+						rg,
+						projections,
+						filterExpr,
+						distinctColumns,
+					)
+					if err != nil {
+						return err
+					}
+				}
+
+				var record arrow.Record
+				record, err = pqarrow.ParquetRowGroupToArrowRecord(
+					ctx,
+					pool,
+					rg,
+					schema,
+					filterExpr,
+					distinctColumns,
+				)
+				if err != nil {
+					return fmt.Errorf("failed to convert row group to arrow record: %v", err)
+				}
+				err = iterator(record)
+				record.Release()
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
 	// Previously we sorted all row groups into a single row group here,
 	// but it turns out that none of the downstream uses actually rely on
 	// the sorting so it's not worth it in the general case. Physical plans
@@ -342,38 +388,15 @@ func (t *Table) Iterator(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-			if schema == nil {
-				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
-					ctx,
-					rg,
-					projections,
-					filterExpr,
-					distinctColumns,
-				)
-				if err != nil {
-					return err
-				}
-			}
-
-			var record arrow.Record
-			record, err = pqarrow.ParquetRowGroupToArrowRecord(
-				ctx,
-				pool,
-				rg,
-				schema,
-				filterExpr,
-				distinctColumns,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
-			}
-			err = iterator(record)
-			record.Release()
-			if err != nil {
-				return err
-			}
+		case rgChan <- rg:
+		case <-egCtx.Done():
+			break
 		}
+	}
+	close(rgChan)
+	err = eg.Wait()
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -1038,6 +1061,9 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 	}
 
 	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
+	if err != nil {
+		return nil, err
+	}
 	if err != nil {
 		return nil, err
 	}

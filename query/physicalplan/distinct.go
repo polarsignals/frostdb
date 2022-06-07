@@ -81,22 +81,29 @@ func (d *Distinction) Callback(r arrow.Record) error {
 			)
 		}
 
+		// if we have already seen the value continue ...
 		d.mtx.RLock()
 		if _, ok := d.seen[hash]; ok {
 			d.mtx.RUnlock()
 			continue
 		}
 		d.mtx.RUnlock()
+		// ... otherwise add value to result
 
+		d.mtx.Lock()
+		// double check that no other thread set the value in between when we held
+		// the read and write locks
+		if _, ok := d.seen[hash]; ok {
+			d.mtx.Unlock()
+			continue
+		}
 		for j, arr := range distinctArrays {
 			err := appendValue(resBuilders[j], arr, i)
 			if err != nil {
 				return err
 			}
 		}
-
 		rows++
-		d.mtx.Lock()
 		d.seen[hash] = struct{}{}
 		d.mtx.Unlock()
 	}

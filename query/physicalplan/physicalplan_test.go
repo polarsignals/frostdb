@@ -32,7 +32,7 @@ func (m *mockTableReader) Iterator(
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
-	callback func(r arrow.Record) error,
+	callback logicalplan.IteratorProvider,
 ) error {
 	return nil
 }
