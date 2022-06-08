@@ -468,7 +468,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 			return ctx.Err()
 		default:
 			part := NewPart(tx, serBuf)
-			card, err := granule.AddPart(part)
+			card, err := addPartToGranule([]*Granule{granule}, part)
 			if err != nil {
 				return fmt.Errorf("failed to add part to granule: %w", err)
 			}
@@ -601,7 +601,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	// add remaining parts onto new granules
 	for _, p := range remain {
-		err := addPartToGranule(granules, p)
+		_, err := addPartToGranule(granules, p)
 		if err != nil {
 			t.abort(granule)
 			level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
@@ -629,7 +629,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	// Now we need to copy any new parts that happened while we were compacting
 	parts.Iterate(func(p *Part) bool {
-		err = addPartToGranule(granules, p)
+		_, err = addPartToGranule(granules, p)
 		if err != nil {
 			return false
 		}
@@ -884,29 +884,17 @@ func (t *TableBlock) compact(g *Granule) {
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
-func addPartToGranule(granules []*Granule, p *Part) error {
-	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
-	_, err := reader.ReadRows(rowBuf)
-	if err == io.EOF {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err := reader.Close(); err != nil {
-		return err
-	}
-	row := rowBuf.GetCopy(0)
+func addPartToGranule(granules []*Granule, p *Part) (uint64, error) {
 
 	var prev *Granule
 	for _, g := range granules {
-		if g.tableConfig.schema.RowLessThan(row, g.Least()) {
+		if g.tableConfig.schema.RowLessThan(p.least, g.Least()) {
 			if prev != nil {
-				if _, err := prev.AddPart(p); err != nil {
-					return err
+				card, err := prev.AddPart(p)
+				if err != nil {
+					return 0, err
 				}
-				return nil
+				return card, nil
 			}
 		}
 		prev = g
@@ -914,12 +902,16 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 
 	if prev != nil {
 		// Save part to prev
-		if _, err := prev.AddPart(p); err != nil {
-			return err
+		card, err := prev.AddPart(p)
+		if err != nil {
+			return 0, err
 		}
+
+		return card, nil
 	}
 
-	return nil
+	// TODO, refactor this case should never be possible
+	return 0, nil
 }
 
 // abort a compaction transaction.

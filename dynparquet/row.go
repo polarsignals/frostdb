@@ -38,6 +38,10 @@ type DynamicRow struct {
 }
 
 func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
+	if b == nil {
+		return true
+	}
+
 	dynamicColumns := mergeDynamicColumnSets([]map[string][]string{a.DynamicColumns, b.DynamicColumns})
 	cols := s.parquetSortingColumns(dynamicColumns)
 	for _, col := range cols {

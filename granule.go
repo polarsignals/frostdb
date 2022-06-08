@@ -66,21 +66,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 	if firstPart != nil {
 		g.metadata.card = atomic.NewUint64(uint64(firstPart.Buf.NumRows()))
 		g.parts.Prepend(firstPart)
-		// Since we assume a part is sorted, we need only to look at the first row in each Part
-		rows := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-		reader := firstPart.Buf.DynamicRowGroup(0).DynamicRows()
-		n, err := reader.ReadRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		if err := reader.Close(); err != nil {
-			return nil, err
-		}
-		if n != 1 {
-			return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
-		}
-		r := rows.GetCopy(0)
-		g.metadata.least.Store(unsafe.Pointer(r))
+		g.metadata.least.Store(unsafe.Pointer(firstPart.least))
 
 		// Set the minmaxes on the new granule
 		if err := g.minmaxes(firstPart); err != nil {
@@ -101,24 +87,11 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 	node := g.parts.Prepend(p)
 
 	newcard := g.metadata.card.Add(uint64(p.Buf.NumRows()))
-	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
-	n, err := reader.ReadRows(rowBuf)
-	if err != nil {
-		return 0, fmt.Errorf("read first row of part: %w", err)
-	}
-	if n != 1 {
-		return 0, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
-	}
-	r := rowBuf.GetCopy(0)
-	if err := reader.Close(); err != nil {
-		return 0, err
-	}
 
 	for {
 		least := g.metadata.least.Load()
-		if least == nil || g.tableConfig.schema.RowLessThan(r, (*dynparquet.DynamicRow)(least)) {
-			if g.metadata.least.CAS(least, unsafe.Pointer(r)) {
+		if least == nil || g.tableConfig.schema.RowLessThan(p.least, (*dynparquet.DynamicRow)(least)) {
+			if g.metadata.least.CAS(least, unsafe.Pointer(p.least)) {
 				break
 			}
 		} else {
@@ -133,7 +106,7 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 
 	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
 	if node.sentinel == Compacted {
-		err := addPartToGranule(g.newGranules, p)
+		_, err := addPartToGranule(g.newGranules, p)
 		if err != nil {
 			return 0, err
 		}
