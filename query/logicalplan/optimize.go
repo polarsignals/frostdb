@@ -1,7 +1,11 @@
 package logicalplan
 
+import (
+	"github.com/polarsignals/arcticdb/dynparquet"
+)
+
 type Optimizer interface {
-	Optimize(plan *LogicalPlan) *LogicalPlan
+	Optimize(schema *dynparquet.Schema, plan *LogicalPlan) *LogicalPlan
 }
 
 var DefaultOptimizers = []Optimizer{
@@ -17,19 +21,31 @@ var DefaultOptimizers = []Optimizer{
 // the query.
 type PhysicalProjectionPushDown struct{}
 
-func (p *PhysicalProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
-	p.optimize(plan, nil)
+func (p *PhysicalProjectionPushDown) Optimize(schema *dynparquet.Schema, plan *LogicalPlan) *LogicalPlan {
+	p.optimize(schema, plan, nil)
 	return plan
 }
 
-func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsed []ColumnMatcher) {
+func (p *PhysicalProjectionPushDown) optimize(schema *dynparquet.Schema, plan *LogicalPlan, columnsUsed []ColumnMatcher) {
 	switch {
 	case plan.SchemaScan != nil:
 		plan.SchemaScan.Projection = columnsUsed
 	case plan.TableScan != nil:
 		plan.TableScan.Projection = columnsUsed
 	case plan.Filter != nil:
-		columnsUsed = append(columnsUsed, plan.Filter.Expr.ColumnsUsed()...)
+		columns := plan.Filter.Expr.ColumnsUsed()
+		for _, column := range columns {
+			if dc, ok := schema.ColumnByName(column.Name()); ok {
+				if dc.Dynamic {
+					columnsUsed = append(columnsUsed, DynamicColumnMatcher{ColumnName: column.Name()})
+				} else {
+					columnsUsed = append(columnsUsed, column)
+				}
+			} else {
+				columnsUsed = append(columnsUsed, column)
+			}
+		}
+
 	case plan.Distinct != nil:
 		for _, expr := range plan.Distinct.Columns {
 			columnsUsed = append(columnsUsed, expr.ColumnsUsed()...)
@@ -46,7 +62,7 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsed []C
 	}
 
 	if plan.Input != nil {
-		p.optimize(plan.Input, columnsUsed)
+		p.optimize(schema, plan.Input, columnsUsed)
 	}
 }
 
@@ -59,7 +75,7 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsed []C
 // doesn't exist, and insert it in the deepest possible position in the plan.
 type ProjectionPushDown struct{}
 
-func (p *ProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
+func (p *ProjectionPushDown) Optimize(_ *dynparquet.Schema, plan *LogicalPlan) *LogicalPlan {
 	c := &projectionCollector{}
 	c.collect(plan)
 
@@ -134,7 +150,7 @@ func insertProjection(cur *LogicalPlan, projection *Projection) *LogicalPlan {
 // less data from disk. It modifies the plan in place.
 type FilterPushDown struct{}
 
-func (p *FilterPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
+func (p *FilterPushDown) Optimize(_ *dynparquet.Schema, plan *LogicalPlan) *LogicalPlan {
 	p.optimize(plan, nil)
 	return plan
 }
@@ -166,7 +182,7 @@ func (p *FilterPushDown) optimize(plan *LogicalPlan, exprs []Expr) {
 // in downstream distinct operators. It modifies the plan in place.
 type DistinctPushDown struct{}
 
-func (p *DistinctPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
+func (p *DistinctPushDown) Optimize(_ *dynparquet.Schema, plan *LogicalPlan) *LogicalPlan {
 	p.optimize(plan, nil)
 	return plan
 }

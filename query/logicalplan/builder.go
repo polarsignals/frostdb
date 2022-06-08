@@ -85,6 +85,9 @@ func (m DynamicColumnMatcher) Name() string {
 }
 
 func (m DynamicColumnMatcher) Match(columnName string) bool {
+	if m.ColumnName == columnName {
+		return true
+	}
 	return strings.HasPrefix(columnName, m.ColumnName+".")
 }
 

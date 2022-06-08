@@ -230,3 +230,26 @@ func TestMultipleIterations(t *testing.T) {
 	require.Equal(t, 3, i)
 	require.NoError(t, rows.Close())
 }
+
+func TestSchema_ColumnByName(t *testing.T) {
+	schema := NewSampleSchema()
+
+	def, ok := schema.ColumnByName("example_type")
+	require.True(t, ok)
+	require.False(t, def.Dynamic)
+	require.Equal(t, "example_type", def.Name)
+
+	def, ok = schema.ColumnByName("timestamp")
+	require.True(t, ok)
+	require.False(t, def.Dynamic)
+	require.Equal(t, "timestamp", def.Name)
+
+	def, ok = schema.ColumnByName("nonexistent")
+	require.False(t, ok)
+	require.Equal(t, ColumnDefinition{}, def)
+
+	def, ok = schema.ColumnByName("labels.test")
+	require.True(t, ok)
+	require.True(t, def.Dynamic)
+	require.Equal(t, "labels", def.Name)
+}

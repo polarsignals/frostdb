@@ -96,7 +96,7 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Re
 	}
 
 	for _, optimizer := range logicalplan.DefaultOptimizers {
-		logicalPlan = optimizer.Optimize(logicalPlan)
+		logicalPlan = optimizer.Optimize(logicalPlan.InputSchema(), logicalPlan)
 	}
 
 	phyPlan, err := physicalplan.Build(

@@ -22,20 +22,21 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 		Build()
 
 	optimizer := &PhysicalProjectionPushDown{}
-	optimizer.Optimize(p)
+	optimizer.Optimize(tableProvider.schema, p)
 
 	require.Equal(t, &TableScan{
 		TableName:     "table1",
 		TableProvider: tableProvider,
 		// Only these columns are needed to compute the result. There can be
-		// duplicates because the statements just add the matchers for the
-		// columns they access. The optimizer could potentially deduplicate or
-		// use a more efficient datastructure in the future.
+		// duplicates because the statements of separate query plans just add
+		// the matchers for the columns they access. The optimizer could
+		// potentially deduplicate or use a more efficient datastructures
+		// in the future.
 		Projection: []ColumnMatcher{
 			StaticColumnMatcher{ColumnName: "stacktrace"},
 			StaticColumnMatcher{ColumnName: "stacktrace"},
 			StaticColumnMatcher{ColumnName: "value"},
-			StaticColumnMatcher{ColumnName: "labels.test"},
+			DynamicColumnMatcher{ColumnName: "labels.test"},
 		},
 	},
 		// Projection -> Aggregate -> Filter -> TableScan
@@ -50,7 +51,7 @@ func TestOptimizeDistinctPushDown(t *testing.T) {
 		Build()
 
 	optimizer := &DistinctPushDown{}
-	p = optimizer.Optimize(p)
+	p = optimizer.Optimize(dynparquet.NewSampleSchema(), p)
 
 	require.Equal(t, &TableScan{
 		TableName: "table1",
@@ -76,7 +77,7 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 		Build()
 
 	optimizer := &FilterPushDown{}
-	optimizer.Optimize(p)
+	optimizer.Optimize(tableProvider.schema, p)
 
 	require.Equal(t, &TableScan{
 		TableName:     "table1",
@@ -144,8 +145,9 @@ func TestRemoveLowestProjection(t *testing.T) {
 }
 
 func TestProjectionPushDown(t *testing.T) {
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
 	p, _ := (&Builder{}).
-		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
+		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
 			Sum(Col("value")).Alias("value_sum"),
@@ -154,18 +156,19 @@ func TestProjectionPushDown(t *testing.T) {
 		Project(Col("stacktrace")).
 		Build()
 
-	p = (&ProjectionPushDown{}).Optimize(p)
+	p = (&ProjectionPushDown{}).Optimize(tableProvider.schema, p)
 
 	require.True(t, p.Input.Input.Projection != nil)
 }
 
 func TestProjectionPushDownOfDistinct(t *testing.T) {
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
 	p, _ := (&Builder{}).
-		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
+		Scan(tableProvider, "table1").
 		Distinct(DynCol("labels")).
 		Build()
 
-	p = (&ProjectionPushDown{}).Optimize(p)
+	p = (&ProjectionPushDown{}).Optimize(tableProvider.schema, p)
 
 	require.True(t, p.Input.Projection != nil)
 }
@@ -190,7 +193,7 @@ func TestAllOptimizers(t *testing.T) {
 	}
 
 	for _, optimizer := range optimizers {
-		p = optimizer.Optimize(p)
+		p = optimizer.Optimize(tableProvider.schema, p)
 	}
 
 	require.Equal(t, &TableScan{
@@ -204,7 +207,7 @@ func TestAllOptimizers(t *testing.T) {
 			StaticColumnMatcher{ColumnName: "stacktrace"},
 			StaticColumnMatcher{ColumnName: "stacktrace"},
 			StaticColumnMatcher{ColumnName: "value"},
-			StaticColumnMatcher{ColumnName: "labels.test"},
+			DynamicColumnMatcher{ColumnName: "labels.test"},
 		},
 		Filter: &BinaryExpr{
 			Left: &Column{ColumnName: "labels.test"},

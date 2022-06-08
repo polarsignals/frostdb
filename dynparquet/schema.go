@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/segmentio/parquet-go"
 )
@@ -129,6 +130,15 @@ func NewSchema(
 func (s *Schema) ColumnByName(name string) (ColumnDefinition, bool) {
 	i, ok := s.columnIndexes[name]
 	if !ok {
+		// If column is dynamic the prefix before the dot
+		// should be a column with a schema
+		parts := strings.Split(name, ".")
+		if len(parts) == 2 {
+			i, ok = s.columnIndexes[parts[0]]
+			if ok {
+				return s.columns[i], true
+			}
+		}
 		return ColumnDefinition{}, false
 	}
 	return s.columns[i], true

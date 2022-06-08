@@ -71,8 +71,9 @@ func (m *mockTableProvider) GetTable(name string) logicalplan.TableReader {
 }
 
 func TestBuildPhysicalPlan(t *testing.T) {
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
 	p, _ := (&logicalplan.Builder{}).
-		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
+		Scan(tableProvider, "table1").
 		Filter(logicalplan.Col("labels.test").Eq(logicalplan.Literal("abc"))).
 		Aggregate(
 			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
@@ -87,7 +88,7 @@ func TestBuildPhysicalPlan(t *testing.T) {
 	}
 
 	for _, optimizer := range optimizers {
-		optimizer.Optimize(p)
+		optimizer.Optimize(tableProvider.schema, p)
 	}
 
 	_, err := Build(memory.DefaultAllocator, dynparquet.NewSampleSchema(), p)
