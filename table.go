@@ -885,25 +885,16 @@ func (t *TableBlock) compact(g *Granule) {
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
 func addPartToGranule(granules []*Granule, p *Part) error {
-	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
-	_, err := reader.ReadRows(rowBuf)
-	if err == io.EOF {
-		return nil
-	}
+	row, err := p.Least()
 	if err != nil {
 		return err
 	}
-	if err := reader.Close(); err != nil {
-		return err
-	}
-	row := rowBuf.GetCopy(0)
 
 	var prev *Granule
 	for _, g := range granules {
 		if g.tableConfig.schema.RowLessThan(row, g.Least()) {
 			if prev != nil {
-				if _, err := prev.AddPart(p); err != nil {
+				if _, err := prev.addPart(p, row); err != nil {
 					return err
 				}
 				return nil
@@ -914,7 +905,7 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 
 	if prev != nil {
 		// Save part to prev
-		if _, err := prev.AddPart(p); err != nil {
+		if _, err := prev.addPart(p, row); err != nil {
 			return err
 		}
 	}
