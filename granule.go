@@ -120,7 +120,6 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 
 // AddPart returns the new cardinality of the Granule.
 func (g *Granule) AddPart(p *Part) (uint64, error) {
-
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
 	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
 	n, err := reader.ReadRows(rowBuf)

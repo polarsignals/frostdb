@@ -3,8 +3,9 @@ package arcticdb
 import (
 	"fmt"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
 	"github.com/segmentio/parquet-go"
+
+	"github.com/polarsignals/arcticdb/dynparquet"
 )
 
 type Part struct {
@@ -21,7 +22,7 @@ func NewPart(tx uint64, buf *dynparquet.SerializedBuffer) *Part {
 	}
 }
 
-// Least returns the least row  in the part
+// Least returns the least row  in the part.
 func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
 	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
