@@ -1336,6 +1336,8 @@ func Test_Table_ArrowSchema(t *testing.T) {
 			},
 			nil, nil,
 		)
+		require.NoError(t, err)
+
 		require.Len(t, schema.Fields(), 4)
 		require.Equal(t,
 			arrow.Field{Name: "labels.label1", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
