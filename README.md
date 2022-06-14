@@ -6,8 +6,8 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/polarsignals/arcticdb.svg)](https://pkg.go.dev/github.com/polarsignals/arcticdb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/polarsignals/arcticdb)](https://goreportcard.com/report/github.com/polarsignals/arcticdb)
-![Build](https://github.com/polarsignals/arcticdb/actions/workflows/go.yml/badge.svg)
-![Discord](https://img.shields.io/discord/813669360513056790?label=Discord)
+[![Build](https://github.com/polarsignals/arcticdb/actions/workflows/go.yml/badge.svg)](https://github.com/polarsignals/arcticdb/actions/workflows/go.yml)
+[![Discord](https://img.shields.io/discord/813669360513056790?label=Discord)](https://discord.com/invite/ZgUpYgpzXy)
 
 > This project is still in its infancy, consider it not production-ready, probably has various consistency and correctness problems and all API will change!
 
