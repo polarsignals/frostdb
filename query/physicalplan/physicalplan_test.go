@@ -21,8 +21,13 @@ func (m *mockTableReader) Schema() *dynparquet.Schema {
 	return m.schema
 }
 
+func (m *mockTableReader) View(fn func(tx uint64) error) error {
+	return nil
+}
+
 func (m *mockTableReader) Iterator(
 	ctx context.Context,
+	tx uint64,
 	pool memory.Allocator,
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,
@@ -34,6 +39,7 @@ func (m *mockTableReader) Iterator(
 
 func (m *mockTableReader) SchemaIterator(
 	ctx context.Context,
+	tx uint64,
 	pool memory.Allocator,
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,
@@ -45,6 +51,7 @@ func (m *mockTableReader) SchemaIterator(
 
 func (m *mockTableReader) ArrowSchema(
 	ctx context.Context,
+	tx uint64,
 	pool memory.Allocator,
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,

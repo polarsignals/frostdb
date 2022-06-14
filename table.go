@@ -269,9 +269,14 @@ func (t *Table) Insert(ctx context.Context, buf []byte) (uint64, error) {
 	return tx, nil
 }
 
+func (t *Table) View(fn func(tx uint64) error) error {
+	return fn(t.db.beginRead())
+}
+
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *Table) Iterator(
 	ctx context.Context,
+	tx uint64,
 	pool memory.Allocator,
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
@@ -307,7 +312,7 @@ func (t *Table) Iterator(
 	t.mtx.RUnlock()
 
 	for _, block := range memoryBlocks {
-		if err := block.RowGroupIterator(ctx, filterExpr, filter, false, iteratorFunc); err != nil {
+		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
 			return err
 		}
 	}
@@ -353,6 +358,7 @@ func (t *Table) Iterator(
 // all the schemas seen across the table.
 func (t *Table) SchemaIterator(
 	ctx context.Context,
+	tx uint64,
 	pool memory.Allocator,
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
@@ -365,7 +371,7 @@ func (t *Table) SchemaIterator(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, false, func(rg dynparquet.DynamicRowGroup) bool {
+	err = t.ActiveBlock().RowGroupIterator(ctx, tx, nil, filter, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -409,6 +415,7 @@ func (t *Table) SchemaIterator(
 
 func (t *Table) ArrowSchema(
 	ctx context.Context,
+	tx uint64,
 	pool memory.Allocator,
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
@@ -420,7 +427,7 @@ func (t *Table) ArrowSchema(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, nil, filter, false,
+	err = t.ActiveBlock().RowGroupIterator(ctx, tx, nil, filter,
 		func(rg dynparquet.DynamicRowGroup) bool {
 			rowGroups = append(rowGroups, rg)
 			return true
@@ -730,20 +737,16 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	}
 }
 
-// Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
+// RowGroupIterator iterates in order over all granules in the table.
+// It stops iterating when the iterator function returns false.
 func (t *TableBlock) RowGroupIterator(
 	ctx context.Context,
+	tx uint64,
 	filterExpr logicalplan.Expr,
 	filter TrueNegativeFilter,
-	ignoreWatermark bool,
 	iterator func(rg dynparquet.DynamicRowGroup) bool,
 ) error {
 	index := t.Index()
-
-	watermark := uint64(math.MaxUint64)
-	if !ignoreWatermark {
-		watermark = t.table.db.beginRead()
-	}
 
 	var err error
 	index.Ascend(func(i btree.Item) bool {
@@ -754,7 +757,7 @@ func (t *TableBlock) RowGroupIterator(
 			return true
 		}
 
-		g.PartBuffersForTx(watermark, func(buf *dynparquet.SerializedBuffer) bool {
+		g.PartBuffersForTx(tx, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
 			for i := range f.RowGroups() {
 				rg := buf.DynamicRowGroup(i)
@@ -1007,7 +1010,7 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 
 	// Read all row groups
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err := t.RowGroupIterator(ctx, nil, &AlwaysTrueFilter{}, true, func(rg dynparquet.DynamicRowGroup) bool {
+	err := t.RowGroupIterator(ctx, math.MaxUint64, nil, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})

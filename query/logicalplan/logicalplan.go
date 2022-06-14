@@ -102,8 +102,10 @@ func (plan *LogicalPlan) Accept(visitor PlanVisitor) bool {
 }
 
 type TableReader interface {
+	View(func(tx uint64) error) error
 	Iterator(
 		ctx context.Context,
+		tx uint64,
 		pool memory.Allocator,
 		projection []ColumnMatcher,
 		filter Expr,
@@ -112,6 +114,7 @@ type TableReader interface {
 	) error
 	SchemaIterator(
 		ctx context.Context,
+		tx uint64,
 		pool memory.Allocator,
 		projection []ColumnMatcher,
 		filter Expr,
@@ -120,6 +123,7 @@ type TableReader interface {
 	) error
 	ArrowSchema(
 		ctx context.Context,
+		tx uint64,
 		pool memory.Allocator,
 		projection []ColumnMatcher,
 		filter Expr, // TODO: We probably don't need this
