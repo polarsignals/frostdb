@@ -69,14 +69,17 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	if table == nil {
 		return errors.New("table not found")
 	}
-	err := table.Iterator(
-		ctx,
-		pool,
-		s.options.Projection,
-		s.options.Filter,
-		s.options.Distinct,
-		s.next.Callback,
-	)
+	err := table.View(func(tx uint64) error {
+		return table.Iterator(
+			ctx,
+			tx,
+			pool,
+			s.options.Projection,
+			s.options.Filter,
+			s.options.Distinct,
+			s.next.Callback,
+		)
+	})
 	if err != nil {
 		return err
 	}
@@ -95,14 +98,17 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	if table == nil {
 		return errors.New("table not found")
 	}
-	err := table.SchemaIterator(
-		ctx,
-		pool,
-		s.options.Projection,
-		s.options.Filter,
-		s.options.Distinct,
-		s.next.Callback,
-	)
+	err := table.View(func(tx uint64) error {
+		return table.SchemaIterator(
+			ctx,
+			tx,
+			pool,
+			s.options.Projection,
+			s.options.Filter,
+			s.options.Distinct,
+			s.next.Callback,
+		)
+	})
 	if err != nil {
 		return err
 	}

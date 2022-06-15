@@ -43,6 +43,8 @@ func arrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 		v := [16]byte{}
 		copy(v[:width], s.Data())
 		return parquet.ValueOf(v), nil
+	case nil:
+		return parquet.Value{}, nil
 	default:
 		return parquet.Value{}, fmt.Errorf("unsupported scalar type %T", s)
 	}
