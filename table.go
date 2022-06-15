@@ -332,7 +332,7 @@ func (t *Table) Iterator(
 			return ctx.Err()
 		default:
 			var record arrow.Record
-			record, _, err = pqarrow.ParquetRowGroupToArrowRecord(
+			record, err = pqarrow.ParquetRowGroupToArrowRecord(
 				ctx,
 				pool,
 				rg,
@@ -448,11 +448,11 @@ func (t *Table) ArrowSchema(
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
-			_, schema, err := pqarrow.ParquetRowGroupToArrowRecord(ctx, pool, rg, projections, filterExpr, distinctColumns)
+			record, err := pqarrow.ParquetRowGroupToArrowRecord(ctx, pool, rg, projections, filterExpr, distinctColumns)
 			if err != nil {
 				return nil, err
 			}
-			for _, f := range schema.Fields() {
+			for _, f := range record.Schema().Fields() {
 				if _, ok := fieldsMap[f.Name]; !ok {
 					fieldNames = append(fieldNames, f.Name)
 					fieldsMap[f.Name] = f
@@ -1010,6 +1010,7 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 
 	// Read all row groups
 	rowGroups := []dynparquet.DynamicRowGroup{}
+	// math.MaxUint64 is passed because we want to serialize everything.
 	err := t.RowGroupIterator(ctx, math.MaxUint64, nil, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
