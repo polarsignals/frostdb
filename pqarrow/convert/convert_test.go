@@ -39,7 +39,7 @@ func TestParquetNodeToType(t *testing.T) {
 	}{
 		{
 			parquetNode: parquet.Leaf(parquet.DoubleType),
-			msg:         "unsupported type",
+			msg:         "unsupported type: DOUBLE",
 		},
 	}
 	for _, c := range errCases {

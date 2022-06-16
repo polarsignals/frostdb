@@ -26,7 +26,7 @@ func ParquetNodeToTypeWithWriterFunc(n parquet.Node) (arrow.DataType, func(b arr
 	lt := t.LogicalType()
 
 	if lt == nil {
-		return nil, nil, errors.New("unsupported type")
+		return nil, nil, errors.New("unsupported type: " + n.Type().String())
 	}
 
 	switch {
@@ -43,6 +43,6 @@ func ParquetNodeToTypeWithWriterFunc(n parquet.Node) (arrow.DataType, func(b arr
 			return nil, nil, errors.New("unsupported int bit width")
 		}
 	default:
-		return nil, nil, errors.New("unsupported type")
+		return nil, nil, errors.New("unsupported type: " + n.Type().String())
 	}
 }

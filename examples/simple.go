@@ -91,7 +91,7 @@ func simpleSchema() *dynparquet.Schema {
 			Dynamic:       true,
 		}, {
 			Name:          "value",
-			StorageLayout: parquet.Leaf(parquet.DoubleType),
+			StorageLayout: parquet.Int(64),
 			Dynamic:       false,
 		}},
 		[]dynparquet.SortingColumn{
