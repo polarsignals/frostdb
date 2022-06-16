@@ -10,7 +10,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 // LogicalPlan is a logical representation of a query. Each LogicalPlan is a

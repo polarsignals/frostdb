@@ -6,7 +6,7 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 type Builder struct {

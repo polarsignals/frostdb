@@ -1,4 +1,4 @@
-package arcticdb
+package frostdb
 
 import (
 	"context"
@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/query"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 func TestFilter(t *testing.T) {

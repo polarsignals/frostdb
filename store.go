@@ -1,4 +1,4 @@
-package arcticdb
+package frostdb
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 // Persist uploads the block to the underlying bucket.

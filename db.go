@@ -1,4 +1,4 @@
-package arcticdb
+package frostdb
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
 
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 type ColumnStore struct {

@@ -1,4 +1,4 @@
-package arcticdb
+package frostdb
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"github.com/segmentio/parquet-go"
 	"go.uber.org/atomic"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 type Granule struct {

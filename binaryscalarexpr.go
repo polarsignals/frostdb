@@ -1,12 +1,12 @@
-package arcticdb
+package frostdb
 
 import (
 	"errors"
 
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 var ErrUnexpectedNumberOfFields = errors.New("unexpected number of fields")

@@ -7,7 +7,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/arcticdb/pqarrow/writer"
+	"github.com/polarsignals/frostdb/pqarrow/writer"
 )
 
 // ParquetNodeToType converts a parquet node to an arrow type.

@@ -1,4 +1,4 @@
-package arcticdb
+package frostdb
 
 import (
 	"time"

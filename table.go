@@ -1,4 +1,4 @@
-package arcticdb
+package frostdb
 
 import (
 	"bytes"
@@ -26,9 +26,9 @@ import (
 	"github.com/segmentio/parquet-go"
 	"go.uber.org/atomic"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/pqarrow"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 var ErrNoSchema = fmt.Errorf("no schema")

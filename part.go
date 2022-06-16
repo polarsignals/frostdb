@@ -1,11 +1,11 @@
-package arcticdb
+package frostdb
 
 import (
 	"fmt"
 
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 type Part struct {

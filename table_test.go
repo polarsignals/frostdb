@@ -1,4 +1,4 @@
-package arcticdb
+package frostdb
 
 import (
 	"context"
@@ -21,8 +21,8 @@ import (
 	"github.com/thanos-io/objstore/filesystem"
 	"go.uber.org/atomic"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 type testOutput struct {

@@ -1,4 +1,4 @@
-module github.com/polarsignals/arcticdb
+module github.com/polarsignals/frostdb
 
 go 1.18
 

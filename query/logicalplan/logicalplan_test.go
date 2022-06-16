@@ -8,7 +8,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/stretchr/testify/require"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 type mockTableReader struct {

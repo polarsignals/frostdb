@@ -11,10 +11,10 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/pqarrow/convert"
-	"github.com/polarsignals/arcticdb/pqarrow/writer"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow/convert"
+	"github.com/polarsignals/frostdb/pqarrow/writer"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 // ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.

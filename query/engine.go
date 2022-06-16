@@ -6,8 +6,8 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 
-	"github.com/polarsignals/arcticdb/query/logicalplan"
-	"github.com/polarsignals/arcticdb/query/physicalplan"
+	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/query/physicalplan"
 )
 
 type Builder interface {

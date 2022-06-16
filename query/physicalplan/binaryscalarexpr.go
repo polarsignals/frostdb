@@ -8,7 +8,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 var ErrUnexpectedNumberOfFields = errors.New("unexpected number of fields")
