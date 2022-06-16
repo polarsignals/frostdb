@@ -782,9 +782,9 @@ func (t *TableBlock) RowGroupIterator(
 		g := i.(*Granule)
 
 		// Check if the entire granule can be skipped due to the filter expr
-		if !filterGranule(t.logger, filterExpr, g) {
-			return true
-		}
+		//if !filterGranule(t.logger, filterExpr, g) {
+		//	return true
+		//}
 
 		g.PartBuffersForTx(tx, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
