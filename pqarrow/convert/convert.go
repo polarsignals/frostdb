@@ -23,16 +23,12 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 // create a value writer.
 func ParquetNodeToTypeWithWriterFunc(n parquet.Node) (arrow.DataType, func(b array.Builder, numValues int) writer.ValueWriter, error) {
 	t := n.Type()
-	lt := t.LogicalType()
 
-	if lt == nil {
-		return nil, nil, errors.New("unsupported type: " + n.Type().String())
-	}
-
-	switch {
-	case lt.UTF8 != nil:
+	switch t.Kind() {
+	case parquet.ByteArray:
 		return &arrow.BinaryType{}, writer.NewBinaryValueWriter, nil
-	case lt.Integer != nil:
+	case parquet.Int64:
+		lt := t.LogicalType()
 		switch lt.Integer.BitWidth {
 		case 64:
 			if lt.Integer.IsSigned {
