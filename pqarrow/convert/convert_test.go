@@ -82,6 +82,7 @@ func TestParquetNodeToType(t *testing.T) {
 			msg:         "unsupported type: ENUM",
 		},
 		// This causes stack overflow.
+		// Fix PR: https://github.com/segmentio/parquet-go/pull/244
 		//{
 		//	parquetNode: parquet.JSON(),
 		//	msg:         "unsupported type: JSON",
