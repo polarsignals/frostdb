@@ -232,7 +232,7 @@ func parquetColumnToArrowArray(
 ) {
 	at, newValueWriter, err := convert.ParquetNodeToTypeWithWriterFunc(n)
 	if err != nil {
-		return nil, false, nil, err
+		return nil, false, nil, fmt.Errorf("ParquetNodeToTypeWithWriterFunc: %v", err)
 	}
 
 	var (
@@ -283,7 +283,7 @@ func parquetColumnToArrowArray(
 		dictionaryOnly,
 	)
 	if err != nil {
-		return nil, false, nil, err
+		return nil, false, nil, fmt.Errorf("writePagesToArray: %v", err)
 	}
 
 	arr := b.NewArray()

@@ -96,9 +96,6 @@ func NewInt64ValueWriter(b array.Builder, numValues int) ValueWriter {
 }
 
 func (w *int64ValueWriter) Write(values []parquet.Value) {
-	// Depending on the nullability of the column this could be optimized
-	// further by reading int64s directly and adding all of them at once to
-	// the array builder.
 	for _, v := range values {
 		if v.IsNull() {
 			w.b.AppendNull()
@@ -216,6 +213,65 @@ func (w *repeatedValueWriter) Write(values []parquet.Value) {
 // TODO: implement fast path of writing the whole page directly.
 func (w *repeatedValueWriter) WritePage(p parquet.Page) error {
 	reader := p.Values()
+
+	values := make([]parquet.Value, p.NumValues())
+	_, err := reader.ReadValues(values)
+	// We're reading all values in the page so we always expect an io.EOF.
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("read values: %w", err)
+	}
+
+	w.Write(values)
+
+	return nil
+}
+
+type float64ValueWriter struct {
+	b   *array.Float64Builder
+	buf []float64
+}
+
+func NewFloat64ValueWriter(b array.Builder, numValues int) ValueWriter {
+	res := &float64ValueWriter{
+		b: b.(*array.Float64Builder),
+	}
+	res.b.Reserve(numValues)
+	return res
+}
+
+func (w *float64ValueWriter) Write(values []parquet.Value) {
+	for _, v := range values {
+		if v.IsNull() {
+			w.b.AppendNull()
+		} else {
+			w.b.Append(v.Double())
+		}
+	}
+}
+
+func (w *float64ValueWriter) WritePage(p parquet.Page) error {
+	reader := p.Values()
+
+	ireader, ok := reader.(parquet.DoubleReader)
+	if ok {
+		// fast path
+		if w.buf == nil {
+			w.buf = make([]float64, p.NumValues())
+		}
+		values := w.buf
+		for {
+			n, err := ireader.ReadDoubles(values)
+			if err != nil && err != io.EOF {
+				return fmt.Errorf("read values: %w", err)
+			}
+
+			w.b.AppendValues(values[:n], nil)
+			if err == io.EOF {
+				break
+			}
+		}
+		return nil
+	}
 
 	values := make([]parquet.Value, p.NumValues())
 	_, err := reader.ReadValues(values)

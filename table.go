@@ -235,11 +235,13 @@ func (t *Table) Sync() {
 }
 
 func (t *Table) InsertBuffer(ctx context.Context, buf *dynparquet.Buffer) (uint64, error) {
+	fmt.Print("serializing buffer...")
 	b, err := t.config.schema.SerializeBuffer(buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
 	if err != nil {
 		return 0, fmt.Errorf("serialize buffer: %w", err)
 	}
 
+	fmt.Println("done")
 	return t.Insert(ctx, b)
 }
 
@@ -341,7 +343,7 @@ func (t *Table) Iterator(
 				distinctColumns,
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 			}
 			err = iterator(record)
 			record.Release()
