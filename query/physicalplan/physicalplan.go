@@ -69,11 +69,25 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	if table == nil {
 		return errors.New("table not found")
 	}
+
 	err := table.View(func(tx uint64) error {
+		schema, err := table.ArrowSchema(
+			ctx,
+			tx,
+			pool,
+			s.options.Projection,
+			s.options.Filter,
+			s.options.Distinct,
+		)
+		if err != nil {
+			return err
+		}
+
 		return table.Iterator(
 			ctx,
 			tx,
 			pool,
+			schema,
 			s.options.Projection,
 			s.options.Filter,
 			s.options.Distinct,

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
-
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/stretchr/testify/require"
 
@@ -29,6 +28,7 @@ func (m *mockTableReader) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
+	schema *arrow.Schema,
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,

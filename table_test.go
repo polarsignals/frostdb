@@ -108,7 +108,8 @@ func TestTable(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	ctx := context.Background()
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -128,7 +129,7 @@ func TestTable(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -149,15 +150,31 @@ func TestTable(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
+	pool := memory.NewGoAllocator()
+
 	err = table.View(func(tx uint64) error {
-		return table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
-			t.Log(ar)
-			defer ar.Release()
-			return nil
-		})
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+
+		return table.Iterator(
+			ctx,
+			tx,
+			pool,
+			as,
+			nil,
+			nil,
+			nil,
+			func(ar arrow.Record) error {
+				t.Log(ar)
+				defer ar.Release()
+				return nil
+			},
+		)
 	})
 	require.NoError(t, err)
 
@@ -224,7 +241,8 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	ctx := context.Background()
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -243,7 +261,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -266,7 +284,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
-	tx, err := table.InsertBuffer(context.Background(), buf)
+	tx, err := table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	// Wait for the last tx to be marked as completed
@@ -284,7 +302,13 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	}
 
 	err = table.View(func(tx uint64) error {
-		return table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
+		pool := memory.NewGoAllocator()
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+
+		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(r arrow.Record) error {
 			defer r.Release()
 			t.Log(r)
 			return nil
@@ -362,9 +386,11 @@ func Test_Table_InsertLowest(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
+	ctx := context.Background()
+
 	// Since we are inserting 4 elements and the granule size is 4, the granule
 	// will immediately split.
-	_, err = table.InsertBuffer(context.Background(), buf)
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
@@ -394,7 +420,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
@@ -420,14 +446,21 @@ func Test_Table_InsertLowest(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	// Wait for the index to be updated by the asynchronous granule split.
 	table.Sync()
 
+	pool := memory.NewGoAllocator()
+
 	err = table.View(func(tx uint64) error {
-		return table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(r arrow.Record) error {
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+
+		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(r arrow.Record) error {
 			defer r.Release()
 			t.Log(r)
 			return nil
@@ -494,12 +527,13 @@ func Test_Table_Concurrency(t *testing.T) {
 			inserts := 100
 			rows := 10
 			wg := &sync.WaitGroup{}
+			ctx := context.Background()
 			for i := 0; i < n; i++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					for i := 0; i < inserts; i++ {
-						tx, err := table.InsertBuffer(context.Background(), generateRows(rows))
+						tx, err := table.InsertBuffer(ctx, generateRows(rows))
 						if err != nil {
 							fmt.Println("Received error on insert: ", err)
 						}
@@ -518,10 +552,17 @@ func Test_Table_Concurrency(t *testing.T) {
 			// Wait for our last tx to be marked as complete
 			table.db.Wait(maxTxID.Load())
 
+			pool := memory.NewGoAllocator()
+
 			err := table.View(func(tx uint64) error {
 				totalrows := int64(0)
 
-				err := table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+				as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+				if err != nil {
+					return err
+				}
+
+				err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(ar arrow.Record) error {
 					totalrows += ar.NumRows()
 					defer ar.Release()
 
@@ -669,7 +710,9 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	ctx := context.Background()
+
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	// Perform a new insert that will have a higher tx id
@@ -689,7 +732,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	tx, err := table.InsertBuffer(context.Background(), buf)
+	tx, err := table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	table.db.Wait(tx)
@@ -698,29 +741,45 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.tx.Store(1)
 	table.db.highWatermark.Store(1)
 
-	rows := int64(0)
-	err = table.Iterator(context.Background(), table.db.highWatermark.Load(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
-		rows += ar.NumRows()
-		defer ar.Release()
+	pool := memory.NewGoAllocator()
 
+	err = table.View(func(tx uint64) error {
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		require.NoError(t, err)
+
+		rows := int64(0)
+		err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(ar arrow.Record) error {
+			rows += ar.NumRows()
+			defer ar.Release()
+
+			return nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(3), rows)
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(3), rows)
 
 	// Now set the tx back to what it was, and perform the same read, we should return all 4 rows
 	table.db.tx.Store(2)
 	table.db.highWatermark.Store(2)
 
-	rows = int64(0)
-	err = table.Iterator(context.Background(), table.db.highWatermark.Load(), memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
-		rows += ar.NumRows()
-		defer ar.Release()
+	err = table.View(func(tx uint64) error {
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		require.NoError(t, err)
 
+		rows := int64(0)
+		err = table.Iterator(ctx, table.db.highWatermark.Load(), pool, as, nil, nil, nil, func(ar arrow.Record) error {
+			rows += ar.NumRows()
+			defer ar.Release()
+
+			return nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(4), rows)
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(4), rows)
 }
 
 //func Test_Table_Sorting(t *testing.T) {
@@ -976,7 +1035,9 @@ func Test_Table_Filter(t *testing.T) {
 	buf, err := samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	ctx := context.Background()
+
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -996,7 +1057,7 @@ func Test_Table_Filter(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -1017,7 +1078,7 @@ func Test_Table_Filter(t *testing.T) {
 	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
-	_, err = table.InsertBuffer(context.Background(), buf)
+	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
 	filterExpr := logicalplan.And( // Filter that excludes the granule
@@ -1025,9 +1086,17 @@ func Test_Table_Filter(t *testing.T) {
 		logicalplan.Col("timestamp").LT(logicalplan.Literal(1)),
 	)
 
+	pool := memory.NewGoAllocator()
+
 	err = table.View(func(tx uint64) error {
 		iterated := false
-		err = table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, filterExpr, nil, func(ar arrow.Record) error {
+
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+
+		err = table.Iterator(ctx, tx, pool, as, nil, filterExpr, nil, func(ar arrow.Record) error {
 			defer ar.Release()
 
 			iterated = true
@@ -1051,7 +1120,8 @@ func Test_Table_InsertCancellation(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			table := basicTable(t, test.granuleSize)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Millisecond)
 			defer cancel()
 
 			generateRows := func(n int) *dynparquet.Buffer {
@@ -1123,9 +1193,17 @@ func Test_Table_InsertCancellation(t *testing.T) {
 				})
 			}
 
+			pool := memory.NewGoAllocator()
+
 			err := table.View(func(tx uint64) error {
 				totalrows := int64(0)
-				err := table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+
+				as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+				if err != nil {
+					return err
+				}
+
+				err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(ar arrow.Record) error {
 					totalrows += ar.NumRows()
 					defer ar.Release()
 
@@ -1191,9 +1269,17 @@ func Test_Table_CancelBasic(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.True(t, errors.Is(err, context.Canceled))
 
+	pool := memory.NewGoAllocator()
+
 	err = table.View(func(tx uint64) error {
 		totalrows := int64(0)
-		err = table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+
+		err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(ar arrow.Record) error {
 			totalrows += ar.NumRows()
 			defer ar.Release()
 

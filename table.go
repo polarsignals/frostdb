@@ -278,6 +278,7 @@ func (t *Table) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
+	schema *arrow.Schema,
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
@@ -331,12 +332,26 @@ func (t *Table) Iterator(
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+			if schema == nil {
+				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
+					ctx,
+					pool,
+					rg,
+					projections,
+					filterExpr,
+					distinctColumns,
+				)
+				if err != nil {
+					return err
+				}
+			}
+
 			var record arrow.Record
 			record, err = pqarrow.ParquetRowGroupToArrowRecord(
 				ctx,
 				pool,
 				rg,
-				projections,
+				schema,
 				filterExpr,
 				distinctColumns,
 			)
@@ -448,7 +463,26 @@ func (t *Table) ArrowSchema(
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
-			record, err := pqarrow.ParquetRowGroupToArrowRecord(ctx, pool, rg, projections, filterExpr, distinctColumns)
+			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
+				ctx,
+				pool,
+				rg,
+				projections,
+				filterExpr,
+				distinctColumns,
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			record, err := pqarrow.ParquetRowGroupToArrowRecord(
+				ctx,
+				pool,
+				rg,
+				schema,
+				filterExpr,
+				distinctColumns,
+			)
 			if err != nil {
 				return nil, err
 			}
