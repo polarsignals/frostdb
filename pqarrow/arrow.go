@@ -2,7 +2,6 @@ package pqarrow
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -17,20 +16,20 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-// ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
-func ParquetRowGroupToArrowRecord(
+// ParquetRowGroupToArrowSchema converts a parquet row group to an arrow schema.
+func ParquetRowGroupToArrowSchema(
 	ctx context.Context,
 	pool memory.Allocator,
 	rg parquet.RowGroup,
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
-) (arrow.Record, error) {
+) (*arrow.Schema, error) {
 	switch rg.(type) {
 	case *dynparquet.MergedRowGroup:
-		return rowBasedParquetRowGroupToArrowRecord(ctx, pool, rg)
+		return rowBasedParquetRowGroupToArrowSchema(ctx, rg)
 	default:
-		return contiguousParquetRowGroupToArrowRecord(
+		return contiguousParquetRowGroupToArrowSchema(
 			ctx,
 			pool,
 			rg,
@@ -41,17 +40,12 @@ func ParquetRowGroupToArrowRecord(
 	}
 }
 
-// rowBasedParquetRowGroupToArrowRecord converts a parquet row group to an arrow record row by row.
-func rowBasedParquetRowGroupToArrowRecord(
-	ctx context.Context,
-	pool memory.Allocator,
-	rg parquet.RowGroup,
-) (arrow.Record, error) {
+func rowBasedParquetRowGroupToArrowSchema(ctx context.Context, rg parquet.RowGroup) (*arrow.Schema, error) {
 	s := rg.Schema()
 
 	parquetFields := s.Fields()
 	fields := make([]arrow.Field, 0, len(parquetFields))
-	newWriterFuncs := make([]func(array.Builder, int) writer.ValueWriter, 0, len(parquetFields))
+
 	for _, parquetField := range parquetFields {
 		select {
 		case <-ctx.Done():
@@ -67,13 +61,10 @@ func rowBasedParquetRowGroupToArrowRecord(
 			if node.Optional() {
 				nullable = true
 			}
-
 			if node.Repeated() {
 				typ = arrow.ListOf(typ)
 				newValueWriter = writer.NewListValueWriter(newValueWriter)
 			}
-			newWriterFuncs = append(newWriterFuncs, newValueWriter)
-
 			fields = append(fields, arrow.Field{
 				Name:     name,
 				Type:     typ,
@@ -82,10 +73,142 @@ func rowBasedParquetRowGroupToArrowRecord(
 		}
 	}
 
+	return arrow.NewSchema(fields, nil), nil
+}
+
+// contiguousParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
+func contiguousParquetRowGroupToArrowSchema(
+	ctx context.Context,
+	pool memory.Allocator,
+	rg parquet.RowGroup,
+	projections []logicalplan.ColumnMatcher,
+	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
+) (*arrow.Schema, error) {
+	parquetColumns := rg.ColumnChunks()
+	parquetFields := rg.Schema().Fields()
+
+	if len(distinctColumns) == 1 && filterExpr == nil {
+		// We can use the faster path for a single distinct column by just
+		// returning its dictionary.
+		fields := make([]arrow.Field, 0, 1)
+		for i, field := range parquetFields {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				name := field.Name()
+				if distinctColumns[0].Match(name) {
+					typ, nullable, _, err := parquetColumnToArrowArray(
+						pool,
+						field,
+						parquetColumns[i],
+						true,
+					)
+					if err != nil {
+						return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+					}
+					fields = append(fields, arrow.Field{
+						Name:     name,
+						Type:     typ,
+						Nullable: nullable,
+					})
+				}
+			}
+		}
+
+		return arrow.NewSchema(fields, nil), nil
+	}
+
+	fields := make([]arrow.Field, 0, len(parquetFields))
+
+	for i, parquetField := range parquetFields {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			if includedProjection(projections, parquetField.Name()) {
+				typ, nullable, _, err := parquetColumnToArrowArray(
+					pool,
+					parquetField,
+					parquetColumns[i],
+					false,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+				}
+				fields = append(fields, arrow.Field{
+					Name:     parquetField.Name(),
+					Type:     typ,
+					Nullable: nullable,
+				})
+			}
+		}
+	}
+
+	return arrow.NewSchema(fields, nil), nil
+}
+
+func includedProjection(projections []logicalplan.ColumnMatcher, name string) bool {
+	if len(projections) == 0 {
+		return true
+	}
+
+	for _, p := range projections {
+		if p.Match(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
+func ParquetRowGroupToArrowRecord(
+	ctx context.Context,
+	pool memory.Allocator,
+	rg parquet.RowGroup,
+	schema *arrow.Schema, // TODO!
+	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
+) (arrow.Record, error) {
+	switch rg.(type) {
+	case *dynparquet.MergedRowGroup:
+		return rowBasedParquetRowGroupToArrowRecord(ctx, pool, rg, schema)
+	default:
+		return contiguousParquetRowGroupToArrowRecord(
+			ctx,
+			pool,
+			rg,
+			schema,
+			filterExpr,
+			distinctColumns,
+		)
+	}
+}
+
+// rowBasedParquetRowGroupToArrowRecord converts a parquet row group to an arrow record row by row.
+func rowBasedParquetRowGroupToArrowRecord(
+	ctx context.Context,
+	pool memory.Allocator,
+	rg parquet.RowGroup,
+	schema *arrow.Schema,
+) (arrow.Record, error) {
+	parquetFields := rg.Schema().Fields()
+
+	if len(schema.Fields()) != len(parquetFields) {
+		return nil, fmt.Errorf("inconsistent schema between arrow and parquet")
+	}
+
+	// Create arrow writers from arrow and parquet schema
 	writers := make([]writer.ValueWriter, len(parquetFields))
-	b := array.NewRecordBuilder(pool, arrow.NewSchema(fields, nil))
+	b := array.NewRecordBuilder(pool, schema)
 	for i, column := range b.Fields() {
-		writers[i] = newWriterFuncs[i](column, 0)
+		parquetField := parquetFields[i]
+		_, newValueWriter, err := convert.ParquetNodeToTypeWithWriterFunc(parquetField)
+		if err != nil {
+			return nil, err
+		}
+		writers[i] = newValueWriter(column, 0)
 	}
 
 	rows := rg.Rows()
@@ -125,7 +248,7 @@ func contiguousParquetRowGroupToArrowRecord(
 	ctx context.Context,
 	pool memory.Allocator,
 	rg parquet.RowGroup,
-	projections []logicalplan.ColumnMatcher,
+	schema *arrow.Schema,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
 ) (arrow.Record, error) {
@@ -136,7 +259,6 @@ func contiguousParquetRowGroupToArrowRecord(
 	if len(distinctColumns) == 1 && filterExpr == nil {
 		// We can use the faster path for a single distinct column by just
 		// returning its dictionary.
-		fields := make([]arrow.Field, 0, 1)
 		cols := make([]arrow.Array, 0, 1)
 		rows := int64(0)
 		for i, field := range parquetFields {
@@ -146,7 +268,7 @@ func contiguousParquetRowGroupToArrowRecord(
 			default:
 				name := field.Name()
 				if distinctColumns[0].Match(name) {
-					typ, nullable, array, err := parquetColumnToArrowArray(
+					_, _, array, err := parquetColumnToArrowArray(
 						pool,
 						field,
 						parquetColumns[i],
@@ -155,31 +277,24 @@ func contiguousParquetRowGroupToArrowRecord(
 					if err != nil {
 						return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
 					}
-					fields = append(fields, arrow.Field{
-						Name:     name,
-						Type:     typ,
-						Nullable: nullable,
-					})
 					cols = append(cols, array)
 					rows = int64(array.Len())
 				}
 			}
 		}
 
-		schema := arrow.NewSchema(fields, nil)
 		return array.NewRecord(schema, cols, rows), nil
 	}
 
-	fields := make([]arrow.Field, 0, len(parquetFields))
-	cols := make([]arrow.Array, 0, len(parquetFields))
+	cols := make([]arrow.Array, len(schema.Fields()))
 
 	for i, parquetField := range parquetFields {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
-			if includedProjection(projections, parquetField.Name()) {
-				typ, nullable, array, err := parquetColumnToArrowArray(
+			if schema.HasField(parquetField.Name()) {
+				_, _, a, err := parquetColumnToArrowArray(
 					pool,
 					parquetField,
 					parquetColumns[i],
@@ -188,31 +303,28 @@ func contiguousParquetRowGroupToArrowRecord(
 				if err != nil {
 					return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
 				}
-				fields = append(fields, arrow.Field{
-					Name:     parquetField.Name(),
-					Type:     typ,
-					Nullable: nullable,
-				})
-				cols = append(cols, array)
+
+				index := schema.FieldIndices(parquetField.Name())[0]
+				cols[index] = a
 			}
 		}
 	}
 
-	schema := arrow.NewSchema(fields, nil)
-	return array.NewRecord(schema, cols, rg.NumRows()), nil
-}
+	rows := rg.NumRows()
 
-func includedProjection(projections []logicalplan.ColumnMatcher, name string) bool {
-	if len(projections) == 0 {
-		return true
-	}
-
-	for _, p := range projections {
-		if p.Match(name) {
-			return true
+	for i, field := range schema.Fields() {
+		if cols[i] == nil {
+			// If the column is empty we need to append NULL as often as we have rows
+			// TODO: Is there a faster or better way?
+			b := array.NewBuilder(pool, field.Type)
+			for j := int64(0); j < rows; j++ {
+				b.AppendNull()
+			}
+			cols[i] = b.NewArray()
 		}
 	}
-	return false
+
+	return array.NewRecord(schema, cols, rows), nil
 }
 
 // parquetColumnToArrowArray converts a single parquet column to an arrow array
@@ -376,5 +488,3 @@ func writePagesToArray(
 
 	return nil
 }
-
-var ErrPageTypeMismatch = errors.New("page type mismatch")

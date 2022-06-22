@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestMergeToArrow(t *testing.T) {
-	schema := dynparquet.NewSampleSchema()
+	dynSchema := dynparquet.NewSampleSchema()
 
 	samples := dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -51,7 +52,7 @@ func TestMergeToArrow(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf1, err := samples.ToBuffer(schema)
+	buf1, err := samples.ToBuffer(dynSchema)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -67,7 +68,7 @@ func TestMergeToArrow(t *testing.T) {
 		Value:     2,
 	}}
 
-	buf2, err := samples.ToBuffer(schema)
+	buf2, err := samples.ToBuffer(dynSchema)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -84,13 +85,28 @@ func TestMergeToArrow(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf3, err := samples.ToBuffer(schema)
+	buf3, err := samples.ToBuffer(dynSchema)
 	require.NoError(t, err)
 
-	merge, err := schema.MergeDynamicRowGroups([]dynparquet.DynamicRowGroup{buf1, buf2, buf3})
+	merge, err := dynSchema.MergeDynamicRowGroups([]dynparquet.DynamicRowGroup{buf1, buf2, buf3})
 	require.NoError(t, err)
 
-	ar, err := ParquetRowGroupToArrowRecord(context.Background(), memory.DefaultAllocator, merge, nil, nil, nil)
+	ctx := context.Background()
+	pool := memory.DefaultAllocator
+
+	as, err := ParquetRowGroupToArrowSchema(ctx, pool, merge, nil, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, as.Fields(), 8)
+	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
+	require.Equal(t, as.Field(1), arrow.Field{Name: "labels.label1", Type: &arrow.BinaryType{}, Nullable: true})
+	require.Equal(t, as.Field(2), arrow.Field{Name: "labels.label2", Type: &arrow.BinaryType{}, Nullable: true})
+	require.Equal(t, as.Field(3), arrow.Field{Name: "labels.label3", Type: &arrow.BinaryType{}, Nullable: true})
+	require.Equal(t, as.Field(4), arrow.Field{Name: "labels.label4", Type: &arrow.BinaryType{}, Nullable: true})
+	require.Equal(t, as.Field(5), arrow.Field{Name: "stacktrace", Type: &arrow.BinaryType{}})
+	require.Equal(t, as.Field(6), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
+	require.Equal(t, as.Field(7), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
+
+	ar, err := ParquetRowGroupToArrowRecord(ctx, pool, merge, as, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), ar.NumRows())
 	require.Equal(t, int64(8), ar.NumCols())
@@ -98,7 +114,7 @@ func TestMergeToArrow(t *testing.T) {
 }
 
 func BenchmarkParquetToArrow(b *testing.B) {
-	schema := dynparquet.NewSampleSchema()
+	dynSchema := dynparquet.NewSampleSchema()
 
 	samples := make(dynparquet.Samples, 0, 1000)
 	for i := 0; i < 1000; i++ {
@@ -116,13 +132,33 @@ func BenchmarkParquetToArrow(b *testing.B) {
 		})
 	}
 
-	buf, err := samples.ToBuffer(schema)
+	buf, err := samples.ToBuffer(dynSchema)
+	require.NoError(b, err)
+
+	ctx := context.Background()
+	pool := memory.NewGoAllocator()
+
+	schema, err := ParquetRowGroupToArrowSchema(
+		ctx,
+		pool,
+		buf,
+		nil,
+		nil,
+		nil,
+	)
 	require.NoError(b, err)
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err = ParquetRowGroupToArrowRecord(context.Background(), memory.DefaultAllocator, buf, nil, nil, nil)
+		_, err = ParquetRowGroupToArrowRecord(
+			ctx,
+			pool,
+			buf,
+			schema,
+			nil,
+			nil,
+		)
 		require.NoError(b, err)
 	}
 }
