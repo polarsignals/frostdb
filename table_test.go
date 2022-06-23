@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -1357,6 +1358,62 @@ func Test_Table_ArrowSchema(t *testing.T) {
 		)
 
 		return nil
+	})
+	require.NoError(t, err)
+}
+
+func Test_DoubleTable(t *testing.T) {
+	schema := dynparquet.NewSchema(
+		"test",
+		[]dynparquet.ColumnDefinition{{
+			Name:          "id",
+			StorageLayout: parquet.String(),
+			Dynamic:       false,
+		}, {
+			Name:          "value",
+			StorageLayout: parquet.Leaf(parquet.DoubleType),
+			Dynamic:       false,
+		}},
+		[]dynparquet.SortingColumn{
+			dynparquet.Ascending("id"),
+		},
+	)
+	config := NewTableConfig(schema)
+
+	bucket, err := filesystem.NewBucket(".")
+	require.NoError(t, err)
+
+	c := New(
+		nil,
+		4096,
+		512*1024*1024,
+	).WithStorageBucket(bucket)
+
+	db, err := c.DB("test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config, newTestLogger(t))
+	require.NoError(t, err)
+
+	b, err := schema.NewBuffer(nil)
+	require.NoError(t, err)
+
+	value := rand.Float64()
+
+	b.WriteRows([]parquet.Row{{
+		parquet.ValueOf("a").Level(0, 0, 0),
+		parquet.ValueOf(value).Level(0, 0, 1),
+	}})
+
+	n, err := table.InsertBuffer(context.Background(), b)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), n)
+
+	err = table.View(func(tx uint64) error {
+		return table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+			defer ar.Release()
+			require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
+			return nil
+		})
 	})
 	require.NoError(t, err)
 }

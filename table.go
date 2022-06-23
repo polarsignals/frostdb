@@ -341,7 +341,7 @@ func (t *Table) Iterator(
 				distinctColumns,
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 			}
 			err = iterator(record)
 			record.Release()
