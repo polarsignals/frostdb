@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -1396,9 +1397,11 @@ func Test_DoubleTable(t *testing.T) {
 	b, err := schema.NewBuffer(nil)
 	require.NoError(t, err)
 
+	value := rand.Float64()
+
 	b.WriteRows([]parquet.Row{{
 		parquet.ValueOf("a").Level(0, 0, 0),
-		parquet.ValueOf(rand.Float64()).Level(0, 0, 1),
+		parquet.ValueOf(value).Level(0, 0, 1),
 	}})
 
 	n, err := table.InsertBuffer(context.Background(), b)
@@ -1407,8 +1410,8 @@ func Test_DoubleTable(t *testing.T) {
 
 	err = table.View(func(tx uint64) error {
 		return table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
-			t.Log(ar)
 			defer ar.Release()
+			require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
 			return nil
 		})
 	})

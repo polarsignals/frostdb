@@ -96,6 +96,9 @@ func NewInt64ValueWriter(b array.Builder, numValues int) ValueWriter {
 }
 
 func (w *int64ValueWriter) Write(values []parquet.Value) {
+	// Depending on the nullability of the column this could be optimized
+	// further by reading int64s directly and adding all of them at once to
+	// the array builder.
 	for _, v := range values {
 		if v.IsNull() {
 			w.b.AppendNull()
