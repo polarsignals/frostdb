@@ -38,10 +38,6 @@ func TestParquetNodeToType(t *testing.T) {
 		msg         string
 	}{
 		{
-			parquetNode: parquet.Leaf(parquet.DoubleType),
-			msg:         "unsupported type: DOUBLE",
-		},
-		{
 			parquetNode: parquet.Leaf(parquet.BooleanType),
 			msg:         "unsupported type: BOOLEAN",
 		},
@@ -58,10 +54,6 @@ func TestParquetNodeToType(t *testing.T) {
 			msg:         "unsupported type: FLOAT",
 		},
 		{
-			parquetNode: parquet.Leaf(parquet.DoubleType),
-			msg:         "unsupported type: DOUBLE",
-		},
-		{
 			parquetNode: parquet.Leaf(parquet.ByteArrayType),
 			msg:         "unsupported type: BYTE_ARRAY",
 		},
@@ -71,15 +63,15 @@ func TestParquetNodeToType(t *testing.T) {
 		},
 		{
 			parquetNode: parquet.Decimal(0, 9, parquet.Int32Type),
-			msg:         "unsupported type: DECIMAL(0,9)",
+			msg:         "unsupported logical type: DECIMAL(0,9)",
 		},
 		{
 			parquetNode: parquet.UUID(),
-			msg:         "unsupported type: UUID",
+			msg:         "unsupported logical type: UUID",
 		},
 		{
 			parquetNode: parquet.Enum(),
-			msg:         "unsupported type: ENUM",
+			msg:         "unsupported logical type: ENUM",
 		},
 		// This causes stack overflow.
 		// Fix PR: https://github.com/segmentio/parquet-go/pull/244
@@ -89,30 +81,30 @@ func TestParquetNodeToType(t *testing.T) {
 		//},
 		{
 			parquetNode: parquet.BSON(),
-			msg:         "unsupported type: BSON",
+			msg:         "unsupported logical type: BSON",
 		},
 		{
 			parquetNode: parquet.Date(),
-			msg:         "unsupported type: DATE",
+			msg:         "unsupported logical type: DATE",
 		},
 		{
 			parquetNode: parquet.Time(parquet.Millisecond),
-			msg:         "unsupported type: TIME(isAdjustedToUTC=true,unit=MILLIS)",
+			msg:         "unsupported logical type: TIME(isAdjustedToUTC=true,unit=MILLIS)",
 		},
 		{
 			parquetNode: parquet.Timestamp(parquet.Millisecond),
-			msg:         "unsupported type: TIMESTAMP(isAdjustedToUTC=true,unit=MILLIS)",
+			msg:         "unsupported logical type: TIMESTAMP(isAdjustedToUTC=true,unit=MILLIS)",
 		},
 		{
 			parquetNode: parquet.List(parquet.String()),
-			msg:         "unsupported type: LIST",
+			msg:         "unsupported logical type: LIST",
 		},
 		{
 			parquetNode: parquet.Map(
 				parquet.String(),
 				parquet.String(),
 			),
-			msg: "unsupported type: MAP",
+			msg: "unsupported logical type: MAP",
 		},
 		{
 			parquetNode: parquet.Group{},

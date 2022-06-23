@@ -26,22 +26,27 @@ func ParquetNodeToTypeWithWriterFunc(n parquet.Node) (arrow.DataType, func(b arr
 	lt := t.LogicalType()
 
 	switch {
+	case lt != nil:
+		switch {
+		case lt.UTF8 != nil:
+			return &arrow.BinaryType{}, writer.NewBinaryValueWriter, nil
+		case lt.Integer != nil:
+			switch lt.Integer.BitWidth {
+			case 64:
+				if lt.Integer.IsSigned {
+					return &arrow.Int64Type{}, writer.NewInt64ValueWriter, nil
+				}
+				return &arrow.Uint64Type{}, writer.NewUint64ValueWriter, nil
+			default:
+				return nil, nil, errors.New("unsupported int bit width")
+			}
+		default:
+			return nil, nil, errors.New("unsupported logical type: " + n.Type().String())
+		}
+	case t.String() == "group": // NOTE: this needs to be perfomed before t.Kind() because t.Kind() will panic when called on a group
+		return nil, nil, errors.New("unsupported type: " + n.Type().String())
 	case t.Kind() == parquet.Double:
 		return &arrow.Float64Type{}, writer.NewFloat64ValueWriter, nil
-	case lt == nil:
-		return nil, nil, errors.New("unsupported logical type: " + n.Type().String())
-	case lt.UTF8 != nil:
-		return &arrow.BinaryType{}, writer.NewBinaryValueWriter, nil
-	case lt.Integer != nil:
-		switch lt.Integer.BitWidth {
-		case 64:
-			if lt.Integer.IsSigned {
-				return &arrow.Int64Type{}, writer.NewInt64ValueWriter, nil
-			}
-			return &arrow.Uint64Type{}, writer.NewUint64ValueWriter, nil
-		default:
-			return nil, nil, errors.New("unsupported int bit width")
-		}
 	default:
 		return nil, nil, errors.New("unsupported type: " + n.Type().String())
 	}
