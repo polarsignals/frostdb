@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/oklog/ulid v1.3.1
 	github.com/prometheus/client_golang v1.12.1
-	github.com/segmentio/parquet-go v0.0.0-20220616233901-edd371b528ff
+	github.com/segmentio/parquet-go v0.0.0-20220623195409-8b4d4260d8cb
 	github.com/stretchr/testify v1.7.1
 	github.com/thanos-io/objstore v0.0.0-20220324141029-c4f11442aa33
 	go.uber.org/atomic v1.9.0
