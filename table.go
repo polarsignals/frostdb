@@ -1035,7 +1035,7 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 
 	err = w.Close()
 
-	fmt.Printf("writing %d rows to disk\n", n)
+	level.Info(t.logger).Log("msg", "writing rows to disk", "rows_count", n)
 	return buf.Bytes(), err
 }
 
