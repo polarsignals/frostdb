@@ -88,6 +88,7 @@ type TableBlock struct {
 }
 
 type tableMetrics struct {
+	blockRotated     prometheus.Counter
 	granulesCreated  prometheus.Counter
 	granulesSplits   prometheus.Counter
 	rowsInserted     prometheus.Counter
@@ -121,6 +122,10 @@ func newTable(
 		logger: logger,
 		mtx:    &sync.RWMutex{},
 		metrics: &tableMetrics{
+			blockRotated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "blocks_rotated",
+				Help: "Number of table blocks that have been rotated.",
+			}),
 			granulesCreated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "granules_created",
 				Help: "Number of granules created.",
@@ -210,6 +215,7 @@ func (t *Table) RotateBlock() error {
 
 	block := t.active
 	t.active = tb
+	t.metrics.blockRotated.Inc()
 
 	if t.db.bucket != nil {
 		t.pendingBlocks[block] = struct{}{}
