@@ -1050,19 +1050,17 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 		level.Info(logger).Log("msg", "unsupported filter")
 		return true
 	case *logicalplan.BinaryExpr:
-		var min, max *parquet.Value
-		var v scalar.Scalar
-		var leftresult bool
+		var (
+			min, max   *parquet.Value
+			v          scalar.Scalar
+			leftresult bool
+			leftfound  bool
+		)
 		switch left := expr.Left.(type) {
 		case *logicalplan.BinaryExpr:
 			leftresult = filterGranule(logger, left, g)
 		case *logicalplan.Column:
-			var found bool
-			min, max, found = findColumnValues(left.ColumnsUsed(), g)
-			if !found {
-				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
-				return false
-			}
+			min, max, leftfound = findColumnValues(left.ColumnsUsed(), g)
 		case *logicalplan.LiteralExpr:
 			switch left.Value.(type) {
 			case *scalar.Int64:
@@ -1118,6 +1116,9 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 		case *logicalplan.LiteralExpr:
 			switch v := right.Value.(type) {
 			case *scalar.Int64:
+				if !leftfound {
+					return false
+				}
 				switch expr.Op {
 				case logicalplan.LTOp:
 					return min.Int64() < v.Value
@@ -1130,6 +1131,21 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 				s := string(v.Value.Bytes())
 				if len(v.Value.Bytes()) > dynparquet.ColumnIndexSize {
 					s = string(v.Value.Bytes()[:dynparquet.ColumnIndexSize])
+				}
+				if !leftfound {
+					switch {
+					case expr.Op == logicalplan.EqOp && len(s) == 0:
+						return true
+					case expr.Op == logicalplan.NotEqOp && len(s) != 0:
+						return true
+					case expr.Op == logicalplan.NotRegExpOp || expr.Op == logicalplan.RegExpOp:
+						// todo: run the regex on empty string to see if it matches
+						// this would allow to fully reject a granule faster.
+						// However it requires a bigger refactoring of the code to compile the regexp only once.
+						return true
+					default:
+						return false
+					}
 				}
 				switch expr.Op {
 				case logicalplan.LTOp:

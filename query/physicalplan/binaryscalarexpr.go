@@ -11,8 +11,6 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-var ErrUnexpectedNumberOfFields = errors.New("unexpected number of fields")
-
 type ArrayRef struct {
 	ColumnName string
 }
@@ -20,7 +18,7 @@ type ArrayRef struct {
 func (a *ArrayRef) ArrowArray(r arrow.Record) (arrow.Array, bool, error) {
 	fields := r.Schema().FieldIndices(a.ColumnName)
 	if len(fields) != 1 {
-		return nil, false, ErrUnexpectedNumberOfFields
+		return nil, false, nil
 	}
 
 	return r.Column(fields[0]), true, nil

@@ -93,6 +93,38 @@ func TestFilter(t *testing.T) {
 			),
 			rows: 3,
 		},
+		"regexp missing colum": {
+			filterExpr: logicalplan.And(
+				logicalplan.Col("labels.label5").RegexMatch(""),
+			),
+			rows: 3,
+		},
+		"not regexp missing colum": {
+			filterExpr: logicalplan.And(
+				logicalplan.Col("labels.label5").RegexNotMatch("foo"),
+			),
+			rows: 3,
+		},
+		"regexp mixed of missing/not missing colum": {
+			filterExpr: logicalplan.And(
+				logicalplan.Col("labels.label3").RegexMatch("value."),
+				logicalplan.Col("labels.label5").RegexMatch(""),
+				logicalplan.Col("labels.label2").Eq(logicalplan.Literal("value2")),
+			),
+			rows: 1,
+		},
+		"=! missing colum": {
+			filterExpr: logicalplan.And(
+				logicalplan.Col("labels.label5").NotEq(logicalplan.Literal("value4")),
+			),
+			rows: 3,
+		},
+		"== missing colum": {
+			filterExpr: logicalplan.And(
+				logicalplan.Col("labels.label5").Eq(logicalplan.Literal("")),
+			),
+			rows: 3,
+		},
 		"regexp and == string and != string": {
 			filterExpr: logicalplan.And(
 				logicalplan.Col("labels.label1").RegexMatch("value."),
