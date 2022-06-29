@@ -130,10 +130,7 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 	}
 
 	if s.bucket != nil {
-		db.bucket = &BucketPrefixDecorator{
-			Bucket: s.bucket,
-			prefix: db.StorePath(),
-		}
+		db.bucket = NewPrefixedBucket(s.bucket, db.StorePath())
 	}
 
 	db.txPool = NewTxPool(db.highWatermark)
