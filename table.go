@@ -341,7 +341,6 @@ func (t *Table) Iterator(
 			if schema == nil {
 				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
 					ctx,
-					pool,
 					rg,
 					projections,
 					filterExpr,
@@ -471,7 +470,6 @@ func (t *Table) ArrowSchema(
 		default:
 			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
 				ctx,
-				pool,
 				rg,
 				projections,
 				filterExpr,
@@ -481,18 +479,7 @@ func (t *Table) ArrowSchema(
 				return nil, err
 			}
 
-			record, err := pqarrow.ParquetRowGroupToArrowRecord(
-				ctx,
-				pool,
-				rg,
-				schema,
-				filterExpr,
-				distinctColumns,
-			)
-			if err != nil {
-				return nil, err
-			}
-			for _, f := range record.Schema().Fields() {
+			for _, f := range schema.Fields() {
 				if _, ok := fieldsMap[f.Name]; !ok {
 					fieldNames = append(fieldNames, f.Name)
 					fieldsMap[f.Name] = f

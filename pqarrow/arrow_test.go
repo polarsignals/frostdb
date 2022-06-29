@@ -94,7 +94,7 @@ func TestMergeToArrow(t *testing.T) {
 	ctx := context.Background()
 	pool := memory.DefaultAllocator
 
-	as, err := ParquetRowGroupToArrowSchema(ctx, pool, merge, nil, nil, nil)
+	as, err := ParquetRowGroupToArrowSchema(ctx, merge, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 8)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
@@ -138,14 +138,7 @@ func BenchmarkParquetToArrow(b *testing.B) {
 	ctx := context.Background()
 	pool := memory.NewGoAllocator()
 
-	schema, err := ParquetRowGroupToArrowSchema(
-		ctx,
-		pool,
-		buf,
-		nil,
-		nil,
-		nil,
-	)
+	schema, err := ParquetRowGroupToArrowSchema(ctx, buf, nil, nil, nil)
 	require.NoError(b, err)
 
 	b.ResetTimer()
