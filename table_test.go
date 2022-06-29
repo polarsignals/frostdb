@@ -1485,17 +1485,27 @@ func Test_DoubleTable(t *testing.T) {
 
 	value := rand.Float64()
 
-	b.WriteRows([]parquet.Row{{
+	_, err = b.WriteRows([]parquet.Row{{
 		parquet.ValueOf("a").Level(0, 0, 0),
 		parquet.ValueOf(value).Level(0, 0, 1),
 	}})
+	require.NoError(t, err)
 
-	n, err := table.InsertBuffer(context.Background(), b)
+	ctx := context.Background()
+
+	n, err := table.InsertBuffer(ctx, b)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), n)
 
 	err = table.View(func(tx uint64) error {
-		return table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, func(ar arrow.Record) error {
+		pool := memory.NewGoAllocator()
+
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+
+		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(ar arrow.Record) error {
 			defer ar.Release()
 			require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
 			return nil
