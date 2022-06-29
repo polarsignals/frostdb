@@ -21,11 +21,10 @@ func (f *RegExpFilter) Eval(r arrow.Record) (*Bitmap, error) {
 		return nil, err
 	}
 
-	// TODO: This needs a bunch of test cases to validate edge cases like non
-	// existant columns or null values.
 	if !exists {
 		res := NewBitmap()
-		if f.notMatch {
+		emptyMatch := f.right.Match(nil)
+		if (f.notMatch && !emptyMatch) || (!f.notMatch && emptyMatch) {
 			for i := uint32(0); i < uint32(r.NumRows()); i++ {
 				res.Add(i)
 			}

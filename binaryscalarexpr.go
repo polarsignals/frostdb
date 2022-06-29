@@ -9,8 +9,6 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-var ErrUnexpectedNumberOfFields = errors.New("unexpected number of fields")
-
 type ColumnRef struct {
 	ColumnName string
 }
@@ -51,6 +49,15 @@ func (e BinaryScalarExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
 	// existant columns or null values. I'm pretty sure this is completely
 	// wrong and needs per operation, per type specific behavior.
 	if !exists {
+		// only handling string for now.
+		if e.Right.Kind() == parquet.ByteArray || e.Right.Kind() == parquet.FixedLenByteArray {
+			switch {
+			case e.Op == logicalplan.EqOp && e.Right.String() == "":
+				return true, nil
+			case e.Op == logicalplan.NotEqOp && e.Right.String() != "":
+				return true, nil
+			}
+		}
 		return false, nil
 	}
 
