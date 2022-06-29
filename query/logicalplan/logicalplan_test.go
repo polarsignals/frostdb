@@ -27,6 +27,7 @@ func (m *mockTableReader) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
+	schema *arrow.Schema,
 	projection []ColumnMatcher,
 	filter Expr,
 	distinctColumns []ColumnMatcher,

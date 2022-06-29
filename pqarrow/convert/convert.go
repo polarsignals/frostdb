@@ -10,6 +10,19 @@ import (
 	"github.com/polarsignals/frostdb/pqarrow/writer"
 )
 
+func ParquetFieldToArrowField(pf parquet.Field) (arrow.Field, error) {
+	typ, err := ParquetNodeToType(pf)
+	if err != nil {
+		return arrow.Field{}, err
+	}
+
+	return arrow.Field{
+		Name:     pf.Name(),
+		Type:     typ,
+		Nullable: pf.Optional(),
+	}, nil
+}
+
 // ParquetNodeToType converts a parquet node to an arrow type.
 func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 	typ, _, err := ParquetNodeToTypeWithWriterFunc(n)
