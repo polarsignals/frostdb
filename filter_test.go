@@ -2,7 +2,6 @@ package frostdb
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -231,13 +230,15 @@ func Test_Projection(t *testing.T) {
 		filterExpr  logicalplan.Expr
 		projections []logicalplan.Expr
 		rows        int64
+		cols        int64
 	}{
-		">= int64": {
+		"dynamic projections": {
 			filterExpr: logicalplan.And(
 				logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
 			),
-			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
-			rows:        6,
+			projections: []logicalplan.Expr{logicalplan.DynCol("labels"), logicalplan.Col("timestamp")},
+			rows:        2,
+			cols:        10,
 		},
 	}
 
@@ -250,19 +251,20 @@ func Test_Projection(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			rows := int64(0)
+			cols := int64(0)
 			err := engine.ScanTable("test").
-				Filter(test.filterExpr).
 				Project(test.projections...).
+				Filter(test.filterExpr).
 				Execute(context.Background(), func(ar arrow.Record) error {
 					rows += ar.NumRows()
+					cols += ar.NumCols()
 					defer ar.Release()
-
-					fmt.Println(ar) // TODO REMOVE ME
 
 					return nil
 				})
 			require.NoError(t, err)
 			require.Equal(t, test.rows, rows)
+			require.Equal(t, test.cols, cols)
 		})
 	}
 }
