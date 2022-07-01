@@ -232,13 +232,21 @@ func Test_Projection(t *testing.T) {
 		rows        int64
 		cols        int64
 	}{
-		"dynamic projections": {
+		"dynamic projections no optimization": {
 			filterExpr: logicalplan.And(
 				logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
 			),
-			projections: []logicalplan.Expr{logicalplan.DynCol("labels"), logicalplan.Col("timestamp")},
+			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
 			rows:        2,
-			cols:        10,
+			cols:        4,
+		},
+		"projection with optimization": {
+			filterExpr: logicalplan.And(
+				logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
+			),
+			projections: []logicalplan.Expr{logicalplan.Col("timestamp")},
+			rows:        2,
+			cols:        1,
 		},
 		">= int64": {
 			filterExpr: logicalplan.And(
@@ -259,19 +267,17 @@ func Test_Projection(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			rows := int64(0)
-			cols := int64(0)
 			err := engine.ScanTable("test").
-				Project(test.projections...).
 				Filter(test.filterExpr).
+				Project(test.projections...).
 				Execute(context.Background(), func(ar arrow.Record) error {
 					rows += ar.NumRows()
-					cols += ar.NumCols()
+					require.Equal(t, test.cols, ar.NumCols())
 					defer ar.Release()
 					return nil
 				})
 			require.NoError(t, err)
 			require.Equal(t, test.rows, rows)
-			require.Equal(t, test.cols, cols)
 		})
 	}
 }
