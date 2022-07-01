@@ -77,6 +77,10 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		return plainProjection{
 			matcher: e.Matcher(),
 		}, nil
+	case *logicalplan.DynamicColumn:
+		return plainProjection{
+			matcher: e.Matcher(),
+		}, nil
 	case *logicalplan.AliasExpr:
 		return aliasProjection{
 			matcher: e.Matcher(),
