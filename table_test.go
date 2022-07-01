@@ -629,7 +629,6 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	b.ResetTimer()
 	ctx := context.Background()
 	for i := 0; i < b.N; i++ {
-
 		// Create table for test
 		table, err := db.Table(uuid.New().String(), config, log.NewNopLogger())
 		require.NoError(b, err)
