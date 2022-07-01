@@ -639,11 +639,14 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 			wg.Add(1)
 			go func(id string, tbl *Table, w *sync.WaitGroup) {
 				defer w.Done()
+				var maxTx uint64
+				var err error
 				for i := 0; i < iterations; i++ {
-					if _, err := tbl.InsertBuffer(ctx, inserts[id]); err != nil {
+					if maxTx, err = tbl.InsertBuffer(ctx, inserts[id]); err != nil {
 						fmt.Println("Received error on insert: ", err)
 					}
 				}
+				db.Wait(maxTx)
 			}(id, table, wg)
 		}
 		wg.Wait()
