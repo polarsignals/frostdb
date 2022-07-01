@@ -240,6 +240,14 @@ func Test_Projection(t *testing.T) {
 			rows:        2,
 			cols:        10,
 		},
+		">= int64": {
+			filterExpr: logicalplan.And(
+				logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
+			),
+			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
+			rows:        6,
+			cols:        0,
+		},
 	}
 
 	engine := query.NewEngine(
@@ -259,7 +267,6 @@ func Test_Projection(t *testing.T) {
 					rows += ar.NumRows()
 					cols += ar.NumCols()
 					defer ar.Release()
-
 					return nil
 				})
 			require.NoError(t, err)
