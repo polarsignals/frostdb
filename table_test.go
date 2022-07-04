@@ -17,6 +17,8 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/filesystem"
@@ -579,94 +581,110 @@ func Test_Table_Concurrency(t *testing.T) {
 	}
 }
 
-//func Benchmark_Table_Insert_10Rows_10Iter_10Writers(b *testing.B) {
-//	benchmarkTableInserts(b, 10, 10, 10)
-//}
-//
-//func Benchmark_Table_Insert_100Row_100Iter_100Writers(b *testing.B) {
-//	benchmarkTableInserts(b, 100, 100, 100)
-//}
-//
-//func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
-//	config := NewTableConfig(
-//		dynparquet.NewSampleSchema(),
-//		2<<13,
-//	)
-//
-//	c := New(nil)
-//	db := c.DB("test")
-//	generateRows := func(id string, n int) *dynparquet.Buffer {
-//		rows := make(dynparquet.Samples, 0, n)
-//		for i := 0; i < n; i++ {
-//			rows = append(rows, dynparquet.Sample{
-//				Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
-//					{Name: "label1", Value: id},
-//					{Name: "label2", Value: "value2"},
-//				},
-//				Stacktrace: []uuid.UUID{
-//					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-//					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-//				},
-//				Timestamp: rand.Int63(),
-//				Value:     int64(i),
-//			})
-//		}
-//
-//		buf, err := rows.ToBuffer(config.schema)
-//		require.NoError(b, err)
-//
-//		buf.Sort()
-//		return buf
-//	}
-//
-//	// Pre-generate all rows we're inserting
-//	inserts := make(map[string]*dynparquet.Buffer, writers)
-//	for i := 0; i < writers; i++ {
-//		id := uuid.New().String()
-//		inserts[id] = generateRows(id, rows*iterations)
-//	}
-//
-//	b.ResetTimer()
-//
-//	for i := 0; i < b.N; i++ {
-//
-//		// Create table for test
-//		table := db.Table(uuid.New().String(), config, log.NewNopLogger())
-//
-//		// Spawn n workers that will insert values into the table
-//		wg := &sync.WaitGroup{}
-//		for id := range inserts {
-//			wg.Add(1)
-//			go func(id string, tbl *Table, w *sync.WaitGroup) {
-//				defer w.Done()
-//				for i := 0; i < iterations; i++ {
-//					if err := tbl.Insert(inserts[id][i*rows : i*rows+rows]); err != nil {
-//						fmt.Println("Received error on insert: ", err)
-//					}
-//				}
-//			}(id, table, wg)
-//		}
-//		wg.Wait()
-//
-//		b.StopTimer()
-//
-//		// Wait for all compaction routines to complete
-//		table.Sync()
-//
-//		// Calculate the number of entries in database
-//		totalrows := int64(0)
-//		err := table.Iterator(memory.NewGoAllocator(), func(ar arrow.Record) error {
-//			totalrows += ar.NumRows()
-//			defer ar.Release()
-//
-//			return nil
-//		})
-//		require.NoError(b, err)
-//		require.Equal(b, int64(rows*iterations*writers), totalrows)
-//
-//		b.StartTimer()
-//	}
-//}
+func Benchmark_Table_Insert_10Rows_10Iter_10Writers(b *testing.B) {
+	benchmarkTableInserts(b, 10, 10, 10)
+}
+
+func Benchmark_Table_Insert_100Row_100Iter_100Writers(b *testing.B) {
+	benchmarkTableInserts(b, 100, 100, 100)
+}
+
+func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
+	var (
+		ctx    = context.Background()
+		config = NewTableConfig(
+			dynparquet.NewSampleSchema(),
+		)
+		c = New(prometheus.NewRegistry(), 512, 512*1024*1024)
+	)
+	db, err := c.DB("test")
+	require.NoError(b, err)
+	generateRows := func(id string, n int) *dynparquet.Buffer {
+		rows := make(dynparquet.Samples, 0, n)
+		for i := 0; i < n; i++ {
+			rows = append(rows, dynparquet.Sample{
+				Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
+					{Name: "label1", Value: id},
+					{Name: "label2", Value: "value2"},
+				},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+				},
+				Timestamp: rand.Int63(),
+				Value:     int64(i),
+			})
+		}
+
+		buf, err := rows.ToBuffer(config.schema)
+		require.NoError(b, err)
+
+		buf.Sort()
+		return buf
+	}
+
+	// Pre-generate all rows we're inserting
+	inserts := make(map[string][]*dynparquet.Buffer, writers)
+	for i := 0; i < writers; i++ {
+		id := uuid.New().String()
+		inserts[id] = make([]*dynparquet.Buffer, iterations)
+		for j := 0; j < iterations; j++ {
+			inserts[id][j] = generateRows(id, rows)
+		}
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		// Create table for test
+		table, err := db.Table(uuid.New().String(), config, log.NewNopLogger())
+		require.NoError(b, err)
+		// Spawn n workers that will insert values into the table
+		wg := &sync.WaitGroup{}
+		for id := range inserts {
+			wg.Add(1)
+			go func(id string, tbl *Table, w *sync.WaitGroup) {
+				defer w.Done()
+				var (
+					maxTx uint64
+					err   error
+				)
+				for i := 0; i < iterations; i++ {
+					if maxTx, err = tbl.InsertBuffer(ctx, inserts[id][i]); err != nil {
+						fmt.Println("Received error on insert: ", err)
+					}
+				}
+				db.Wait(maxTx)
+			}(id, table, wg)
+		}
+		wg.Wait()
+
+		b.StopTimer()
+		pool := memory.NewGoAllocator()
+		// Wait for all compaction routines to complete
+		table.Sync()
+
+		// Calculate the number of entries in database
+		totalrows := int64(0)
+		err = table.View(func(tx uint64) error {
+			as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+			if err != nil {
+				return err
+			}
+			return table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(ar arrow.Record) error {
+				defer ar.Release()
+				totalrows += ar.NumRows()
+
+				return nil
+			})
+		})
+		require.Equal(b, 0., testutil.ToFloat64(table.metrics.granulesCompactionAborted))
+		require.NoError(b, err)
+		require.Equal(b, int64(rows*iterations*writers), totalrows)
+
+		b.StartTimer()
+	}
+}
 
 func Test_Table_ReadIsolation(t *testing.T) {
 	table := basicTable(t, 2<<12)
