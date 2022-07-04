@@ -159,13 +159,14 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	var (
 		rowBuf = make([]parquet.Row, 1)
 		b      *bytes.Buffer
-		w      *parquet.Writer
+		w      *dynparquet.PooledWriter
 	)
 	b = bytes.NewBuffer(nil)
-	w, err := g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
+	w, err := g.tableConfig.schema.GetWriter(b, p.Buf.DynamicColumns())
 	if err != nil {
 		return nil, ErrCreateSchemaWriter{err}
 	}
+
 	rowsWritten := 0
 
 	f := p.Buf.ParquetFile()
@@ -201,7 +202,8 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 				}
 				granules = append(granules, gran)
 				b = bytes.NewBuffer(nil)
-				w, err = g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
+				g.tableConfig.schema.PutWriter(w)
+				w, err = g.tableConfig.schema.GetWriter(b, p.Buf.DynamicColumns())
 				if err != nil {
 					return nil, ErrCreateSchemaWriter{err}
 				}
@@ -219,6 +221,8 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 		if err != nil {
 			return nil, fmt.Errorf("close last writer: %w", err)
 		}
+		g.tableConfig.schema.PutWriter(w)
+
 		r, err := dynparquet.ReaderFromBytes(b.Bytes())
 		if err != nil {
 			return nil, fmt.Errorf("create last reader: %w", err)

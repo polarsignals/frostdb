@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -105,6 +106,12 @@ func ParquetRowGroupToArrowRecord(
 	}
 }
 
+var rowBufPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]parquet.Row, 64) // Random guess.
+	},
+}
+
 // rowBasedParquetRowGroupToArrowRecord converts a parquet row group to an arrow record row by row.
 func rowBasedParquetRowGroupToArrowRecord(
 	ctx context.Context,
@@ -131,13 +138,16 @@ func rowBasedParquetRowGroupToArrowRecord(
 
 	rows := rg.Rows()
 	defer rows.Close()
+	rowBuf := rowBufPool.Get().([]parquet.Row)
+	defer rowBufPool.Put(rowBuf[:cap(rowBuf)])
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
-		rowBuf := make([]parquet.Row, 64) // Random guess.
+		rowBuf = rowBuf[:cap(rowBuf)]
 		n, err := rows.ReadRows(rowBuf)
 		if err == io.EOF && n == 0 {
 			break
