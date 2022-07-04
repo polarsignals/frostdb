@@ -88,12 +88,13 @@ type TableBlock struct {
 }
 
 type tableMetrics struct {
-	blockRotated     prometheus.Counter
-	granulesCreated  prometheus.Counter
-	granulesSplits   prometheus.Counter
-	rowsInserted     prometheus.Counter
-	zeroRowsInserted prometheus.Counter
-	rowInsertSize    prometheus.Histogram
+	blockRotated              prometheus.Counter
+	granulesCreated           prometheus.Counter
+	granulesSplits            prometheus.Counter
+	rowsInserted              prometheus.Counter
+	zeroRowsInserted          prometheus.Counter
+	granulesCompactionAborted prometheus.Counter
+	rowInsertSize             prometheus.Histogram
 }
 
 func newTable(
@@ -133,6 +134,10 @@ func newTable(
 			granulesSplits: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "granules_splits",
 				Help: "Number of granules splits executed.",
+			}),
+			granulesCompactionAborted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "granules_compaction_aborted",
+				Help: "Number of aborted granules compaction.",
 			}),
 			rowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "rows_inserted",
@@ -1003,6 +1008,7 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 
 // abort a compaction transaction.
 func (t *TableBlock) abort(granule *Granule) {
+	t.table.metrics.granulesCompactionAborted.Inc()
 	for {
 		if granule.metadata.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
 			return
