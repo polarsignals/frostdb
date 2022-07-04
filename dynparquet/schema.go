@@ -446,7 +446,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 }
 
 type PooledWriter struct {
-	key string
+	pool *sync.Pool
 	*parquet.Writer
 }
 
@@ -459,15 +459,17 @@ func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*Po
 		if err != nil {
 			return nil, err
 		}
-		return &PooledWriter{key, new}, nil
+		return &PooledWriter{
+			pool:   pool.(*sync.Pool),
+			Writer: new,
+		}, nil
 	}
 	pooled.(*PooledWriter).Writer.Reset(w)
 	return pooled.(*PooledWriter), nil
 }
 
 func (s *Schema) PutWriter(w *PooledWriter) {
-	pool, _ := s.writers.LoadOrStore(w.key, &sync.Pool{})
-	pool.(*sync.Pool).Put(w)
+	w.pool.Put(w)
 }
 
 // MergedRowGroup allows wrapping any parquet.RowGroup to implement the

@@ -1044,10 +1044,11 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 
 	buf := bytes.NewBuffer(nil)
 	cols := merged.DynamicColumns()
-	w, err := t.table.config.schema.NewWriter(buf, cols)
+	w, err := t.table.config.schema.GetWriter(buf, cols)
 	if err != nil {
 		return nil, err
 	}
+	defer t.table.config.schema.PutWriter(w)
 
 	rows := merged.Rows()
 	n := 0
