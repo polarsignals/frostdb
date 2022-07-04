@@ -17,6 +17,8 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/filesystem"
@@ -588,11 +590,13 @@ func Benchmark_Table_Insert_100Row_100Iter_100Writers(b *testing.B) {
 }
 
 func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
-	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+	var (
+		ctx    = context.Background()
+		config = NewTableConfig(
+			dynparquet.NewSampleSchema(),
+		)
+		c = New(prometheus.NewRegistry(), 512, 512*1024*1024)
 	)
-
-	c := New(nil, 512, 512*1024*1024)
 	db, err := c.DB("test")
 	require.NoError(b, err)
 	generateRows := func(id string, n int) *dynparquet.Buffer {
@@ -620,14 +624,17 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	}
 
 	// Pre-generate all rows we're inserting
-	inserts := make(map[string]*dynparquet.Buffer, writers)
+	inserts := make(map[string][]*dynparquet.Buffer, writers)
 	for i := 0; i < writers; i++ {
 		id := uuid.New().String()
-		inserts[id] = generateRows(id, rows)
+		inserts[id] = make([]*dynparquet.Buffer, iterations)
+		for j := 0; j < iterations; j++ {
+			inserts[id][j] = generateRows(id, rows)
+		}
 	}
 
 	b.ResetTimer()
-	ctx := context.Background()
+
 	for i := 0; i < b.N; i++ {
 		// Create table for test
 		table, err := db.Table(uuid.New().String(), config, log.NewNopLogger())
@@ -638,10 +645,12 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 			wg.Add(1)
 			go func(id string, tbl *Table, w *sync.WaitGroup) {
 				defer w.Done()
-				var maxTx uint64
-				var err error
+				var (
+					maxTx uint64
+					err   error
+				)
 				for i := 0; i < iterations; i++ {
-					if maxTx, err = tbl.InsertBuffer(ctx, inserts[id]); err != nil {
+					if maxTx, err = tbl.InsertBuffer(ctx, inserts[id][i]); err != nil {
 						fmt.Println("Received error on insert: ", err)
 					}
 				}
@@ -669,7 +678,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 				return nil
 			})
 		})
-
+		require.Equal(b, 0., testutil.ToFloat64(table.metrics.granulesCompactionAborted))
 		require.NoError(b, err)
 		require.Equal(b, int64(rows*iterations*writers), totalrows)
 
