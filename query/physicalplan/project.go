@@ -11,7 +11,7 @@ import (
 )
 
 type columnProjection interface {
-	Project(mem memory.Allocator, ar arrow.Record) (arrow.Field, arrow.Array, error)
+	Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error)
 }
 
 type aliasProjection struct {
@@ -19,25 +19,25 @@ type aliasProjection struct {
 	name    string
 }
 
-func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) (arrow.Field, arrow.Array, error) {
+func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i, field := range ar.Schema().Fields() {
 		if a.matcher.Match(field.Name) {
 			field.Name = a.name
-			return field, ar.Column(i), nil
+			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 		}
 	}
 
-	return arrow.Field{}, nil, nil
+	return nil, nil, nil
 }
 
 type binaryExprProjection struct {
 	boolExpr BooleanExpression
 }
 
-func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) (arrow.Field, arrow.Array, error) {
+func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	bitmap, err := b.boolExpr.Eval(ar)
 	if err != nil {
-		return arrow.Field{}, nil, err
+		return nil, nil, err
 	}
 
 	vals := make([]bool, ar.NumRows())
@@ -51,30 +51,53 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) (ar
 
 	builder.AppendValues(vals, nil)
 
-	return arrow.Field{
-		Name: b.boolExpr.String(),
-		Type: &arrow.BooleanType{},
-	}, builder.NewArray(), nil
+	return []arrow.Field{
+		{
+			Name: b.boolExpr.String(),
+			Type: &arrow.BooleanType{},
+		},
+	}, []arrow.Array{builder.NewArray()}, nil
 }
 
 type plainProjection struct {
 	matcher logicalplan.ColumnMatcher
 }
 
-func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) (arrow.Field, arrow.Array, error) {
+func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i, field := range ar.Schema().Fields() {
 		if p.matcher.Match(field.Name) {
-			return field, ar.Column(i), nil
+			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 		}
 	}
 
-	return arrow.Field{}, nil, nil
+	return nil, nil, nil
+}
+
+type dynamicProjection struct {
+	matcher logicalplan.ColumnMatcher
+}
+
+func (p dynamicProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	fields := []arrow.Field{}
+	arrays := []arrow.Array{}
+	for i, field := range ar.Schema().Fields() {
+		if p.matcher.Match(field.Name) {
+			fields = append(fields, field)
+			arrays = append(arrays, ar.Column(i))
+		}
+	}
+
+	return fields, arrays, nil
 }
 
 func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 	switch e := expr.(type) {
 	case *logicalplan.Column:
 		return plainProjection{
+			matcher: e.Matcher(),
+		}, nil
+	case *logicalplan.DynamicColumn:
+		return dynamicProjection{
 			matcher: e.Matcher(),
 		}, nil
 	case *logicalplan.AliasExpr:
@@ -130,8 +153,8 @@ func (p *Projection) Callback(r arrow.Record) error {
 			continue
 		}
 
-		resFields = append(resFields, f)
-		resArrays = append(resArrays, a)
+		resFields = append(resFields, f...)
+		resArrays = append(resArrays, a...)
 	}
 
 	rows := int64(0)
