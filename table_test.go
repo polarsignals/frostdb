@@ -1217,12 +1217,12 @@ func Test_Table_InsertCancellation(t *testing.T) {
 			err := table.View(func(tx uint64) error {
 				totalrows := int64(0)
 
-				as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+				as, err := table.ArrowSchema(context.Background(), tx, pool, nil, nil, nil)
 				if err != nil {
 					return err
 				}
 
-				err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, func(ar arrow.Record) error {
+				err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, func(ar arrow.Record) error {
 					totalrows += ar.NumRows()
 					defer ar.Release()
 
