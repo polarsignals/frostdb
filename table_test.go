@@ -599,6 +599,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	)
 	db, err := c.DB("test")
 	require.NoError(b, err)
+	ts := atomic.NewInt64(0)
 	generateRows := func(id string, n int) *dynparquet.Buffer {
 		rows := make(dynparquet.Samples, 0, n)
 		for i := 0; i < n; i++ {
@@ -611,7 +612,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
 				},
-				Timestamp: rand.Int63(),
+				Timestamp: ts.Inc(),
 				Value:     int64(i),
 			})
 		}
