@@ -581,11 +581,11 @@ func Test_Table_Concurrency(t *testing.T) {
 	}
 }
 
-func Benchmark_Table_Insert_10Rows_10Iter_10Writers(b *testing.B) {
-	benchmarkTableInserts(b, 10, 10, 10)
+func Benchmark_Table_Insert_10Rows_10Iters_10Writers(b *testing.B) {
+	benchmarkTableInserts(b, 1000, 10, 10)
 }
 
-func Benchmark_Table_Insert_100Row_100Iter_100Writers(b *testing.B) {
+func Benchmark_Table_Insert_100Rows_100Iters_100Writers(b *testing.B) {
 	benchmarkTableInserts(b, 100, 100, 100)
 }
 
