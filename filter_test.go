@@ -248,14 +248,6 @@ func Test_Projection(t *testing.T) {
 			rows:        2,
 			cols:        1,
 		},
-		">= int64": {
-			filterExpr: logicalplan.And(
-				logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
-			),
-			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
-			rows:        6,
-			cols:        0,
-		},
 	}
 
 	engine := query.NewEngine(
