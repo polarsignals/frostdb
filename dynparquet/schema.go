@@ -201,6 +201,7 @@ func dynamicColumnsFor(column string, dynamicColumns map[string][]string) []stri
 type Buffer struct {
 	buffer         *parquet.Buffer
 	dynamicColumns map[string][]string
+	fields         []parquet.Field
 }
 
 // DynamicRowGroup is a parquet.RowGroup that can describe the concrete dynamic
@@ -224,13 +225,15 @@ type dynamicRowGroupReader struct {
 	schema         *parquet.Schema
 	dynamicColumns map[string][]string
 	rows           parquet.Rows
+	fields         []parquet.Field
 }
 
-func newDynamicRowGroupReader(rg DynamicRowGroup) *dynamicRowGroupReader {
+func newDynamicRowGroupReader(rg DynamicRowGroup, fields []parquet.Field) *dynamicRowGroupReader {
 	return &dynamicRowGroupReader{
 		schema:         rg.Schema(),
 		dynamicColumns: rg.DynamicColumns(),
 		rows:           rg.Rows(),
+		fields:         fields,
 	}
 }
 
@@ -241,6 +244,9 @@ func (r *dynamicRowGroupReader) ReadRows(rows *DynamicRows) (int, error) {
 	}
 	if rows.Schema == nil {
 		rows.Schema = r.schema
+	}
+	if rows.fields == nil {
+		rows.fields = r.fields
 	}
 
 	n, err := r.rows.ReadRows(rows.Rows)
@@ -306,6 +312,7 @@ func (b *Buffer) Clone() (*Buffer, error) {
 	return &Buffer{
 		buffer:         buf,
 		dynamicColumns: b.dynamicColumns,
+		fields:         b.fields,
 	}, nil
 }
 
@@ -346,7 +353,7 @@ func (b *Buffer) Rows() parquet.Rows {
 // DynamicRows returns an iterator for the rows in the buffer. It implements the
 // DynamicRowGroup interface.
 func (b *Buffer) DynamicRows() DynamicRowReader {
-	return newDynamicRowGroupReader(b)
+	return newDynamicRowGroupReader(b, b.fields)
 }
 
 // NewBuffer returns a new buffer with a concrete parquet schema generated
@@ -364,6 +371,7 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 			ps,
 			parquet.SortingColumns(cols...),
 		),
+		fields: ps.Fields(),
 	}, nil
 }
 
@@ -478,6 +486,7 @@ func (s *Schema) PutWriter(w *PooledWriter) {
 type MergedRowGroup struct {
 	parquet.RowGroup
 	DynCols map[string][]string
+	fields  []parquet.Field
 }
 
 // DynamicColumns returns the concrete dynamic column names that were used
@@ -490,7 +499,7 @@ func (r *MergedRowGroup) DynamicColumns() map[string][]string {
 // DynamicRows returns an iterator over the rows in the row group. Implements
 // the DynamicRowGroup interface.
 func (r *MergedRowGroup) DynamicRows() DynamicRowReader {
-	return newDynamicRowGroupReader(r)
+	return newDynamicRowGroupReader(r, r.fields)
 }
 
 // MergeDynamicRowGroups merges the given dynamic row groups into a single
@@ -528,6 +537,7 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowG
 	return &MergedRowGroup{
 		RowGroup: merge,
 		DynCols:  dynamicColumns,
+		fields:   ps.Fields(),
 	}, nil
 }
 
@@ -654,8 +664,8 @@ func (a *dynamicRowGroupMergeAdapter) NumRows() int64 {
 	return a.originalRowGroup.NumRows()
 }
 
-func FieldByName(schema *parquet.Schema, name string) parquet.Field {
-	for _, field := range schema.Fields() {
+func FieldByName(fields []parquet.Field, name string) parquet.Field {
+	for _, field := range fields {
 		if field.Name() == name {
 			return field
 		}
@@ -674,7 +684,7 @@ func (a *dynamicRowGroupMergeAdapter) ColumnChunks() []parquet.ColumnChunk {
 	for i, field := range fields {
 		colIndex := a.indexMapping[i]
 		if colIndex == -1 {
-			schemaField := FieldByName(a.schema, field.Name())
+			schemaField := FieldByName(fields, field.Name())
 			remappedColumnChunks[i] = NewNilColumnChunk(schemaField.Type(), i, int(a.NumRows()))
 		} else {
 			remappedColumnChunks[i] = &remappedColumnChunk{

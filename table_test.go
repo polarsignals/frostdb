@@ -585,6 +585,10 @@ func Benchmark_Table_Insert_1000Rows_10Iters_10Writers(b *testing.B) {
 	benchmarkTableInserts(b, 1000, 10, 10)
 }
 
+func Benchmark_Table_Insert_100Rows_1000Iters_1Writers(b *testing.B) {
+	benchmarkTableInserts(b, 100, 1000, 1)
+}
+
 func Benchmark_Table_Insert_100Rows_100Iters_100Writers(b *testing.B) {
 	benchmarkTableInserts(b, 100, 100, 100)
 }

@@ -109,6 +109,7 @@ func TestLess(t *testing.T) {
 		Schema:         rowGroups[0].Schema(),
 		DynamicColumns: rowGroups[0].DynamicColumns(),
 		Rows:           make([]parquet.Row, 1),
+		fields:         rowGroups[0].Schema().Fields(),
 	}
 	n, err := rowGroups[0].Rows().ReadRows(row1.Rows)
 	require.NoError(t, err)
@@ -118,6 +119,7 @@ func TestLess(t *testing.T) {
 		Schema:         rowGroups[1].Schema(),
 		DynamicColumns: rowGroups[1].DynamicColumns(),
 		Rows:           make([]parquet.Row, 1),
+		fields:         rowGroups[1].Schema().Fields(),
 	}
 	n, err = rowGroups[1].Rows().ReadRows(row2.Rows)
 	require.NoError(t, err)
@@ -127,6 +129,7 @@ func TestLess(t *testing.T) {
 		Schema:         rowGroups[2].Schema(),
 		DynamicColumns: rowGroups[2].DynamicColumns(),
 		Rows:           make([]parquet.Row, 1),
+		fields:         rowGroups[2].Schema().Fields(),
 	}
 	n, err = rowGroups[2].Rows().ReadRows(row3.Rows)
 	require.NoError(t, err)
@@ -177,6 +180,7 @@ func TestLessWithDynamicSchemas(t *testing.T) {
 		Schema:         rowGroups[0].Schema(),
 		DynamicColumns: rowGroups[0].DynamicColumns(),
 		Rows:           make([]parquet.Row, 1),
+		fields:         rowGroups[0].Schema().Fields(),
 	}
 	n, err := rowGroups[0].Rows().ReadRows(row1.Rows)
 	require.NoError(t, err)
@@ -186,6 +190,7 @@ func TestLessWithDynamicSchemas(t *testing.T) {
 		Schema:         rowGroups[1].Schema(),
 		DynamicColumns: rowGroups[1].DynamicColumns(),
 		Rows:           make([]parquet.Row, 1),
+		fields:         rowGroups[1].Schema().Fields(),
 	}
 	n, err = rowGroups[1].Rows().ReadRows(row2.Rows)
 	require.NoError(t, err)
