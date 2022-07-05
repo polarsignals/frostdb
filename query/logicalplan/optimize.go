@@ -60,8 +60,7 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsed []C
 type ProjectionPushDown struct{}
 
 func (p *ProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
-
-	// Don't perform the optimization if filters contain a column that projections do not
+	// Don't perform the optimization if filters contain a column that projections do not.
 	// Otherwise we'll removed the columns we're filtering on before we filter.
 	projectColumns := projectionColumns(plan)
 	projectMap := map[string]bool{}
@@ -105,7 +104,7 @@ func (p *projectionCollector) collect(plan *LogicalPlan) {
 	}
 }
 
-// filterColumns returns all the column matchers for filters in a given plan
+// filterColumns returns all the column matchers for filters in a given plan.
 func filterColumns(plan *LogicalPlan) []ColumnMatcher {
 	if plan == nil {
 		return nil
@@ -120,7 +119,7 @@ func filterColumns(plan *LogicalPlan) []ColumnMatcher {
 	return append(columnsUsed, filterColumns(plan.Input)...)
 }
 
-// projectionColumns returns all the column matchers for projections in a given plan
+// projectionColumns returns all the column matchers for projections in a given plan.
 func projectionColumns(plan *LogicalPlan) []ColumnMatcher {
 	if plan == nil {
 		return nil
