@@ -581,11 +581,11 @@ func Test_Table_Concurrency(t *testing.T) {
 	}
 }
 
-func Benchmark_Table_Insert_10Rows_10Iter_10Writers(b *testing.B) {
-	benchmarkTableInserts(b, 10, 10, 10)
+func Benchmark_Table_Insert_1000Rows_10Iters_10Writers(b *testing.B) {
+	benchmarkTableInserts(b, 1000, 10, 10)
 }
 
-func Benchmark_Table_Insert_100Row_100Iter_100Writers(b *testing.B) {
+func Benchmark_Table_Insert_100Rows_100Iters_100Writers(b *testing.B) {
 	benchmarkTableInserts(b, 100, 100, 100)
 }
 
@@ -599,6 +599,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	)
 	db, err := c.DB("test")
 	require.NoError(b, err)
+	ts := atomic.NewInt64(0)
 	generateRows := func(id string, n int) *dynparquet.Buffer {
 		rows := make(dynparquet.Samples, 0, n)
 		for i := 0; i < n; i++ {
@@ -611,7 +612,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
 				},
-				Timestamp: rand.Int63(),
+				Timestamp: ts.Inc(),
 				Value:     int64(i),
 			})
 		}

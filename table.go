@@ -629,12 +629,13 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	b := bytes.NewBuffer(nil)
 	cols := merge.DynamicColumns()
-	w, err := t.table.config.schema.NewWriter(b, cols)
+	w, err := t.table.config.schema.GetWriter(b, cols)
 	if err != nil {
 		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to create new schema writer", "err", err)
 		return
 	}
+	defer t.table.config.schema.PutWriter(w)
 
 	rowBuf := make([]parquet.Row, 1)
 	rows := merge.Rows()
@@ -825,10 +826,11 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 		b := bytes.NewBuffer(nil)
 
 		cols := buf.DynamicColumns()
-		w, err := t.table.config.schema.NewWriter(b, cols)
+		w, err := t.table.config.schema.GetWriter(b, cols)
 		if err != nil {
 			return nil, ErrCreateSchemaWriter{err}
 		}
+		defer t.table.config.schema.PutWriter(w)
 
 		rowBuf := make([]parquet.Row, 1)
 		rows := buf.Reader()
@@ -861,8 +863,13 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 		}, nil
 	}
 
-	writerByGranule := map[*Granule]*parquet.Writer{}
+	writerByGranule := map[*Granule]*dynparquet.PooledWriter{}
 	bufByGranule := map[*Granule]*bytes.Buffer{}
+	defer func() {
+		for _, w := range writerByGranule {
+			t.table.config.schema.PutWriter(w)
+		}
+	}()
 
 	// TODO: we might be able to do ascend less than or ascend greater than here?
 	rows := buf.DynamicRows()
@@ -889,7 +896,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 					w, ok := writerByGranule[prev]
 					if !ok {
 						b := bytes.NewBuffer(nil)
-						w, err = t.table.config.schema.NewWriter(b, buf.DynamicColumns())
+						w, err = t.table.config.schema.GetWriter(b, buf.DynamicColumns())
 						if err != nil {
 							ascendErr = ErrCreateSchemaWriter{err}
 							return false
@@ -931,7 +938,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 		w, ok := writerByGranule[prev]
 		if !ok {
 			b := bytes.NewBuffer(nil)
-			w, err = t.table.config.schema.NewWriter(b, buf.DynamicColumns())
+			w, err = t.table.config.schema.GetWriter(b, buf.DynamicColumns())
 			if err != nil {
 				return nil, ErrCreateSchemaWriter{err}
 			}
@@ -1037,10 +1044,11 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 
 	buf := bytes.NewBuffer(nil)
 	cols := merged.DynamicColumns()
-	w, err := t.table.config.schema.NewWriter(buf, cols)
+	w, err := t.table.config.schema.GetWriter(buf, cols)
 	if err != nil {
 		return nil, err
 	}
+	defer t.table.config.schema.PutWriter(w)
 
 	rows := merged.Rows()
 	n := 0

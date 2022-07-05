@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 
 	"github.com/segmentio/parquet-go"
 )
@@ -90,6 +91,8 @@ type Schema struct {
 	columnIndexes  map[string]int
 	sortingColumns []SortingColumn
 	dynamicColumns []int
+
+	writers *sync.Map
 }
 
 // NewSchema creates a new dynamic parquet schema with the given name, column
@@ -115,6 +118,7 @@ func NewSchema(
 		columns:        columns,
 		sortingColumns: sortingColumns,
 		columnIndexes:  columnIndexes,
+		writers:        &sync.Map{},
 	}
 
 	for i, col := range columns {
@@ -363,14 +367,21 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 	}, nil
 }
 
+var rowBufPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]parquet.Row, 64) // Random guess.
+	},
+}
+
 // NewWriter returns a new parquet writer with a concrete parquet schema
 // generated using the given concrete dynamic column names.
 func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
 	b := bytes.NewBuffer(nil)
-	w, err := s.NewWriter(b, buffer.DynamicColumns())
+	w, err := s.GetWriter(b, buffer.DynamicColumns())
 	if err != nil {
 		return nil, fmt.Errorf("create writer: %w", err)
 	}
+	defer s.PutWriter(w)
 
 	// TODO: This copying should be possible, but it's not at the time of
 	// writing this. This is likely a bug in the parquet-go library.
@@ -380,8 +391,11 @@ func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
 	//}
 
 	rows := buffer.Rows()
+	rowBuf := rowBufPool.Get().([]parquet.Row)
+	defer rowBufPool.Put(rowBuf[:cap(rowBuf)])
+
 	for {
-		rowBuf := make([]parquet.Row, 64)
+		rowBuf = rowBuf[:cap(rowBuf)]
 		n, err := rows.ReadRows(rowBuf)
 		if err == io.EOF && n == 0 {
 			break
@@ -429,6 +443,33 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 			serializeDynamicColumns(dynamicColumns),
 		),
 	), nil
+}
+
+type PooledWriter struct {
+	pool *sync.Pool
+	*parquet.Writer
+}
+
+func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*PooledWriter, error) {
+	key := serializeDynamicColumns(dynamicColumns)
+	pool, _ := s.writers.LoadOrStore(key, &sync.Pool{})
+	pooled := pool.(*sync.Pool).Get()
+	if pooled == nil {
+		new, err := s.NewWriter(w, dynamicColumns)
+		if err != nil {
+			return nil, err
+		}
+		return &PooledWriter{
+			pool:   pool.(*sync.Pool),
+			Writer: new,
+		}, nil
+	}
+	pooled.(*PooledWriter).Writer.Reset(w)
+	return pooled.(*PooledWriter), nil
+}
+
+func (s *Schema) PutWriter(w *PooledWriter) {
+	w.pool.Put(w)
 }
 
 // MergedRowGroup allows wrapping any parquet.RowGroup to implement the
