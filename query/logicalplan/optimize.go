@@ -61,22 +61,18 @@ type ProjectionPushDown struct{}
 
 func (p *ProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 
-	// Don't perform the optimization if the intersection of the columns affected is less than the number of columns filtered.
+	// Don't perform the optimization if filters contain a column that projections do not
 	// Otherwise we'll removed the columns we're filtering on before we filter.
 	projectColumns := projectionColumns(plan)
 	projectMap := map[string]bool{}
 	filterColumns := filterColumns(plan)
-	intersection := map[string]struct{}{}
 	for _, m := range projectColumns {
 		projectMap[m.Name()] = true
 	}
 	for _, m := range filterColumns {
-		if projectMap[m.Name()] {
-			intersection[m.Name()] = struct{}{}
+		if !projectMap[m.Name()] {
+			return plan
 		}
-	}
-	if len(intersection) < len(filterColumns) {
-		return plan
 	}
 
 	c := &projectionCollector{}
