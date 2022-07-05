@@ -83,7 +83,9 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		if !ok {
 			// Bloom filters may return false positives, but never return false
 			// negatives, we know this column chunk does not contain the value.
-			return false, nil
+
+			// THIS IS WRONG AND FOR TESTING
+			return true, nil
 		}
 	}
 	return true, nil
