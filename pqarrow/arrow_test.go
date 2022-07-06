@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 func TestMergeToArrow(t *testing.T) {
@@ -111,6 +112,63 @@ func TestMergeToArrow(t *testing.T) {
 	require.Equal(t, int64(5), ar.NumRows())
 	require.Equal(t, int64(8), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 8)
+}
+
+func TestNonExistedColumn(t *testing.T) {
+	dynSchema := dynparquet.NewSampleSchema()
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf1, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	pool := memory.DefaultAllocator
+
+	as := arrow.NewSchema([]arrow.Field{
+		{Name: "labels.label5", Type: arrow.BinaryTypes.String},
+	}, nil)
+
+	columns := []logicalplan.ColumnMatcher{
+		logicalplan.StaticColumnMatcher{ColumnName: "labels.label5"},
+	}
+	_, err = ParquetRowGroupToArrowRecord(ctx, pool, buf1, as, nil, columns)
+	require.ErrorIs(t, err, ErrColumNotFound)
 }
 
 func BenchmarkParquetToArrow(b *testing.B) {
