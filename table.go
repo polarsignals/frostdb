@@ -365,6 +365,28 @@ func (t *Table) Iterator(
 				filterExpr,
 				distinctColumns,
 			)
+			if !record.Schema().Equal(schema) {
+				// TODO: Move to helper function
+				// The above checks the same, but the following code returns the actual error rather than just a boolean
+				r := record.Schema()
+				s := schema
+				switch {
+				case r == nil:
+					return fmt.Errorf("the record schema is nil")
+				case s == nil:
+					return fmt.Errorf("the schema is nil")
+				case len(r.Fields()) != len(s.Fields()):
+					return fmt.Errorf("the record schema has %d fields, the schema has %d fields", len(r.Fields()), len(s.Fields()))
+				}
+
+				for i := range r.Fields() {
+					if !r.Field(i).Equal(s.Field(i)) {
+						return fmt.Errorf("field %s in record schema does not match schema field %s", r.Field(i).Name, s.Field(i))
+					}
+				}
+
+				return fmt.Errorf("the schema and the record schema differ for unknown reasons")
+			}
 			if err != nil {
 				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 			}
