@@ -2,6 +2,7 @@ package pqarrow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -16,6 +17,8 @@ import (
 	"github.com/polarsignals/frostdb/pqarrow/writer"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
+
+var ErrColumNotFound = errors.New("could not find column")
 
 // ParquetRowGroupToArrowSchema converts a parquet row group to an arrow schema.
 func ParquetRowGroupToArrowSchema(
@@ -211,6 +214,10 @@ func contiguousParquetRowGroupToArrowRecord(
 			}
 		}
 
+		if len(cols) == 0 {
+			return nil, ErrColumNotFound
+		}
+
 		return array.NewRecord(schema, cols, rows), nil
 	}
 
@@ -252,6 +259,9 @@ func contiguousParquetRowGroupToArrowRecord(
 		}
 	}
 
+	if len(cols) == 0 {
+		return nil, ErrColumNotFound
+	}
 	return array.NewRecord(schema, cols, rows), nil
 }
 

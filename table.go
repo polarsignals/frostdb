@@ -366,6 +366,9 @@ func (t *Table) Iterator(
 				distinctColumns,
 			)
 			if err != nil {
+				if err == pqarrow.ErrColumNotFound {
+					continue
+				}
 				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 			}
 			err = iterator(record)
