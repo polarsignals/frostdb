@@ -8,6 +8,7 @@ type DynamicRows struct {
 	Rows           []parquet.Row
 	Schema         *parquet.Schema
 	DynamicColumns map[string][]string
+	fields         []parquet.Field
 }
 
 func (r *DynamicRows) Get(i int) *DynamicRow {
@@ -15,6 +16,7 @@ func (r *DynamicRows) Get(i int) *DynamicRow {
 		Schema:         r.Schema,
 		DynamicColumns: r.DynamicColumns,
 		Row:            r.Rows[i],
+		fields:         r.fields,
 	}
 }
 
@@ -28,6 +30,7 @@ func (r *DynamicRows) GetCopy(i int) *DynamicRow {
 		Schema:         r.Schema,
 		DynamicColumns: r.DynamicColumns,
 		Row:            rowCopy,
+		fields:         r.fields,
 	}
 }
 
@@ -35,6 +38,7 @@ type DynamicRow struct {
 	Row            parquet.Row
 	Schema         *parquet.Schema
 	DynamicColumns map[string][]string
+	fields         []parquet.Field
 }
 
 func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
@@ -43,8 +47,8 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 	for _, col := range cols {
 		name := col.Path()[0] // Currently we only support flat schemas.
 
-		aIndex := FindChildIndex(a.Schema, name)
-		bIndex := FindChildIndex(b.Schema, name)
+		aIndex := FindChildIndex(a.fields, name)
+		bIndex := FindChildIndex(b.fields, name)
 
 		if aIndex == -1 && bIndex == -1 {
 			continue
@@ -52,9 +56,9 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 
 		var node parquet.Node
 		if aIndex != -1 {
-			node = FieldByName(a.Schema, name)
+			node = FieldByName(a.fields, name)
 		} else {
-			node = FieldByName(b.Schema, name)
+			node = FieldByName(b.fields, name)
 		}
 
 		av, bv := extractValues(a, b, aIndex, bIndex)
@@ -103,8 +107,8 @@ func extractValues(a, b *DynamicRow, aIndex, bIndex int) ([]parquet.Value, []par
 	return ValuesForIndex(a.Row, aIndex), ValuesForIndex(b.Row, bIndex)
 }
 
-func FindChildIndex(schema *parquet.Schema, name string) int {
-	for i, field := range schema.Fields() {
+func FindChildIndex(fields []parquet.Field, name string) int {
+	for i, field := range fields {
 		if field.Name() == name {
 			return i
 		}
