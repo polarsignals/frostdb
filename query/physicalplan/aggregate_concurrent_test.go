@@ -2,7 +2,9 @@ package physicalplan
 
 import (
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -27,6 +29,36 @@ func TestCombineAggregateResults(t *testing.T) {
 	require.Nil(t, err)
 	phyPlanAgg2, err := Aggregate(memory.DefaultAllocator, schema, &aggLogPlan)
 	require.Nil(t, err)
+
+	merge := Merge()
+	merge.wg.Add(1)
+	merge.wg.Add(1)
+
+	phyPlanAgg1.SetNextPlan(merge)
+	phyPlanAgg2.SetNextPlan(merge)
+
+	concurrentAgg := ConcurrentAggregate(
+		memory.DefaultAllocator,
+		phyPlanAgg1.aggregationFunction,
+	)
+	merge.SetNextPlan(concurrentAgg)
+
+	results := make([]arrow.Record, 0)
+	resultMtx := sync.Mutex{}
+	finishCalled := false
+	concurrentAgg.SetNextPlan(&mockPhyPlan{
+		callback: func(r arrow.Record) error {
+			resultMtx.Lock()
+			defer resultMtx.Unlock()
+			results = append(results, r)
+			return nil
+		},
+		finish: func() error {
+			require.False(t, finishCalled) // should only be called once
+			finishCalled = true
+			return nil
+		},
+	})
 
 	ebuilder := array.NewBinaryBuilder(memory.DefaultAllocator, arrow.BinaryTypes.Binary)
 	sbuilder := array.NewBinaryBuilder(memory.DefaultAllocator, arrow.BinaryTypes.Binary)
@@ -60,33 +92,43 @@ func TestCombineAggregateResults(t *testing.T) {
 		nil,
 	)
 
-	phyPlanAgg1.Callback(array.NewRecord(arrowSchema, arrays, int64(3)))
-	phyPlanAgg2.Callback(array.NewRecord(arrowSchema, arrays, int64(3)))
+	record1 := array.NewRecord(arrowSchema, arrays, int64(3))
+	record1.Retain()
+	defer record1.Release()
+	phyPlanAgg1.Callback(record1)
 
-	results := make([]arrow.Record, 0)
-	callback := func(r arrow.Record) error {
-		results = append(results, r)
-		return nil
-	}
-	phyPlanAgg1.SetNextCallback(callback)
-	phyPlanAgg2.SetNextCallback(callback)
+	record2 := array.NewRecord(arrowSchema, arrays, int64(3))
+	record2.Retain()
+	defer record2.Release()
+	phyPlanAgg2.Callback(record2)
+	go func() {
+		err = phyPlanAgg1.Finish()
+		require.Nil(t, err)
+	}()
+	go func() {
+		err = phyPlanAgg2.Finish()
+		require.Nil(t, err)
+	}()
+	merge.wg.Wait()
+	// give it time to call the finisher
+	time.Sleep(100 * time.Millisecond)
+	resultMtx.Lock()
+	defer resultMtx.Unlock()
 
-	aggFinisher := HashAggregateFinisher{
-		pool: memory.DefaultAllocator,
-		aggregations: []*HashAggregate{
-			phyPlanAgg1,
-			phyPlanAgg2,
-		},
-	}
-
-	aggFinisher.Finish()
 	require.Len(t, results, 1)
 	require.Equal(t, int64(3), results[0].NumRows())
+	require.True(t, finishCalled)
 
-	exampleTypes, ok := results[0].Column(0).(*array.Binary)
+	resultSchema := results[0].Schema()
+
+	eIdx := resultSchema.FieldIndices("example_type")
+	require.Len(t, eIdx, 1)
+	exampleTypes, ok := results[0].Column(eIdx[0]).(*array.Binary)
 	require.True(t, ok)
 
-	stacktraces, ok := results[0].Column(1).(*array.Binary)
+	sIdx := resultSchema.FieldIndices("stacktrace")
+	require.Len(t, sIdx, 1)
+	stacktraces, ok := results[0].Column(sIdx[0]).(*array.Binary)
 	require.True(t, ok)
 
 	values, ok := results[0].Column(2).(*array.Int64)

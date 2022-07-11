@@ -341,8 +341,9 @@ func (t *Table) Iterator(
 	numWorkers := runtime.NumCPU()
 	rgChan := make(chan dynparquet.DynamicRowGroup, numWorkers*2)
 	for i := 0; i < numWorkers; i++ {
-		iterator := iteratorProvider.Iterator()
+		iterator := iteratorProvider.Iterator(egCtx)
 		eg.Go(func() error {
+			var err error
 			for rg := range rgChan {
 				if schema == nil {
 					schema, err = pqarrow.ParquetRowGroupToArrowSchema(
@@ -369,11 +370,15 @@ func (t *Table) Iterator(
 				if err != nil {
 					return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 				}
-				err = iterator(record)
+				err = iterator.Callback(record)
 				record.Release()
 				if err != nil {
 					return err
 				}
+			}
+			err = iterator.Finish()
+			if err != nil {
+				return err
 			}
 			return nil
 		})
@@ -390,7 +395,6 @@ func (t *Table) Iterator(
 			return ctx.Err()
 		case rgChan <- rg:
 		case <-egCtx.Done():
-			break
 		}
 	}
 	close(rgChan)
@@ -411,7 +415,7 @@ func (t *Table) SchemaIterator(
 	projections []logicalplan.ColumnMatcher,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
-	iterator func(r arrow.Record) error,
+	iteratorProvider logicalplan.IteratorProvider,
 ) error {
 	filter, err := booleanExpr(filterExpr)
 	if err != nil {
@@ -433,6 +437,8 @@ func (t *Table) SchemaIterator(
 		},
 		nil,
 	)
+	iterator := iteratorProvider.Iterator(ctx)
+
 	for _, rg := range rowGroups {
 		select {
 		case <-ctx.Done():
@@ -449,7 +455,7 @@ func (t *Table) SchemaIterator(
 			b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
 
 			record := b.NewRecord()
-			err = iterator(record)
+			err = iterator.Callback(record)
 			record.Release()
 			b.Release()
 			if err != nil {
@@ -458,6 +464,7 @@ func (t *Table) SchemaIterator(
 		}
 	}
 
+	err = iterator.Finish()
 	return err
 }
 

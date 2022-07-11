@@ -32,12 +32,24 @@ type testOutput struct {
 	t *testing.T
 }
 
-type tIteratorProvider struct {
+type mockIteratorProvider struct {
 	callback func(arrow.Record) error
+	finish   func() error
 }
 
-func (p *tIteratorProvider) Iterator() func(arrow.Record) error {
-	return p.callback
+func (p *mockIteratorProvider) Callback(record arrow.Record) error {
+	return p.callback(record)
+}
+
+func (p *mockIteratorProvider) Finish() error {
+	if p.finish != nil {
+		return p.finish()
+	}
+	return nil
+}
+
+func (p *mockIteratorProvider) Iterator(context.Context) logicalplan.Iterator {
+	return p
 }
 
 func (l *testOutput) Write(p []byte) (n int, err error) {
@@ -165,6 +177,7 @@ func TestTable(t *testing.T) {
 	require.NoError(t, err)
 
 	pool := memory.NewGoAllocator()
+	numFinishCalls := atomic.NewInt32(0)
 
 	err = table.View(func(tx uint64) error {
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
@@ -172,10 +185,14 @@ func TestTable(t *testing.T) {
 			return err
 		}
 
-		return table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &tIteratorProvider{
+		return table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &mockIteratorProvider{
 			callback: func(ar arrow.Record) error {
 				t.Log(ar)
 				defer ar.Release()
+				return nil
+			},
+			finish: func() error {
+				numFinishCalls.Add(1)
 				return nil
 			},
 		})
@@ -200,6 +217,9 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf(1).Level(0, 0, 7),
 	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least.Load()).Row)
 	require.Equal(t, 1, table.active.Index().Len())
+
+	// require that it called the iterator provider finisher
+	require.Greater(t, numFinishCalls.Load(), int32(0))
 }
 
 func Test_Table_GranuleSplit(t *testing.T) {
@@ -312,7 +332,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 			return err
 		}
 
-		return table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &tIteratorProvider{callback: func(r arrow.Record) error {
+		return table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(r arrow.Record) error {
 			defer r.Release()
 			t.Log(r)
 			return nil
@@ -464,8 +484,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 			return err
 		}
 
-		return table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &tIteratorProvider{callback: func(r arrow.Record) error {
-
+		return table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(r arrow.Record) error {
 			defer r.Release()
 			t.Log(r)
 			return nil
@@ -568,7 +587,7 @@ func Test_Table_Concurrency(t *testing.T) {
 					return err
 				}
 
-				err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &tIteratorProvider{callback: func(ar arrow.Record) error {
+				err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(ar arrow.Record) error {
 					mtx.Lock()
 					totalrows += ar.NumRows()
 					mtx.Unlock()
@@ -680,7 +699,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 			if err != nil {
 				return err
 			}
-			return table.Iterator(ctx, tx, pool, as, nil, nil, nil, &tIteratorProvider{callback: func(ar arrow.Record) error {
+			return table.Iterator(ctx, tx, pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(ar arrow.Record) error {
 				defer ar.Release()
 				totalrows += ar.NumRows()
 
@@ -778,7 +797,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 		mtx := sync.Mutex{}
 
 		rows := int64(0)
-		err = table.Iterator(context.Background(), table.db.highWatermark.Load(), pool, as, nil, nil, nil, &tIteratorProvider{callback: func(ar arrow.Record) error {
+		err = table.Iterator(context.Background(), table.db.highWatermark.Load(), pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(ar arrow.Record) error {
 			mtx.Lock()
 			rows += ar.NumRows()
 			mtx.Unlock()
@@ -801,7 +820,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 		rows := int64(0)
 		mtx := sync.Mutex{}
 
-		err = table.Iterator(context.Background(), table.db.highWatermark.Load(), pool, as, nil, nil, nil, &tIteratorProvider{callback: func(ar arrow.Record) error {
+		err = table.Iterator(context.Background(), table.db.highWatermark.Load(), pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(ar arrow.Record) error {
 			mtx.Lock()
 			rows += ar.NumRows()
 			mtx.Unlock()
@@ -1017,7 +1036,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received -1)")
 
 	c = New(nil, 512, 512*1024*1024).WithSplitSize(2)
-	db, err = c.DB("test")
+	db, _ = c.DB("test")
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()), newTestLogger(t))
 	require.NoError(t, err)
 }
@@ -1129,7 +1148,7 @@ func Test_Table_Filter(t *testing.T) {
 			return err
 		}
 
-		err = table.Iterator(context.Background(), tx, pool, as, nil, filterExpr, nil, &tIteratorProvider{callback: func(ar arrow.Record) error {
+		err = table.Iterator(context.Background(), tx, pool, as, nil, filterExpr, nil, &mockIteratorProvider{callback: func(ar arrow.Record) error {
 			defer ar.Release()
 
 			iterated = true
@@ -1227,6 +1246,7 @@ func Test_Table_InsertCancellation(t *testing.T) {
 			}
 
 			pool := memory.NewGoAllocator()
+			mtx := sync.Mutex{}
 
 			err := table.View(func(tx uint64) error {
 				totalrows := int64(0)
@@ -1234,7 +1254,9 @@ func Test_Table_InsertCancellation(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &tIteratorProvider{callback: func(ar arrow.Record) error {
+				err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(ar arrow.Record) error {
+					mtx.Lock()
+					defer mtx.Unlock()
 					totalrows += ar.NumRows()
 					defer ar.Release()
 
@@ -1310,7 +1332,7 @@ func Test_Table_CancelBasic(t *testing.T) {
 			return err
 		}
 
-		err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &tIteratorProvider{callback: func(ar arrow.Record) error {
+		err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(ar arrow.Record) error {
 			totalrows += ar.NumRows()
 			defer ar.Release()
 
@@ -1535,7 +1557,7 @@ func Test_DoubleTable(t *testing.T) {
 			return err
 		}
 
-		return table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &tIteratorProvider{callback: func(ar arrow.Record) error {
+		return table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, &mockIteratorProvider{callback: func(ar arrow.Record) error {
 			defer ar.Release()
 			require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
 			return nil

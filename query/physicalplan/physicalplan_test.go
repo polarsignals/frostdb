@@ -32,7 +32,7 @@ func (m *mockTableReader) Iterator(
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
-	callback logicalplan.IteratorProvider,
+	iteratorProvider logicalplan.IteratorProvider,
 ) error {
 	return nil
 }
@@ -44,7 +44,7 @@ func (m *mockTableReader) SchemaIterator(
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,
 	distinctColumns []logicalplan.ColumnMatcher,
-	callback func(r arrow.Record) error,
+	iteratorProvider logicalplan.IteratorProvider,
 ) error {
 	return nil
 }
@@ -68,6 +68,23 @@ func (m *mockTableProvider) GetTable(name string) logicalplan.TableReader {
 	return &mockTableReader{
 		schema: m.schema,
 	}
+}
+
+type mockPhyPlan struct {
+	callback func(record arrow.Record) error
+	finish   func() error
+}
+
+func (m *mockPhyPlan) Callback(record arrow.Record) error {
+	return m.callback(record)
+}
+
+func (m *mockPhyPlan) Finish() error {
+	return m.finish()
+}
+
+func (m *mockPhyPlan) SetNextPlan(nextPlan PhysicalPlan) {
+	// noop
 }
 
 func TestBuildPhysicalPlan(t *testing.T) {

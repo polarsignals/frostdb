@@ -14,11 +14,13 @@ import (
 
 type PhysicalPlan interface {
 	Callback(r arrow.Record) error
-	SetNextCallback(next func(r arrow.Record) error)
+	Finish() error
+	SetNextPlan(PhysicalPlan)
 }
 
 type ScanPhysicalPlan interface {
 	Execute(ctx context.Context, pool memory.Allocator) error
+	PlanBuilder() func(context.Context) PhysicalPlan
 }
 
 type QueryOptions interface {
@@ -47,17 +49,21 @@ func (f PostPlanVisitorFunc) PostVisit(plan *logicalplan.LogicalPlan) bool {
 
 type OutputPlan struct {
 	callback func(r arrow.Record) error
-	options  QueryOptions
-	mtx      sync.Mutex
 	scan     ScanPhysicalPlan
 }
 
 func (e *OutputPlan) Callback(r arrow.Record) error {
-	if e.options.GetSyncCallback() {
-		e.mtx.Lock()
-		defer e.mtx.Unlock()
-	}
 	return e.callback(r)
+}
+
+func (e *OutputPlan) Finish() error {
+	return nil
+}
+
+func (e *OutputPlan) SetNextPlan(nextPlan PhysicalPlan) {
+	// output plan should be the last step .. if this gets called we're doing
+	// something wrong
+	panic("bug in builder! output plan should not have a next plan!")
 }
 
 func (e *OutputPlan) SetNextCallback(next func(r arrow.Record) error) {
@@ -67,26 +73,28 @@ func (e *OutputPlan) SetNextCallback(next func(r arrow.Record) error) {
 func (e *OutputPlan) Execute(
 	ctx context.Context,
 	pool memory.Allocator,
-	options QueryOptions,
 	callback func(r arrow.Record) error,
 ) error {
-	e.options = options
 	e.callback = callback
 	return e.scan.Execute(ctx, pool)
 }
 
 type IteratorProvider struct {
-	scan *TableScan
+	scan ScanPhysicalPlan
 }
 
-func (p *IteratorProvider) Iterator() func(record arrow.Record) error {
-	return p.scan.nextBuilder().Callback
+func (p *IteratorProvider) Iterator(ctx context.Context) logicalplan.Iterator {
+	planBuilder := p.scan.PlanBuilder()
+	return planBuilder(ctx)
 }
 
 type TableScan struct {
 	options     *logicalplan.TableScan
-	nextBuilder func() PhysicalPlan
-	finisher    func() error
+	nextBuilder func(context.Context) PhysicalPlan
+}
+
+func (s *TableScan) PlanBuilder() func(context.Context) PhysicalPlan {
+	return s.nextBuilder
 }
 
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -123,13 +131,17 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
-	return s.finisher()
+	return nil
 }
 
 type SchemaScan struct {
 	options     *logicalplan.SchemaScan
-	nextBuilder func() PhysicalPlan
+	nextBuilder func(context.Context) PhysicalPlan
 	finisher    func() error
+}
+
+func (s *SchemaScan) PlanBuilder() func(context.Context) PhysicalPlan {
+	return s.nextBuilder
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -137,7 +149,6 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	if table == nil {
 		return errors.New("table not found")
 	}
-
 	err := table.View(func(tx uint64) error {
 		return table.SchemaIterator(
 			ctx,
@@ -146,7 +157,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			s.options.Projection,
 			s.options.Filter,
 			s.options.Distinct,
-			s.nextBuilder().Callback,
+			&IteratorProvider{scan: s},
 		)
 	})
 	if err != nil {
@@ -157,25 +168,21 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 }
 
 func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
-	outputPlan := &OutputPlan{
-		mtx: sync.Mutex{},
-	}
+	outputPlan := &OutputPlan{}
 
-	finisher, nextBuilder := nextIteratorBuilder(pool, s, plan, outputPlan)
+	nextBuilder := nextIteratorBuilder(pool, s, plan, outputPlan)
 	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
 		switch {
 		case plan.SchemaScan != nil:
 			outputPlan.scan = &SchemaScan{
 				options:     plan.SchemaScan,
 				nextBuilder: nextBuilder,
-				finisher:    finisher.Finish,
 			}
 			return false
 		case plan.TableScan != nil:
 			outputPlan.scan = &TableScan{
 				options:     plan.TableScan,
 				nextBuilder: nextBuilder,
-				finisher:    finisher.Finish,
 			}
 			return false
 		case plan.Aggregation != nil:
@@ -196,8 +203,7 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 }
 
 // nextIteratorBuilder returns a function that when called will build the part
-// of the physical plan that will iterate the arrow records as well as the
-// finisher which can be used to join results of the query. The builder
+// of the physical plan that will iterate the arrow records. The builder
 // function can be called in multiple threads to parallelize query execution
 // from the scan step onward.
 func nextIteratorBuilder(
@@ -205,18 +211,17 @@ func nextIteratorBuilder(
 	s *dynparquet.Schema,
 	plan *logicalplan.LogicalPlan,
 	outputPlan *OutputPlan,
-) (*Finisher, func() PhysicalPlan) {
-	finisher := Finisher{
-		pool: pool,
-	}
-
-	// instances of distinct are not shared across threads so that multiple
-	// instances do not have to syncrhonize which distinct values they have seen.
-	// we'll only create one instance of the phy plan distinct per logical plan
-	disticts := make(map[*logicalplan.Distinct]*Distinction)
+) func(ctx context.Context) PhysicalPlan {
+	distinctExchanges := make(map[*logicalplan.Distinct]*ExchangeOperator)
+	distinctsPhys := make(map[*logicalplan.Distinct]*Distinction)
+	distinctMerges := make(map[*logicalplan.Distinct]*MergeOperator)
 	distintsLock := sync.Mutex{}
 
-	return &finisher, func() PhysicalPlan {
+	aggExchanges := make(map[*logicalplan.Aggregation]*ExchangeOperator)
+	aggMerges := make(map[*logicalplan.Aggregation]*MergeOperator)
+	aggLock := sync.Mutex{}
+
+	return func(ctx context.Context) PhysicalPlan {
 		var (
 			err  error
 			prev PhysicalPlan = outputPlan
@@ -231,29 +236,74 @@ func nextIteratorBuilder(
 			case plan.Projection != nil:
 				phyPlan, err = Project(pool, plan.Projection.Exprs)
 			case plan.Distinct != nil:
+				// instances of distinct are not shared across threads so that multiple
+				// instances do not have to syncrhonize which distinct values they have seen.
+				// we'll only create one instance of the phy plan distinct per logical plan
 				distintsLock.Lock()
 				defer distintsLock.Unlock()
 				// if the distinct instance for the logical plan has not been
 				// insantiated, do it now
-				if _, ok := disticts[plan.Distinct]; !ok {
+				if _, ok := distinctExchanges[plan.Distinct]; !ok {
+					exchange := Exchange(ctx)
+					distinctExchanges[plan.Distinct] = exchange
+
 					matchers := make([]logicalplan.ColumnMatcher, 0, len(plan.Distinct.Columns))
 					for _, col := range plan.Distinct.Columns {
 						matchers = append(matchers, col.Matcher())
 					}
-					disticts[plan.Distinct] = Distinct(pool, matchers)
+					distinct := Distinct(pool, matchers)
+					distinct.SetNextPlan(exchange)
+					distinctsPhys[plan.Distinct] = distinct
+
+					merge := Merge()
+					merge.SetNextPlan(distinct)
+					distinctMerges[plan.Distinct] = merge
 				}
-				// use same distinct in all threads
-				phyPlan = disticts[plan.Distinct]
+				distinctExchanges[plan.Distinct].SetNextPlan(prev)
+				merge := distinctMerges[plan.Distinct]
+				merge.wg.Add(1)
+				phyPlan = merge
+				prev = distinctsPhys[plan.Distinct]
 			case plan.Filter != nil:
 				phyPlan, err = Filter(pool, plan.Filter.Expr)
 
 			case plan.Aggregation != nil:
+				// aggregations results are computed in parallel and then a concurrent agg
+				// is used to combine the results of the mulitple threads. Exchange/merge ops
+				// are wrapping the concurrent agg
 				var agg *HashAggregate
 				agg, err = Aggregate(pool, s, plan.Aggregation)
-				phyPlan = agg
-				if agg != nil {
-					finisher.AddHashAgg(agg)
+
+				// add the exchange operator that will parallelize execution
+				// after the concurrent merge
+				aggLock.Lock()
+				defer aggLock.Unlock()
+				if _, ok := aggExchanges[plan.Aggregation]; !ok {
+					aggExchanges[plan.Aggregation] = Exchange(ctx)
 				}
+				exchange := aggExchanges[plan.Aggregation]
+				exchange.SetNextPlan(prev)
+
+				// add concurrent agg & merge for combining the results of the
+				// parallel merges
+				if _, ok := aggMerges[plan.Aggregation]; !ok {
+					concurrentAgg := ConcurrentAggregate(
+						pool,
+						agg.aggregationFunction,
+					)
+					concurrentAgg.SetNextPlan(exchange)
+
+					merge := Merge()
+					merge.SetNextPlan(concurrentAgg)
+					aggMerges[plan.Aggregation] = merge
+				}
+				merge := aggMerges[plan.Aggregation]
+				merge.wg.Add(1)
+				prev = merge
+
+				// add the aggregation
+				phyPlan = agg
+
 			default:
 				panic("Unsupported plan")
 			}
@@ -261,7 +311,7 @@ func nextIteratorBuilder(
 				return false
 			}
 
-			phyPlan.SetNextCallback(prev.Callback)
+			phyPlan.SetNextPlan(prev)
 			prev = phyPlan
 			return true
 		}))

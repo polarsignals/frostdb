@@ -43,7 +43,6 @@ require (
 	github.com/segmentio/encoding v0.3.5 // indirect
 	go.uber.org/goleak v1.1.12 // indirect
 	golang.org/x/mod v0.6.0-dev.0.20211013180041-c96bc1413d57 // indirect
-	golang.org/x/sync v0.0.0-20220601150217-0de741cfad7f // indirect
 	golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8 // indirect
 	golang.org/x/tools v0.1.9 // indirect
 	golang.org/x/xerrors v0.0.0-20220411194840-2f41105eb62f // indirect
