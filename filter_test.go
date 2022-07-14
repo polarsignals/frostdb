@@ -77,32 +77,39 @@ func TestFilter(t *testing.T) {
 	tests := map[string]struct {
 		filterExpr logicalplan.Expr
 		rows       int64
+		cols       int64
 	}{
 		">= int64": {
 			filterExpr: logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
+			cols:       7,
 			rows:       2,
 		},
 		"== string": {
 			filterExpr: logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4")),
-			rows:       1,
+			// This only has 6 because the label4 column is only present in the last row.
+			cols: 6,
+			rows: 1,
 		},
 		"regexp and == string": {
 			filterExpr: logicalplan.And(
 				logicalplan.Col("labels.label1").RegexMatch("value."),
 				logicalplan.Col("labels.label2").Eq(logicalplan.Literal("value2")),
 			),
+			cols: 7,
 			rows: 3,
 		},
 		"regexp missing colum": {
 			filterExpr: logicalplan.And(
 				logicalplan.Col("labels.label5").RegexMatch(""),
 			),
+			cols: 7,
 			rows: 3,
 		},
 		"not regexp missing colum": {
 			filterExpr: logicalplan.And(
 				logicalplan.Col("labels.label5").RegexNotMatch("foo"),
 			),
+			cols: 7,
 			rows: 3,
 		},
 		"regexp mixed of missing/not missing colum": {
@@ -111,18 +118,21 @@ func TestFilter(t *testing.T) {
 				logicalplan.Col("labels.label5").RegexMatch(""),
 				logicalplan.Col("labels.label2").Eq(logicalplan.Literal("value2")),
 			),
+			cols: 7,
 			rows: 1,
 		},
 		"=! missing colum": {
 			filterExpr: logicalplan.And(
 				logicalplan.Col("labels.label5").NotEq(logicalplan.Literal("value4")),
 			),
+			cols: 7,
 			rows: 3,
 		},
 		"== missing colum": {
 			filterExpr: logicalplan.And(
 				logicalplan.Col("labels.label5").Eq(logicalplan.Literal("")),
 			),
+			cols: 7,
 			rows: 3,
 		},
 		"regexp and == string and != string": {
@@ -131,10 +141,12 @@ func TestFilter(t *testing.T) {
 				logicalplan.Col("labels.label2").Eq(logicalplan.Literal("value2")),
 				logicalplan.Col("labels.label1").NotEq(logicalplan.Literal("value3")),
 			),
+			cols: 7,
 			rows: 2,
 		},
 		"regexp simple match": {
 			filterExpr: logicalplan.Col("labels.label1").RegexMatch("value."),
+			cols:       7,
 			rows:       3,
 		},
 		"regexp no match": {
@@ -152,9 +164,12 @@ func TestFilter(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			rows := int64(0)
+			cols := int64(0)
 			err := engine.ScanTable("test").
+				Project(logicalplan.DynCol("labels"), logicalplan.Col("stacktrace"), logicalplan.Col("timestamp"), logicalplan.Col("value")).
 				Filter(test.filterExpr).
 				Execute(context.Background(), func(ar arrow.Record) error {
+					cols = ar.NumCols()
 					rows += ar.NumRows()
 					defer ar.Release()
 
@@ -162,6 +177,7 @@ func TestFilter(t *testing.T) {
 				})
 			require.NoError(t, err)
 			require.Equal(t, test.rows, rows)
+			require.Equal(t, test.cols, cols)
 		})
 	}
 }
