@@ -27,6 +27,7 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -59,6 +60,11 @@ func NewTableConfig(
 	}
 }
 
+type completedBlock struct {
+	prevTx uint64
+	tx     uint64
+}
+
 type Table struct {
 	db      *DB
 	name    string
@@ -67,17 +73,32 @@ type Table struct {
 
 	config *TableConfig
 
-	pendingBlocks map[*TableBlock]struct{}
+	pendingBlocks   map[*TableBlock]struct{}
+	completedBlocks []completedBlock
+	lastCompleted   uint64
 
 	mtx    *sync.RWMutex
 	active *TableBlock
+
+	wal WAL
+}
+
+type WAL interface {
+	Close() error
+	Log(tx uint64, record *walpb.Record) error
+	Replay(handler func(tx uint64, record *walpb.Record) error) error
+	Truncate(tx uint64) error
+	FirstIndex() (uint64, error)
 }
 
 type TableBlock struct {
 	table  *Table
 	logger log.Logger
 
-	ulid  ulid.ULID
+	ulid   ulid.ULID
+	minTx  uint64
+	prevTx uint64
+
 	size  *atomic.Int64
 	index *atomic.UnsafePointer // *btree.BTree
 
@@ -95,6 +116,7 @@ type tableMetrics struct {
 	zeroRowsInserted          prometheus.Counter
 	granulesCompactionAborted prometheus.Counter
 	rowInsertSize             prometheus.Histogram
+	lastCompletedBlockTx      prometheus.Gauge
 }
 
 func newTable(
@@ -103,6 +125,7 @@ func newTable(
 	tableConfig *TableConfig,
 	reg prometheus.Registerer,
 	logger log.Logger,
+	wal WAL,
 ) (*Table, error) {
 	if db.columnStore.indexDegree <= 0 {
 		msg := fmt.Sprintf("Table's columnStore index degree must be a positive integer (received %d)", db.columnStore.indexDegree)
@@ -122,29 +145,30 @@ func newTable(
 		name:   name,
 		logger: logger,
 		mtx:    &sync.RWMutex{},
+		wal:    wal,
 		metrics: &tableMetrics{
 			blockRotated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "blocks_rotated",
+				Name: "blocks_rotated_total",
 				Help: "Number of table blocks that have been rotated.",
 			}),
 			granulesCreated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "granules_created",
+				Name: "granules_created_total",
 				Help: "Number of granules created.",
 			}),
 			granulesSplits: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "granules_splits",
+				Name: "granules_splits_total",
 				Help: "Number of granules splits executed.",
 			}),
 			granulesCompactionAborted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "granules_compaction_aborted",
+				Name: "granules_compaction_aborted_total",
 				Help: "Number of aborted granules compaction.",
 			}),
 			rowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "rows_inserted",
+				Name: "rows_inserted_total",
 				Help: "Number of rows inserted into table.",
 			}),
 			zeroRowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "zero_rows_inserted",
+				Name: "zero_rows_inserted_total",
 				Help: "Number of times it was attempted to insert zero rows into the table.",
 			}),
 			rowInsertSize: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
@@ -152,18 +176,14 @@ func newTable(
 				Help:    "Size of batch inserts into table.",
 				Buckets: prometheus.ExponentialBuckets(1, 2, 10),
 			}),
+			lastCompletedBlockTx: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+				Name: "last_completed_block_tx",
+				Help: "Last completed block transaction.",
+			}),
 		},
 	}
 
-	if db.bucket != nil {
-		t.pendingBlocks = make(map[*TableBlock]struct{})
-	}
-
-	var err error
-	t.active, err = newTableBlock(t)
-	if err != nil {
-		return nil, err
-	}
+	t.pendingBlocks = make(map[*TableBlock]struct{})
 
 	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "index_size",
@@ -182,51 +202,122 @@ func newTable(
 	return t, nil
 }
 
+func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
+	b, err := id.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	if err := t.wal.Log(tx, &walpb.Record{
+		Entry: &walpb.Entry{
+			EntryType: &walpb.Entry_NewTableBlock_{
+				NewTableBlock: &walpb.Entry_NewTableBlock{
+					TableName: t.name,
+					BlockId:   b,
+					Schema:    t.config.schema.Definition(),
+				},
+			},
+		},
+	}); err != nil {
+		return err
+	}
+
+	t.active, err = newTableBlock(t, prevTx, tx, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (t *Table) writeBlock(block *TableBlock) {
 	level.Debug(t.logger).Log("msg", "syncing block")
-
-	block.pendingWritersWg.Wait()
-	block.wg.Wait()
+	block.Sync()
 
 	// from now on, the block will no longer be modified, we can persist it to disk
 
 	level.Debug(t.logger).Log("msg", "done syncing block")
 
 	// Persist the block
-	if err := block.Persist(); err != nil {
+	err := block.Persist()
+	t.mtx.Lock()
+	delete(t.pendingBlocks, block)
+	t.mtx.Unlock()
+	if err != nil {
 		level.Error(t.logger).Log("msg", "failed to persist block")
 		level.Error(t.logger).Log("msg", err.Error())
+		return
+	}
+
+	tx, _, commit := t.db.begin()
+	defer commit()
+
+	buf, err := block.ulid.MarshalBinary()
+	if err != nil {
+		level.Error(t.logger).Log("msg", "failed to record block persistence in WAL: marshal ulid", "err", err)
+		return
+	}
+
+	if err := t.wal.Log(tx, &walpb.Record{
+		Entry: &walpb.Entry{
+			EntryType: &walpb.Entry_TableBlockPersisted_{
+				TableBlockPersisted: &walpb.Entry_TableBlockPersisted{
+					TableName: t.name,
+					BlockId:   buf,
+				},
+			},
+		},
+	}); err != nil {
+		level.Error(t.logger).Log("msg", "failed to record block persistence in WAL", "err", err)
+		return
 	}
 
 	t.mtx.Lock()
+	t.completedBlocks = append(t.completedBlocks, completedBlock{prevTx: block.prevTx, tx: block.minTx})
+	sort.Slice(t.completedBlocks, func(i, j int) bool {
+		return t.completedBlocks[i].prevTx < t.completedBlocks[j].prevTx
+	})
+	for {
+		if len(t.completedBlocks) == 0 {
+			break
+		}
+		if t.completedBlocks[0].prevTx != t.lastCompleted {
+			break
+		}
 
-	delete(t.pendingBlocks, block)
-
+		t.lastCompleted = t.completedBlocks[0].tx
+		t.metrics.lastCompletedBlockTx.Set(float64(t.lastCompleted))
+		t.completedBlocks = t.completedBlocks[1:]
+	}
 	t.mtx.Unlock()
+	t.db.maintainWAL()
 }
 
-func (t *Table) RotateBlock() error {
+func (t *Table) RotateBlock(block *TableBlock) error {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
-	if t.active.Size() == 0 {
+	// Need to check that we haven't already rotated this block.
+	if t.active != block {
 		return nil
 	}
 
-	tb, err := newTableBlock(t)
-	if err != nil {
+	level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size())
+	defer func() {
+		level.Debug(t.logger).Log("msg", "done rotating block")
+	}()
+
+	tx, _, commit := t.db.begin()
+	defer commit()
+
+	id := generateULID()
+	if err := t.newTableBlock(t.active.minTx, tx, id); err != nil {
 		return err
 	}
-
-	block := t.active
-	t.active = tb
 	t.metrics.blockRotated.Inc()
 
-	if t.db.bucket != nil {
-		t.pendingBlocks[block] = struct{}{}
-
-		go t.writeBlock(block)
-	}
+	t.pendingBlocks[block] = struct{}{}
+	go t.writeBlock(block)
 	return nil
 }
 
@@ -235,6 +326,14 @@ func (t *Table) ActiveBlock() *TableBlock {
 	defer t.mtx.RUnlock()
 
 	return t.active
+}
+
+func (t *Table) ActiveWriteBlock() (*TableBlock, func()) {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+
+	t.active.pendingWritersWg.Add(1)
+	return t.active, t.active.pendingWritersWg.Done
 }
 
 func (t *Table) Schema() *dynparquet.Schema {
@@ -255,26 +354,55 @@ func (t *Table) InsertBuffer(ctx context.Context, buf *dynparquet.Buffer) (uint6
 }
 
 func (t *Table) Insert(ctx context.Context, buf []byte) (uint64, error) {
+	return t.insert(ctx, buf)
+}
+
+func (t *Table) appendToLog(ctx context.Context, tx uint64, buf []byte) error {
+	if err := t.wal.Log(tx, &walpb.Record{
+		Entry: &walpb.Entry{
+			EntryType: &walpb.Entry_Write_{
+				Write: &walpb.Entry_Write{
+					Data:      buf,
+					TableName: t.name,
+				},
+			},
+		},
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
+start:
+	// Using active write block is important because it ensures that we don't
+	// miss pending writers when synchronizing the block.
+	block, close := t.ActiveWriteBlock()
+	if block.Size() > t.db.columnStore.activeMemorySize {
+		if err := t.RotateBlock(block); err != nil {
+			close()
+			return 0, fmt.Errorf("rotate block: %w", err)
+		}
+		close()
+		goto start
+	}
+	defer close()
+
 	tx, _, commit := t.db.begin()
 	defer commit()
 
+	if err := t.appendToLog(ctx, tx, buf); err != nil {
+		return tx, fmt.Errorf("append to log: %w", err)
+	}
+
 	serBuf, err := dynparquet.ReaderFromBytes(buf)
 	if err != nil {
-		return 0, fmt.Errorf("deserialize buffer: %w", err)
+		return tx, fmt.Errorf("deserialize buffer: %w", err)
 	}
 
-	block := t.ActiveBlock()
 	err = block.Insert(ctx, tx, serBuf)
 	if err != nil {
-		return 0, fmt.Errorf("insert buffer into block: %w", err)
-	}
-
-	if block.Size() > t.db.columnStore.activeMemorySize {
-		level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size())
-		if err := t.RotateBlock(); err != nil {
-			return 0, fmt.Errorf("failed to rotate block: %w", err)
-		}
-		level.Debug(t.logger).Log("msg", "done rotating block")
+		return tx, fmt.Errorf("insert buffer into block: %w", err)
 	}
 
 	return tx, nil
@@ -509,16 +637,18 @@ func generateULID() ulid.ULID {
 	return ulid.MustNew(ulid.Timestamp(t), entropy)
 }
 
-func newTableBlock(table *Table) (*TableBlock, error) {
+func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, error) {
 	index := btree.New(table.db.columnStore.indexDegree)
 	tb := &TableBlock{
 		table:  table,
 		index:  atomic.NewUnsafePointer(unsafe.Pointer(index)),
 		wg:     &sync.WaitGroup{},
 		mtx:    &sync.RWMutex{},
-		ulid:   generateULID(),
+		ulid:   id,
 		size:   atomic.NewInt64(0),
 		logger: table.logger,
+		minTx:  tx,
+		prevTx: prevTx,
 	}
 
 	g, err := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)
@@ -530,18 +660,14 @@ func newTableBlock(table *Table) (*TableBlock, error) {
 	return tb, nil
 }
 
-// Sync the table. This will return once all split operations have completed.
-// Currently it does not prevent new inserts from happening, so this is only
-// safe to rely on if you control all writers. In the future we may need to add a way to
-// block new writes as well.
+// Sync the table block. This will return once all writes have completed and
+// all potentially started split operations have completed.
 func (t *TableBlock) Sync() {
+	t.pendingWritersWg.Wait()
 	t.wg.Wait()
 }
 
 func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.SerializedBuffer) error {
-	t.pendingWritersWg.Add(1)
-	defer t.pendingWritersWg.Done()
-
 	defer func() {
 		t.table.metrics.rowsInserted.Add(float64(buf.NumRows()))
 		t.table.metrics.rowInsertSize.Observe(float64(buf.NumRows()))

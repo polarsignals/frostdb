@@ -7,6 +7,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -19,14 +20,17 @@ func TestFilter(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	c := New(
-		nil,
-		8192,
-		512*1024*1024,
+	reg := prometheus.NewRegistry()
+	logger := newTestLogger(t)
+
+	c, err := New(
+		logger,
+		reg,
 	)
+	require.NoError(t, err)
 	db, err := c.DB("test")
 	require.NoError(t, err)
-	table, err := db.Table("test", config, newTestLogger(t))
+	table, err := db.Table("test", config)
 	require.NoError(t, err)
 
 	samples := dynparquet.Samples{{
@@ -187,14 +191,17 @@ func Test_Projection(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	c := New(
-		nil,
-		8192,
-		512*1024*1024,
+	reg := prometheus.NewRegistry()
+	logger := newTestLogger(t)
+
+	c, err := New(
+		logger,
+		reg,
 	)
+	require.NoError(t, err)
 	db, err := c.DB("test")
 	require.NoError(t, err)
-	table, err := db.Table("test", config, newTestLogger(t))
+	table, err := db.Table("test", config)
 	require.NoError(t, err)
 
 	samples := dynparquet.Samples{{

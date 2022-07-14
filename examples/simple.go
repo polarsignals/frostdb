@@ -9,6 +9,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,23 +20,21 @@ import (
 func main() {
 
 	// Create a new column store
-	columnstore := frostdb.New(
+	columnstore, _ := frostdb.New(
+		log.NewNopLogger(),
 		prometheus.NewRegistry(),
-		8192,
-		10*1024*1024, // 10MiB
 	)
 
 	// Open up a database in the column store
 	database, _ := columnstore.DB("simple_db")
 
 	// Define our simple schema of labels and values
-	schema := simpleSchema()
+	schema, _ := simpleSchema()
 
 	// Create a table named simple in our database
 	table, _ := database.Table(
 		"simple_table",
 		frostdb.NewTableConfig(schema),
-		log.NewNopLogger(),
 	)
 
 	// Create values to insert into the database these first rows havel dynamic label names of 'firstname' and 'surname'
@@ -74,6 +73,7 @@ func main() {
 	// Create a new query engine to retrieve data and print the results
 	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
 	engine.ScanTable("simple_table").
+		Project(logicalplan.DynCol("names")). // We don't know all dynamic columns at query time, but we want all of them to be returned.
 		Filter(
 			logicalplan.Col("names.firstname").Eq(logicalplan.Literal("Frederic")),
 		).Execute(context.Background(), func(r arrow.Record) error {
@@ -82,20 +82,27 @@ func main() {
 	})
 }
 
-func simpleSchema() *dynparquet.Schema {
-	return dynparquet.NewSchema(
-		"simple_schema",
-		[]dynparquet.ColumnDefinition{{
-			Name:          "names",
-			StorageLayout: parquet.Encoded(parquet.Optional(parquet.String()), &parquet.RLEDictionary),
-			Dynamic:       true,
+func simpleSchema() (*dynparquet.Schema, error) {
+	return dynparquet.SchemaFromDefinition(&schemapb.Schema{
+		Name: "simple_schema",
+		Columns: []*schemapb.Column{{
+			Name: "names",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				Nullable: true,
+			},
+			Dynamic: true,
 		}, {
-			Name:          "value",
-			StorageLayout: parquet.Int(64),
-			Dynamic:       false,
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
 		}},
-		[]dynparquet.SortingColumn{
-			dynparquet.Ascending("names"),
-		},
-	)
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "names",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	})
 }

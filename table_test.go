@@ -25,19 +25,27 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
+type TestLogHelper interface {
+	Helper()
+	Log(args ...any)
+}
+
 type testOutput struct {
-	t *testing.T
+	t TestLogHelper
 }
 
 func (l *testOutput) Write(p []byte) (n int, err error) {
+	l.t.Helper()
 	l.t.Log(string(p))
 	return len(p), nil
 }
 
-func newTestLogger(t *testing.T) log.Logger {
+func newTestLogger(t TestLogHelper) log.Logger {
+	t.Helper()
 	logger := log.NewLogfmtLogger(log.NewSyncWriter(&testOutput{t: t}))
 	logger = level.NewFilter(logger, level.AllowDebug())
 	return logger
@@ -51,15 +59,20 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 	bucket, err := filesystem.NewBucket(".")
 	require.NoError(t, err)
 
-	c := New(
-		nil,
-		granuleSize,
-		512*1024*1024,
-	).WithStorageBucket(bucket)
+	reg := prometheus.NewRegistry()
+	logger := newTestLogger(t)
+
+	c, err := New(
+		logger,
+		reg,
+		WithGranuleSize(granuleSize),
+		WithBucketStorage(bucket),
+	)
+	require.NoError(t, err)
 
 	db, err := c.DB("test")
 	require.NoError(t, err)
-	table, err := db.Table("test", config, newTestLogger(t))
+	table, err := db.Table("test", config)
 	require.NoError(t, err)
 
 	return table
@@ -599,8 +612,18 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		config = NewTableConfig(
 			dynparquet.NewSampleSchema(),
 		)
-		c = New(prometheus.NewRegistry(), 512, 512*1024*1024)
 	)
+
+	reg := prometheus.NewRegistry()
+	logger := log.NewNopLogger()
+
+	c, err := New(
+		logger,
+		reg,
+		WithGranuleSize(512),
+	)
+	require.NoError(b, err)
+
 	db, err := c.DB("test")
 	require.NoError(b, err)
 	ts := atomic.NewInt64(0)
@@ -642,7 +665,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 
 	for i := 0; i < b.N; i++ {
 		// Create table for test
-		table, err := db.Table(uuid.New().String(), config, log.NewNopLogger())
+		table, err := db.Table(uuid.New().String(), config)
 		require.NoError(b, err)
 		// Spawn n workers that will insert values into the table
 		wg := &sync.WaitGroup{}
@@ -762,8 +785,8 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.Wait(tx)
 
 	// Now we cheat and reset our tx and watermark
-	table.db.tx.Store(1)
-	table.db.highWatermark.Store(1)
+	table.db.tx.Store(2)
+	table.db.highWatermark.Store(2)
 
 	pool := memory.NewGoAllocator()
 
@@ -785,8 +808,8 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now set the tx back to what it was, and perform the same read, we should return all 4 rows
-	table.db.tx.Store(2)
-	table.db.highWatermark.Store(2)
+	table.db.tx.Store(3)
+	table.db.highWatermark.Store(3)
 
 	err = table.View(func(tx uint64) error {
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
@@ -979,11 +1002,12 @@ func Test_Table_ReadIsolation(t *testing.T) {
 
 func Test_Table_NewTableValidIndexDegree(t *testing.T) {
 	config := NewTableConfig(dynparquet.NewSampleSchema())
-	c := New(nil, 512, 512*1024*1024).WithIndexDegree(-1)
+	c, err := New(newTestLogger(t), nil, WithIndexDegree(-1))
+	require.NoError(t, err)
 	db, err := c.DB("test")
 	require.NoError(t, err)
 
-	_, err = db.Table("test", config, newTestLogger(t))
+	_, err = db.Table("test", config)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore index degree must be a positive integer (received -1)")
 }
@@ -993,23 +1017,26 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	c := New(nil, 512, 512*1024*1024).WithSplitSize(1)
+	c, err := New(newTestLogger(t), nil, WithSplitSize(1))
+	require.NoError(t, err)
 	db, err := c.DB("test")
 	require.NoError(t, err)
-	_, err = db.Table("test", config, newTestLogger(t))
+	_, err = db.Table("test", config)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received 1)")
 
-	c = New(nil, 512, 512*1024*1024).WithSplitSize(-1)
+	c, err = New(newTestLogger(t), nil, WithSplitSize(-1))
+	require.NoError(t, err)
 	db, err = c.DB("test")
 	require.NoError(t, err)
-	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()), newTestLogger(t))
+	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received -1)")
 
-	c = New(nil, 512, 512*1024*1024).WithSplitSize(2)
+	c, err = New(newTestLogger(t), nil, WithSplitSize(2))
+	require.NoError(t, err)
 	db, err = c.DB("test")
-	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()), newTestLogger(t))
+	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
 	require.NoError(t, err)
 }
 
@@ -1364,9 +1391,11 @@ func Test_Table_ArrowSchema(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 
-	// Read the schema from a previous transaction.
-
-	schema, err := table.ArrowSchema(ctx, 1, pool, nil, nil, nil)
+	// Read the schema from a previous transaction. Reading transaction 2 here
+	// because transaction 1 is just the new block creation, therefore there
+	// would be no schema to read (schemas only materialize when data is
+	// inserted).
+	schema, err := table.ArrowSchema(ctx, 2, pool, nil, nil, nil)
 	require.NoError(t, err)
 
 	require.Len(t, schema.Fields(), 6)
@@ -1472,35 +1501,39 @@ func Test_Table_ArrowSchema(t *testing.T) {
 }
 
 func Test_DoubleTable(t *testing.T) {
-	schema := dynparquet.NewSchema(
-		"test",
-		[]dynparquet.ColumnDefinition{{
+	schema, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
+		Name: "test",
+		Columns: []*schemapb.Column{{
 			Name:          "id",
-			StorageLayout: parquet.String(),
+			StorageLayout: &schemapb.StorageLayout{Type: schemapb.StorageLayout_TYPE_STRING},
 			Dynamic:       false,
 		}, {
 			Name:          "value",
-			StorageLayout: parquet.Leaf(parquet.DoubleType),
+			StorageLayout: &schemapb.StorageLayout{Type: schemapb.StorageLayout_TYPE_DOUBLE},
 			Dynamic:       false,
 		}},
-		[]dynparquet.SortingColumn{
-			dynparquet.Ascending("id"),
-		},
-	)
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "id",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	})
+	require.NoError(t, err)
 	config := NewTableConfig(schema)
 
 	bucket, err := filesystem.NewBucket(".")
 	require.NoError(t, err)
 
-	c := New(
+	c, err := New(
+		newTestLogger(t),
 		nil,
-		4096,
-		512*1024*1024,
-	).WithStorageBucket(bucket)
+		WithGranuleSize(4096),
+		WithBucketStorage(bucket),
+	)
+	require.NoError(t, err)
 
 	db, err := c.DB("test")
 	require.NoError(t, err)
-	table, err := db.Table("test", config, newTestLogger(t))
+	table, err := db.Table("test", config)
 	require.NoError(t, err)
 
 	b, err := schema.NewBuffer(nil)
@@ -1518,7 +1551,12 @@ func Test_DoubleTable(t *testing.T) {
 
 	n, err := table.InsertBuffer(ctx, b)
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), n)
+
+	// Read the schema from a previous transaction. Reading transaction 2 here
+	// because transaction 1 is just the new block creation, therefore there
+	// would be no schema to read (schemas only materialize when data is
+	// inserted).
+	require.Equal(t, uint64(2), n)
 
 	err = table.View(func(tx uint64) error {
 		pool := memory.NewGoAllocator()

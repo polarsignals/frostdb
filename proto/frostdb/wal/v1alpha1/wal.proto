@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package frostdb.wal.v1alpha1;
+
+import "frostdb/schema/v1alpha1/schema.proto";
+
+// Record describes a single entry into the WAL.
+message Record {
+    // Data of the record. This is intentionally nested so the only thing in
+    // the entry can be a protobuf `oneof` and have forward compatilibity.
+    Entry entry = 1;
+}
+
+// The data of a WAL Record. This is intentionally separate to allow using the
+// `oneof` feature in a forward-compatible way.
+message Entry {
+  // The write-type entry.
+  message Write {
+    // Table name of the write.
+    string table_name = 1;
+    // Data is the data of the write.
+    bytes data = 2;
+  }
+
+  // The new-table-block entry.
+  message NewTableBlock {
+    // Table name of the new-table-block.
+    string table_name = 1;
+    // Block ID of the new-table-block.
+    bytes block_id = 2;
+    // Schema of the new-table-block.
+    frostdb.schema.v1alpha1.Schema schema = 3;
+  }
+
+  // The table-block persisted entry.
+  message TableBlockPersisted {
+    // Table name of the new-table-block.
+    string table_name = 1;
+    // Block ID of the new-table-block.
+    bytes block_id = 2;
+  }
+
+  // The new-table entry.
+  oneof entry_type {
+    // Write is set if the entry describes a write.
+    Write write = 1;
+    // NewTableBlock is set if the entry describes a new-table-block.
+    NewTableBlock new_table_block = 2;
+    // TableBlockPersisted is set if the entry describes a table-block-persisted.
+    TableBlockPersisted table_block_persisted = 3;
+  }
+}

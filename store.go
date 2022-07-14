@@ -15,6 +15,10 @@ import (
 
 // Persist uploads the block to the underlying bucket.
 func (t *TableBlock) Persist() error {
+	if t.table.db.bucket == nil {
+		return nil
+	}
+
 	data, err := t.Serialize()
 	if err != nil {
 		return err
