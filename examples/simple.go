@@ -9,6 +9,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet/schema"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/prometheus/client_golang/prometheus"
@@ -29,7 +30,7 @@ func main() {
 	database, _ := columnstore.DB("simple_db")
 
 	// Define our simple schema of labels and values
-	schema := simpleSchema()
+	schema, _ := simpleSchema()
 
 	// Create a table named simple in our database
 	table, _ := database.Table(
@@ -82,20 +83,27 @@ func main() {
 	})
 }
 
-func simpleSchema() *dynparquet.Schema {
-	return dynparquet.NewSchema(
-		"simple_schema",
-		[]dynparquet.ColumnDefinition{{
-			Name:          "names",
-			StorageLayout: parquet.Encoded(parquet.Optional(parquet.String()), &parquet.RLEDictionary),
-			Dynamic:       true,
+func simpleSchema() (*dynparquet.Schema, error) {
+	return dynparquet.SchemaFromDefinition(schema.Definition{
+		Name: "simple_schema",
+		Columns: []schema.ColumnDefinition{{
+			Name: "names",
+			StorageLayout: schema.StorageLayout{
+				Type:     "string",
+				Optional: true,
+				Encoding: "RLE_DICTIONARY",
+			},
+			Dynamic: true,
 		}, {
-			Name:          "value",
-			StorageLayout: parquet.Int(64),
-			Dynamic:       false,
+			Name: "value",
+			StorageLayout: schema.StorageLayout{
+				Type: "int64",
+			},
+			Dynamic: false,
 		}},
-		[]dynparquet.SortingColumn{
-			dynparquet.Ascending("names"),
-		},
-	)
+		SortingColumns: []schema.SortingColumn{{
+			Name:  "names",
+			Order: "ascending",
+		}},
+	})
 }

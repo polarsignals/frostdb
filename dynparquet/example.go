@@ -5,6 +5,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
+
+	"github.com/polarsignals/frostdb/dynparquet/schema"
 )
 
 type Label struct {
@@ -108,36 +110,63 @@ func extractLocationIDs(locs []uuid.UUID) []byte {
 }
 
 func NewSampleSchema() *Schema {
-	return NewSchema(
-		"test",
-		[]ColumnDefinition{{
-			Name:          "example_type",
-			StorageLayout: parquet.Encoded(parquet.String(), &parquet.RLEDictionary),
-			Dynamic:       false,
+	s, err := SchemaFromDefinition(schema.Definition{
+		Name: "test",
+		Columns: []schema.ColumnDefinition{{
+			Name: "example_type",
+			StorageLayout: schema.StorageLayout{
+				Type:     "string",
+				Encoding: "RLE_DICTIONARY",
+			},
+			Dynamic: false,
 		}, {
-			Name:          "labels",
-			StorageLayout: parquet.Encoded(parquet.Optional(parquet.String()), &parquet.RLEDictionary),
-			Dynamic:       true,
+			Name: "labels",
+			StorageLayout: schema.StorageLayout{
+				Type:     "string",
+				Optional: true,
+				Encoding: "RLE_DICTIONARY",
+			},
+			Dynamic: true,
 		}, {
-			Name:          "stacktrace",
-			StorageLayout: parquet.Encoded(parquet.String(), &parquet.RLEDictionary),
-			Dynamic:       false,
+			Name: "stacktrace",
+			StorageLayout: schema.StorageLayout{
+				Type:     "string",
+				Encoding: "RLE_DICTIONARY",
+			},
+			Dynamic: false,
 		}, {
-			Name:          "timestamp",
-			StorageLayout: parquet.Int(64),
-			Dynamic:       false,
+			Name: "timestamp",
+			StorageLayout: schema.StorageLayout{
+				Type: "int64",
+			},
+			Dynamic: false,
 		}, {
-			Name:          "value",
-			StorageLayout: parquet.Int(64),
-			Dynamic:       false,
+			Name: "value",
+			StorageLayout: schema.StorageLayout{
+				Type: "int64",
+			},
+			Dynamic: false,
 		}},
-		[]SortingColumn{
-			Ascending("example_type"),
-			NullsFirst(Ascending("labels")),
-			NullsFirst(Ascending("stacktrace")),
-			Ascending("timestamp"),
-		},
-	)
+		SortingColumns: []schema.SortingColumn{{
+			Name:  "example_type",
+			Order: "ascending",
+		}, {
+			Name:       "labels",
+			Order:      "ascending",
+			NullsFirst: true,
+		}, {
+			Name:       "stacktrace",
+			Order:      "ascending",
+			NullsFirst: true,
+		}, {
+			Name:  "timestamp",
+			Order: "ascending",
+		}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 func NewTestSamples() Samples {

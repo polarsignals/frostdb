@@ -25,6 +25,7 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet/schema"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -1472,21 +1473,23 @@ func Test_Table_ArrowSchema(t *testing.T) {
 }
 
 func Test_DoubleTable(t *testing.T) {
-	schema := dynparquet.NewSchema(
-		"test",
-		[]dynparquet.ColumnDefinition{{
+	schema, err := dynparquet.SchemaFromDefinition(schema.Definition{
+		Name: "test",
+		Columns: []schema.ColumnDefinition{{
 			Name:          "id",
-			StorageLayout: parquet.String(),
+			StorageLayout: schema.StorageLayout{Type: "string"},
 			Dynamic:       false,
 		}, {
 			Name:          "value",
-			StorageLayout: parquet.Leaf(parquet.DoubleType),
+			StorageLayout: schema.StorageLayout{Type: "double"},
 			Dynamic:       false,
 		}},
-		[]dynparquet.SortingColumn{
-			dynparquet.Ascending("id"),
-		},
-	)
+		SortingColumns: []schema.SortingColumn{{
+			Name:  "id",
+			Order: "ascending",
+		}},
+	})
+	require.NoError(t, err)
 	config := NewTableConfig(schema)
 
 	bucket, err := filesystem.NewBucket(".")

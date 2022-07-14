@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/segmentio/parquet-go"
+
+	"github.com/polarsignals/frostdb/dynparquet/schema"
 )
 
 const (
@@ -95,11 +97,49 @@ type Schema struct {
 	writers *sync.Map
 }
 
+func SchemaFromDefinition(def schema.Definition) (*Schema, error) {
+	columns := make([]ColumnDefinition, 0, len(def.Columns))
+	for _, col := range def.Columns {
+		layout, err := schema.StorageLayoutToParquetNode(col.StorageLayout)
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, ColumnDefinition{
+			Name:          col.Name,
+			StorageLayout: layout,
+			Dynamic:       col.Dynamic,
+		})
+	}
+
+	sortingColumns := make([]SortingColumn, 0, len(def.SortingColumns))
+	for _, col := range def.SortingColumns {
+		var sortingColumn SortingColumn
+		switch col.Order {
+		case "ascending":
+			sortingColumn = Ascending(col.Name)
+		case "descending":
+			sortingColumn = Descending(col.Name)
+		default:
+			return nil, fmt.Errorf("unknown sorting order %q, only \"ascending\", \"descending\" are valid choices", col.Order)
+		}
+		if col.NullsFirst {
+			sortingColumn = NullsFirst(sortingColumn)
+		}
+		sortingColumns = append(sortingColumns, sortingColumn)
+	}
+
+	return newSchema(
+		def.Name,
+		columns,
+		sortingColumns,
+	), nil
+}
+
 // NewSchema creates a new dynamic parquet schema with the given name, column
 // definitions and sorting columns. The order of the sorting columns is
 // important as it determines the order in which data is written to a file or
 // laid out in memory.
-func NewSchema(
+func newSchema(
 	name string,
 	columns []ColumnDefinition,
 	sortingColumns []SortingColumn,
