@@ -21,7 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
-	"github.com/thanos-io/objstore/filesystem"
+	"github.com/thanos-io/objstore/providers/filesystem"
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -806,7 +806,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	require.NoError(t, err)
 }
 
-//func Test_Table_Sorting(t *testing.T) {
+// func Test_Table_Sorting(t *testing.T) {
 //	granuleSize := 2 << 12
 //	schema1 := NewSchema(
 //		[]ColumnDefinition{{
@@ -939,9 +939,9 @@ func Test_Table_ReadIsolation(t *testing.T) {
 //		})
 //		require.NoError(t, err)
 //	}
-//}
+// }
 
-//func Test_Granule_Less(t *testing.T) {
+// func Test_Granule_Less(t *testing.T) {
 //	config := NewTableConfig(
 //		dynparquet.NewSampleSchema(),
 //		2<<13,
@@ -975,7 +975,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 //	}
 //
 //	require.NotEqual(t, g.Less(g1), g1.Less(g))
-//}
+// }
 
 func Test_Table_NewTableValidIndexDegree(t *testing.T) {
 	config := NewTableConfig(dynparquet.NewSampleSchema())
