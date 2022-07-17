@@ -420,7 +420,11 @@ func (t *Table) SchemaIterator(
 			parquetFields := rg.Schema().Fields()
 			fieldNames := make([]string, 0, len(parquetFields))
 			for _, f := range parquetFields {
-				fieldNames = append(fieldNames, f.Name())
+				for _, p := range projections {
+					if p.Match(f.Name()) {
+						fieldNames = append(fieldNames, f.Name())
+					}
+				}
 			}
 
 			b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
