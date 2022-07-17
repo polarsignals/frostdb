@@ -198,3 +198,81 @@ func TestDistinctProjection(t *testing.T) {
 	t.Log(r)
 	require.Equal(t, int64(3), r.NumCols())
 }
+
+func Test_ScanSchema_DynamicProjection(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	c := New(
+		nil,
+		8192,
+		512*1024*1024,
+	)
+	db, err := c.DB("test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config, newTestLogger(t))
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	for i := 0; i < len(samples); i++ {
+		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		require.NoError(t, err)
+
+		_, err = table.InsertBuffer(context.Background(), buf)
+		require.NoError(t, err)
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	total := 0
+	err = engine.ScanSchema("test").
+		Project(logicalplan.DynCol("labels")).
+		Execute(context.Background(), func(ar arrow.Record) error {
+			defer ar.Release()
+			total += int(ar.NumCols())
+			require.Equal(t, 0, int(ar.NumRows()))
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, 4, total)
+}

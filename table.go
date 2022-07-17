@@ -404,39 +404,35 @@ func (t *Table) SchemaIterator(
 		return err
 	}
 
-	schema := arrow.NewSchema(
-		[]arrow.Field{
-			{Name: "name", Type: arrow.BinaryTypes.String},
-		},
-		nil,
-	)
+	nameMap := map[string]struct{}{}
+	arrowFields := []arrow.Field{}
 	for _, rg := range rowGroups {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			b := array.NewRecordBuilder(pool, schema)
-
 			parquetFields := rg.Schema().Fields()
-			fieldNames := make([]string, 0, len(parquetFields))
 			for _, f := range parquetFields {
 				for _, p := range projections {
-					if p.Match(f.Name()) {
-						fieldNames = append(fieldNames, f.Name())
+					if _, ok := nameMap[f.Name()]; !ok {
+						nameMap[f.Name()] = struct{}{}
+						if p.Match(f.Name()) {
+							arrowFields = append(arrowFields, arrow.Field{Name: f.Name(), Type: arrow.BinaryTypes.String})
+						}
 					}
 				}
 			}
-
-			b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
-
-			record := b.NewRecord()
-			err = iterator(record)
-			record.Release()
-			b.Release()
-			if err != nil {
-				return err
-			}
 		}
+	}
+
+	schema := arrow.NewSchema(arrowFields, nil)
+	b := array.NewRecordBuilder(pool, schema)
+	record := b.NewRecord()
+	err = iterator(record)
+	record.Release()
+	b.Release()
+	if err != nil {
+		return err
 	}
 
 	return err
