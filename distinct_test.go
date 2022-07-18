@@ -96,6 +96,14 @@ func TestDistinct(t *testing.T) {
 			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label4"),
 			rows:    3,
 		},
+		"label1,label2,label3, label4": {
+			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label3", "labels.label4"),
+			rows:    3,
+		},
+		"labels": {
+			columns: []logicalplan.Expr{logicalplan.DynCol("labels")},
+			rows:    3,
+		},
 	}
 
 	engine := query.NewEngine(

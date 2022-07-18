@@ -184,7 +184,7 @@ func contiguousParquetRowGroupToArrowRecord(
 	parquetColumns := rg.ColumnChunks()
 	parquetFields := s.Fields()
 
-	if len(distinctColumns) == 1 && filterExpr == nil {
+	if SingleMatchingColumn(distinctColumns, parquetFields) && filterExpr == nil {
 		// We can use the faster path for a single distinct column by just
 		// returning its dictionary.
 		cols := make([]arrow.Array, 0, 1)
@@ -408,4 +408,22 @@ func writePagesToArray(
 	}
 
 	return nil
+}
+
+// SingleMatchingColumn returns true if there is only a single matching column for the given column matchers.
+func SingleMatchingColumn(distinctColumns []logicalplan.ColumnMatcher, fields []parquet.Field) bool {
+	count := 0
+	for _, col := range distinctColumns {
+		for _, field := range fields {
+			name := field.Name()
+			if col.Match(name) {
+				count++
+				if count > 1 {
+					return false
+				}
+			}
+		}
+	}
+
+	return count == 1
 }

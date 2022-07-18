@@ -151,12 +151,12 @@ func TestProjectionPushDown(t *testing.T) {
 			Sum(Col("value")).Alias("value_sum"),
 			Col("stacktrace"),
 		).
-		Project(Col("stacktrace")).
+		Project(Col("labels")).
 		Build()
 
 	p = (&ProjectionPushDown{}).Optimize(p)
 
-	require.True(t, p.Input.Input.Projection != nil)
+	require.True(t, p.Input.Input.Projection == nil)
 }
 
 func TestProjectionPushDownOfDistinct(t *testing.T) {

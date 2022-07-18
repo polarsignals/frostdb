@@ -5,9 +5,10 @@ import "github.com/segmentio/parquet-go"
 type concatenatedDynamicRowGroup struct {
 	parquet.RowGroup
 	dynamicColumns map[string][]string
+	fields         []parquet.Field
 }
 
-func Concat(drg ...DynamicRowGroup) DynamicRowGroup {
+func Concat(fields []parquet.Field, drg ...DynamicRowGroup) DynamicRowGroup {
 	rg := make([]parquet.RowGroup, 0, len(drg))
 	for _, d := range drg {
 		rg = append(rg, d)
@@ -16,6 +17,7 @@ func Concat(drg ...DynamicRowGroup) DynamicRowGroup {
 	return &concatenatedDynamicRowGroup{
 		RowGroup:       parquet.MultiRowGroup(rg...),
 		dynamicColumns: drg[0].DynamicColumns(),
+		fields:         fields,
 	}
 }
 
@@ -24,5 +26,5 @@ func (c *concatenatedDynamicRowGroup) DynamicColumns() map[string][]string {
 }
 
 func (c *concatenatedDynamicRowGroup) DynamicRows() DynamicRowReader {
-	return newDynamicRowGroupReader(c)
+	return newDynamicRowGroupReader(c, c.fields)
 }
