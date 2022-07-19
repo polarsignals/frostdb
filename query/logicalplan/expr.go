@@ -305,24 +305,31 @@ func And(exprs ...Expr) Expr {
 }
 
 func and(exprs []Expr) Expr {
-	if len(exprs) == 0 {
+	nonNilExprs := make([]Expr, 0, len(exprs))
+	for _, expr := range exprs {
+		if expr != nil {
+			nonNilExprs = append(nonNilExprs, expr)
+		}
+	}
+
+	if len(nonNilExprs) == 0 {
 		return nil
 	}
-	if len(exprs) == 1 {
-		return exprs[0]
+	if len(nonNilExprs) == 1 {
+		return nonNilExprs[0]
 	}
-	if len(exprs) == 2 {
+	if len(nonNilExprs) == 2 {
 		return &BinaryExpr{
-			Left:  exprs[0],
+			Left:  nonNilExprs[0],
 			Op:    AndOp,
-			Right: exprs[1],
+			Right: nonNilExprs[1],
 		}
 	}
 
 	return &BinaryExpr{
-		Left:  exprs[0],
+		Left:  nonNilExprs[0],
 		Op:    AndOp,
-		Right: and(exprs[1:]),
+		Right: and(nonNilExprs[1:]),
 	}
 }
 
