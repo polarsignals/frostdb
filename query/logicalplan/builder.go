@@ -109,9 +109,11 @@ type Expr interface {
 	json.Unmarshaler
 }
 
-func (b Builder) Filter(
-	expr Expr,
-) Builder {
+func (b Builder) Filter(expr Expr) Builder {
+	if expr == nil {
+		return b
+	}
+
 	return Builder{
 		plan: &LogicalPlan{
 			Input: b.plan,

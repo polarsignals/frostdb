@@ -306,7 +306,7 @@ func And(exprs ...Expr) Expr {
 
 func and(exprs []Expr) Expr {
 	if len(exprs) == 0 {
-		panic("no expressions")
+		return nil
 	}
 	if len(exprs) == 1 {
 		return exprs[0]
