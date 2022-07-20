@@ -31,7 +31,7 @@ func (m *mockTableReader) Iterator(
 	projection []ColumnMatcher,
 	filter Expr,
 	distinctColumns []ColumnMatcher,
-	callback func(r arrow.Record) error,
+	callback IteratorProvider,
 ) error {
 	return nil
 }
@@ -43,7 +43,7 @@ func (m *mockTableReader) SchemaIterator(
 	projection []ColumnMatcher,
 	filter Expr,
 	distinctColumns []ColumnMatcher,
-	callback func(r arrow.Record) error,
+	iteratorProvider IteratorProvider,
 ) error {
 	return nil
 }

@@ -119,8 +119,7 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 type Projection struct {
 	pool           memory.Allocator
 	colProjections []columnProjection
-
-	next func(r arrow.Record) error
+	nextPlan       PhysicalPlan
 }
 
 func Project(mem memory.Allocator, exprs []logicalplan.Expr) (*Projection, error) {
@@ -167,9 +166,13 @@ func (p *Projection) Callback(r arrow.Record) error {
 		resArrays,
 		rows,
 	)
-	return p.next(ar)
+	return p.nextPlan.Callback(ar)
 }
 
-func (p *Projection) SetNextCallback(next func(r arrow.Record) error) {
-	p.next = next
+func (p *Projection) SetNextPlan(nextPlan PhysicalPlan) {
+	p.nextPlan = nextPlan
+}
+
+func (p *Projection) Finish() error {
+	return p.nextPlan.Finish()
 }

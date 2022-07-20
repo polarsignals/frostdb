@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -178,7 +179,11 @@ func TestAggregateNils(t *testing.T) {
 	for i, col := range cols {
 		require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 	}
-	require.Equal(t, []int64{1, 5}, cols[len(cols)-1].(*array.Int64).Int64Values())
+
+	// the values can come in any order, but assert they're both there
+	resultsActual := cols[len(cols)-1].(*array.Int64).Int64Values()
+	sort.Slice(resultsActual, func(i, j int) bool { return resultsActual[i] > resultsActual[j] })
+	require.Equal(t, []int64{5, 1}, resultsActual)
 }
 
 func TestAggregateInconsistentSchema(t *testing.T) {
@@ -259,5 +264,8 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 	for i, col := range cols {
 		require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 	}
-	require.Equal(t, []int64{5, 1}, cols[len(cols)-1].(*array.Int64).Int64Values())
+
+	resultsActual := cols[len(cols)-1].(*array.Int64).Int64Values()
+	sort.Slice(resultsActual, func(i, j int) bool { return resultsActual[i] > resultsActual[j] })
+	require.Equal(t, []int64{5, 1}, resultsActual)
 }

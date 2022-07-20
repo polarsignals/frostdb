@@ -14,9 +14,9 @@ import (
 )
 
 type PredicateFilter struct {
-	pool         memory.Allocator
-	filterExpr   BooleanExpression
-	nextCallback func(r arrow.Record) error
+	pool       memory.Allocator
+	filterExpr BooleanExpression
+	nextPlan   PhysicalPlan
 }
 
 type Bitmap = roaring.Bitmap
@@ -169,8 +169,8 @@ func newFilter(pool memory.Allocator, filterExpr BooleanExpression) *PredicateFi
 	}
 }
 
-func (f *PredicateFilter) SetNextCallback(callback func(r arrow.Record) error) {
-	f.nextCallback = callback
+func (f *PredicateFilter) SetNextPlan(nextPlan PhysicalPlan) {
+	f.nextPlan = nextPlan
 }
 
 func (f *PredicateFilter) Callback(r arrow.Record) error {
@@ -183,7 +183,11 @@ func (f *PredicateFilter) Callback(r arrow.Record) error {
 	}
 
 	defer filtered.Release()
-	return f.nextCallback(filtered)
+	return f.nextPlan.Callback(filtered)
+}
+
+func (f *PredicateFilter) Finish() error {
+	return f.nextPlan.Finish()
 }
 
 func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record) (arrow.Record, bool, error) {

@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -163,12 +164,15 @@ func TestFilter(t *testing.T) {
 	t.Parallel()
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
+			rowsMtx := sync.Mutex{}
 			rows := int64(0)
 			cols := int64(0)
 			err := engine.ScanTable("test").
 				Project(logicalplan.DynCol("labels"), logicalplan.Col("stacktrace"), logicalplan.Col("timestamp"), logicalplan.Col("value")).
 				Filter(test.filterExpr).
 				Execute(context.Background(), func(ar arrow.Record) error {
+					rowsMtx.Lock()
+					defer rowsMtx.Unlock()
 					cols = ar.NumCols()
 					rows += ar.NumRows()
 					defer ar.Release()
@@ -275,10 +279,13 @@ func Test_Projection(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			rows := int64(0)
+			rowsMtx := sync.Mutex{}
 			err := engine.ScanTable("test").
 				Filter(test.filterExpr).
 				Project(test.projections...).
 				Execute(context.Background(), func(ar arrow.Record) error {
+					rowsMtx.Lock()
+					defer rowsMtx.Unlock()
 					rows += ar.NumRows()
 					require.Equal(t, test.cols, ar.NumCols())
 					defer ar.Release()

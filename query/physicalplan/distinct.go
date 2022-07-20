@@ -14,7 +14,7 @@ import (
 
 type Distinction struct {
 	pool     memory.Allocator
-	next     func(r arrow.Record) error
+	nextPlan PhysicalPlan
 	columns  []logicalplan.ColumnMatcher
 	hashSeed maphash.Seed
 
@@ -33,8 +33,12 @@ func Distinct(pool memory.Allocator, columns []logicalplan.ColumnMatcher) *Disti
 	}
 }
 
-func (d *Distinction) SetNextCallback(callback func(r arrow.Record) error) {
-	d.next = callback
+func (d *Distinction) SetNextPlan(nextPlan PhysicalPlan) {
+	d.nextPlan = nextPlan
+}
+
+func (d *Distinction) Finish() error {
+	return d.nextPlan.Finish()
 }
 
 func (d *Distinction) Callback(r arrow.Record) error {
@@ -120,7 +124,7 @@ func (d *Distinction) Callback(r arrow.Record) error {
 		rows,
 	)
 
-	err := d.next(distinctRecord)
+	err := d.nextPlan.Callback(distinctRecord)
 	distinctRecord.Release()
 	return err
 }
