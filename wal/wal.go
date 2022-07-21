@@ -47,10 +47,13 @@ type fileWALMetrics struct {
 }
 
 type FileWAL struct {
-	logger         log.Logger
-	path           string
-	log            *wal.Log
-	nextTx         uint64
+	logger log.Logger
+	path   string
+	log    *wal.Log
+
+	nextTx uint64
+	txmtx  *sync.Mutex
+
 	metrics        *fileWALMetrics
 	logRequestCh   chan *logRequest
 	queue          *logRequestQueue
@@ -104,6 +107,7 @@ func Open(
 		path:         path,
 		log:          log,
 		nextTx:       1,
+		txmtx:        &sync.Mutex{},
 		logRequestCh: make(chan *logRequest),
 		logRequestPool: &sync.Pool{
 			New: func() any {
@@ -161,11 +165,14 @@ func (w *FileWAL) Run(ctx context.Context) {
 			len := w.queue.Len()
 			w.mtx.Unlock()
 			if len > 0 {
+				// Need to drain the queue before we can shutdown.
 				continue
 			}
 			return
 		case <-ticker.C:
+			w.txmtx.Lock()
 			nextTx := w.nextTx
+			w.txmtx.Unlock()
 			batch := batch[:0]
 			w.mtx.Lock()
 			for {
@@ -198,7 +205,9 @@ func (w *FileWAL) Run(ctx context.Context) {
 				w.logRequestPool.Put(r)
 			}
 
+			w.txmtx.Lock()
 			w.nextTx = nextTx
+			w.txmtx.Unlock()
 		}
 	}
 }
@@ -283,6 +292,8 @@ func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) er
 		}
 	}
 
+	w.txmtx.Lock()
 	w.nextTx = lastIndex + 1
+	w.txmtx.Unlock()
 	return nil
 }
