@@ -374,19 +374,27 @@ func (t *Table) appendToLog(ctx context.Context, tx uint64, buf []byte) error {
 	return nil
 }
 
-func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
-start:
-	// Using active write block is important because it ensures that we don't
-	// miss pending writers when synchronizing the block.
-	block, close := t.ActiveWriteBlock()
-	if block.Size() > t.db.columnStore.activeMemorySize {
-		if err := t.RotateBlock(block); err != nil {
-			close()
-			return 0, fmt.Errorf("rotate block: %w", err)
+func (t *Table) appender() (*TableBlock, func(), error) {
+	for {
+		// Using active write block is important because it ensures that we don't
+		// miss pending writers when synchronizing the block.
+		block, close := t.ActiveWriteBlock()
+		if block.Size() < t.db.columnStore.activeMemorySize {
+			return block, close, nil
 		}
+
+		// We need to rotate the block and the writer won't actually be used.
 		close()
-		goto start
+
+		err := t.RotateBlock(block)
+		if err != nil {
+			return nil, nil, fmt.Errorf("rotate block: %w", err)
+		}
 	}
+}
+
+func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
+	block, close, err := t.appender()
 	defer close()
 
 	tx, _, commit := t.db.begin()

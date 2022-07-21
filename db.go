@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -144,6 +143,7 @@ func (s *ColumnStore) DatabasesDir() string {
 	return filepath.Join(s.storagePath, "databases")
 }
 
+// ReplayWALs replays the write-ahead log for each database.
 func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 	if !s.enableWAL {
 		return nil
@@ -158,7 +158,7 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 		return err
 	}
 
-	files, err := ioutil.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
