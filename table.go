@@ -395,6 +395,9 @@ func (t *Table) appender() (*TableBlock, func(), error) {
 
 func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
 	block, close, err := t.appender()
+	if err != nil {
+		return 0, fmt.Errorf("get appender: %w", err)
+	}
 	defer close()
 
 	tx, _, commit := t.db.begin()

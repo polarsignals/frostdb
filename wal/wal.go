@@ -186,8 +186,14 @@ func (w *FileWAL) Run(ctx context.Context) {
 				walBatch.Write(r.tx, r.data)
 			}
 
-			// TODO handle error
-			w.log.WriteBatch(walBatch)
+			err := w.log.WriteBatch(walBatch)
+			if err != nil {
+				w.metrics.failedLogs.Add(float64(len(batch)))
+				level.Error(w.logger).Log("msg", "failed to write WAL batch", "err", err)
+			} else {
+				w.metrics.recordsLogged.Add(float64(len(batch)))
+			}
+
 			for _, r := range batch {
 				w.logRequestPool.Put(r)
 			}
@@ -220,14 +226,6 @@ func (w *FileWAL) Close() error {
 }
 
 func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
-	w.metrics.recordsLogged.Inc()
-	var err error
-	defer func() {
-		if err != nil {
-			w.metrics.failedLogs.Inc()
-		}
-	}()
-
 	r := w.logRequestPool.Get().(*logRequest)
 	r.tx = tx
 	size := record.SizeVT()
@@ -235,7 +233,7 @@ func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
 		r.data = make([]byte, size)
 	}
 	r.data = r.data[:size]
-	_, err = record.MarshalToSizedBufferVT(r.data)
+	_, err := record.MarshalToSizedBufferVT(r.data)
 	if err != nil {
 		return err
 	}
