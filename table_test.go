@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"sync"
@@ -614,6 +615,10 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		)
 	)
 
+	dir, err := ioutil.TempDir("", "frostdb-benchmark")
+	require.NoError(b, err)
+	defer os.RemoveAll(dir) // clean up
+
 	reg := prometheus.NewRegistry()
 	logger := log.NewNopLogger()
 
@@ -621,6 +626,8 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		logger,
 		reg,
 		WithGranuleSize(512),
+		WithWAL(),
+		WithStoragePath(dir),
 	)
 	require.NoError(b, err)
 

@@ -406,6 +406,11 @@ func (db *DB) replayWAL(ctx context.Context) error {
 }
 
 func (db *DB) Close() error {
+	if db.columnStore.enableWAL {
+		if err := db.wal.Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

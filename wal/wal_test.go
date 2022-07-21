@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -15,6 +16,8 @@ func TestWAL(t *testing.T) {
 	dir, err := os.MkdirTemp("", "frostdb-wal-test")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	w, err := Open(
 		log.NewNopLogger(),
@@ -22,6 +25,7 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	go w.Run(ctx)
 
 	require.NoError(t, w.Log(1, &walpb.Record{
 		Entry: &walpb.Entry{
@@ -42,6 +46,7 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	go w.Run(ctx)
 
 	err = w.Replay(func(tx uint64, r *walpb.Record) error {
 		require.Equal(t, uint64(1), tx)
@@ -70,6 +75,7 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	go w.Run(ctx)
 
 	err = w.Replay(func(tx uint64, r *walpb.Record) error {
 		return nil

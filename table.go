@@ -232,7 +232,8 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 
 func (t *Table) writeBlock(block *TableBlock) {
 	level.Debug(t.logger).Log("msg", "syncing block")
-	block.Sync()
+	block.pendingWritersWg.Wait()
+	block.wg.Wait()
 
 	// from now on, the block will no longer be modified, we can persist it to disk
 
@@ -663,7 +664,6 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 // Sync the table block. This will return once all writes have completed and
 // all potentially started split operations have completed.
 func (t *TableBlock) Sync() {
-	t.pendingWritersWg.Wait()
 	t.wg.Wait()
 }
 

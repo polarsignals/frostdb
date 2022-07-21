@@ -1,12 +1,17 @@
 package wal
 
 import (
+	"container/heap"
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/tidwall/wal"
-	"go.uber.org/atomic"
 
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 )
@@ -42,11 +47,46 @@ type fileWALMetrics struct {
 }
 
 type FileWAL struct {
-	logger  log.Logger
-	path    string
-	log     *wal.Log
-	nextTx  *atomic.Uint64
-	metrics *fileWALMetrics
+	logger         log.Logger
+	path           string
+	log            *wal.Log
+	nextTx         uint64
+	metrics        *fileWALMetrics
+	logRequestCh   chan *logRequest
+	queue          *logRequestQueue
+	logRequestPool *sync.Pool
+	mtx            *sync.Mutex
+
+	cancel     func()
+	shutdownCh chan struct{}
+}
+
+type logRequest struct {
+	tx    uint64
+	data  []byte
+	errCh chan error
+}
+
+// min-heap based priority queue to synchronize log requests to be in order of
+// transactions.
+type logRequestQueue []*logRequest
+
+func (q logRequestQueue) Len() int           { return len(q) }
+func (q logRequestQueue) Less(i, j int) bool { return q[i].tx < q[j].tx }
+func (q logRequestQueue) Swap(i, j int)      { q[i], q[j] = q[j], q[i] }
+
+func (q *logRequestQueue) Push(x any) {
+	// Push and Pop use pointer receivers because they modify the slice's length,
+	// not just its contents.
+	*q = append(*q, x.(*logRequest))
+}
+
+func (q *logRequestQueue) Pop() any {
+	old := *q
+	n := len(old)
+	x := old[n-1]
+	*q = old[0 : n-1]
+	return x
 }
 
 func Open(
@@ -59,11 +99,21 @@ func Open(
 		return nil, err
 	}
 
-	return &FileWAL{
-		logger: logger,
-		path:   path,
-		log:    log,
-		nextTx: atomic.NewUint64(1),
+	w := &FileWAL{
+		logger:       logger,
+		path:         path,
+		log:          log,
+		nextTx:       1,
+		logRequestCh: make(chan *logRequest),
+		logRequestPool: &sync.Pool{
+			New: func() any {
+				return &logRequest{
+					data: make([]byte, 1024),
+				}
+			},
+		},
+		mtx:   &sync.Mutex{},
+		queue: &logRequestQueue{},
 		metrics: &fileWALMetrics{
 			recordsLogged: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "wal_records_logged_total",
@@ -86,7 +136,65 @@ func Open(
 				Help: "The number of WAL truncations",
 			}),
 		},
-	}, nil
+		shutdownCh: make(chan struct{}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	w.cancel = cancel
+	go func() {
+		w.Run(ctx)
+		close(w.shutdownCh)
+	}()
+
+	return w, nil
+}
+
+func (w *FileWAL) Run(ctx context.Context) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	walBatch := &wal.Batch{}
+	batch := make([]*logRequest, 0, 128) // random number is random
+	for {
+		select {
+		case <-ctx.Done():
+			w.mtx.Lock()
+			len := w.queue.Len()
+			w.mtx.Unlock()
+			if len > 0 {
+				continue
+			}
+			return
+		case <-ticker.C:
+			nextTx := w.nextTx
+			batch := batch[:0]
+			w.mtx.Lock()
+			for {
+				if w.queue.Len() == 0 || (*w.queue)[0].tx != nextTx {
+					break
+				}
+				r := heap.Pop(w.queue).(*logRequest)
+				batch = append(batch, r)
+				nextTx++
+			}
+			w.mtx.Unlock()
+			if len(batch) == 0 {
+				continue
+			}
+
+			walBatch.Clear()
+			for _, r := range batch {
+				walBatch.Write(r.tx, r.data)
+			}
+
+			// TODO handle error
+			w.log.WriteBatch(walBatch)
+			for _, r := range batch {
+				w.logRequestPool.Put(r)
+			}
+
+			w.nextTx = nextTx
+		}
+	}
 }
 
 func (w *FileWAL) Truncate(tx uint64) error {
@@ -106,12 +214,9 @@ func (w *FileWAL) Truncate(tx uint64) error {
 }
 
 func (w *FileWAL) Close() error {
+	w.cancel()
+	<-w.shutdownCh
 	return w.log.Close()
-}
-
-func (w *FileWAL) waitUntilTxTurn(tx uint64) {
-	for w.nextTx.Load() != tx {
-	}
 }
 
 func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
@@ -123,20 +228,22 @@ func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
 		}
 	}()
 
-	var data []byte
-	data, err = record.MarshalVT()
+	r := w.logRequestPool.Get().(*logRequest)
+	r.tx = tx
+	size := record.SizeVT()
+	if cap(r.data) < size {
+		r.data = make([]byte, size)
+	}
+	r.data = r.data[:size]
+	_, err = record.MarshalToSizedBufferVT(r.data)
 	if err != nil {
 		return err
 	}
 
-	w.waitUntilTxTurn(tx)
+	w.mtx.Lock()
+	heap.Push(w.queue, r)
+	w.mtx.Unlock()
 
-	err = w.log.Write(tx, data)
-	if err != nil {
-		return err
-	}
-
-	w.nextTx.Inc()
 	return nil
 }
 
@@ -151,12 +258,12 @@ func (w *FileWAL) LastIndex() (uint64, error) {
 func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) error {
 	firstIndex, err := w.log.FirstIndex()
 	if err != nil {
-		return err
+		return fmt.Errorf("read first index: %w", err)
 	}
 
 	lastIndex, err := w.log.LastIndex()
 	if err != nil {
-		return err
+		return fmt.Errorf("read last index: %w", err)
 	}
 
 	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", firstIndex, "last_index", lastIndex)
@@ -165,19 +272,19 @@ func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) er
 		level.Debug(w.logger).Log("msg", "replaying WAL record", "tx", tx)
 		data, err := w.log.Read(tx)
 		if err != nil {
-			return err
+			return fmt.Errorf("read index %d: %w", tx, err)
 		}
 
 		record := &walpb.Record{}
 		if err := record.UnmarshalVT(data); err != nil {
-			return err
+			return fmt.Errorf("unmarshal WAL record: %w", err)
 		}
 
 		if err := handler(tx, record); err != nil {
-			return err
+			return fmt.Errorf("call replay handler: %w", err)
 		}
 	}
 
-	w.nextTx.Store(lastIndex + 1)
+	w.nextTx = lastIndex + 1
 	return nil
 }
