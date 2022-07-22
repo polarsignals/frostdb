@@ -21,7 +21,7 @@ type aliasProjection struct {
 
 func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i, field := range ar.Schema().Fields() {
-		if a.matcher.Match(field.Name) {
+		if a.matcher.MatchColumn(field.Name) {
 			field.Name = a.name
 			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 		}
@@ -35,6 +35,20 @@ type binaryExprProjection struct {
 }
 
 func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	if ar.Schema().HasField(b.boolExpr.String()) {
+		arr := ar.Column(ar.Schema().FieldIndices(b.boolExpr.String())[0])
+		if arr.Len() != arr.NullN() {
+			// This means we have pre-computed the result of the expression in
+			// the table scan already.
+			return []arrow.Field{
+				{
+					Name: b.boolExpr.String(),
+					Type: &arrow.BooleanType{},
+				},
+			}, []arrow.Array{arr}, nil
+		}
+	}
+
 	bitmap, err := b.boolExpr.Eval(ar)
 	if err != nil {
 		return nil, nil, err
@@ -65,7 +79,7 @@ type plainProjection struct {
 
 func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i, field := range ar.Schema().Fields() {
-		if p.matcher.Match(field.Name) {
+		if p.matcher.MatchColumn(field.Name) {
 			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 		}
 	}
@@ -81,7 +95,7 @@ func (p dynamicProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arr
 	fields := []arrow.Field{}
 	arrays := []arrow.Array{}
 	for i, field := range ar.Schema().Fields() {
-		if p.matcher.Match(field.Name) {
+		if p.matcher.MatchColumn(field.Name) {
 			fields = append(fields, field)
 			arrays = append(arrays, ar.Column(i))
 		}
@@ -94,15 +108,15 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 	switch e := expr.(type) {
 	case *logicalplan.Column:
 		return plainProjection{
-			matcher: e.Matcher(),
+			matcher: e,
 		}, nil
 	case *logicalplan.DynamicColumn:
 		return dynamicProjection{
-			matcher: e.Matcher(),
+			matcher: e,
 		}, nil
 	case *logicalplan.AliasExpr:
 		return aliasProjection{
-			matcher: e.Matcher(),
+			matcher: e,
 			name:    e.Name(),
 		}, nil
 	case *logicalplan.BinaryExpr:
@@ -110,14 +124,17 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		if err != nil {
 			return nil, err
 		}
-		return binaryExprProjection{boolExpr: boolExpr}, nil
+		return binaryExprProjection{
+			boolExpr: boolExpr,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type for projection: %T", expr)
 	}
 }
 
 type Projection struct {
-	pool           memory.Allocator
+	pool memory.Allocator
+
 	colProjections []columnProjection
 
 	next func(r arrow.Record) error

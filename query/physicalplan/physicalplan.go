@@ -75,6 +75,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			ctx,
 			tx,
 			pool,
+			s.options.PhysicalProjection,
 			s.options.Projection,
 			s.options.Filter,
 			s.options.Distinct,
@@ -88,6 +89,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			tx,
 			pool,
 			schema,
+			s.options.PhysicalProjection,
 			s.options.Projection,
 			s.options.Filter,
 			s.options.Distinct,
@@ -117,6 +119,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			ctx,
 			tx,
 			pool,
+			s.options.PhysicalProjection,
 			s.options.Projection,
 			s.options.Filter,
 			s.options.Distinct,
@@ -158,12 +161,7 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 		case plan.Projection != nil:
 			phyPlan, err = Project(pool, plan.Projection.Exprs)
 		case plan.Distinct != nil:
-			matchers := make([]logicalplan.ColumnMatcher, 0, len(plan.Distinct.Columns))
-			for _, col := range plan.Distinct.Columns {
-				matchers = append(matchers, col.Matcher())
-			}
-
-			phyPlan = Distinct(pool, matchers)
+			phyPlan = Distinct(pool, plan.Distinct.Exprs)
 		case plan.Filter != nil:
 			phyPlan, err = Filter(pool, plan.Filter.Expr)
 		case plan.Aggregation != nil:

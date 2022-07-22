@@ -158,7 +158,7 @@ func TestDBWithWAL(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 	err = table.View(func(tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
 		if err != nil {
 			return err
 		}
@@ -168,6 +168,7 @@ func TestDBWithWAL(t *testing.T) {
 			tx,
 			pool,
 			as,
+			nil,
 			nil,
 			nil,
 			nil,

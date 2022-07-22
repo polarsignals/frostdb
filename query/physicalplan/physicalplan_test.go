@@ -29,9 +29,10 @@ func (m *mockTableReader) Iterator(
 	tx uint64,
 	pool memory.Allocator,
 	schema *arrow.Schema,
-	projection []logicalplan.ColumnMatcher,
+	physicalProjection []logicalplan.ColumnMatcher,
+	projection []logicalplan.Expr,
 	filter logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 	callback func(r arrow.Record) error,
 ) error {
 	return nil
@@ -41,9 +42,10 @@ func (m *mockTableReader) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	projection []logicalplan.ColumnMatcher,
+	physicalProjection []logicalplan.ColumnMatcher,
+	projection []logicalplan.Expr,
 	filter logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 	callback func(r arrow.Record) error,
 ) error {
 	return nil
@@ -53,9 +55,10 @@ func (m *mockTableReader) ArrowSchema(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	projection []logicalplan.ColumnMatcher,
+	physicalProjection []logicalplan.ColumnMatcher,
+	projection []logicalplan.Expr,
 	filter logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 ) (*arrow.Schema, error) {
 	return nil, nil
 }

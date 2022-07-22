@@ -25,13 +25,13 @@ func (p *PhysicalProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsed []ColumnMatcher) {
 	switch {
 	case plan.SchemaScan != nil:
-		plan.SchemaScan.Projection = columnsUsed
+		plan.SchemaScan.PhysicalProjection = columnsUsed
 	case plan.TableScan != nil:
-		plan.TableScan.Projection = columnsUsed
+		plan.TableScan.PhysicalProjection = columnsUsed
 	case plan.Filter != nil:
 		columnsUsed = append(columnsUsed, plan.Filter.Expr.ColumnsUsed()...)
 	case plan.Distinct != nil:
-		for _, expr := range plan.Distinct.Columns {
+		for _, expr := range plan.Distinct.Exprs {
 			columnsUsed = append(columnsUsed, expr.ColumnsUsed()...)
 		}
 	case plan.Projection != nil:
@@ -94,7 +94,7 @@ type projectionCollector struct {
 func (p *projectionCollector) collect(plan *LogicalPlan) {
 	switch {
 	case plan.Distinct != nil:
-		p.projections = append(p.projections, plan.Distinct.Columns...)
+		p.projections = append(p.projections, plan.Distinct.Exprs...)
 	case plan.Projection != nil:
 		p.projections = append(p.projections, plan.Projection.Exprs...)
 	}
@@ -217,15 +217,15 @@ func (p *DistinctPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 	return plan
 }
 
-func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []ColumnMatcher) {
+func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []Expr) {
 	switch {
 	case plan.TableScan != nil:
 		if len(distinctColumns) > 0 {
 			plan.TableScan.Distinct = distinctColumns
 		}
 	case plan.Distinct != nil:
-		for _, expr := range plan.Distinct.Columns {
-			distinctColumns = append(distinctColumns, expr.Matcher())
+		for _, expr := range plan.Distinct.Exprs {
+			distinctColumns = append(distinctColumns, expr)
 		}
 	}
 

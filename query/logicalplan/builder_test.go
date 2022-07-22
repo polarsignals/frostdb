@@ -66,7 +66,7 @@ func TestLogicalPlanBuilderWithoutProjection(t *testing.T) {
 
 	require.Equal(t, &LogicalPlan{
 		Distinct: &Distinct{
-			Columns: []Expr{&Column{ColumnName: "labels.test"}},
+			Exprs: []Expr{&Column{ColumnName: "labels.test"}},
 		},
 		Input: &LogicalPlan{
 			TableScan: &TableScan{

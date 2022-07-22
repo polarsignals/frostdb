@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
@@ -161,8 +162,12 @@ func (e BinaryExpr) ColumnsUsed() []ColumnMatcher {
 	return append(e.Left.ColumnsUsed(), e.Right.ColumnsUsed()...)
 }
 
-func (e BinaryExpr) Matcher() ColumnMatcher {
-	return StaticColumnMatcher{ColumnName: e.Name()}
+func (e BinaryExpr) MatchColumn(columnName string) bool {
+	return e.Name() == columnName
+}
+
+func (e BinaryExpr) Computed() bool {
+	return true
 }
 
 func (e BinaryExpr) Alias(alias string) AliasExpr {
@@ -171,6 +176,10 @@ func (e BinaryExpr) Alias(alias string) AliasExpr {
 
 type Column struct {
 	ColumnName string
+}
+
+func (c *Column) Computed() bool {
+	return false
 }
 
 func (c *Column) MarshalJSON() ([]byte, error) {
@@ -225,11 +234,11 @@ func (c *Column) Alias(alias string) AliasExpr {
 }
 
 func (c *Column) ColumnsUsed() []ColumnMatcher {
-	return []ColumnMatcher{c.Matcher()}
+	return []ColumnMatcher{c}
 }
 
-func (c *Column) Matcher() ColumnMatcher {
-	return StaticColumnMatcher{ColumnName: c.ColumnName}
+func (c *Column) MatchColumn(columnName string) bool {
+	return c.ColumnName == columnName
 }
 
 func (c *Column) Eq(e Expr) *BinaryExpr {
@@ -337,6 +346,10 @@ type DynamicColumn struct {
 	ColumnName string
 }
 
+func (c DynamicColumn) Computed() bool {
+	return false
+}
+
 func (c DynamicColumn) MarshalJSON() ([]byte, error) {
 	type dynamicColumnJSON struct {
 		Expr string
@@ -376,11 +389,11 @@ func (c DynamicColumn) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
 }
 
 func (c DynamicColumn) ColumnsUsed() []ColumnMatcher {
-	return []ColumnMatcher{c.Matcher()}
+	return []ColumnMatcher{c}
 }
 
-func (c DynamicColumn) Matcher() ColumnMatcher {
-	return DynamicColumnMatcher{ColumnName: c.ColumnName}
+func (c DynamicColumn) MatchColumn(columnName string) bool {
+	return strings.HasPrefix(columnName, c.ColumnName+".")
 }
 
 func (c DynamicColumn) Name() string {
@@ -401,6 +414,10 @@ func Cols(names ...string) []Expr {
 
 type LiteralExpr struct {
 	Value scalar.Scalar
+}
+
+func (e LiteralExpr) Computed() bool {
+	return false
 }
 
 func (e LiteralExpr) MarshalJSON() ([]byte, error) {
@@ -457,7 +474,9 @@ func (e LiteralExpr) Accept(visitor Visitor) bool {
 
 func (e LiteralExpr) ColumnsUsed() []ColumnMatcher { return nil }
 
-func (e LiteralExpr) Matcher() ColumnMatcher { return StaticColumnMatcher{ColumnName: e.Name()} }
+func (e LiteralExpr) MatchColumn(columnName string) bool {
+	return e.Name() == columnName
+}
 
 type AggregationFunction struct {
 	Func AggFunc
@@ -490,6 +509,10 @@ func (f AggregationFunction) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(&f)
 }
 
+func (f AggregationFunction) Computed() bool {
+	return true
+}
+
 func (f AggregationFunction) Name() string {
 	return f.Func.String() + "(" + f.Expr.Name() + ")"
 }
@@ -498,8 +521,8 @@ func (f AggregationFunction) ColumnsUsed() []ColumnMatcher {
 	return f.Expr.ColumnsUsed()
 }
 
-func (f AggregationFunction) Matcher() ColumnMatcher {
-	return StaticColumnMatcher{ColumnName: f.Name()}
+func (f AggregationFunction) MatchColumn(columnName string) bool {
+	return f.Name() == columnName
 }
 
 type AggFunc int
@@ -545,12 +568,16 @@ func (e AliasExpr) Name() string {
 	return e.Alias
 }
 
+func (e AliasExpr) Computed() bool {
+	return e.Expr.Computed()
+}
+
 func (e AliasExpr) ColumnsUsed() []ColumnMatcher {
 	return e.Expr.ColumnsUsed()
 }
 
-func (e AliasExpr) Matcher() ColumnMatcher {
-	return StaticColumnMatcher{ColumnName: e.Name()}
+func (e AliasExpr) MatchColumn(columnName string) bool {
+	return e.Name() == columnName
 }
 
 func (e AliasExpr) Accept(visitor Visitor) bool {

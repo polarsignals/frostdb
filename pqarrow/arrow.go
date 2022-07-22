@@ -20,10 +20,12 @@ import (
 // ParquetRowGroupToArrowSchema converts a parquet row group to an arrow schema.
 func ParquetRowGroupToArrowSchema(
 	ctx context.Context,
+	schema *dynparquet.Schema,
 	rg parquet.RowGroup,
-	projections []logicalplan.ColumnMatcher,
+	physicalProjections []logicalplan.ColumnMatcher,
+	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 ) (*arrow.Schema, error) {
 	parquetFields := rg.Schema().Fields()
 
@@ -37,7 +39,7 @@ func ParquetRowGroupToArrowSchema(
 				return nil, ctx.Err()
 			default:
 				name := field.Name()
-				if distinctColumns[0].Match(name) {
+				if distinctColumns[0].MatchColumn(name) {
 					af, err := convert.ParquetFieldToArrowField(field)
 					if err != nil {
 						return nil, err
@@ -56,13 +58,27 @@ func ParquetRowGroupToArrowSchema(
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
-			if includedProjection(projections, parquetField.Name()) {
+			if includedProjection(physicalProjections, parquetField.Name()) {
 				af, err := convert.ParquetFieldToArrowField(parquetField)
 				if err != nil {
 					return nil, err
 				}
 				fields = append(fields, af)
 			}
+		}
+	}
+
+	for _, distinctExpr := range distinctColumns {
+		if distinctExpr.Computed() {
+			dataType, err := distinctExpr.DataType(schema)
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, arrow.Field{
+				Name:     distinctExpr.Name(),
+				Type:     dataType,
+				Nullable: true, // TODO: This should be determined by the expression.
+			})
 		}
 	}
 
@@ -75,7 +91,7 @@ func includedProjection(projections []logicalplan.ColumnMatcher, name string) bo
 	}
 
 	for _, p := range projections {
-		if p.Match(name) {
+		if p.MatchColumn(name) {
 			return true
 		}
 	}
@@ -89,7 +105,7 @@ func ParquetRowGroupToArrowRecord(
 	rg parquet.RowGroup,
 	schema *arrow.Schema,
 	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 ) (arrow.Record, error) {
 	switch rg.(type) {
 	case *dynparquet.MergedRowGroup:
@@ -178,13 +194,13 @@ func contiguousParquetRowGroupToArrowRecord(
 	rg parquet.RowGroup,
 	schema *arrow.Schema,
 	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 ) (arrow.Record, error) {
 	s := rg.Schema()
 	parquetColumns := rg.ColumnChunks()
 	parquetFields := s.Fields()
 
-	if SingleMatchingColumn(distinctColumns, parquetFields) && filterExpr == nil {
+	if filterExpr == nil && len(distinctColumns) == 0 && SingleMatchingColumn(distinctColumns, parquetFields) {
 		// We can use the faster path for a single distinct column by just
 		// returning its dictionary.
 		cols := make([]arrow.Array, 0, 1)
@@ -195,7 +211,7 @@ func contiguousParquetRowGroupToArrowRecord(
 				return nil, ctx.Err()
 			default:
 				name := field.Name()
-				if distinctColumns[0].Match(name) {
+				if distinctColumns[0].MatchColumn(name) {
 					array, err := parquetColumnToArrowArray(
 						pool,
 						field,
@@ -212,6 +228,28 @@ func contiguousParquetRowGroupToArrowRecord(
 		}
 
 		return array.NewRecord(schema, cols, rows), nil
+	}
+
+	if filterExpr == nil && len(distinctColumns) != 0 {
+		// Since we're not filtering, we can use a faster path for distinct
+		// columns. If all the distinct columns are dictionary encoded, we can
+		// check their dictionaries and if all of them have a single value, we
+		// can just return a single row with each of their values.
+		res, err := distinctColumnsToArrowRecord(
+			ctx,
+			pool,
+			schema,
+			parquetFields,
+			parquetColumns,
+			distinctColumns,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if res != nil {
+			return res, nil
+		}
+		// If we get here, we couldn't use the fast path.
 	}
 
 	cols := make([]arrow.Array, len(schema.Fields()))
@@ -252,7 +290,8 @@ func contiguousParquetRowGroupToArrowRecord(
 		}
 	}
 
-	return array.NewRecord(schema, cols, rows), nil
+	r := array.NewRecord(schema, cols, rows)
+	return r, nil
 }
 
 // parquetColumnToArrowArray converts a single parquet column to an arrow array
@@ -307,8 +346,8 @@ func parquetColumnToArrowArray(
 	}
 	defer b.Release()
 
-	err = writePagesToArray(
-		c.Pages(),
+	err = writeColumnToArray(
+		c,
 		optional,
 		repeated,
 		lb,
@@ -332,17 +371,24 @@ func parquetColumnToArrowArray(
 	return arr, nil
 }
 
-// writePagesToArray reads all pages of a page iterator and writes the values
-// to an array builder. If the type is a repeated type it will also write the
-// starting offsets of lists to the list builder.
-func writePagesToArray(
-	pages parquet.Pages,
+// writeColumnToArray writes the values of a single parquet column to an arrow
+// array. It will attempt to make shortcuts if possible to not read the whole
+// column. Possilibities why it might not read the whole column:
+//
+// * If it has been requested to only read the dictionary it will only do that
+// (provided it's not a repeated type).
+//
+// If the type is a repeated type it will also write the starting offsets of
+// lists to the list builder.
+func writeColumnToArray(
+	columnChunk parquet.ColumnChunk,
 	optional bool,
 	repeated bool,
 	lb *array.ListBuilder,
 	w writer.ValueWriter,
 	dictionaryOnly bool,
 ) error {
+	pages := columnChunk.Pages()
 	defer pages.Close()
 	// We are potentially writing multiple pages to the same array, so we need
 	// to keep track of the index of the offsets in case this is a List-type.
@@ -411,12 +457,12 @@ func writePagesToArray(
 }
 
 // SingleMatchingColumn returns true if there is only a single matching column for the given column matchers.
-func SingleMatchingColumn(distinctColumns []logicalplan.ColumnMatcher, fields []parquet.Field) bool {
+func SingleMatchingColumn(distinctColumns []logicalplan.Expr, fields []parquet.Field) bool {
 	count := 0
 	for _, col := range distinctColumns {
 		for _, field := range fields {
 			name := field.Name()
-			if col.Match(name) {
+			if col.MatchColumn(name) {
 				count++
 				if count > 1 {
 					return false
@@ -426,4 +472,188 @@ func SingleMatchingColumn(distinctColumns []logicalplan.ColumnMatcher, fields []
 	}
 
 	return count == 1
+}
+
+func distinctColumnsToArrowRecord(
+	ctx context.Context,
+	pool memory.Allocator,
+	schema *arrow.Schema,
+	parquetFields []parquet.Field,
+	parquetColumns []parquet.ColumnChunk,
+	distinctColumns []logicalplan.Expr,
+) (arrow.Record, error) {
+	cols := make([]arrow.Array, len(schema.Fields()))
+	rows := int64(0)
+	for i, field := range parquetFields {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			name := field.Name()
+			for _, distinctColumn := range distinctColumns {
+				matchers := distinctColumn.ColumnsUsed()
+				if len(matchers) != 1 {
+					// The expression is more complex than just a single binary
+					// expression, so we can't apply the optimization.
+					return nil, nil
+				}
+				if matchers[0].MatchColumn(name) {
+					// Fast path for distinct queries.
+					array, err := writeDistinctColumnToArray(
+						pool,
+						field,
+						parquetColumns[i],
+						distinctColumn,
+					)
+					if err != nil {
+						return nil, err
+					}
+					if array == nil {
+						// Optimization could not be applied.
+						return nil, nil
+					}
+
+					index := schema.FieldIndices(distinctColumn.Name())[0]
+					cols[index] = array
+					if rows == 0 && array.Len() > 0 {
+						rows = int64(array.Len())
+						continue
+					}
+					if rows != int64(array.Len()) {
+						// Inconsistent row count means we can't apply the
+						// optimization.
+						return nil, nil
+					}
+				}
+			}
+		}
+	}
+
+	if rows == 0 {
+		return array.NewRecord(schema, cols, rows), nil
+	}
+
+	if rows == 1 {
+		for i, field := range schema.Fields() {
+			if cols[i] == nil {
+				b := array.NewBuilder(pool, field.Type)
+				b.AppendNull()
+				cols[i] = b.NewArray()
+			}
+		}
+		return array.NewRecord(schema, cols, rows), nil
+	}
+
+	return nil, nil
+}
+
+func writeDistinctColumnToArray(
+	pool memory.Allocator,
+	node parquet.Node,
+	columnChunk parquet.ColumnChunk,
+	distinctExpr logicalplan.Expr,
+) (arrow.Array, error) {
+	switch expr := distinctExpr.(type) {
+	case *logicalplan.BinaryExpr:
+		return binaryDistinctExpr(
+			pool,
+			node.Type(),
+			columnChunk,
+			expr,
+		)
+	case *logicalplan.Column:
+		return parquetColumnToArrowArray(
+			pool,
+			node,
+			columnChunk,
+			true,
+		)
+	default:
+		return nil, nil
+	}
+}
+
+type PreExprVisitorFunc func(expr logicalplan.Expr) bool
+
+func (f PreExprVisitorFunc) PreVisit(expr logicalplan.Expr) bool {
+	return f(expr)
+}
+
+func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
+	return false
+}
+
+func binaryDistinctExpr(
+	pool memory.Allocator,
+	typ parquet.Type,
+	columnChunk parquet.ColumnChunk,
+	expr *logicalplan.BinaryExpr,
+) (arrow.Array, error) {
+	var (
+		value parquet.Value
+		err   error
+	)
+	expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+		switch e := expr.(type) {
+		case *logicalplan.LiteralExpr:
+			value, err = ArrowScalarToParquetValue(e.Value)
+			return false
+		}
+		return true
+	}))
+	if err != nil {
+		return nil, err
+	}
+
+	switch expr.Op {
+	case logicalplan.GTOp:
+		index := columnChunk.ColumnIndex()
+		allGreater, noneGreater := allOrNoneGreaterThan(
+			typ,
+			index,
+			value,
+		)
+
+		if allGreater || noneGreater {
+			b := array.NewBooleanBuilder(pool)
+			defer b.Release()
+			if allGreater {
+				b.Append(true)
+				return b.NewArray(), nil
+			}
+			if noneGreater {
+				b.Append(false)
+				return b.NewArray(), nil
+			}
+			return b.NewArray(), nil
+		}
+	default:
+		return nil, nil
+	}
+
+	return nil, nil
+}
+
+func allOrNoneGreaterThan(
+	typ parquet.Type,
+	index parquet.ColumnIndex,
+	value parquet.Value,
+) (bool, bool) {
+	numPages := index.NumPages()
+	allTrue := true
+	allFalse := true
+	for i := 0; i < numPages; i++ {
+		min := index.MinValue(i)
+		max := index.MaxValue(i)
+
+		if typ.Compare(max, value) <= 0 {
+			allTrue = false
+		}
+
+		if typ.Compare(min, value) > 0 {
+			allFalse = false
+		}
+	}
+
+	return allTrue, allFalse
 }
