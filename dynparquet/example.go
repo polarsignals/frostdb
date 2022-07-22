@@ -5,6 +5,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
+
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
 type Label struct {
@@ -108,36 +110,63 @@ func extractLocationIDs(locs []uuid.UUID) []byte {
 }
 
 func NewSampleSchema() *Schema {
-	return NewSchema(
-		"test",
-		[]ColumnDefinition{{
-			Name:          "example_type",
-			StorageLayout: parquet.Encoded(parquet.String(), &parquet.RLEDictionary),
-			Dynamic:       false,
+	s, err := SchemaFromDefinition(&schemapb.Schema{
+		Name: "test",
+		Columns: []*schemapb.Column{{
+			Name: "example_type",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: false,
 		}, {
-			Name:          "labels",
-			StorageLayout: parquet.Encoded(parquet.Optional(parquet.String()), &parquet.RLEDictionary),
-			Dynamic:       true,
+			Name: "labels",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Nullable: true,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: true,
 		}, {
-			Name:          "stacktrace",
-			StorageLayout: parquet.Encoded(parquet.String(), &parquet.RLEDictionary),
-			Dynamic:       false,
+			Name: "stacktrace",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: false,
 		}, {
-			Name:          "timestamp",
-			StorageLayout: parquet.Int(64),
-			Dynamic:       false,
+			Name: "timestamp",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
 		}, {
-			Name:          "value",
-			StorageLayout: parquet.Int(64),
-			Dynamic:       false,
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
 		}},
-		[]SortingColumn{
-			Ascending("example_type"),
-			NullsFirst(Ascending("labels")),
-			NullsFirst(Ascending("stacktrace")),
-			Ascending("timestamp"),
-		},
-	)
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "example_type",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
+			Name:       "labels",
+			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+			NullsFirst: true,
+		}, {
+			Name:       "stacktrace",
+			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+			NullsFirst: true,
+		}, {
+			Name:      "timestamp",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 func NewTestSamples() Samples {

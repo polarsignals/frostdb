@@ -1,0 +1,6 @@
+version: v1
+name: buf.build/polarsignals/frostdb
+lint:
+  use:
+    - DEFAULT
+    - COMMENTS

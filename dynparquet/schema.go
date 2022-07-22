@@ -8,6 +8,10 @@ import (
 	"sync"
 
 	"github.com/segmentio/parquet-go"
+	"github.com/segmentio/parquet-go/compress"
+	"github.com/segmentio/parquet-go/encoding"
+
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
 const (
@@ -86,7 +90,7 @@ func (dyn dynamicSortingColumn) Path() []string { return []string{dyn.ColumnName
 // ability that any column definition that is dynamic will have columns
 // dynamically created as their column name is seen for the first time.
 type Schema struct {
-	name           string
+	def            *schemapb.Schema
 	columns        []ColumnDefinition
 	columnIndexes  map[string]int
 	sortingColumns []SortingColumn
@@ -95,12 +99,102 @@ type Schema struct {
 	writers *sync.Map
 }
 
+func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
+	columns := make([]ColumnDefinition, 0, len(def.Columns))
+	for _, col := range def.Columns {
+		layout, err := storageLayoutToParquetNode(col.StorageLayout)
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, ColumnDefinition{
+			Name:          col.Name,
+			StorageLayout: layout,
+			Dynamic:       col.Dynamic,
+		})
+	}
+
+	sortingColumns := make([]SortingColumn, 0, len(def.SortingColumns))
+	for _, col := range def.SortingColumns {
+		var sortingColumn SortingColumn
+		switch col.Direction {
+		case schemapb.SortingColumn_DIRECTION_ASCENDING:
+			sortingColumn = Ascending(col.Name)
+		case schemapb.SortingColumn_DIRECTION_DESCENDING:
+			sortingColumn = Descending(col.Name)
+		default:
+			return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
+		}
+		if col.NullsFirst {
+			sortingColumn = NullsFirst(sortingColumn)
+		}
+		sortingColumns = append(sortingColumns, sortingColumn)
+	}
+
+	return newSchema(
+		def,
+		columns,
+		sortingColumns,
+	), nil
+}
+
+func storageLayoutToParquetNode(l *schemapb.StorageLayout) (parquet.Node, error) {
+	var node parquet.Node
+	switch l.Type {
+	case schemapb.StorageLayout_TYPE_STRING:
+		node = parquet.String()
+	case schemapb.StorageLayout_TYPE_INT64:
+		node = parquet.Int(64)
+	case schemapb.StorageLayout_TYPE_DOUBLE:
+		node = parquet.Leaf(parquet.DoubleType)
+	default:
+		return nil, fmt.Errorf("unknown storage layout type: %s", l.Type)
+	}
+
+	if l.Nullable {
+		node = parquet.Optional(node)
+	}
+
+	if l.Encoding != schemapb.StorageLayout_ENCODING_PLAIN_UNSPECIFIED {
+		enc, err := encodingFromDefinition(l.Encoding)
+		if err != nil {
+			return nil, err
+		}
+		node = parquet.Encoded(node, enc)
+	}
+
+	if l.Compression != schemapb.StorageLayout_COMPRESSION_NONE_UNSPECIFIED {
+		comp, err := compressionFromDefinition(l.Compression)
+		if err != nil {
+			return nil, err
+		}
+		node = parquet.Compressed(node, comp)
+	}
+
+	return node, nil
+}
+
+func encodingFromDefinition(enc schemapb.StorageLayout_Encoding) (encoding.Encoding, error) {
+	switch enc {
+	case schemapb.StorageLayout_ENCODING_RLE_DICTIONARY:
+		return &parquet.RLEDictionary, nil
+	default:
+		return nil, fmt.Errorf("unknown encoding: %s", enc)
+	}
+}
+
+func compressionFromDefinition(comp schemapb.StorageLayout_Compression) (compress.Codec, error) {
+	switch comp {
+	default:
+		return nil, fmt.Errorf("unknown compression: %s", comp)
+	}
+}
+
 // NewSchema creates a new dynamic parquet schema with the given name, column
 // definitions and sorting columns. The order of the sorting columns is
 // important as it determines the order in which data is written to a file or
 // laid out in memory.
-func NewSchema(
-	name string,
+func newSchema(
+	def *schemapb.Schema,
 	columns []ColumnDefinition,
 	sortingColumns []SortingColumn,
 ) *Schema {
@@ -114,7 +208,7 @@ func NewSchema(
 	}
 
 	s := &Schema{
-		name:           name,
+		def:            def,
 		columns:        columns,
 		sortingColumns: sortingColumns,
 		columnIndexes:  columnIndexes,
@@ -128,6 +222,10 @@ func NewSchema(
 	}
 
 	return s
+}
+
+func (s *Schema) Definition() *schemapb.Schema {
+	return s.def
 }
 
 func (s *Schema) ColumnByName(name string) (ColumnDefinition, bool) {
@@ -166,7 +264,7 @@ func (s Schema) parquetSchema(
 		g[col.Name] = col.StorageLayout
 	}
 
-	return parquet.NewSchema(s.name, g), nil
+	return parquet.NewSchema(s.def.Name, g), nil
 }
 
 // parquetSortingColumns returns the parquet sorting columns for the dynamic

@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package frostdb.schema.v1alpha1;
+
+// Schema definition for a table.
+message Schema {
+    // Name of the schema.
+    string name = 1;
+    // Columns in the schema.
+    repeated Column columns = 2;
+    // Columns to sort by in the schema.
+    repeated SortingColumn sorting_columns = 3;
+}
+
+// Column definition.
+message Column {
+    // Name of the column.
+    string name = 1;
+    // Storage layout of the column.
+    StorageLayout storage_layout = 2;
+    // Whether the column can dynamically expand.
+    bool dynamic = 3;
+}
+
+// Storage layout describes the physical storage properties of a column.
+message StorageLayout {
+    // Type enum of a column.
+    enum Type {
+        // Unknown type.
+        TYPE_UNKNOWN_UNSPECIFIED = 0;
+        // Represents a string type.
+        TYPE_STRING = 1;
+        // Represents an int64 type.
+        TYPE_INT64 = 2;
+        // Represents a double type.
+        TYPE_DOUBLE = 3;
+    }
+
+    // Type of the column.
+    Type type = 1;
+
+    // Encoding enum of a column.
+    enum Encoding {
+        // Plain encoding.
+        ENCODING_PLAIN_UNSPECIFIED = 0;
+        // Dictionary run-length encoding.
+        ENCODING_RLE_DICTIONARY = 1;
+    }
+
+    // Encoding of the column.
+    Encoding encoding = 2;
+
+    // Compression enum of a column.
+    enum Compression {
+        // No compression.
+        COMPRESSION_NONE_UNSPECIFIED = 0;
+    }
+
+    // Compression of the column.
+    Compression compression = 3;
+
+    // Wether values in the column are allowed to be null.
+    bool nullable = 4;
+}
+
+// SortingColumn definition.
+message SortingColumn {
+    // Name of the column to sort by.
+    string name = 1;
+
+    // Enum of possible sorting directions.
+    enum Direction {
+        // Unknown direction.
+        DIRECTION_UNKNOWN_UNSPECIFIED = 0;
+        // Sort in ascending order.
+        DIRECTION_ASCENDING = 1;
+        // Sort in descending order.
+        DIRECTION_DESCENDING = 2;
+    }
+
+    // Direction of the sorting.
+    Direction direction = 2;
+
+    // Whether nulls are the smallest or largest values.
+    bool nulls_first = 3;
+}

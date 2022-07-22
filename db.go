@@ -1,27 +1,40 @@
 package frostdb
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"path"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
+	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/proto"
 
+	"github.com/polarsignals/frostdb/dynparquet"
+	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/wal"
 )
 
 type ColumnStore struct {
 	mtx              *sync.RWMutex
 	dbs              map[string]*DB
 	reg              prometheus.Registerer
+	logger           log.Logger
 	granuleSize      int
 	activeMemorySize int64
 	storagePath      string
 	bucket           objstore.Bucket
+	enableWAL        bool
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
@@ -29,44 +42,88 @@ type ColumnStore struct {
 	splitSize int
 }
 
+type Option func(*ColumnStore) error
+
 func New(
+	logger log.Logger,
 	reg prometheus.Registerer,
-	granuleSize int,
-	activeMemorySize int64,
-) *ColumnStore {
+	options ...Option,
+) (*ColumnStore, error) {
 	if reg == nil {
 		reg = prometheus.NewRegistry()
 	}
 
-	return &ColumnStore{
+	s := &ColumnStore{
 		mtx:              &sync.RWMutex{},
 		dbs:              map[string]*DB{},
 		reg:              reg,
-		granuleSize:      granuleSize,
-		activeMemorySize: activeMemorySize,
+		logger:           logger,
 		indexDegree:      2,
 		splitSize:        2,
+		granuleSize:      8192,
+		activeMemorySize: 512 * 1024 * 1024, // 512MB
+	}
+
+	for _, option := range options {
+		if err := option(s); err != nil {
+			return nil, err
+		}
+	}
+
+	if s.enableWAL && s.storagePath == "" {
+		return nil, fmt.Errorf("storage path must be configured if WAL is enabled")
+	}
+
+	return s, nil
+}
+
+func WithGranuleSize(size int) Option {
+	return func(s *ColumnStore) error {
+		s.granuleSize = size
+		return nil
 	}
 }
 
-func (s *ColumnStore) WithIndexDegree(indexDegree int) *ColumnStore {
-	s.indexDegree = indexDegree
-	return s
+func WithActiveMemorySize(size int64) Option {
+	return func(s *ColumnStore) error {
+		s.activeMemorySize = size
+		return nil
+	}
 }
 
-func (s *ColumnStore) WithSplitSize(splitSize int) *ColumnStore {
-	s.splitSize = splitSize
-	return s
+func WithIndexDegree(indexDegree int) Option {
+	return func(s *ColumnStore) error {
+		s.indexDegree = indexDegree
+		return nil
+	}
 }
 
-func (s *ColumnStore) WithStorageBucket(bucket objstore.Bucket) *ColumnStore {
-	s.bucket = bucket
-	return s
+func WithSplitSize(size int) Option {
+	return func(s *ColumnStore) error {
+		s.splitSize = size
+		return nil
+	}
 }
 
-func (s *ColumnStore) WithStoragePath(storagePath string) *ColumnStore {
-	s.storagePath = storagePath
-	return s
+func WithBucketStorage(bucket objstore.Bucket) Option {
+	return func(s *ColumnStore) error {
+		s.bucket = bucket
+		return nil
+	}
+}
+
+func WithWAL() Option {
+	return func(s *ColumnStore) error {
+		s.enableWAL = true
+		return nil
+	}
+}
+
+func WithStoragePath(path string) Option {
+	return func(s *ColumnStore) error {
+		s.storagePath = path
+		return nil
+	}
 }
 
 func (s *ColumnStore) Close() error {
@@ -82,15 +139,61 @@ func (s *ColumnStore) Close() error {
 	return nil
 }
 
+func (s *ColumnStore) DatabasesDir() string {
+	return filepath.Join(s.storagePath, "databases")
+}
+
+// ReplayWALs replays the write-ahead log for each database.
+func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
+	if !s.enableWAL {
+		return nil
+	}
+
+	dir := s.DatabasesDir()
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			level.Debug(s.logger).Log("msg", "WAL directory does not exist, no WAL to replay")
+			return nil
+		}
+		return err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	g, ctx := errgroup.WithContext(ctx)
+	for _, f := range files {
+		databaseName := f.Name()
+		g.Go(func() error {
+			db, err := s.DB(databaseName)
+			if err != nil {
+				return err
+			}
+			return db.replayWAL(ctx)
+		})
+	}
+
+	return g.Wait()
+}
+
+type dbMetrics struct {
+	txHighWatermark prometheus.GaugeFunc
+}
+
 type DB struct {
 	columnStore *ColumnStore
+	logger      log.Logger
 	name        string
 
 	mtx    *sync.RWMutex
 	tables map[string]*Table
 	reg    prometheus.Registerer
 
-	bucket objstore.Bucket
+	storagePath string
+	wal         WAL
+	bucket      objstore.Bucket
 	// Databases monotonically increasing transaction id
 	tx *atomic.Uint64
 
@@ -99,6 +202,8 @@ type DB struct {
 
 	// highWatermark maintains the highest consecutively completed tx number
 	highWatermark *atomic.Uint64
+
+	metrics *dbMetrics
 }
 
 func (s *ColumnStore) DB(name string) (*DB, error) {
@@ -119,18 +224,39 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 		return db, nil
 	}
 
+	highWatermark := atomic.NewUint64(0)
+	reg := prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg)
 	db = &DB{
 		columnStore:   s,
 		name:          name,
 		mtx:           &sync.RWMutex{},
 		tables:        map[string]*Table{},
-		reg:           prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg),
+		reg:           reg,
 		tx:            atomic.NewUint64(0),
-		highWatermark: atomic.NewUint64(0),
+		highWatermark: highWatermark,
+		storagePath:   filepath.Join(s.DatabasesDir(), name),
+		logger:        s.logger,
+		wal:           &wal.NopWAL{},
+		metrics: &dbMetrics{
+			txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
+				Name: "tx_high_watermark",
+				Help: "The highest transaction number that has been released to be read",
+			}, func() float64 {
+				return float64(highWatermark.Load())
+			}),
+		},
 	}
 
 	if s.bucket != nil {
-		db.bucket = NewPrefixedBucket(s.bucket, db.StorePath())
+		db.bucket = NewPrefixedBucket(s.bucket, db.name)
+	}
+
+	if s.enableWAL {
+		var err error
+		db.wal, err = db.openWAL()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	db.txPool = NewTxPool(db.highWatermark)
@@ -139,15 +265,176 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 	return db, nil
 }
 
-func (db *DB) StorePath() string {
-	return path.Join(db.columnStore.storagePath, db.name)
+func (db *DB) openWAL() (WAL, error) {
+	return wal.Open(
+		db.logger,
+		db.reg,
+		db.walDir(),
+	)
 }
 
-func (db *DB) Close() error {
+func (db *DB) walDir() string {
+	return filepath.Join(db.storagePath, "wal")
+}
+
+func (db *DB) replayWAL(ctx context.Context) error {
+	persistedBlocks := map[ulid.ULID]struct{}{}
+	if err := db.wal.Replay(func(tx uint64, record *walpb.Record) error {
+		switch e := record.Entry.EntryType.(type) {
+		case *walpb.Entry_TableBlockPersisted_:
+			entry := e.TableBlockPersisted
+			var id ulid.ULID
+			if err := id.UnmarshalBinary(entry.BlockId); err != nil {
+				return err
+			}
+
+			persistedBlocks[id] = struct{}{}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("first WAL replay: %w", err)
+	}
+
+	lastTx := uint64(0)
+	if err := db.wal.Replay(func(tx uint64, record *walpb.Record) error {
+		lastTx = tx
+		switch e := record.Entry.EntryType.(type) {
+		case *walpb.Entry_NewTableBlock_:
+			entry := e.NewTableBlock
+
+			var id ulid.ULID
+			if err := id.UnmarshalBinary(entry.BlockId); err != nil {
+				return err
+			}
+
+			if _, ok := persistedBlocks[id]; ok {
+				// This block has already been successfully persisted, so we can skip it.
+				return nil
+			}
+
+			tableName := entry.TableName
+			table, err := db.GetTable(tableName)
+			var tableErr ErrTableNotFound
+			if errors.As(err, &tableErr) {
+				schema, err := dynparquet.SchemaFromDefinition(entry.Schema)
+				if err != nil {
+					return fmt.Errorf("initialize schema: %w", err)
+				}
+				table, err = newTable(
+					db,
+					tableName,
+					NewTableConfig(schema),
+					db.reg,
+					db.logger,
+					db.wal,
+				)
+				if err != nil {
+					return fmt.Errorf("instantiate table: %w", err)
+				}
+
+				db.tables[tableName] = table
+
+				table.active, err = newTableBlock(table, 0, tx, id)
+				if err != nil {
+					return err
+				}
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("get table: %w", err)
+			}
+
+			// If we get to this point it means a block was finished but did
+			// not get persisted.
+			table.pendingBlocks[table.active] = struct{}{}
+			go table.writeBlock(table.active)
+
+			if !proto.Equal(entry.Schema, table.config.schema.Definition()) {
+				// If schemas are identical from block to block we should we
+				// reuse the previous schema in order to retain pooled memory
+				// for it.
+
+				schema, err := dynparquet.SchemaFromDefinition(entry.Schema)
+				if err != nil {
+					return fmt.Errorf("instantiate schema: %w", err)
+				}
+
+				table.config.schema = schema
+			}
+
+			table.active, err = newTableBlock(table, table.active.minTx, tx, id)
+			if err != nil {
+				return err
+			}
+		case *walpb.Entry_Write_:
+			entry := e.Write
+			tableName := entry.TableName
+			table, err := db.GetTable(tableName)
+			var tableErr ErrTableNotFound
+			if errors.As(err, &tableErr) {
+				// This means the WAL was truncated at a point where this write
+				// was already successfully persisted to disk in more optimized
+				// form than the WAL.
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("get table: %w", err)
+			}
+
+			serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
+			if err != nil {
+				return fmt.Errorf("deserialize buffer: %w", err)
+			}
+
+			if err := table.active.Insert(ctx, tx, serBuf); err != nil {
+				return fmt.Errorf("insert buffer into block: %w", err)
+			}
+		case *walpb.Entry_TableBlockPersisted_:
+			return nil
+		default:
+			return fmt.Errorf("unexpected WAL entry type: %t", e)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("second WAL replay: %w", err)
+	}
+
+	db.tx.Store(lastTx)
+	db.highWatermark.Store(lastTx)
+
 	return nil
 }
 
-func (db *DB) Table(name string, config *TableConfig, logger log.Logger) (*Table, error) {
+func (db *DB) Close() error {
+	if db.columnStore.enableWAL {
+		if err := db.wal.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (db *DB) maintainWAL() {
+	db.mtx.RLock()
+	defer db.mtx.RUnlock()
+	minTx := uint64(0)
+	for _, table := range db.tables {
+		table.mtx.RLock()
+		tableMinTxPersisted := table.lastCompleted
+		table.mtx.RUnlock()
+		if minTx == 0 || tableMinTxPersisted < minTx {
+			minTx = tableMinTxPersisted
+		}
+	}
+
+	if minTx > 0 {
+		if err := db.wal.Truncate(minTx); err != nil {
+			return
+		}
+	}
+}
+
+func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 	db.mtx.RLock()
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
@@ -165,12 +452,45 @@ func (db *DB) Table(name string, config *TableConfig, logger log.Logger) (*Table
 		return table, nil
 	}
 
-	table, err := newTable(db, name, config, db.reg, logger)
+	table, err := newTable(
+		db,
+		name,
+		config,
+		db.reg,
+		db.logger,
+		db.wal,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
+	tx, _, commit := db.begin()
+	defer commit()
+
+	id := generateULID()
+	if err := table.newTableBlock(0, tx, id); err != nil {
+		return nil, err
+	}
+
 	db.tables[name] = table
+	return table, nil
+}
+
+type ErrTableNotFound struct {
+	tableName string
+}
+
+func (e ErrTableNotFound) Error() string {
+	return fmt.Sprintf("table %q not found", e.tableName)
+}
+
+func (db *DB) GetTable(name string) (*Table, error) {
+	db.mtx.RLock()
+	table, ok := db.tables[name]
+	db.mtx.RUnlock()
+	if !ok {
+		return nil, ErrTableNotFound{tableName: name}
+	}
 	return table, nil
 }
 
