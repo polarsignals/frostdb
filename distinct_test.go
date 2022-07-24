@@ -202,7 +202,7 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Release()
 
-	//t.Log(r)
+	// t.Log(r)
 	require.Equal(t, int64(3), r.NumCols())
 	require.Equal(t, int64(1), r.NumRows())
 }
@@ -276,7 +276,7 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Release()
 
-	//t.Log(r)
+	// t.Log(r)
 	require.Equal(t, int64(3), r.NumCols())
 	require.Equal(t, int64(1), r.NumRows())
 }
@@ -372,7 +372,7 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 	require.NoError(t, err)
 	defer r.Release()
 
-	//t.Log(r)
+	// t.Log(r)
 	require.Equal(t, int64(3), r.NumCols())
 	require.Equal(t, int64(2), r.NumRows())
 }

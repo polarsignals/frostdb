@@ -77,7 +77,7 @@ func ParquetRowGroupToArrowSchema(
 			fields = append(fields, arrow.Field{
 				Name:     distinctExpr.Name(),
 				Type:     dataType,
-				Nullable: true, // TODO: This should be determined by the expression.
+				Nullable: true, // TODO: This should be determined by the expression and underlying column(s).
 			})
 		}
 	}
@@ -483,7 +483,6 @@ func distinctColumnsToArrowRecord(
 	distinctColumns []logicalplan.Expr,
 ) (arrow.Record, error) {
 	cols := make([]arrow.Array, len(schema.Fields()))
-	rows := int64(0)
 	for i, field := range parquetFields {
 		select {
 		case <-ctx.Done():
@@ -515,36 +514,82 @@ func distinctColumnsToArrowRecord(
 
 					index := schema.FieldIndices(distinctColumn.Name())[0]
 					cols[index] = array
-					if rows == 0 && array.Len() > 0 {
-						rows = int64(array.Len())
-						continue
-					}
-					if rows != int64(array.Len()) {
-						// Inconsistent row count means we can't apply the
-						// optimization.
-						return nil, nil
-					}
 				}
 			}
 		}
 	}
 
-	if rows == 0 {
-		return array.NewRecord(schema, cols, rows), nil
+	if allArraysNoRows(cols) {
+		return array.NewRecord(schema, cols, 0), nil
 	}
 
-	if rows == 1 {
-		for i, field := range schema.Fields() {
-			if cols[i] == nil {
-				b := array.NewBuilder(pool, field.Type)
-				b.AppendNull()
-				cols[i] = b.NewArray()
+	count, maxRows, maxColIndex := countArraysWithRowsLargerThanOne(cols)
+	if count > 1 {
+		// Can't apply the optimization as we can't know the combination of
+		// distinct values.
+		for _, col := range cols {
+			if col != nil {
+				col.Release()
 			}
 		}
-		return array.NewRecord(schema, cols, rows), nil
+		return nil, nil
 	}
 
-	return nil, nil
+	// At this point we know there is at most one column with more than one
+	// row. Therefore we can repeat the values of the other columns as those
+	// are the only possible combinations within the rowgroup.
+
+	for i, field := range schema.Fields() {
+		// Columns that had no values are just backfilled with null values.
+		if cols[i] == nil {
+			b := array.NewBuilder(pool, field.Type)
+			for j := 0; j < maxRows; j++ {
+				b.AppendNull()
+			}
+			cols[i] = b.NewArray()
+		}
+
+		// Columns with a single value must be repeated to match the maximum
+		// number of rows. Also we need to make sure the column is not the one
+		// with the maximum values as that array we want to retain the exact
+		// values.
+		if maxRows > 1 && maxColIndex != i {
+			cols[i] = repeatArray(pool, cols[i], maxRows)
+		}
+	}
+	return array.NewRecord(schema, cols, int64(maxRows)), nil
+}
+
+func allArraysNoRows(arrays []arrow.Array) bool {
+	for _, arr := range arrays {
+		if arr == nil {
+			continue
+		}
+		if arr.Len() != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func countArraysWithRowsLargerThanOne(arrays []arrow.Array) (int, int, int) {
+	count := 0
+	maxRows := 0
+	maxColIndex := 0
+	for i, arr := range arrays {
+		if arr == nil {
+			continue
+		}
+		len := arr.Len()
+		if len > maxRows {
+			maxRows = len
+			maxColIndex = i
+		}
+		if len > 1 {
+			count++
+		}
+	}
+	return count, maxRows, maxColIndex
 }
 
 func writeDistinctColumnToArray(
@@ -619,11 +664,9 @@ func binaryDistinctExpr(
 			defer b.Release()
 			if allGreater {
 				b.Append(true)
-				return b.NewArray(), nil
 			}
 			if noneGreater {
 				b.Append(false)
-				return b.NewArray(), nil
 			}
 			return b.NewArray(), nil
 		}
@@ -656,4 +699,106 @@ func allOrNoneGreaterThan(
 	}
 
 	return allTrue, allFalse
+}
+
+func repeatArray(
+	pool memory.Allocator,
+	arr arrow.Array,
+	count int,
+) arrow.Array {
+	defer arr.Release()
+	switch arr := arr.(type) {
+	case *array.Boolean:
+		return repeatBooleanArray(pool, arr, count)
+	case *array.Binary:
+		return repeatBinaryArray(pool, arr, count)
+	case *array.Int64:
+		return repeatInt64Array(pool, arr, count)
+	case *array.Uint64:
+		return repeatUint64Array(pool, arr, count)
+	case *array.Float64:
+		return repeatFloat64Array(pool, arr, count)
+	default:
+		panic(fmt.Sprintf("unsupported array type: %T", arr))
+	}
+}
+
+func repeatBooleanArray(
+	pool memory.Allocator,
+	arr *array.Boolean,
+	count int,
+) *array.Boolean {
+	b := array.NewBooleanBuilder(pool)
+	defer b.Release()
+	val := arr.Value(0)
+	vals := make([]bool, count)
+	for i := 0; i < count; i++ {
+		vals[i] = val
+	}
+	b.AppendValues(vals, nil)
+	return b.NewBooleanArray()
+}
+
+func repeatBinaryArray(
+	pool memory.Allocator,
+	arr *array.Binary,
+	count int,
+) *array.Binary {
+	b := array.NewBinaryBuilder(pool, &arrow.BinaryType{})
+	defer b.Release()
+	val := arr.Value(0)
+	vals := make([][]byte, count)
+	for i := 0; i < count; i++ {
+		vals[i] = val
+	}
+	b.AppendValues(vals, nil)
+	return b.NewBinaryArray()
+}
+
+func repeatInt64Array(
+	pool memory.Allocator,
+	arr *array.Int64,
+	count int,
+) *array.Int64 {
+	b := array.NewInt64Builder(pool)
+	defer b.Release()
+	val := arr.Value(0)
+	vals := make([]int64, count)
+	for i := 0; i < count; i++ {
+		vals[i] = val
+	}
+	b.AppendValues(vals, nil)
+	return b.NewInt64Array()
+}
+
+func repeatUint64Array(
+	pool memory.Allocator,
+	arr *array.Uint64,
+	count int,
+) *array.Uint64 {
+	b := array.NewUint64Builder(pool)
+	defer b.Release()
+	val := arr.Value(0)
+	vals := make([]uint64, count)
+	for i := 0; i < count; i++ {
+		vals[i] = val
+	}
+	b.AppendValues(vals, nil)
+	return b.NewUint64Array()
+}
+
+func repeatFloat64Array(
+	pool memory.Allocator,
+	arr *array.Float64,
+	count int,
+) *array.Float64 {
+	b := array.NewFloat64Builder(pool)
+	defer b.Release()
+	val := arr.Value(0)
+	vals := make([]float64, count)
+	for i := 0; i < count; i++ {
+		vals[i] = val
+	}
+	b.AppendValues(vals, nil)
+	return b.NewFloat64Array()
 }
