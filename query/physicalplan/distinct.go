@@ -15,14 +15,14 @@ import (
 type Distinction struct {
 	pool     memory.Allocator
 	next     func(r arrow.Record) error
-	columns  []logicalplan.ColumnMatcher
+	columns  []logicalplan.Expr
 	hashSeed maphash.Seed
 
 	mtx  *sync.RWMutex
 	seen map[uint64]struct{}
 }
 
-func Distinct(pool memory.Allocator, columns []logicalplan.ColumnMatcher) *Distinction {
+func Distinct(pool memory.Allocator, columns []logicalplan.Expr) *Distinction {
 	return &Distinction{
 		pool:     pool,
 		columns:  columns,
@@ -44,7 +44,7 @@ func (d *Distinction) Callback(r arrow.Record) error {
 
 	for i, field := range r.Schema().Fields() {
 		for _, col := range d.columns {
-			if col.Match(field.Name) {
+			if col.MatchColumn(field.Name) {
 				distinctFields = append(distinctFields, field)
 				distinctFieldHashes = append(distinctFieldHashes, scalar.Hash(d.hashSeed, scalar.NewStringScalar(field.Name)))
 				distinctArrays = append(distinctArrays, r.Column(i))

@@ -23,7 +23,7 @@ func Aggregate(
 ) (*HashAggregate, error) {
 	groupByMatchers := make([]logicalplan.ColumnMatcher, 0, len(agg.GroupExprs))
 	for _, groupExpr := range agg.GroupExprs {
-		groupByMatchers = append(groupByMatchers, groupExpr.Matcher())
+		groupByMatchers = append(groupByMatchers, groupExpr)
 	}
 
 	var (
@@ -40,7 +40,7 @@ func Aggregate(
 			aggFunc = e.Func
 			aggFuncFound = true
 		case *logicalplan.Column:
-			aggColumnMatcher = e.Matcher()
+			aggColumnMatcher = e
 			aggColumnFound = true
 		}
 
@@ -225,14 +225,14 @@ func (a *HashAggregate) Callback(r arrow.Record) error {
 
 	for i, field := range r.Schema().Fields() {
 		for _, matcher := range a.groupByColumnMatchers {
-			if matcher.Match(field.Name) {
+			if matcher.MatchColumn(field.Name) {
 				groupByFields = append(groupByFields, field)
 				groupByFieldHashes = append(groupByFieldHashes, scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name)))
 				groupByArrays = append(groupByArrays, r.Column(i))
 			}
 		}
 
-		if a.columnToAggregate.Match(field.Name) {
+		if a.columnToAggregate.MatchColumn(field.Name) {
 			columnToAggregate = r.Column(i)
 			aggregateFieldFound = true
 		}

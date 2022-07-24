@@ -31,11 +31,11 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 		// duplicates because the statements just add the matchers for the
 		// columns they access. The optimizer could potentially deduplicate or
 		// use a more efficient datastructure in the future.
-		Projection: []ColumnMatcher{
-			StaticColumnMatcher{ColumnName: "stacktrace"},
-			StaticColumnMatcher{ColumnName: "stacktrace"},
-			StaticColumnMatcher{ColumnName: "value"},
-			StaticColumnMatcher{ColumnName: "labels.test"},
+		PhysicalProjection: []ColumnMatcher{
+			&Column{ColumnName: "stacktrace"},
+			&Column{ColumnName: "stacktrace"},
+			&Column{ColumnName: "value"},
+			&Column{ColumnName: "labels.test"},
 		},
 	},
 		// Projection -> Aggregate -> Filter -> TableScan
@@ -54,8 +54,8 @@ func TestOptimizeDistinctPushDown(t *testing.T) {
 
 	require.Equal(t, &TableScan{
 		TableName: "table1",
-		Distinct: []ColumnMatcher{
-			StaticColumnMatcher{ColumnName: "labels.test"},
+		Distinct: []Expr{
+			&Column{ColumnName: "labels.test"},
 		},
 	},
 		// Distinct -> TableScan
@@ -200,11 +200,11 @@ func TestAllOptimizers(t *testing.T) {
 		// duplicates because the statements just add the matchers for the
 		// columns they access. The optimizer could potentially deduplicate or
 		// use a more efficient datastructure in the future.
-		Projection: []ColumnMatcher{
-			StaticColumnMatcher{ColumnName: "stacktrace"},
-			StaticColumnMatcher{ColumnName: "stacktrace"},
-			StaticColumnMatcher{ColumnName: "value"},
-			StaticColumnMatcher{ColumnName: "labels.test"},
+		PhysicalProjection: []ColumnMatcher{
+			&Column{ColumnName: "stacktrace"},
+			&Column{ColumnName: "stacktrace"},
+			&Column{ColumnName: "value"},
+			&Column{ColumnName: "labels.test"},
 		},
 		Filter: &BinaryExpr{
 			Left: &Column{ColumnName: "labels.test"},

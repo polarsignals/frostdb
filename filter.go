@@ -4,11 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -30,24 +29,6 @@ type AlwaysTrueFilter struct{}
 
 func (f *AlwaysTrueFilter) Eval(dynparquet.DynamicRowGroup) (bool, error) {
 	return true, nil
-}
-
-func arrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
-	switch s := sc.(type) {
-	case *scalar.String:
-		return parquet.ValueOf(string(s.Data())), nil
-	case *scalar.Int64:
-		return parquet.ValueOf(s.Value), nil
-	case *scalar.FixedSizeBinary:
-		width := s.Type.(*arrow.FixedSizeBinaryType).ByteWidth
-		v := [16]byte{}
-		copy(v[:width], s.Data())
-		return parquet.ValueOf(v), nil
-	case nil:
-		return parquet.Value{}, nil
-	default:
-		return parquet.Value{}, fmt.Errorf("unsupported scalar type %T", s)
-	}
 }
 
 func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error) {
@@ -75,7 +56,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error)
 		expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
 			case *logicalplan.LiteralExpr:
-				rightValue, err = arrowScalarToParquetValue(e.Value)
+				rightValue, err = pqarrow.ArrowScalarToParquetValue(e.Value)
 				return false
 			}
 			return true

@@ -430,9 +430,10 @@ func (t *Table) Iterator(
 	tx uint64,
 	pool memory.Allocator,
 	schema *arrow.Schema,
-	projections []logicalplan.ColumnMatcher,
+	physicalProjections []logicalplan.ColumnMatcher,
+	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 	iterator func(r arrow.Record) error,
 ) error {
 	filter, err := booleanExpr(filterExpr)
@@ -486,7 +487,9 @@ func (t *Table) Iterator(
 			if schema == nil {
 				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
 					ctx,
+					t.config.schema,
 					rg,
+					physicalProjections,
 					projections,
 					filterExpr,
 					distinctColumns,
@@ -525,9 +528,10 @@ func (t *Table) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	projections []logicalplan.ColumnMatcher,
+	physicalProjections []logicalplan.ColumnMatcher,
+	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 	iterator func(r arrow.Record) error,
 ) error {
 	filter, err := booleanExpr(filterExpr)
@@ -582,9 +586,10 @@ func (t *Table) ArrowSchema(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	projections []logicalplan.ColumnMatcher,
+	physicalProjections []logicalplan.ColumnMatcher,
+	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.ColumnMatcher,
+	distinctColumns []logicalplan.Expr,
 ) (*arrow.Schema, error) {
 	filter, err := booleanExpr(filterExpr)
 	if err != nil {
@@ -615,7 +620,9 @@ func (t *Table) ArrowSchema(
 		default:
 			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
 				ctx,
+				t.config.schema,
 				rg,
+				physicalProjections,
 				projections,
 				filterExpr,
 				distinctColumns,
@@ -1340,7 +1347,7 @@ func findColumnValues(matchers []logicalplan.ColumnMatcher, g *Granule) (*parque
 		defer g.metadata.minlock.RUnlock()
 		for _, matcher := range matchers {
 			for column, min := range g.metadata.min {
-				if matcher.Match(column) {
+				if matcher.MatchColumn(column) {
 					return min, column
 				}
 			}

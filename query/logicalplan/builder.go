@@ -2,7 +2,6 @@ package logicalplan
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
 
@@ -72,20 +71,8 @@ func (m StaticColumnMatcher) Match(columnName string) bool {
 }
 
 type ColumnMatcher interface {
-	Match(columnName string) bool
+	MatchColumn(columnName string) bool
 	Name() string
-}
-
-type DynamicColumnMatcher struct {
-	ColumnName string
-}
-
-func (m DynamicColumnMatcher) Name() string {
-	return m.ColumnName
-}
-
-func (m DynamicColumnMatcher) Match(columnName string) bool {
-	return strings.HasPrefix(columnName, m.ColumnName+".")
 }
 
 type Expr interface {
@@ -93,15 +80,20 @@ type Expr interface {
 	Accept(Visitor) bool
 	Name() string
 	ColumnsUsed() []ColumnMatcher
-	// Matcher returns a ColumnMatcher that can be used to identify a column by
-	// a downstream plan. In contrast to the ColumnUsed function from the Expr
-	// interface, it is not useful to identify which columns are to be read
-	// physically. This is necessary to distinguish between projections.
+
+	// MatchColumn returns whether it would operate on the passed column. In
+	// contrast to the ColumnUsed function from the Expr interface, it is not
+	// useful to identify which columns are to be read physically. This is
+	// necessary to distinguish between projections.
 	//
 	// Take the example of a column that projects `XYZ > 0`. Matcher can be
 	// used to identify the column in the resulting Apache Arrow frames, while
 	// ColumnsUsed will return `XYZ` to be necessary to be loaded physically.
-	Matcher() ColumnMatcher
+	MatchColumn(columnName string) bool
+
+	// Computed returns whether the expression is computed as opposed to being
+	// a static value or unmodified physical column.
+	Computed() bool
 
 	// Expr implements these two interfaces
 	// so that queries can be transported as JSON.
@@ -125,13 +117,13 @@ func (b Builder) Filter(expr Expr) Builder {
 }
 
 func (b Builder) Distinct(
-	columns ...Expr,
+	exprs ...Expr,
 ) Builder {
 	return Builder{
 		plan: &LogicalPlan{
 			Input: b.plan,
 			Distinct: &Distinct{
-				Columns: columns,
+				Exprs: exprs,
 			},
 		},
 	}

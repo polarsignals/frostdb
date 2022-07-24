@@ -108,27 +108,30 @@ type TableReader interface {
 		tx uint64,
 		pool memory.Allocator,
 		schema *arrow.Schema,
-		projection []ColumnMatcher,
+		physicalProjection []ColumnMatcher,
+		projection []Expr,
 		filter Expr,
-		distinctColumns []ColumnMatcher,
+		distinctColumns []Expr,
 		callback func(r arrow.Record) error,
 	) error
 	SchemaIterator(
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		projection []ColumnMatcher,
+		physicalProjection []ColumnMatcher,
+		projection []Expr,
 		filter Expr,
-		distinctColumns []ColumnMatcher,
+		distinctColumns []Expr,
 		callback func(r arrow.Record) error,
 	) error
 	ArrowSchema(
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		projection []ColumnMatcher,
+		physicalProjection []ColumnMatcher,
+		projection []Expr,
 		filter Expr, // TODO: We probably don't need this
-		distinctColumns []ColumnMatcher,
+		distinctColumns []Expr,
 	) (*arrow.Schema, error)
 	Schema() *dynparquet.Schema
 }
@@ -141,16 +144,19 @@ type TableScan struct {
 	TableProvider TableProvider
 	TableName     string
 
-	// Projection in this case means the columns that are to be read by the
-	// table scan.
-	Projection []ColumnMatcher
+	// PhysicalProjection describes the columns that are to be physically read
+	// by the table scan.
+	PhysicalProjection []ColumnMatcher
 
 	// Filter is the predicate that is to be applied by the table scan to rule
 	// out any blocks of data to be scanned at all.
 	Filter Expr
 
 	// Distinct describes the columns that are to be distinct.
-	Distinct []ColumnMatcher
+	Distinct []Expr
+
+	// Projection is the list of columns that are to be projected.
+	Projection []Expr
 }
 
 func (scan *TableScan) String() string {
@@ -165,16 +171,19 @@ type SchemaScan struct {
 	TableProvider TableProvider
 	TableName     string
 
-	// projection in this case means the columns that are to be read by the
-	// table scan.
-	Projection []ColumnMatcher
+	// PhysicalProjection describes the columns that are to be physically read
+	// by the table scan.
+	PhysicalProjection []ColumnMatcher
 
 	// filter is the predicate that is to be applied by the table scan to rule
 	// out any blocks of data to be scanned at all.
 	Filter Expr
 
 	// Distinct describes the columns that are to be distinct.
-	Distinct []ColumnMatcher
+	Distinct []Expr
+
+	// Projection is the list of columns that are to be projected.
+	Projection []Expr
 }
 
 func (s *SchemaScan) String() string {
@@ -224,7 +233,7 @@ func (f *Filter) String() string {
 }
 
 type Distinct struct {
-	Columns []Expr
+	Exprs []Expr
 }
 
 func (d *Distinct) String() string {
