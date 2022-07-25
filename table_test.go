@@ -67,7 +67,7 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 	)
 	require.NoError(t, err)
 
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -628,7 +628,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	)
 	require.NoError(b, err)
 
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(b, err)
 	ts := atomic.NewInt64(0)
 	generateRows := func(id string, n int) *dynparquet.Buffer {
@@ -1008,7 +1008,7 @@ func Test_Table_NewTableValidIndexDegree(t *testing.T) {
 	config := NewTableConfig(dynparquet.NewSampleSchema())
 	c, err := New(newTestLogger(t), nil, WithIndexDegree(-1))
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 
 	_, err = db.Table("test", config)
@@ -1023,7 +1023,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 
 	c, err := New(newTestLogger(t), nil, WithSplitSize(1))
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	_, err = db.Table("test", config)
 	require.Error(t, err)
@@ -1031,7 +1031,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 
 	c, err = New(newTestLogger(t), nil, WithSplitSize(-1))
 	require.NoError(t, err)
-	db, err = c.DB("test")
+	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
 	require.Error(t, err)
@@ -1039,7 +1039,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 
 	c, err = New(newTestLogger(t), nil, WithSplitSize(2))
 	require.NoError(t, err)
-	db, err = c.DB("test")
+	db, err = c.DB(context.Background(), "test")
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
 	require.NoError(t, err)
 }
@@ -1602,7 +1602,7 @@ func Test_DoubleTable(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)

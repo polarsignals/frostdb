@@ -28,7 +28,7 @@ func TestFilter(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -199,7 +199,7 @@ func Test_Projection(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)

@@ -28,7 +28,7 @@ func TestDistinct(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -146,7 +146,7 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -294,7 +294,7 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -390,7 +390,7 @@ func TestDistinctProjectionAllNull(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)

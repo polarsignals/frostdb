@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/segmentio/parquet-go"
 	"github.com/segmentio/parquet-go/compress"
 	"github.com/segmentio/parquet-go/encoding"
+	"github.com/segmentio/parquet-go/format"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
@@ -135,6 +137,138 @@ func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 		columns,
 		sortingColumns,
 	), nil
+}
+
+// DefinitionFromParquetFile converts a parquet file into a schemapb.Schema.
+func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
+	schema := file.Schema()
+
+	buf, err := NewSerializedBuffer(file)
+	if err != nil {
+		return nil, err
+	}
+	dyncols := buf.DynamicColumns()
+	found := map[string]struct{}{}
+	columns := []*schemapb.Column{}
+	metadata := file.Metadata()
+	sortingCols := []*schemapb.SortingColumn{}
+	foundSortingCols := map[string]struct{}{}
+	for _, rg := range metadata.RowGroups {
+		// Extract the sorting column information
+		for _, sc := range rg.SortingColumns {
+			name := rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0]
+			isDynamic := false
+			split := strings.Split(name, ".")
+			colName := split[0]
+			if len(split) > 1 && len(dyncols[colName]) != 0 {
+				isDynamic = true
+			}
+
+			if isDynamic {
+				name = colName
+			}
+
+			// we need a set to filter out duplicates
+			if _, ok := foundSortingCols[name]; ok {
+				continue
+			}
+			foundSortingCols[name] = struct{}{}
+
+			direction := schemapb.SortingColumn_DIRECTION_ASCENDING
+			if sc.Descending {
+				direction = schemapb.SortingColumn_DIRECTION_DESCENDING
+			}
+			sortingCols = append(sortingCols, &schemapb.SortingColumn{
+				Name:       name,
+				Direction:  direction,
+				NullsFirst: sc.NullsFirst,
+			})
+		}
+
+		for _, col := range rg.Columns {
+			name := col.MetaData.PathInSchema[0] // we only support flat schemas
+
+			// Check if the column is optional
+			nullable := false
+			for _, node := range schema.Fields() {
+				if node.Name() == name {
+					nullable = node.Optional()
+				}
+			}
+
+			isDynamic := false
+			split := strings.Split(name, ".")
+			colName := split[0]
+			if len(split) > 1 && len(dyncols[colName]) != 0 {
+				isDynamic = true
+			}
+
+			// Mark the dynamic column as being found
+			if _, ok := found[colName]; ok {
+				continue
+			}
+			found[colName] = struct{}{}
+
+			columns = append(columns, &schemapb.Column{
+				Name:          split[0],
+				StorageLayout: parquetColumnMetaDataToStorageLayout(col.MetaData, nullable),
+				Dynamic:       isDynamic,
+			})
+		}
+	}
+
+	return &schemapb.Schema{
+		Name:           schema.Name(),
+		Columns:        columns,
+		SortingColumns: sortingCols,
+	}, nil
+}
+
+// SchemaFromParquetFile converts a parquet file into a dnyparquet.Schema.
+func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
+	def, err := DefinitionFromParquetFile(file)
+	if err != nil {
+		return nil, err
+	}
+
+	return SchemaFromDefinition(def)
+}
+
+func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData, nullable bool) *schemapb.StorageLayout {
+	layout := &schemapb.StorageLayout{
+		Nullable: nullable,
+	}
+
+	switch metadata.Encoding[len(metadata.Encoding)-1] {
+	case format.RLEDictionary:
+		layout.Encoding = schemapb.StorageLayout_ENCODING_RLE_DICTIONARY
+	case format.DeltaBinaryPacked:
+		layout.Encoding = schemapb.StorageLayout_ENCODING_DELTA_BINARY_PACKED
+	}
+
+	switch metadata.Codec {
+	case format.Snappy:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_SNAPPY
+	case format.Gzip:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_GZIP
+	case format.Brotli:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_BROTLI
+	case format.Lz4Raw:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_LZ4_RAW
+	case format.Zstd:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_ZSTD
+	}
+
+	switch metadata.Type {
+	case format.ByteArray:
+		layout.Type = schemapb.StorageLayout_TYPE_STRING
+	case format.Int64:
+		layout.Type = schemapb.StorageLayout_TYPE_INT64
+	case format.Double:
+		layout.Type = schemapb.StorageLayout_TYPE_DOUBLE
+	}
+
+	return layout
 }
 
 func storageLayoutToParquetNode(l *schemapb.StorageLayout) (parquet.Node, error) {
@@ -564,7 +698,45 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 			DynamicColumnsKey,
 			serializeDynamicColumns(dynamicColumns),
 		),
+		parquet.SortingColumns(s.sortingColumnsFromDynamic(dynamicColumns)...),
 	), nil
+}
+
+// sortingColumnsFromDynamic generate the parquet sorting columns from the given set of dynamic columns.
+func (s *Schema) sortingColumnsFromDynamic(dynamicColumns map[string][]string) []parquet.SortingColumn {
+	sortingCols := []parquet.SortingColumn{}
+	for _, sc := range s.sortingColumns {
+		// Convert dynamic columns into sorting columns if appropriate
+		dynamic := false // innocent until proven guilty
+		for col, vals := range dynamicColumns {
+			if sc.ColumnName() == col {
+				for _, val := range vals {
+					name := col + "." + val
+					var col SortingColumn
+					switch sc.Descending() {
+					case true:
+						col = Descending(name)
+					default:
+						col = Ascending(name)
+					}
+					switch sc.NullsFirst() {
+					case true:
+						sortingCols = append(sortingCols, NullsFirst(col))
+					default:
+						sortingCols = append(sortingCols, col)
+					}
+				}
+				dynamic = true
+				break
+			}
+		}
+
+		if !dynamic {
+			sortingCols = append(sortingCols, sc)
+		}
+	}
+
+	return sortingCols
 }
 
 type PooledWriter struct {

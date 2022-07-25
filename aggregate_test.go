@@ -29,7 +29,7 @@ func TestAggregate(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestAggregateNils(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		reg,
 	)
 	require.NoError(t, err)
-	db, err := c.DB("test")
+	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)

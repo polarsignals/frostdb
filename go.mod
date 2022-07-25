@@ -8,6 +8,7 @@ require (
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140
 	github.com/dustin/go-humanize v1.0.0
 	github.com/go-kit/log v0.2.1
+	github.com/golang/protobuf v1.5.2
 	github.com/google/btree v1.0.1
 	github.com/google/uuid v1.3.0
 	github.com/oklog/ulid v1.3.1
@@ -31,7 +32,6 @@ require (
 	github.com/efficientgo/tools/core v0.0.0-20220225185207-fe763185946b // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/goccy/go-json v0.7.10 // indirect
-	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/klauspost/compress v1.15.5 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
