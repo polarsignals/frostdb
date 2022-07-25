@@ -411,6 +411,18 @@ func (db *DB) Close() error {
 			return err
 		}
 	}
+
+	// If no persistence is enabled; we're done
+	if db.bucket == nil {
+		return nil
+	}
+
+	// Persist blocks to storage
+	for _, table := range db.tables {
+		if err := table.RotateBlock(table.ActiveBlock()); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
