@@ -177,6 +177,8 @@ func encodingFromDefinition(enc schemapb.StorageLayout_Encoding) (encoding.Encod
 	switch enc {
 	case schemapb.StorageLayout_ENCODING_RLE_DICTIONARY:
 		return &parquet.RLEDictionary, nil
+	case schemapb.StorageLayout_ENCODING_DELTA_BINARY_PACKED:
+		return &parquet.DeltaBinaryPacked, nil
 	default:
 		return nil, fmt.Errorf("unknown encoding: %s", enc)
 	}
@@ -184,6 +186,16 @@ func encodingFromDefinition(enc schemapb.StorageLayout_Encoding) (encoding.Encod
 
 func compressionFromDefinition(comp schemapb.StorageLayout_Compression) (compress.Codec, error) {
 	switch comp {
+	case schemapb.StorageLayout_COMPRESSION_SNAPPY:
+		return &parquet.Snappy, nil
+	case schemapb.StorageLayout_COMPRESSION_GZIP:
+		return &parquet.Gzip, nil
+	case schemapb.StorageLayout_COMPRESSION_BROTLI:
+		return &parquet.Brotli, nil
+	case schemapb.StorageLayout_COMPRESSION_LZ4_RAW:
+		return &parquet.Lz4Raw, nil
+	case schemapb.StorageLayout_COMPRESSION_ZSTD:
+		return &parquet.Zstd, nil
 	default:
 		return nil, fmt.Errorf("unknown compression: %s", comp)
 	}

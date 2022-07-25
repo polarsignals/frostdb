@@ -45,6 +45,8 @@ message StorageLayout {
         ENCODING_PLAIN_UNSPECIFIED = 0;
         // Dictionary run-length encoding.
         ENCODING_RLE_DICTIONARY = 1;
+        // Delta binary packed encoding.
+        ENCODING_DELTA_BINARY_PACKED = 2;
     }
 
     // Encoding of the column.
@@ -54,6 +56,16 @@ message StorageLayout {
     enum Compression {
         // No compression.
         COMPRESSION_NONE_UNSPECIFIED = 0;
+        // Snappy compression.
+        COMPRESSION_SNAPPY = 1;
+        // GZIP compression.
+        COMPRESSION_GZIP = 2;
+        // Brotli compression.
+        COMPRESSION_BROTLI = 3;
+        // LZ4_RAW compression.
+        COMPRESSION_LZ4_RAW = 4;
+        // ZSTD compression.
+        COMPRESSION_ZSTD = 5;
     }
 
     // Compression of the column.
