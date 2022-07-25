@@ -419,9 +419,7 @@ func (db *DB) Close() error {
 
 	// Persist blocks to storage
 	for _, table := range db.tables {
-		if err := table.RotateBlock(table.ActiveBlock()); err != nil {
-			return err
-		}
+		table.writeBlock(table.ActiveBlock())
 	}
 	return nil
 }
