@@ -508,10 +508,15 @@ func NewDBTableProvider(db *DB) *DBTableProvider {
 	}
 }
 
-func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
+func (p *DBTableProvider) GetTable(name string) (logicalplan.TableReader, error) {
 	p.db.mtx.RLock()
 	defer p.db.mtx.RUnlock()
-	return p.db.tables[name]
+	tbl, ok := p.db.tables[name]
+	if !ok {
+		return nil, ErrTableNotFound{name}
+	}
+
+	return tbl, nil
 }
 
 // beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.

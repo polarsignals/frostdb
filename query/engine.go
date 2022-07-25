@@ -99,9 +99,14 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Re
 		logicalPlan = optimizer.Optimize(logicalPlan)
 	}
 
+	schema, err := logicalPlan.InputSchema()
+	if err != nil {
+		return err
+	}
+
 	phyPlan, err := physicalplan.Build(
 		b.pool,
-		logicalPlan.InputSchema(),
+		schema,
 		logicalPlan,
 	)
 	if err != nil {

@@ -183,7 +183,13 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 
 	// check that column being aggregated on exists in the schema
 	colExpr := colFinder.result.(*Column)
-	schema := plan.InputSchema()
+	schema, err := plan.InputSchema()
+	if err != nil {
+		return &ExprValidationError{
+			message: fmt.Sprintf("Error generating input schema: %v", err.Error()),
+			expr:    plan.Aggregation.AggExpr,
+		}
+	}
 	if schema == nil {
 		return nil // cannot check column type if there's no input schema
 	}
@@ -267,7 +273,13 @@ func ValidateFilterBinaryExpr(plan *LogicalPlan, expr *BinaryExpr) *ExprValidati
 
 	// try to find the column in the schema
 	columnExpr := leftColumnFinder.result.(*Column)
-	schema := plan.InputSchema()
+	schema, err := plan.InputSchema()
+	if err != nil {
+		return &ExprValidationError{
+			message: fmt.Sprintf("failed to generate input schema: %v", err.Error()),
+			expr:    expr,
+		}
+	}
 	if schema != nil {
 		column, found := schema.ColumnByName(columnExpr.ColumnName)
 		if found {
