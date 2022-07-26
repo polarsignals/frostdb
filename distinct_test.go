@@ -376,3 +376,66 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 	require.Equal(t, int64(3), r.NumCols())
 	require.Equal(t, int64(2), r.NumRows())
 }
+
+func TestDistinctProjectionAllNull(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	reg := prometheus.NewRegistry()
+	logger := newTestLogger(t)
+
+	c, err := New(
+		logger,
+		reg,
+	)
+	require.NoError(t, err)
+	db, err := c.DB("test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     0,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     0,
+	}}
+
+	for i := range samples {
+		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		require.NoError(t, err)
+
+		_, err = table.InsertBuffer(context.Background(), buf)
+		require.NoError(t, err)
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	err = engine.ScanTable("test").
+		Distinct(
+			logicalplan.Col("labels.label2"),
+		).
+		Execute(context.Background(), func(ar arrow.Record) error {
+			return nil
+		})
+	require.NoError(t, err)
+}

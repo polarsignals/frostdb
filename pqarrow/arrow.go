@@ -520,6 +520,11 @@ func distinctColumnsToArrowRecord(
 	}
 
 	if allArraysNoRows(cols) {
+		for i, field := range schema.Fields() {
+			if cols[i] == nil {
+				cols[i] = array.NewBuilder(pool, field.Type).NewArray()
+			}
+		}
 		return array.NewRecord(schema, cols, 0), nil
 	}
 
