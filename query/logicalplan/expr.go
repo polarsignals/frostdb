@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -434,7 +435,7 @@ func (e LiteralExpr) MarshalJSON() ([]byte, error) {
 func (e *LiteralExpr) UnmarshalJSON(data []byte) error {
 	type literalExprJSON struct {
 		ValueType string
-		Value     interface{}
+		Value     string
 	}
 	var literal literalExprJSON
 	err := json.Unmarshal(data, &literal)
@@ -444,6 +445,14 @@ func (e *LiteralExpr) UnmarshalJSON(data []byte) error {
 	switch literal.ValueType {
 	case "*scalar.String":
 		e.Value = scalar.MakeScalar(literal.Value)
+	case "*scalar.Int64":
+		n, err := strconv.ParseInt(literal.Value, 10, 64)
+		if err != nil {
+			return err
+		}
+		e.Value = scalar.MakeScalar(n)
+	default:
+		return fmt.Errorf("unsupported literal type: %s", literal.ValueType)
 	}
 
 	return nil
