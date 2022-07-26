@@ -14,6 +14,7 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
@@ -522,7 +523,34 @@ func (p *DBTableProvider) GetTable(name string) (logicalplan.TableReader, error)
 	p.db.mtx.RLock()
 	defer p.db.mtx.RUnlock()
 	tbl, ok := p.db.tables[name]
-	if !ok {
+	if ok {
+		return tbl, nil
+	}
+
+	if p.db.bucket == nil {
+		return nil, ErrTableNotFound{name}
+	}
+
+	// Perform a scan of the bucket storage to determine if this table exists
+	if err := p.db.bucket.Iter(context.TODO(), name, func(table string) error {
+		rc, err := p.db.bucket.Get(context.TODO(), table)
+		if err != nil {
+			return err
+		}
+
+		// TODO read teh schema from the parquet file
+		parquet.OpenFile(rc, 0)
+
+		fmt.Println(table)
+		// TODO we need to read the schema from the parquet file...
+		// TODO need a way to convert the parquet.Schema into the dynamic schema
+		//_, err := p.db.Table(table, nil)
+		return nil
+	}, objstore.WithRecursiveIter); err != nil {
+		return nil, err
+	}
+
+	if tbl == nil {
 		return nil, ErrTableNotFound{name}
 	}
 
