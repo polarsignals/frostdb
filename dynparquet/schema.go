@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/segmentio/parquet-go"
@@ -141,10 +142,55 @@ func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
 	schema := file.Schema()
 
-	// Extract the dynamic keys
-	v, ok := file.Lookup(DynamicColumnsKey)
-	if ok {
-		// TODO add dynamic columns to schema
+	columns := []*schemapb.Column{}
+	fields := schema.Fields()
+	buf, err := NewSerializedBuffer(file)
+	if err != nil {
+		return nil, err
+	}
+	dyncols := buf.DynamicColumns()
+	found := map[string]struct{}{}
+	for _, field := range fields {
+		layout, err := parquetNodeToStorageLayout(field)
+		if err != nil {
+			return nil, err
+		}
+
+		isDynamic := false
+		split := strings.Split(field.Name(), ".")
+		if len(split) > 1 && len(dyncols[split[0]]) != 0 {
+			isDynamic = true
+		}
+
+		// Mark the dynamic column as being found
+		if _, ok := found[split[0]]; ok {
+			continue
+		}
+		found[split[0]] = struct{}{}
+
+		columns = append(columns, &schemapb.Column{
+			Name:          split[0],
+			StorageLayout: layout,
+			Dynamic:       isDynamic,
+		})
+	}
+
+	// TODO generate the layout
+	// TODO read row group for the sorting columns...
+
+	def := &schemapb.Schema{
+		Name:           schema.Name(),
+		Columns:        columns,
+		SortingColumns: nil,
+	}
+
+	return SchemaFromDefinition(def)
+}
+
+func parquetNodeToStorageLayout(node parquet.Node) (*schemapb.StorageLayout, error) {
+	typ := node.Type()
+	switch typ {
+	// TODO
 	}
 
 	return nil, nil
