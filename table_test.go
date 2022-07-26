@@ -57,9 +57,6 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 		dynparquet.NewSampleSchema(),
 	)
 
-	bucket, err := filesystem.NewBucket(".")
-	require.NoError(t, err)
-
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
 
@@ -67,7 +64,6 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 		logger,
 		reg,
 		WithGranuleSize(granuleSize),
-		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
 

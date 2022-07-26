@@ -87,14 +87,14 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filt
 	return err
 }
 
-// BucketReaderAt is an objstore.Bucket wrapper that supports the io.ReaderAt interface
+// BucketReaderAt is an objstore.Bucket wrapper that supports the io.ReaderAt interface.
 type BucketReaderAt struct {
 	name string
 	ctx  context.Context
 	objstore.Bucket
 }
 
-// ReadAt implements the io.ReaderAt interface
+// ReadAt implements the io.ReaderAt interface.
 func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	rc, err := b.GetRange(b.ctx, b.name, off, int64(len(p)))
 	if err != nil {

@@ -436,7 +436,6 @@ func (t *Table) Iterator(
 	distinctColumns []logicalplan.Expr,
 	iterator func(r arrow.Record) error,
 ) error {
-
 	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
 		return err
@@ -502,7 +501,6 @@ func (t *Table) SchemaIterator(
 	distinctColumns []logicalplan.Expr,
 	iterator func(r arrow.Record) error,
 ) error {
-
 	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
 		return err
@@ -551,7 +549,6 @@ func (t *Table) ArrowSchema(
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
 ) (*arrow.Schema, error) {
-
 	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
 		return nil, err
@@ -1342,7 +1339,7 @@ func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	return memoryBlocks, lastReadBlockTimestamp
 }
 
-// collectRowGroups collects all the row groups from the table for the given filter
+// collectRowGroups collects all the row groups from the table for the given filter.
 func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logicalplan.Expr) ([]dynparquet.DynamicRowGroup, error) {
 	filter, err := booleanExpr(filterExpr)
 	if err != nil {
