@@ -28,13 +28,12 @@ func (t *TableBlock) Persist() error {
 	return t.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
 }
 
-func (t *Table) IterateBucketBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
+func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
 	if t.db.bucket == nil {
 		return nil
 	}
 
 	n := 0
-	ctx := context.Background()
 	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
 		blockUlid, err := ulid.Parse(filepath.Base(blockDir))
 		if err != nil {

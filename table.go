@@ -470,7 +470,7 @@ func (t *Table) Iterator(
 		}
 	}
 
-	if err := t.IterateBucketBlocks(t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
+	if err := t.IterateBucketBlocks(ctx, t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
 		return err
 	}
 
