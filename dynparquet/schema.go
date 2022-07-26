@@ -137,6 +137,19 @@ func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 	), nil
 }
 
+// SchemaFromParquetFile converts a parquet file into a dnyparquet.Schema
+func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
+	schema := file.Schema()
+
+	// Extract the dynamic keys
+	v, ok := file.Lookup(DynamicColumnsKey)
+	if ok {
+		// TODO add dynamic columns to schema
+	}
+
+	return nil, nil
+}
+
 func storageLayoutToParquetNode(l *schemapb.StorageLayout) (parquet.Node, error) {
 	var node parquet.Node
 	switch l.Type {

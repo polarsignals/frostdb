@@ -532,19 +532,38 @@ func (p *DBTableProvider) GetTable(name string) (logicalplan.TableReader, error)
 	}
 
 	// Perform a scan of the bucket storage to determine if this table exists
-	if err := p.db.bucket.Iter(context.TODO(), name, func(table string) error {
-		rc, err := p.db.bucket.Get(context.TODO(), table)
+	ctx := context.TODO()
+
+	// TODO THOR: should this be in the open DB function instead?
+	// TODO probably...
+	if err := p.db.bucket.Iter(ctx, name, func(table string) error {
+		attr, err := p.db.bucket.Attributes(context.TODO(), table)
 		if err != nil {
 			return err
 		}
 
-		// TODO read teh schema from the parquet file
-		parquet.OpenFile(rc, 0)
+		b := &BucketReaderAt{
+			name:   table,
+			ctx:    ctx,
+			Bucket: p.db.bucket,
+		}
 
-		fmt.Println(table)
-		// TODO we need to read the schema from the parquet file...
-		// TODO need a way to convert the parquet.Schema into the dynamic schema
-		//_, err := p.db.Table(table, nil)
+		f, err := parquet.OpenFile(b, attr.Size)
+		if err != nil {
+			return err
+		}
+
+		schema, err := dynparquet.SchemaFromParquetFile(f)
+		if err != nil {
+			return err
+		}
+
+		// Open the table with the derived schema
+		tbl, err = p.db.Table(table, NewTableConfig(schema))
+		if err != nil {
+			return err
+		}
+
 		return nil
 	}, objstore.WithRecursiveIter); err != nil {
 		return nil, err
