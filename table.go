@@ -451,19 +451,7 @@ func (t *Table) Iterator(
 	// to avoid to iterate on them again while reading the block file
 	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
-
-	t.mtx.RLock()
-	lastReadBlockTimestamp := t.active.ulid.Time()
-	memoryBlocks := []*TableBlock{t.active}
-	for block := range t.pendingBlocks {
-		memoryBlocks = append(memoryBlocks, block)
-
-		if block.ulid.Time() < lastReadBlockTimestamp {
-			lastReadBlockTimestamp = block.ulid.Time()
-		}
-	}
-	t.mtx.RUnlock()
-
+	memoryBlocks, lastReadBlockTimestamp := t.memoryBlocks()
 	for _, block := range memoryBlocks {
 		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
 			return err
@@ -597,13 +585,24 @@ func (t *Table) ArrowSchema(
 	}
 
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, tx, nil, filter,
-		func(rg dynparquet.DynamicRowGroup) bool {
-			rowGroups = append(rowGroups, rg)
-			return true
-		},
-	)
+	iteratorFunc := func(rg dynparquet.DynamicRowGroup) bool {
+		rowGroups = append(rowGroups, rg)
+		return true
+	}
+
+	err = t.ActiveBlock().RowGroupIterator(ctx, tx, nil, filter, iteratorFunc)
 	if err != nil {
+		return nil, err
+	}
+
+	memoryBlocks, lastReadBlockTimestamp := t.memoryBlocks()
+	for _, block := range memoryBlocks {
+		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := t.IterateBucketBlocks(ctx, t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
 		return nil, err
 	}
 
@@ -1373,4 +1372,21 @@ func tombstone(parts []*Part) {
 	for _, part := range parts {
 		part.tx = math.MaxUint64
 	}
+}
+
+func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+
+	lastReadBlockTimestamp := t.active.ulid.Time()
+	memoryBlocks := []*TableBlock{t.active}
+	for block := range t.pendingBlocks {
+		memoryBlocks = append(memoryBlocks, block)
+
+		if block.ulid.Time() < lastReadBlockTimestamp {
+			lastReadBlockTimestamp = block.ulid.Time()
+		}
+	}
+
+	return memoryBlocks, lastReadBlockTimestamp
 }
