@@ -436,29 +436,9 @@ func (t *Table) Iterator(
 	distinctColumns []logicalplan.Expr,
 	iterator func(r arrow.Record) error,
 ) error {
-	filter, err := booleanExpr(filterExpr)
+
+	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
-		return err
-	}
-
-	rowGroups := []dynparquet.DynamicRowGroup{}
-	iteratorFunc := func(rg dynparquet.DynamicRowGroup) bool {
-		rowGroups = append(rowGroups, rg)
-		return true
-	}
-
-	// pending blocks could be uploaded to the bucket while we iterate on them.
-	// to avoid to iterate on them again while reading the block file
-	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
-	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
-	memoryBlocks, lastReadBlockTimestamp := t.memoryBlocks()
-	for _, block := range memoryBlocks {
-		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
-			return err
-		}
-	}
-
-	if err := t.IterateBucketBlocks(ctx, t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
 		return err
 	}
 
@@ -522,16 +502,8 @@ func (t *Table) SchemaIterator(
 	distinctColumns []logicalplan.Expr,
 	iterator func(r arrow.Record) error,
 ) error {
-	filter, err := booleanExpr(filterExpr)
-	if err != nil {
-		return err
-	}
 
-	rowGroups := []dynparquet.DynamicRowGroup{}
-	err = t.ActiveBlock().RowGroupIterator(ctx, tx, nil, filter, func(rg dynparquet.DynamicRowGroup) bool {
-		rowGroups = append(rowGroups, rg)
-		return true
-	})
+	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
 		return err
 	}
@@ -579,30 +551,9 @@ func (t *Table) ArrowSchema(
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
 ) (*arrow.Schema, error) {
-	filter, err := booleanExpr(filterExpr)
+
+	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
-		return nil, err
-	}
-
-	rowGroups := []dynparquet.DynamicRowGroup{}
-	iteratorFunc := func(rg dynparquet.DynamicRowGroup) bool {
-		rowGroups = append(rowGroups, rg)
-		return true
-	}
-
-	err = t.ActiveBlock().RowGroupIterator(ctx, tx, nil, filter, iteratorFunc)
-	if err != nil {
-		return nil, err
-	}
-
-	memoryBlocks, lastReadBlockTimestamp := t.memoryBlocks()
-	for _, block := range memoryBlocks {
-		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := t.IterateBucketBlocks(ctx, t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
 		return nil, err
 	}
 
@@ -1389,4 +1340,40 @@ func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	}
 
 	return memoryBlocks, lastReadBlockTimestamp
+}
+
+// collectRowGroups collects all the row groups from the table for the given filter
+func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logicalplan.Expr) ([]dynparquet.DynamicRowGroup, error) {
+	filter, err := booleanExpr(filterExpr)
+	if err != nil {
+		return nil, err
+	}
+
+	rowGroups := []dynparquet.DynamicRowGroup{}
+	iteratorFunc := func(rg dynparquet.DynamicRowGroup) bool {
+		rowGroups = append(rowGroups, rg)
+		return true
+	}
+
+	err = t.ActiveBlock().RowGroupIterator(ctx, tx, nil, filter, iteratorFunc)
+	if err != nil {
+		return nil, err
+	}
+
+	// pending blocks could be uploaded to the bucket while we iterate on them.
+	// to avoid to iterate on them again while reading the block file
+	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
+	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
+	memoryBlocks, lastReadBlockTimestamp := t.memoryBlocks()
+	for _, block := range memoryBlocks {
+		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := t.IterateBucketBlocks(ctx, t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
+		return nil, err
+	}
+
+	return rowGroups, nil
 }
