@@ -151,10 +151,6 @@ func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
 	dyncols := buf.DynamicColumns()
 	found := map[string]struct{}{}
 	for _, field := range fields {
-		layout, err := parquetNodeToStorageLayout(field)
-		if err != nil {
-			return nil, err
-		}
 
 		isDynamic := false
 		split := strings.Split(field.Name(), ".")
@@ -170,30 +166,58 @@ func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
 
 		columns = append(columns, &schemapb.Column{
 			Name:          split[0],
-			StorageLayout: layout,
+			StorageLayout: parquetNodeToStorageLayout(field),
 			Dynamic:       isDynamic,
 		})
 	}
 
-	// TODO generate the layout
 	// TODO read row group for the sorting columns...
 
 	def := &schemapb.Schema{
 		Name:           schema.Name(),
 		Columns:        columns,
-		SortingColumns: nil,
+		SortingColumns: nil, // TODO THOR
 	}
 
 	return SchemaFromDefinition(def)
 }
 
-func parquetNodeToStorageLayout(node parquet.Node) (*schemapb.StorageLayout, error) {
-	typ := node.Type()
-	switch typ {
-	// TODO
+func parquetNodeToStorageLayout(node parquet.Node) *schemapb.StorageLayout {
+	layout := &schemapb.StorageLayout{
+		Nullable: node.Optional(),
 	}
 
-	return nil, nil
+	typ := node.Type()
+	switch typ {
+	case parquet.Int64Type:
+		layout.Type = schemapb.StorageLayout_TYPE_INT64
+	case parquet.DoubleType:
+		layout.Type = schemapb.StorageLayout_TYPE_DOUBLE
+	default: // TODO how do we switch on string types instead of defaulting to them
+		layout.Type = schemapb.StorageLayout_TYPE_STRING
+	}
+
+	switch node.Encoding() {
+	case &parquet.RLEDictionary:
+		layout.Encoding = schemapb.StorageLayout_ENCODING_RLE_DICTIONARY
+	case &parquet.DeltaBinaryPacked:
+		layout.Encoding = schemapb.StorageLayout_ENCODING_DELTA_BINARY_PACKED
+	}
+
+	switch node.Compression() {
+	case &parquet.Snappy:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_SNAPPY
+	case &parquet.Gzip:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_GZIP
+	case &parquet.Brotli:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_BROTLI
+	case &parquet.Lz4Raw:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_LZ4_RAW
+	case &parquet.Zstd:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_ZSTD
+	}
+
+	return layout
 }
 
 func storageLayoutToParquetNode(l *schemapb.StorageLayout) (parquet.Node, error) {
