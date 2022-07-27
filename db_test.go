@@ -289,7 +289,7 @@ func Test_DB_WithStorage(t *testing.T) {
 	pool := memory.NewGoAllocator()
 	engine := query.NewEngine(pool, db.TableProvider())
 	err = engine.ScanTable(t.Name()).
-		Filter(logicalplan.Col("timestamp").GTE(logicalplan.Literal(2))).
+		Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
 		Execute(context.Background(), func(r arrow.Record) error {
 			require.Equal(t, int64(1), r.NumCols())
 			require.Equal(t, int64(2), r.NumRows())
