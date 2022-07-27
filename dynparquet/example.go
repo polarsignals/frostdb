@@ -109,8 +109,8 @@ func extractLocationIDs(locs []uuid.UUID) []byte {
 	return b
 }
 
-func NewSampleSchema() *Schema {
-	s, err := SchemaFromDefinition(&schemapb.Schema{
+func SampleDefinition() *schemapb.Schema {
+	return &schemapb.Schema{
 		Name: "test",
 		Columns: []*schemapb.Column{{
 			Name: "example_type",
@@ -162,7 +162,11 @@ func NewSampleSchema() *Schema {
 			Name:      "timestamp",
 			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 		}},
-	})
+	}
+}
+
+func NewSampleSchema() *Schema {
+	s, err := SchemaFromDefinition(SampleDefinition())
 	if err != nil {
 		panic(err)
 	}
