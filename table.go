@@ -1352,11 +1352,6 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 		return true
 	}
 
-	err = t.ActiveBlock().RowGroupIterator(ctx, tx, nil, filter, iteratorFunc)
-	if err != nil {
-		return nil, err
-	}
-
 	// pending blocks could be uploaded to the bucket while we iterate on them.
 	// to avoid to iterate on them again while reading the block file
 	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
