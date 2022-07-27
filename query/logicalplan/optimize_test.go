@@ -31,7 +31,7 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 		// duplicates because the statements just add the matchers for the
 		// columns they access. The optimizer could potentially deduplicate or
 		// use a more efficient datastructure in the future.
-		PhysicalProjection: []ColumnMatcher{
+		PhysicalProjection: []Expr{
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "value"},
@@ -84,7 +84,7 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 		// Only these columns are needed to compute the result.
 		Filter: &BinaryExpr{
 			Left: &Column{ColumnName: "labels.test"},
-			Op:   EqOp,
+			Op:   OpEq,
 			Right: &LiteralExpr{
 				Value: scalar.MakeScalar("abc"),
 			},
@@ -200,7 +200,7 @@ func TestAllOptimizers(t *testing.T) {
 		// duplicates because the statements just add the matchers for the
 		// columns they access. The optimizer could potentially deduplicate or
 		// use a more efficient datastructure in the future.
-		PhysicalProjection: []ColumnMatcher{
+		PhysicalProjection: []Expr{
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "value"},
@@ -208,7 +208,7 @@ func TestAllOptimizers(t *testing.T) {
 		},
 		Filter: &BinaryExpr{
 			Left: &Column{ColumnName: "labels.test"},
-			Op:   EqOp,
+			Op:   OpEq,
 			Right: &LiteralExpr{
 				Value: scalar.MakeScalar("abc"),
 			},

@@ -84,7 +84,7 @@ func TestFilter(t *testing.T) {
 		cols       int64
 	}{
 		">= int64": {
-			filterExpr: logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
+			filterExpr: logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2)),
 			cols:       7,
 			rows:       2,
 		},
@@ -257,7 +257,7 @@ func Test_Projection(t *testing.T) {
 	}{
 		"dynamic projections no optimization": {
 			filterExpr: logicalplan.And(
-				logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
+				logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2)),
 			),
 			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
 			rows:        2,
@@ -265,7 +265,7 @@ func Test_Projection(t *testing.T) {
 		},
 		"projection with optimization": {
 			filterExpr: logicalplan.And(
-				logicalplan.Col("timestamp").GTE(logicalplan.Literal(2)),
+				logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2)),
 			),
 			projections: []logicalplan.Expr{logicalplan.Col("timestamp")},
 			rows:        2,

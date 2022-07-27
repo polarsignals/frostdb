@@ -1137,8 +1137,8 @@ func Test_Table_Filter(t *testing.T) {
 	require.NoError(t, err)
 
 	filterExpr := logicalplan.And( // Filter that excludes the granule
-		logicalplan.Col("timestamp").GT(logicalplan.Literal(-10)),
-		logicalplan.Col("timestamp").LT(logicalplan.Literal(1)),
+		logicalplan.Col("timestamp").Gt(logicalplan.Literal(-10)),
+		logicalplan.Col("timestamp").Lt(logicalplan.Literal(1)),
 	)
 
 	pool := memory.NewGoAllocator()
@@ -1163,6 +1163,73 @@ func Test_Table_Filter(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func Test_Table_Bloomfilter(t *testing.T) {
+	table := basicTable(t, 2^12)
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	for i := range samples {
+		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		require.NoError(t, err)
+
+		ctx := context.Background()
+
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+	}
+
+	iterations := 0
+	err := table.View(func(tx uint64) error {
+		err := table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4")), nil, func(ar arrow.Record) error {
+			defer ar.Release()
+			iterations++
+			return nil
+		})
+		require.NoError(t, err)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, iterations)
 }
 
 func Test_Table_InsertCancellation(t *testing.T) {
@@ -1473,7 +1540,7 @@ func Test_Table_ArrowSchema(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			[]logicalplan.ColumnMatcher{
+			[]logicalplan.Expr{
 				&logicalplan.DynamicColumn{ColumnName: "labels"},
 				&logicalplan.Column{ColumnName: "value"},
 			},

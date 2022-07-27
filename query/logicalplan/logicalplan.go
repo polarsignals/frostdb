@@ -108,7 +108,7 @@ type TableReader interface {
 		tx uint64,
 		pool memory.Allocator,
 		schema *arrow.Schema,
-		physicalProjection []ColumnMatcher,
+		physicalProjection []Expr,
 		projection []Expr,
 		filter Expr,
 		distinctColumns []Expr,
@@ -118,7 +118,7 @@ type TableReader interface {
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		physicalProjection []ColumnMatcher,
+		physicalProjection []Expr,
 		projection []Expr,
 		filter Expr,
 		distinctColumns []Expr,
@@ -128,7 +128,7 @@ type TableReader interface {
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		physicalProjection []ColumnMatcher,
+		physicalProjection []Expr,
 		projection []Expr,
 		filter Expr, // TODO: We probably don't need this
 		distinctColumns []Expr,
@@ -146,7 +146,7 @@ type TableScan struct {
 
 	// PhysicalProjection describes the columns that are to be physically read
 	// by the table scan.
-	PhysicalProjection []ColumnMatcher
+	PhysicalProjection []Expr
 
 	// Filter is the predicate that is to be applied by the table scan to rule
 	// out any blocks of data to be scanned at all.
@@ -173,7 +173,7 @@ type SchemaScan struct {
 
 	// PhysicalProjection describes the columns that are to be physically read
 	// by the table scan.
-	PhysicalProjection []ColumnMatcher
+	PhysicalProjection []Expr
 
 	// filter is the predicate that is to be applied by the table scan to rule
 	// out any blocks of data to be scanned at all.

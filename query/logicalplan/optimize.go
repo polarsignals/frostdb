@@ -22,31 +22,31 @@ func (p *PhysicalProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 	return plan
 }
 
-func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsed []ColumnMatcher) {
+func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsedExprs []Expr) {
 	switch {
 	case plan.SchemaScan != nil:
-		plan.SchemaScan.PhysicalProjection = columnsUsed
+		plan.SchemaScan.PhysicalProjection = columnsUsedExprs
 	case plan.TableScan != nil:
-		plan.TableScan.PhysicalProjection = columnsUsed
+		plan.TableScan.PhysicalProjection = columnsUsedExprs
 	case plan.Filter != nil:
-		columnsUsed = append(columnsUsed, plan.Filter.Expr.ColumnsUsed()...)
+		columnsUsedExprs = append(columnsUsedExprs, plan.Filter.Expr.ColumnsUsedExprs()...)
 	case plan.Distinct != nil:
 		for _, expr := range plan.Distinct.Exprs {
-			columnsUsed = append(columnsUsed, expr.ColumnsUsed()...)
+			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
 	case plan.Projection != nil:
 		for _, expr := range plan.Projection.Exprs {
-			columnsUsed = append(columnsUsed, expr.ColumnsUsed()...)
+			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
 	case plan.Aggregation != nil:
 		for _, expr := range plan.Aggregation.GroupExprs {
-			columnsUsed = append(columnsUsed, expr.ColumnsUsed()...)
+			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
-		columnsUsed = append(columnsUsed, plan.Aggregation.AggExpr.ColumnsUsed()...)
+		columnsUsedExprs = append(columnsUsedExprs, plan.Aggregation.AggExpr.ColumnsUsedExprs()...)
 	}
 
 	if plan.Input != nil {
-		p.optimize(plan.Input, columnsUsed)
+		p.optimize(plan.Input, columnsUsedExprs)
 	}
 }
 
@@ -105,35 +105,35 @@ func (p *projectionCollector) collect(plan *LogicalPlan) {
 }
 
 // filterColumns returns all the column matchers for filters in a given plan.
-func filterColumns(plan *LogicalPlan) []ColumnMatcher {
+func filterColumns(plan *LogicalPlan) []Expr {
 	if plan == nil {
 		return nil
 	}
 
-	columnsUsed := []ColumnMatcher{}
+	columnsUsedExprs := []Expr{}
 	switch {
 	case plan.Filter != nil:
-		columnsUsed = append(columnsUsed, plan.Filter.Expr.ColumnsUsed()...)
+		columnsUsedExprs = append(columnsUsedExprs, plan.Filter.Expr.ColumnsUsedExprs()...)
 	}
 
-	return append(columnsUsed, filterColumns(plan.Input)...)
+	return append(columnsUsedExprs, filterColumns(plan.Input)...)
 }
 
 // projectionColumns returns all the column matchers for projections in a given plan.
-func projectionColumns(plan *LogicalPlan) []ColumnMatcher {
+func projectionColumns(plan *LogicalPlan) []Expr {
 	if plan == nil {
 		return nil
 	}
 
-	columnsUsed := []ColumnMatcher{}
+	columnsUsedExprs := []Expr{}
 	switch {
 	case plan.Projection != nil:
 		for _, expr := range plan.Projection.Exprs {
-			columnsUsed = append(columnsUsed, expr.ColumnsUsed()...)
+			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
 	}
 
-	return append(columnsUsed, projectionColumns(plan.Input)...)
+	return append(columnsUsedExprs, projectionColumns(plan.Input)...)
 }
 
 func removeProjection(plan *LogicalPlan) *LogicalPlan {

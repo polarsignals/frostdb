@@ -35,7 +35,7 @@ func findColumnIndex(s *parquet.Schema, columnName string) int {
 
 type BinaryScalarExpr struct {
 	Left  *ColumnRef
-	Op    logicalplan.Operator
+	Op    logicalplan.Op
 	Right parquet.Value
 }
 
@@ -52,9 +52,9 @@ func (e BinaryScalarExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
 		// only handling string for now.
 		if e.Right.Kind() == parquet.ByteArray || e.Right.Kind() == parquet.FixedLenByteArray {
 			switch {
-			case e.Op == logicalplan.EqOp && e.Right.String() == "":
+			case e.Op == logicalplan.OpEq && e.Right.String() == "":
 				return true, nil
-			case e.Op == logicalplan.NotEqOp && e.Right.String() != "":
+			case e.Op == logicalplan.OpNotEq && e.Right.String() != "":
 				return true, nil
 			}
 		}
@@ -66,9 +66,9 @@ func (e BinaryScalarExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
 
 var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 
-func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Operator) (bool, error) {
+func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Op) (bool, error) {
 	switch operator {
-	case logicalplan.EqOp:
+	case logicalplan.OpEq:
 		bloomFilter := left.BloomFilter()
 		if bloomFilter == nil {
 			// If there is no bloom filter then we cannot make a statement about a

@@ -191,7 +191,7 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 		Distinct(
 			logicalplan.Col("labels.label1"),
 			logicalplan.Col("labels.label2"),
-			logicalplan.Col("timestamp").GT(logicalplan.Literal(int64(0))),
+			logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(0))),
 		).
 		Execute(context.Background(), func(ar arrow.Record) error {
 			ar.Retain()
@@ -265,7 +265,7 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 		Distinct(
 			logicalplan.Col("labels.label1"),
 			logicalplan.Col("labels.label2"),
-			logicalplan.Col("value").GT(logicalplan.Literal(int64(0))),
+			logicalplan.Col("value").Gt(logicalplan.Literal(int64(0))),
 		).
 		Execute(context.Background(), func(ar arrow.Record) error {
 			ar.Retain()
@@ -361,7 +361,7 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 		Distinct(
 			logicalplan.Col("labels.label1"),
 			logicalplan.Col("labels.label2"),
-			logicalplan.Col("value").GT(logicalplan.Literal(int64(0))),
+			logicalplan.Col("value").Gt(logicalplan.Literal(int64(0))),
 		).
 		Execute(context.Background(), func(ar arrow.Record) error {
 			ar.Retain()

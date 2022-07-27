@@ -15,13 +15,13 @@ type columnProjection interface {
 }
 
 type aliasProjection struct {
-	matcher logicalplan.ColumnMatcher
-	name    string
+	expr *logicalplan.AliasExpr
+	name string
 }
 
 func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i, field := range ar.Schema().Fields() {
-		if a.matcher.MatchColumn(field.Name) {
+		if a.expr.MatchColumn(field.Name) {
 			field.Name = a.name
 			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 		}
@@ -74,12 +74,12 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 }
 
 type plainProjection struct {
-	matcher logicalplan.ColumnMatcher
+	expr *logicalplan.Column
 }
 
 func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i, field := range ar.Schema().Fields() {
-		if p.matcher.MatchColumn(field.Name) {
+		if p.expr.MatchColumn(field.Name) {
 			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 		}
 	}
@@ -88,14 +88,14 @@ func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow
 }
 
 type dynamicProjection struct {
-	matcher logicalplan.ColumnMatcher
+	expr *logicalplan.DynamicColumn
 }
 
 func (p dynamicProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	fields := []arrow.Field{}
 	arrays := []arrow.Array{}
 	for i, field := range ar.Schema().Fields() {
-		if p.matcher.MatchColumn(field.Name) {
+		if p.expr.MatchColumn(field.Name) {
 			fields = append(fields, field)
 			arrays = append(arrays, ar.Column(i))
 		}
@@ -108,16 +108,16 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 	switch e := expr.(type) {
 	case *logicalplan.Column:
 		return plainProjection{
-			matcher: e,
+			expr: e,
 		}, nil
 	case *logicalplan.DynamicColumn:
 		return dynamicProjection{
-			matcher: e,
+			expr: e,
 		}, nil
 	case *logicalplan.AliasExpr:
 		return aliasProjection{
-			matcher: e,
-			name:    e.Name(),
+			expr: e,
+			name: e.Name(),
 		}, nil
 	case *logicalplan.BinaryExpr:
 		boolExpr, err := binaryBooleanExpr(e)

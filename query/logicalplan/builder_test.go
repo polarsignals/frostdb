@@ -1,13 +1,12 @@
 package logicalplan
 
 import (
-	"encoding/json"
 	"testing"
-
-	"github.com/polarsignals/frostdb/dynparquet"
 
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/stretchr/testify/require"
+
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 func TestLogicalPlanBuilder(t *testing.T) {
@@ -34,7 +33,7 @@ func TestLogicalPlanBuilder(t *testing.T) {
 			Aggregation: &Aggregation{
 				GroupExprs: []Expr{&Column{ColumnName: "stacktrace"}},
 				AggExpr: &AliasExpr{
-					Expr:  &AggregationFunction{Func: SumAggFunc, Expr: &Column{ColumnName: "value"}},
+					Expr:  &AggregationFunction{Func: AggFuncSum, Expr: &Column{ColumnName: "value"}},
 					Alias: "value_sum",
 				},
 			},
@@ -42,7 +41,7 @@ func TestLogicalPlanBuilder(t *testing.T) {
 				Filter: &Filter{
 					Expr: &BinaryExpr{
 						Left:  &Column{ColumnName: "labels.test"},
-						Op:    EqOp,
+						Op:    OpEq,
 						Right: &LiteralExpr{Value: scalar.MakeScalar("abc")},
 					},
 				},
@@ -75,21 +74,4 @@ func TestLogicalPlanBuilderWithoutProjection(t *testing.T) {
 			},
 		},
 	}, p)
-}
-
-func TestLogicalPlanBuilderFilterJSON(t *testing.T) {
-	p := (&Builder{}).
-		Filter(Col("labels.test").Eq(Literal("abc"))).
-		Filter(Col("name").RegexMatch("^labels$"))
-
-	expected := `{"ExprType":"*logicalplan.BinaryExpr","Expr":{"LeftType":"*logicalplan.Column","Left":{"Expr":"string","ColumnName":"name"},"RightType":"*logicalplan.LiteralExpr","Right":{"ValueType":"*scalar.String","Value":"^labels$"},"Op":6}}`
-
-	output, err := json.Marshal(p.plan.Filter)
-	require.NoError(t, err)
-	require.JSONEq(t, expected, string(output))
-
-	var f *Filter
-	err = json.Unmarshal(output, &f)
-	require.NoError(t, err)
-	require.Equal(t, p.plan.Filter, f)
 }
