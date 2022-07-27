@@ -519,7 +519,14 @@ func NewDBTableProvider(db *DB) *DBTableProvider {
 	}
 }
 
-func (p *DBTableProvider) GetTable(name string) (logicalplan.TableReader, error) {
+func (p *DBTableProvider) GetTable(name string) (tbl logicalplan.TableReader, err error) {
+	var schema *dynparquet.Schema
+	defer func() {
+		// TODO THOR this should just get moved into the DB function; have it scan all the tables
+		// Open the table with the derived schema
+		fmt.Println("creating table: ", name, schema)
+		tbl, err = p.db.Table(name, NewTableConfig(schema))
+	}()
 	p.db.mtx.RLock()
 	defer p.db.mtx.RUnlock()
 	tbl, ok := p.db.tables[name]
@@ -553,13 +560,7 @@ func (p *DBTableProvider) GetTable(name string) (logicalplan.TableReader, error)
 			return err
 		}
 
-		schema, err := dynparquet.SchemaFromParquetFile(f)
-		if err != nil {
-			return err
-		}
-
-		// Open the table with the derived schema
-		tbl, err = p.db.Table(table, NewTableConfig(schema))
+		schema, err = dynparquet.SchemaFromParquetFile(f)
 		if err != nil {
 			return err
 		}
