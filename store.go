@@ -9,6 +9,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
+	"github.com/thanos-io/objstore"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 )
@@ -27,31 +28,12 @@ func (t *TableBlock) Persist() error {
 	return t.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
 }
 
-func (t *Table) readFileFromBucket(ctx context.Context, fileName string) (*bytes.Reader, error) {
-	attribs, err := t.db.bucket.Attributes(ctx, fileName)
-	if err != nil {
-		return nil, err
-	}
-
-	reader, err := t.db.bucket.Get(ctx, fileName)
-	if err != nil {
-		return nil, err
-	}
-
-	data := make([]byte, attribs.Size)
-	if _, err := reader.Read(data); err != nil {
-		return nil, err
-	}
-	return bytes.NewReader(data), err
-}
-
-func (t *Table) IterateBucketBlocks(logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
+func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
 	if t.db.bucket == nil {
 		return nil
 	}
 
 	n := 0
-	ctx := context.Background()
 	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
 		blockUlid, err := ulid.Parse(filepath.Base(blockDir))
 		if err != nil {
@@ -62,12 +44,19 @@ func (t *Table) IterateBucketBlocks(logger log.Logger, filter TrueNegativeFilter
 			return nil
 		}
 
-		reader, err := t.readFileFromBucket(ctx, filepath.Join(blockDir, "data.parquet"))
+		blockName := filepath.Join(blockDir, "data.parquet")
+		attribs, err := t.db.bucket.Attributes(ctx, blockName)
 		if err != nil {
 			return err
 		}
 
-		file, err := parquet.OpenFile(reader, int64(reader.Len()))
+		b := &BucketReaderAt{
+			name:   blockName,
+			ctx:    ctx,
+			Bucket: t.db.bucket,
+		}
+
+		file, err := parquet.OpenFile(b, attribs.Size)
 		if err != nil {
 			return err
 		}
@@ -96,4 +85,24 @@ func (t *Table) IterateBucketBlocks(logger log.Logger, filter TrueNegativeFilter
 	})
 	level.Debug(logger).Log("msg", "read blocks", "n", n)
 	return err
+}
+
+// BucketReaderAt is an objstore.Bucket wrapper that supports the io.ReaderAt interface.
+type BucketReaderAt struct {
+	name string
+	ctx  context.Context
+	objstore.Bucket
+}
+
+// ReadAt implements the io.ReaderAt interface.
+func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
+	rc, err := b.GetRange(b.ctx, b.name, off, int64(len(p)))
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		err = rc.Close()
+	}()
+
+	return rc.Read(p)
 }
