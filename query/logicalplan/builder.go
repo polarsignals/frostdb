@@ -1,8 +1,6 @@
 package logicalplan
 
 import (
-	"encoding/json"
-
 	"github.com/apache/arrow/go/v8/arrow"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -58,31 +56,17 @@ type Visitor interface {
 	PostVisit(expr Expr) bool
 }
 
-type StaticColumnMatcher struct {
-	ColumnName string
-}
-
-func (m StaticColumnMatcher) Name() string {
-	return m.ColumnName
-}
-
-func (m StaticColumnMatcher) Match(columnName string) bool {
-	return m.ColumnName == columnName
-}
-
-type ColumnMatcher interface {
-	MatchColumn(columnName string) bool
-	Name() string
-}
-
 type Expr interface {
 	DataType(*dynparquet.Schema) (arrow.DataType, error)
 	Accept(Visitor) bool
 	Name() string
-	ColumnsUsed() []ColumnMatcher
+
+	// ColumnsUsedExprs extracts all the expressions that are used that cause
+	// physical data to be read from a column.
+	ColumnsUsedExprs() []Expr
 
 	// MatchColumn returns whether it would operate on the passed column. In
-	// contrast to the ColumnUsed function from the Expr interface, it is not
+	// contrast to the ColumnUsedExprs function from the Expr interface, it is not
 	// useful to identify which columns are to be read physically. This is
 	// necessary to distinguish between projections.
 	//
@@ -94,11 +78,6 @@ type Expr interface {
 	// Computed returns whether the expression is computed as opposed to being
 	// a static value or unmodified physical column.
 	Computed() bool
-
-	// Expr implements these two interfaces
-	// so that queries can be transported as JSON.
-	json.Marshaler
-	json.Unmarshaler
 }
 
 func (b Builder) Filter(expr Expr) Builder {

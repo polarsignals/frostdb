@@ -33,7 +33,7 @@ func (f *AlwaysTrueFilter) Eval(dynparquet.DynamicRowGroup) (bool, error) {
 
 func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error) {
 	switch expr.Op {
-	case logicalplan.EqOp: //, logicalplan.NotEqOp, logicalplan.LTOp, logicalplan.LTEOp, logicalplan.GTOp, logicalplan.GTEOp, logicalplan.RegExpOp, logicalplan.NotRegExpOp:
+	case logicalplan.OpEq: //, logicalplan.OpNotEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpRegexMatch, logicalplan.RegexNotMatch:
 		var leftColumnRef *ColumnRef
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
@@ -71,7 +71,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error)
 			Op:    expr.Op,
 			Right: rightValue,
 		}, nil
-	case logicalplan.AndOp:
+	case logicalplan.OpAnd:
 		left, err := booleanExpr(expr.Left)
 		if err != nil {
 			return nil, err

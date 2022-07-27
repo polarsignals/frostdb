@@ -46,7 +46,7 @@ func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
 
 func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) {
 	switch expr.Op {
-	case logicalplan.EqOp, logicalplan.NotEqOp, logicalplan.LTOp, logicalplan.LTEOp, logicalplan.GTOp, logicalplan.GTEOp, logicalplan.RegExpOp, logicalplan.NotRegExpOp:
+	case logicalplan.OpEq, logicalplan.OpNotEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpRegexMatch, logicalplan.OpRegexNotMatch:
 		var leftColumnRef *ArrayRef
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
@@ -73,7 +73,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 		}))
 
 		switch expr.Op {
-		case logicalplan.RegExpOp:
+		case logicalplan.OpRegexMatch:
 			regexp, err := regexp.Compile(string(rightScalar.(*scalar.String).Data()))
 			if err != nil {
 				return nil, err
@@ -82,7 +82,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 				left:  leftColumnRef,
 				right: regexp,
 			}, nil
-		case logicalplan.NotRegExpOp:
+		case logicalplan.OpRegexNotMatch:
 			regexp, err := regexp.Compile(string(rightScalar.(*scalar.String).Data()))
 			if err != nil {
 				return nil, err
@@ -99,7 +99,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Op:    expr.Op,
 			Right: rightScalar,
 		}, nil
-	case logicalplan.AndOp:
+	case logicalplan.OpAnd:
 		left, err := booleanExpr(expr.Left)
 		if err != nil {
 			return nil, err

@@ -30,7 +30,7 @@ func (a *ArrayRef) String() string {
 
 type BinaryScalarExpr struct {
 	Left  *ArrayRef
-	Op    logicalplan.Operator
+	Op    logicalplan.Op
 	Right scalar.Scalar
 }
 
@@ -60,30 +60,30 @@ func (e BinaryScalarExpr) String() string {
 
 var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 
-func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logicalplan.Operator) (*Bitmap, error) {
+func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logicalplan.Op) (*Bitmap, error) {
 	leftType := left.DataType()
 	switch leftType {
 	case &arrow.FixedSizeBinaryType{ByteWidth: 16}:
 		switch operator {
-		case logicalplan.EqOp:
+		case logicalplan.OpEq:
 			return FixedSizeBinaryArrayScalarEqual(left.(*array.FixedSizeBinary), right.(*scalar.FixedSizeBinary))
-		case logicalplan.NotEqOp:
+		case logicalplan.OpNotEq:
 			return FixedSizeBinaryArrayScalarNotEqual(left.(*array.FixedSizeBinary), right.(*scalar.FixedSizeBinary))
 		default:
 			panic("something terrible has happened, this should have errored previously during validation")
 		}
 	case arrow.BinaryTypes.String:
 		switch operator {
-		case logicalplan.EqOp:
+		case logicalplan.OpEq:
 			return StringArrayScalarEqual(left.(*array.String), right.(*scalar.String))
-		case logicalplan.NotEqOp:
+		case logicalplan.OpNotEq:
 			return StringArrayScalarNotEqual(left.(*array.String), right.(*scalar.String))
 		default:
 			panic("something terrible has happened, this should have errored previously during validation")
 		}
 	case arrow.BinaryTypes.Binary:
 		switch operator {
-		case logicalplan.EqOp:
+		case logicalplan.OpEq:
 			switch r := right.(type) {
 			case *scalar.Binary:
 				return BinaryArrayScalarEqual(left.(*array.Binary), r)
@@ -92,7 +92,7 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 			default:
 				panic("something terrible has happened, this should have errored previously during validation")
 			}
-		case logicalplan.NotEqOp:
+		case logicalplan.OpNotEq:
 			switch r := right.(type) {
 			case *scalar.Binary:
 				return BinaryArrayScalarNotEqual(left.(*array.Binary), r)
@@ -106,17 +106,17 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 		}
 	case arrow.PrimitiveTypes.Int64:
 		switch operator {
-		case logicalplan.EqOp:
+		case logicalplan.OpEq:
 			return Int64ArrayScalarEqual(left.(*array.Int64), right.(*scalar.Int64))
-		case logicalplan.NotEqOp:
+		case logicalplan.OpNotEq:
 			return Int64ArrayScalarNotEqual(left.(*array.Int64), right.(*scalar.Int64))
-		case logicalplan.LTOp:
+		case logicalplan.OpLt:
 			return Int64ArrayScalarLessThan(left.(*array.Int64), right.(*scalar.Int64))
-		case logicalplan.LTEOp:
+		case logicalplan.OpLtEq:
 			return Int64ArrayScalarLessThanOrEqual(left.(*array.Int64), right.(*scalar.Int64))
-		case logicalplan.GTOp:
+		case logicalplan.OpGt:
 			return Int64ArrayScalarGreaterThan(left.(*array.Int64), right.(*scalar.Int64))
-		case logicalplan.GTEOp:
+		case logicalplan.OpGtEq:
 			return Int64ArrayScalarGreaterThanOrEqual(left.(*array.Int64), right.(*scalar.Int64))
 		default:
 			panic("something terrible has happened, this should have errored previously during validation")

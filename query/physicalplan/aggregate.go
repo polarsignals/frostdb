@@ -21,17 +21,12 @@ func Aggregate(
 	s *dynparquet.Schema,
 	agg *logicalplan.Aggregation,
 ) (*HashAggregate, error) {
-	groupByMatchers := make([]logicalplan.ColumnMatcher, 0, len(agg.GroupExprs))
-	for _, groupExpr := range agg.GroupExprs {
-		groupByMatchers = append(groupByMatchers, groupExpr)
-	}
-
 	var (
 		aggFunc      logicalplan.AggFunc
 		aggFuncFound bool
 
-		aggColumnMatcher logicalplan.ColumnMatcher
-		aggColumnFound   bool
+		aggColumnExpr  logicalplan.Expr
+		aggColumnFound bool
 	)
 
 	agg.AggExpr.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
@@ -40,7 +35,7 @@ func Aggregate(
 			aggFunc = e.Func
 			aggFuncFound = true
 		case *logicalplan.Column:
-			aggColumnMatcher = e
+			aggColumnExpr = e
 			aggColumnFound = true
 		}
 
@@ -69,8 +64,8 @@ func Aggregate(
 		pool,
 		agg.AggExpr.Name(),
 		f,
-		aggColumnMatcher,
-		groupByMatchers,
+		aggColumnExpr,
+		agg.GroupExprs,
 	), nil
 }
 
@@ -79,7 +74,7 @@ func chooseAggregationFunction(
 	dataType arrow.DataType,
 ) (AggregationFunction, error) {
 	switch aggFunc {
-	case logicalplan.SumAggFunc:
+	case logicalplan.AggFuncSum:
 		switch dataType.ID() {
 		case arrow.INT64:
 			return &Int64SumAggregation{}, nil
@@ -101,8 +96,8 @@ type HashAggregate struct {
 	groupByCols           map[string]array.Builder
 	arraysToAggregate     []array.Builder
 	hashToAggregate       map[uint64]int
-	groupByColumnMatchers []logicalplan.ColumnMatcher
-	columnToAggregate     logicalplan.ColumnMatcher
+	groupByColumnMatchers []logicalplan.Expr
+	columnToAggregate     logicalplan.Expr
 	aggregationFunction   AggregationFunction
 	hashSeed              maphash.Seed
 	nextCallback          func(r arrow.Record) error
@@ -117,8 +112,8 @@ func NewHashAggregate(
 	pool memory.Allocator,
 	resultColumnName string,
 	aggregationFunction AggregationFunction,
-	columnToAggregate logicalplan.ColumnMatcher,
-	groupByColumnMatchers []logicalplan.ColumnMatcher,
+	columnToAggregate logicalplan.Expr,
+	groupByColumnMatchers []logicalplan.Expr,
 ) *HashAggregate {
 	return &HashAggregate{
 		pool:              pool,

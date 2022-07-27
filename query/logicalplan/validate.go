@@ -199,7 +199,7 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 	// check that the column type can be aggregated by the function type
 	columnType := column.StorageLayout.Type()
 	aggFuncExpr := aggFuncFinder.result.(*AggregationFunction)
-	if aggFuncExpr.Func == SumAggFunc && columnType.LogicalType().UTF8 != nil {
+	if aggFuncExpr.Func == AggFuncSum && columnType.LogicalType().UTF8 != nil {
 		return &ExprValidationError{
 			message: "cannot sum text column",
 			expr:    plan.Aggregation.AggExpr,
@@ -251,7 +251,7 @@ func ValidateFilterExpr(plan *LogicalPlan, e Expr) *ExprValidationError {
 
 // ValidateFilterBinaryExpr validates the filter's binary expression.
 func ValidateFilterBinaryExpr(plan *LogicalPlan, expr *BinaryExpr) *ExprValidationError {
-	if expr.Op == AndOp {
+	if expr.Op == OpAnd {
 		return ValidateFilterAndBinaryExpr(plan, expr)
 	}
 

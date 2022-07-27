@@ -14,7 +14,7 @@ func TestOnlyOneFieldCanBeSet(t *testing.T) {
 		Filter: &Filter{
 			Expr: &BinaryExpr{
 				Left:  Col("example_type"),
-				Op:    EqOp,
+				Op:    OpEq,
 				Right: Literal(4),
 			},
 		},
@@ -37,12 +37,12 @@ func TestCanTraverseInputThatIsInvalid(t *testing.T) {
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
 		Filter(&BinaryExpr{
 			Left:  Col("example_type"),
-			Op:    EqOp,
+			Op:    OpEq,
 			Right: Literal(4),
 		}).
 		Filter(&BinaryExpr{
 			Left:  Col("stacktrace"),
-			Op:    EqOp,
+			Op:    OpEq,
 			Right: Literal(4),
 		}).
 		Build()
@@ -127,7 +127,7 @@ func TestFilterBinaryExprLeftSideMustBeColumn(t *testing.T) {
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
 		Filter(&BinaryExpr{
 			Left:  Literal(5),
-			Op:    EqOp,
+			Op:    OpEq,
 			Right: Literal(4),
 		}).
 		Build()
@@ -145,7 +145,7 @@ func TestFilterBinaryExprColMustMatchLiteralType(t *testing.T) {
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
 		Filter(&BinaryExpr{
 			Left:  Col("example_type"),
-			Op:    EqOp,
+			Op:    OpEq,
 			Right: Literal(4.6),
 		}).
 		Build()
@@ -163,7 +163,7 @@ func TestFilterBinaryExprColMustMatchLiteralType(t *testing.T) {
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
 		Filter(&BinaryExpr{
 			Left:  Col("timestamp"),
-			Op:    EqOp,
+			Op:    OpEq,
 			Right: Literal("albert"),
 		}).
 		Build()
@@ -182,12 +182,12 @@ func TestFilterAndExprEvaluatesEachAndedRule(t *testing.T) {
 		Filter(And(
 			&BinaryExpr{
 				Left:  Col("example_type"),
-				Op:    EqOp,
+				Op:    OpEq,
 				Right: Literal(4),
 			},
 			&BinaryExpr{
 				Left:  Literal("a"),
-				Op:    EqOp,
+				Op:    OpEq,
 				Right: Literal("b"),
 			},
 		)).

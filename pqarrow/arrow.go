@@ -22,7 +22,7 @@ func ParquetRowGroupToArrowSchema(
 	ctx context.Context,
 	schema *dynparquet.Schema,
 	rg parquet.RowGroup,
-	physicalProjections []logicalplan.ColumnMatcher,
+	physicalProjections []logicalplan.Expr,
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
@@ -85,7 +85,7 @@ func ParquetRowGroupToArrowSchema(
 	return arrow.NewSchema(fields, nil), nil
 }
 
-func includedProjection(projections []logicalplan.ColumnMatcher, name string) bool {
+func includedProjection(projections []logicalplan.Expr, name string) bool {
 	if len(projections) == 0 {
 		return true
 	}
@@ -490,7 +490,7 @@ func distinctColumnsToArrowRecord(
 		default:
 			name := field.Name()
 			for _, distinctColumn := range distinctColumns {
-				matchers := distinctColumn.ColumnsUsed()
+				matchers := distinctColumn.ColumnsUsedExprs()
 				if len(matchers) != 1 {
 					// The expression is more complex than just a single binary
 					// expression, so we can't apply the optimization.
@@ -656,7 +656,7 @@ func binaryDistinctExpr(
 	}
 
 	switch expr.Op {
-	case logicalplan.GTOp:
+	case logicalplan.OpGt:
 		index := columnChunk.ColumnIndex()
 		allGreater, noneGreater := allOrNoneGreaterThan(
 			typ,

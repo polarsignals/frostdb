@@ -266,13 +266,13 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 
 	distinctColumns := []logicalplan.Expr{
 		logicalplan.Col("example_type"),
-		logicalplan.Col("timestamp").GT(logicalplan.Literal(int64(0))),
+		logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(0))),
 	}
 	as, err := ParquetRowGroupToArrowSchema(
 		ctx,
 		dynSchema,
 		buf,
-		[]logicalplan.ColumnMatcher{
+		[]logicalplan.Expr{
 			logicalplan.Col("example_type"),
 			logicalplan.Col("timestamp"),
 		},
@@ -350,13 +350,13 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 
 	distinctColumns := []logicalplan.Expr{
 		logicalplan.Col("example_type"),
-		logicalplan.Col("value").GT(logicalplan.Literal(int64(0))),
+		logicalplan.Col("value").Gt(logicalplan.Literal(int64(0))),
 	}
 	as, err := ParquetRowGroupToArrowSchema(
 		ctx,
 		dynSchema,
 		buf,
-		[]logicalplan.ColumnMatcher{
+		[]logicalplan.Expr{
 			logicalplan.Col("example_type"),
 			logicalplan.Col("value"),
 		},

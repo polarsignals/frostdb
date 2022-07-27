@@ -430,7 +430,7 @@ func (t *Table) Iterator(
 	tx uint64,
 	pool memory.Allocator,
 	schema *arrow.Schema,
-	physicalProjections []logicalplan.ColumnMatcher,
+	physicalProjections []logicalplan.Expr,
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
@@ -528,7 +528,7 @@ func (t *Table) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	physicalProjections []logicalplan.ColumnMatcher,
+	physicalProjections []logicalplan.Expr,
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
@@ -586,7 +586,7 @@ func (t *Table) ArrowSchema(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	physicalProjections []logicalplan.ColumnMatcher,
+	physicalProjections []logicalplan.Expr,
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
@@ -1239,7 +1239,7 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 		case *logicalplan.BinaryExpr:
 			leftresult = filterGranule(logger, left, g)
 		case *logicalplan.Column:
-			min, max, leftfound = findColumnValues(left.ColumnsUsed(), g)
+			min, max, leftfound = findColumnValues(left.ColumnsUsedExprs(), g)
 		case *logicalplan.LiteralExpr:
 			switch left.Value.(type) {
 			case *scalar.Int64:
@@ -1252,7 +1252,7 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 		switch right := expr.Right.(type) {
 		case *logicalplan.BinaryExpr:
 			switch expr.Op {
-			case logicalplan.AndOp:
+			case logicalplan.OpAnd:
 				if !leftresult {
 					return false
 				}
@@ -1261,7 +1261,7 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 			}
 		case *logicalplan.Column:
 			var found bool
-			min, max, found = findColumnValues(right.ColumnsUsed(), g)
+			min, max, found = findColumnValues(right.ColumnsUsedExprs(), g)
 			if !found {
 				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
 				return false
@@ -1270,11 +1270,11 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 			switch val := v.(type) {
 			case *scalar.Int64:
 				switch expr.Op {
-				case logicalplan.LTOp:
+				case logicalplan.OpLt:
 					return val.Value < max.Int64()
-				case logicalplan.GTOp:
+				case logicalplan.OpGt:
 					return val.Value > min.Int64()
-				case logicalplan.EqOp:
+				case logicalplan.OpEq:
 					return val.Value >= min.Int64() && val.Value <= max.Int64()
 				}
 			case *scalar.String:
@@ -1283,11 +1283,11 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 					s = string(val.Value.Bytes()[:dynparquet.ColumnIndexSize])
 				}
 				switch expr.Op {
-				case logicalplan.LTOp:
+				case logicalplan.OpLt:
 					return string(val.Value.Bytes()[:dynparquet.ColumnIndexSize]) < max.String()
-				case logicalplan.GTOp:
+				case logicalplan.OpGt:
 					return string(val.Value.Bytes()[:dynparquet.ColumnIndexSize]) > min.String()
-				case logicalplan.EqOp:
+				case logicalplan.OpEq:
 					return s >= min.String() && s <= max.String()
 				}
 			}
@@ -1299,11 +1299,11 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 					return false
 				}
 				switch expr.Op {
-				case logicalplan.LTOp:
+				case logicalplan.OpLt:
 					return min.Int64() < v.Value
-				case logicalplan.GTOp:
+				case logicalplan.OpGt:
 					return max.Int64() > v.Value
-				case logicalplan.EqOp:
+				case logicalplan.OpEq:
 					return v.Value >= min.Int64() && v.Value <= max.Int64()
 				}
 			case *scalar.String:
@@ -1313,11 +1313,11 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 				}
 				if !leftfound {
 					switch {
-					case expr.Op == logicalplan.EqOp && len(s) == 0:
+					case expr.Op == logicalplan.OpEq && len(s) == 0:
 						return true
-					case expr.Op == logicalplan.NotEqOp && len(s) != 0:
+					case expr.Op == logicalplan.OpNotEq && len(s) != 0:
 						return true
-					case expr.Op == logicalplan.NotRegExpOp || expr.Op == logicalplan.RegExpOp:
+					case expr.Op == logicalplan.OpRegexNotMatch || expr.Op == logicalplan.OpRegexMatch:
 						// todo: run the regex on empty string to see if it matches
 						// this would allow to fully reject a granule faster.
 						// However it requires a bigger refactoring of the code to compile the regexp only once.
@@ -1327,11 +1327,11 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 					}
 				}
 				switch expr.Op {
-				case logicalplan.LTOp:
+				case logicalplan.OpLt:
 					return min.String() < s
-				case logicalplan.GTOp:
+				case logicalplan.OpGt:
 					return max.String() > s
-				case logicalplan.EqOp:
+				case logicalplan.OpEq:
 					return s >= min.String() && s <= max.String()
 				}
 			}
@@ -1341,7 +1341,7 @@ func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) b
 	return true
 }
 
-func findColumnValues(matchers []logicalplan.ColumnMatcher, g *Granule) (*parquet.Value, *parquet.Value, bool) {
+func findColumnValues(matchers []logicalplan.Expr, g *Granule) (*parquet.Value, *parquet.Value, bool) {
 	findMinColumn := func() (*parquet.Value, string) {
 		g.metadata.minlock.RLock()
 		defer g.metadata.minlock.RUnlock()
