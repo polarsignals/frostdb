@@ -138,8 +138,8 @@ func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 	), nil
 }
 
-// SchemaFromParquetFile converts a parquet file into a dnyparquet.Schema
-func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
+// DefinitionFromParquetFile converts a parquet file into a schemapb.Schema
+func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 	schema := file.Schema()
 
 	columns := []*schemapb.Column{}
@@ -173,10 +173,18 @@ func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
 
 	// TODO read row group for the sorting columns...
 
-	def := &schemapb.Schema{
+	return &schemapb.Schema{
 		Name:           schema.Name(),
 		Columns:        columns,
 		SortingColumns: nil, // TODO THOR
+	}, nil
+}
+
+// SchemaFromParquetFile converts a parquet file into a dnyparquet.Schema
+func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
+	def, err := DefinitionFromParquetFile(file)
+	if err != nil {
+		return nil, err
 	}
 
 	return SchemaFromDefinition(def)
