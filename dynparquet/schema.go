@@ -204,6 +204,31 @@ func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData) *schem
 	switch metadata.Encoding[len(metadata.Encoding)-1] {
 	case format.RLEDictionary:
 		layout.Encoding = schemapb.StorageLayout_ENCODING_RLE_DICTIONARY
+	case format.DeltaBinaryPacked:
+		layout.Encoding = schemapb.StorageLayout_ENCODING_DELTA_BINARY_PACKED
+	}
+
+	switch metadata.Codec {
+	case format.Snappy:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_SNAPPY
+	case format.Gzip:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_GZIP
+	case format.Brotli:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_BROTLI
+	case format.Lz4Raw:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_LZ4_RAW
+	case format.Zstd:
+		layout.Compression = schemapb.StorageLayout_COMPRESSION_ZSTD
+	}
+
+	fmt.Println(metadata.Type)
+	switch metadata.Type {
+	case format.ByteArray:
+		layout.Type = schemapb.StorageLayout_TYPE_STRING
+	case format.Int64:
+		layout.Type = schemapb.StorageLayout_TYPE_INT64
+	case format.Double:
+		layout.Type = schemapb.StorageLayout_TYPE_DOUBLE
 	}
 
 	return layout
