@@ -11,6 +11,7 @@ import (
 	"github.com/segmentio/parquet-go"
 	"github.com/segmentio/parquet-go/compress"
 	"github.com/segmentio/parquet-go/encoding"
+	"github.com/segmentio/parquet-go/format"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
@@ -142,33 +143,40 @@ func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 	schema := file.Schema()
 
-	columns := []*schemapb.Column{}
-	fields := schema.Fields()
 	buf, err := NewSerializedBuffer(file)
 	if err != nil {
 		return nil, err
 	}
 	dyncols := buf.DynamicColumns()
 	found := map[string]struct{}{}
-	for _, field := range fields {
+	columns := []*schemapb.Column{}
+	metadata := file.Metadata()
+	for _, rg := range metadata.RowGroups {
+		for _, col := range rg.Columns {
 
-		isDynamic := false
-		split := strings.Split(field.Name(), ".")
-		if len(split) > 1 && len(dyncols[split[0]]) != 0 {
-			isDynamic = true
+			name := col.MetaData.PathInSchema[0] // we only support flat schemas
+
+			isDynamic := false
+			split := strings.Split(name, ".")
+			colName := split[0]
+			if len(split) > 1 && len(dyncols[colName]) != 0 {
+				isDynamic = true
+			}
+
+			// Mark the dynamic column as being found
+			if _, ok := found[colName]; ok {
+				continue
+			}
+			found[colName] = struct{}{}
+
+			fmt.Println("Processing: ", colName)
+
+			columns = append(columns, &schemapb.Column{
+				Name:          split[0],
+				StorageLayout: parquetColumnMetaDataToStorageLayout(col.MetaData),
+				Dynamic:       isDynamic,
+			})
 		}
-
-		// Mark the dynamic column as being found
-		if _, ok := found[split[0]]; ok {
-			continue
-		}
-		found[split[0]] = struct{}{}
-
-		columns = append(columns, &schemapb.Column{
-			Name:          split[0],
-			StorageLayout: parquetNodeToStorageLayout(field),
-			Dynamic:       isDynamic,
-		})
 	}
 
 	// TODO read row group for the sorting columns...
@@ -190,39 +198,12 @@ func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
 	return SchemaFromDefinition(def)
 }
 
-func parquetNodeToStorageLayout(node parquet.Node) *schemapb.StorageLayout {
-	layout := &schemapb.StorageLayout{
-		Nullable: node.Optional(),
-	}
+func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData) *schemapb.StorageLayout {
+	layout := &schemapb.StorageLayout{}
 
-	typ := node.Type()
-	switch typ {
-	case parquet.Int64Type:
-		layout.Type = schemapb.StorageLayout_TYPE_INT64
-	case parquet.DoubleType:
-		layout.Type = schemapb.StorageLayout_TYPE_DOUBLE
-	default: // TODO how do we switch on string types instead of defaulting to them
-		layout.Type = schemapb.StorageLayout_TYPE_STRING
-	}
-
-	switch node.Encoding() {
-	case &parquet.RLEDictionary:
+	switch metadata.Encoding[len(metadata.Encoding)-1] {
+	case format.RLEDictionary:
 		layout.Encoding = schemapb.StorageLayout_ENCODING_RLE_DICTIONARY
-	case &parquet.DeltaBinaryPacked:
-		layout.Encoding = schemapb.StorageLayout_ENCODING_DELTA_BINARY_PACKED
-	}
-
-	switch node.Compression() {
-	case &parquet.Snappy:
-		layout.Compression = schemapb.StorageLayout_COMPRESSION_SNAPPY
-	case &parquet.Gzip:
-		layout.Compression = schemapb.StorageLayout_COMPRESSION_GZIP
-	case &parquet.Brotli:
-		layout.Compression = schemapb.StorageLayout_COMPRESSION_BROTLI
-	case &parquet.Lz4Raw:
-		layout.Compression = schemapb.StorageLayout_COMPRESSION_LZ4_RAW
-	case &parquet.Zstd:
-		layout.Compression = schemapb.StorageLayout_COMPRESSION_ZSTD
 	}
 
 	return layout
