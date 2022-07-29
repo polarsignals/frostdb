@@ -156,6 +156,14 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 
 			name := col.MetaData.PathInSchema[0] // we only support flat schemas
 
+			// Check if the column is optional
+			nullable := false
+			for _, node := range schema.Fields() {
+				if node.Name() == name {
+					nullable = node.Optional()
+				}
+			}
+
 			isDynamic := false
 			split := strings.Split(name, ".")
 			colName := split[0]
@@ -169,11 +177,9 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 			}
 			found[colName] = struct{}{}
 
-			fmt.Println("Processing: ", colName)
-
 			columns = append(columns, &schemapb.Column{
 				Name:          split[0],
-				StorageLayout: parquetColumnMetaDataToStorageLayout(col.MetaData),
+				StorageLayout: parquetColumnMetaDataToStorageLayout(col.MetaData, nullable),
 				Dynamic:       isDynamic,
 			})
 		}
@@ -198,8 +204,10 @@ func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
 	return SchemaFromDefinition(def)
 }
 
-func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData) *schemapb.StorageLayout {
-	layout := &schemapb.StorageLayout{}
+func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData, nullable bool) *schemapb.StorageLayout {
+	layout := &schemapb.StorageLayout{
+		Nullable: nullable,
+	}
 
 	switch metadata.Encoding[len(metadata.Encoding)-1] {
 	case format.RLEDictionary:
