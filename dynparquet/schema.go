@@ -165,6 +165,7 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 
 		// Extract the sorting column information
 		for _, sc := range rg.SortingColumns { // TODO handle multiple row groups...
+			fmt.Println("Found: ", rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0])
 			direction := schemapb.SortingColumn_DIRECTION_ASCENDING
 			if sc.Descending {
 				direction = schemapb.SortingColumn_DIRECTION_DESCENDING
@@ -693,10 +694,10 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 // sortingColumnsFromDynamic generate the parquet sorting columns from the given set of dynamic columns
 func (s *Schema) sortingColumnsFromDynamic(dynamicColumns map[string][]string) []parquet.SortingColumn {
 	sortingCols := []parquet.SortingColumn{}
-	// Convert dynamic columns into sorting columns if appropriate
-	for col, vals := range dynamicColumns {
-		// check if the column is a sorting column
-		for _, sc := range s.sortingColumns {
+	for _, sc := range s.sortingColumns {
+		// Convert dynamic columns into sorting columns if appropriate
+		dynamic := false // innocent until proven guilty
+		for col, vals := range dynamicColumns {
 			if sc.ColumnName() == col {
 				for _, val := range vals {
 					name := col + "." + val
@@ -714,7 +715,13 @@ func (s *Schema) sortingColumnsFromDynamic(dynamicColumns map[string][]string) [
 						sortingCols = append(sortingCols, col)
 					}
 				}
+				dynamic = true
+				break
 			}
+		}
+
+		if !dynamic {
+			sortingCols = append(sortingCols, sc)
 		}
 	}
 
