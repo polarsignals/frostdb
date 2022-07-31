@@ -101,6 +101,15 @@ type Schema struct {
 	writers *sync.Map
 }
 
+// SortingColumns returns a slice of parquet.SortingColumn
+func (s *Schema) SortingColumns() []parquet.SortingColumn {
+	col := make([]parquet.SortingColumn, 0, len(s.sortingColumns))
+	for i := range s.sortingColumns {
+		col = append(col, s.sortingColumns[i])
+	}
+	return col
+}
+
 func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 	columns := make([]ColumnDefinition, 0, len(def.Columns))
 	for _, col := range def.Columns {
@@ -151,7 +160,22 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 	found := map[string]struct{}{}
 	columns := []*schemapb.Column{}
 	metadata := file.Metadata()
+	sortingCols := []*schemapb.SortingColumn{}
 	for _, rg := range metadata.RowGroups {
+
+		// Extract the sorting column information
+		for _, sc := range rg.SortingColumns { // TODO handle multiple row groups...
+			direction := schemapb.SortingColumn_DIRECTION_ASCENDING
+			if sc.Descending {
+				direction = schemapb.SortingColumn_DIRECTION_DESCENDING
+			}
+			sortingCols = append(sortingCols, &schemapb.SortingColumn{
+				Name:       rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0],
+				Direction:  direction,
+				NullsFirst: sc.NullsFirst,
+			})
+		}
+
 		for _, col := range rg.Columns {
 
 			name := col.MetaData.PathInSchema[0] // we only support flat schemas
@@ -185,12 +209,10 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 		}
 	}
 
-	// TODO read row group for the sorting columns...
-
 	return &schemapb.Schema{
 		Name:           schema.Name(),
 		Columns:        columns,
-		SortingColumns: nil, // TODO THOR
+		SortingColumns: sortingCols,
 	}, nil
 }
 
@@ -229,7 +251,6 @@ func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData, nullab
 		layout.Compression = schemapb.StorageLayout_COMPRESSION_ZSTD
 	}
 
-	fmt.Println(metadata.Type)
 	switch metadata.Type {
 	case format.ByteArray:
 		layout.Type = schemapb.StorageLayout_TYPE_STRING
@@ -665,7 +686,39 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 			DynamicColumnsKey,
 			serializeDynamicColumns(dynamicColumns),
 		),
+		parquet.SortingColumns(s.sortingColumnsFromDynamic(dynamicColumns)...),
 	), nil
+}
+
+// sortingColumnsFromDynamic generate the parquet sorting columns from the given set of dynamic columns
+func (s *Schema) sortingColumnsFromDynamic(dynamicColumns map[string][]string) []parquet.SortingColumn {
+	sortingCols := []parquet.SortingColumn{}
+	// Convert dynamic columns into sorting columns if appropriate
+	for col, vals := range dynamicColumns {
+		// check if the column is a sorting column
+		for _, sc := range s.sortingColumns {
+			if sc.ColumnName() == col {
+				for _, val := range vals {
+					name := col + "." + val
+					var col SortingColumn
+					switch sc.Descending() {
+					case true:
+						col = Descending(name)
+					default:
+						col = Ascending(name)
+					}
+					switch sc.NullsFirst() {
+					case true:
+						sortingCols = append(sortingCols, NullsFirst(col))
+					default:
+						sortingCols = append(sortingCols, col)
+					}
+				}
+			}
+		}
+	}
+
+	return sortingCols
 }
 
 type PooledWriter struct {
