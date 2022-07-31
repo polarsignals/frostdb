@@ -47,6 +47,10 @@ message StorageLayout {
         ENCODING_RLE_DICTIONARY = 1;
         // Delta binary packed encoding.
         ENCODING_DELTA_BINARY_PACKED = 2;
+        // Delta Byte Array encoding.
+        ENCODING_DELTA_BYTE_ARRAY = 3;
+        // Delta Length Byte Array encoding.
+        ENCODING_DELTA_LENGTH_BYTE_ARRAY = 4;
     }
 
     // Encoding of the column.

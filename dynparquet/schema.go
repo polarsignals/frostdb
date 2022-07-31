@@ -179,6 +179,10 @@ func encodingFromDefinition(enc schemapb.StorageLayout_Encoding) (encoding.Encod
 		return &parquet.RLEDictionary, nil
 	case schemapb.StorageLayout_ENCODING_DELTA_BINARY_PACKED:
 		return &parquet.DeltaBinaryPacked, nil
+	case schemapb.StorageLayout_ENCODING_DELTA_BYTE_ARRAY:
+		return &parquet.DeltaByteArray, nil
+	case schemapb.StorageLayout_ENCODING_DELTA_LENGTH_BYTE_ARRAY:
+		return &parquet.DeltaLengthByteArray, nil
 	default:
 		return nil, fmt.Errorf("unknown encoding: %s", enc)
 	}
