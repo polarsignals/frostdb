@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
@@ -261,6 +263,50 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 
 	db.txPool = NewTxPool(db.highWatermark)
 
+	ctx := context.TODO()
+
+	// If bucket storage is configured; scan for existing tables in the database
+	if db.bucket != nil {
+		if err := db.bucket.Iter(ctx, "", func(block string) error {
+			attr, err := db.bucket.Attributes(ctx, block)
+			if err != nil {
+				return err
+			}
+
+			// grab table name
+			tableName := block
+			if i := strings.Index(block, "/"); i >= 0 {
+				tableName = block[:i]
+			}
+
+			b := &BucketReaderAt{
+				name:   block,
+				ctx:    ctx,
+				Bucket: db.bucket,
+			}
+
+			f, err := parquet.OpenFile(b, attr.Size)
+			if err != nil {
+				return err
+			}
+
+			schema, err := dynparquet.SchemaFromParquetFile(f)
+			if err != nil {
+				return err
+			}
+
+			tbl, err := db.Table(tableName, NewTableConfig(schema))
+			if err != nil {
+				return err
+			}
+			db.tables[tableName] = tbl
+
+			return nil
+		}, objstore.WithRecursiveIter); err != nil {
+			return nil, err
+		}
+	}
+
 	s.dbs[name] = db
 	return db, nil
 }
@@ -410,6 +456,16 @@ func (db *DB) Close() error {
 		if err := db.wal.Close(); err != nil {
 			return err
 		}
+	}
+
+	// If no persistence is enabled; we're done
+	if db.bucket == nil {
+		return nil
+	}
+
+	// Persist blocks to storage
+	for _, table := range db.tables {
+		table.writeBlock(table.ActiveBlock())
 	}
 	return nil
 }

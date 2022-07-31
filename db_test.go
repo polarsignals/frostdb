@@ -2,13 +2,10 @@ package frostdb
 
 import (
 	"context"
-	"errors"
 	"io/ioutil"
 	"log"
 	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -276,15 +273,8 @@ func Test_DB_WithStorage(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
-	// Force the block to rotate so a file is written
-	ulid := table.ActiveBlock().ulid
-	require.NoError(t, table.RotateBlock(table.ActiveBlock()))
-
-	// Wait for the block to be written
-	blockName := filepath.Join(t.Name(), t.Name(), ulid.String(), "data.parquet")
-	for _, err := os.Stat(blockName); errors.Is(err, os.ErrNotExist); _, err = os.Stat(blockName) {
-		time.Sleep(30 * time.Millisecond)
-	}
+	// Gracefully close the db to persist blocks
+	c.Close()
 
 	pool := memory.NewGoAllocator()
 	engine := query.NewEngine(pool, db.TableProvider())
@@ -296,4 +286,102 @@ func Test_DB_WithStorage(t *testing.T) {
 			return nil
 		})
 	require.NoError(t, err)
+}
+
+func Test_DB_ColdStart(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	bucket, err := filesystem.NewBucket(".")
+	require.NoError(t, err)
+
+	logger := newTestLogger(t)
+
+	c, err := New(
+		logger,
+		prometheus.NewRegistry(),
+		WithBucketStorage(bucket),
+	)
+	require.NoError(t, err)
+
+	db, err := c.DB("test")
+	require.NoError(t, err)
+	table, err := db.Table(t.Name(), config)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.RemoveAll(t.Name())
+	})
+
+	samples := dynparquet.Samples{
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 1,
+			Value:     1,
+		},
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 2,
+			Value:     2,
+		},
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 3,
+			Value:     3,
+		},
+	}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	// Gracefully close the db to persist blocks
+	c.Close()
+
+	// Open a new database pointed to the same bucket storage
+	c, err = New(
+		logger,
+		prometheus.NewRegistry(),
+		WithBucketStorage(bucket),
+	)
+	require.NoError(t, err)
+
+	// connect to our test db
+	db, err = c.DB("test")
+	require.NoError(t, err)
+
+	pool := memory.NewGoAllocator()
+	engine := query.NewEngine(pool, db.TableProvider())
+	require.NoError(t, engine.ScanTable(t.Name()).Execute(context.Background(), func(r arrow.Record) error {
+		require.Equal(t, int64(6), r.NumCols())
+		require.Equal(t, int64(3), r.NumRows())
+		return nil
+	}))
 }

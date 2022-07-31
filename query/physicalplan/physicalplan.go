@@ -2,7 +2,7 @@ package physicalplan
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -67,7 +67,7 @@ type TableScan struct {
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
-		return errors.New("table not found")
+		return fmt.Errorf("table not found")
 	}
 
 	err := table.View(func(tx uint64) error {
@@ -112,7 +112,7 @@ type SchemaScan struct {
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
-		return errors.New("table not found")
+		return fmt.Errorf("table not found")
 	}
 	err := table.View(func(tx uint64) error {
 		return table.SchemaIterator(
