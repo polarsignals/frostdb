@@ -161,17 +161,35 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 	columns := []*schemapb.Column{}
 	metadata := file.Metadata()
 	sortingCols := []*schemapb.SortingColumn{}
+	foundSortingCols := map[string]struct{}{}
 	for _, rg := range metadata.RowGroups {
 
 		// Extract the sorting column information
-		for _, sc := range rg.SortingColumns { // TODO handle multiple row groups...
-			fmt.Println("Found: ", rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0])
+		for _, sc := range rg.SortingColumns {
+			name := rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0]
+			isDynamic := false
+			split := strings.Split(name, ".")
+			colName := split[0]
+			if len(split) > 1 && len(dyncols[colName]) != 0 {
+				isDynamic = true
+			}
+
+			if isDynamic {
+				name = colName
+			}
+
+			// we need a set to filter out duplicates
+			if _, ok := foundSortingCols[name]; ok {
+				continue
+			}
+			foundSortingCols[name] = struct{}{}
+
 			direction := schemapb.SortingColumn_DIRECTION_ASCENDING
 			if sc.Descending {
 				direction = schemapb.SortingColumn_DIRECTION_DESCENDING
 			}
 			sortingCols = append(sortingCols, &schemapb.SortingColumn{
-				Name:       rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0],
+				Name:       name,
 				Direction:  direction,
 				NullsFirst: sc.NullsFirst,
 			})
