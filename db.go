@@ -267,7 +267,7 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 
 	// If bucket storage is configured; scan for existing tables in the database
 	if err := db.bucket.Iter(ctx, name, func(block string) error {
-		attr, err := db.bucket.Attributes(context.TODO(), block)
+		attr, err := db.bucket.Attributes(ctx, block)
 		if err != nil {
 			return err
 		}

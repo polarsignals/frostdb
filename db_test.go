@@ -2,13 +2,10 @@ package frostdb
 
 import (
 	"context"
-	"errors"
 	"io/ioutil"
 	"log"
 	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -276,15 +273,8 @@ func Test_DB_WithStorage(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
-	// Force the block to rotate so a file is written
-	ulid := table.ActiveBlock().ulid
-	require.NoError(t, table.RotateBlock(table.ActiveBlock()))
-
-	// Wait for the block to be written
-	blockName := filepath.Join(t.Name(), t.Name(), ulid.String(), "data.parquet")
-	for _, err := os.Stat(blockName); errors.Is(err, os.ErrNotExist); _, err = os.Stat(blockName) {
-		time.Sleep(30 * time.Millisecond)
-	}
+	// Gracefully close the db to persist blocks
+	c.Close()
 
 	pool := memory.NewGoAllocator()
 	engine := query.NewEngine(pool, db.TableProvider())
