@@ -101,7 +101,7 @@ type Schema struct {
 	writers *sync.Map
 }
 
-// SortingColumns returns a slice of parquet.SortingColumn
+// SortingColumns returns a slice of parquet.SortingColumn.
 func (s *Schema) SortingColumns() []parquet.SortingColumn {
 	col := make([]parquet.SortingColumn, 0, len(s.sortingColumns))
 	for i := range s.sortingColumns {
@@ -148,7 +148,7 @@ func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 	), nil
 }
 
-// DefinitionFromParquetFile converts a parquet file into a schemapb.Schema
+// DefinitionFromParquetFile converts a parquet file into a schemapb.Schema.
 func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 	schema := file.Schema()
 
@@ -163,7 +163,6 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 	sortingCols := []*schemapb.SortingColumn{}
 	foundSortingCols := map[string]struct{}{}
 	for _, rg := range metadata.RowGroups {
-
 		// Extract the sorting column information
 		for _, sc := range rg.SortingColumns {
 			name := rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0]
@@ -196,7 +195,6 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 		}
 
 		for _, col := range rg.Columns {
-
 			name := col.MetaData.PathInSchema[0] // we only support flat schemas
 
 			// Check if the column is optional
@@ -235,7 +233,7 @@ func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
 	}, nil
 }
 
-// SchemaFromParquetFile converts a parquet file into a dnyparquet.Schema
+// SchemaFromParquetFile converts a parquet file into a dnyparquet.Schema.
 func SchemaFromParquetFile(file *parquet.File) (*Schema, error) {
 	def, err := DefinitionFromParquetFile(file)
 	if err != nil {

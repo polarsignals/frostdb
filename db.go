@@ -295,6 +295,9 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 		}
 
 		tbl, err := db.Table(tableName, NewTableConfig(schema))
+		if err != nil {
+			return err
+		}
 		db.tables[tableName] = tbl
 
 		return nil
