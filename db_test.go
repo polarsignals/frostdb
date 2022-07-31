@@ -320,6 +320,9 @@ func Test_DB_ColdStart(t *testing.T) {
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.RemoveAll("./test")
+	})
 
 	samples := dynparquet.Samples{
 		{
@@ -378,16 +381,15 @@ func Test_DB_ColdStart(t *testing.T) {
 		logger,
 		prometheus.NewRegistry(),
 		WithBucketStorage(bucket),
-	) // TODO this will need to scan and open tables to query against...
+	)
 	require.NoError(t, err)
 
 	// connect to our test db
 	db, err = c.DB("test")
 	require.NoError(t, err)
 
-	// TODO Perform a query
 	pool := memory.NewGoAllocator()
-	engine := query.NewEngine(pool, db.TableProvider()) // NOTE: this is almost assured to fail; since we haven't created this table
+	engine := query.NewEngine(pool, db.TableProvider())
 	require.NoError(t, engine.ScanTable("test").Execute(context.Background(), func(r arrow.Record) error {
 		fmt.Println(r)
 		return nil

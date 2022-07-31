@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -261,6 +262,45 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 	}
 
 	db.txPool = NewTxPool(db.highWatermark)
+
+	ctx := context.TODO()
+
+	// If bucket storage is configured; scan for existing tables in the database
+	if err := db.bucket.Iter(ctx, name, func(block string) error {
+		attr, err := db.bucket.Attributes(context.TODO(), block)
+		if err != nil {
+			return err
+		}
+
+		// grab table name
+		tableName := block
+		if i := strings.Index(block, "/"); i >= 0 {
+			tableName = block[:i]
+		}
+
+		b := &BucketReaderAt{
+			name:   block,
+			ctx:    ctx,
+			Bucket: db.bucket,
+		}
+
+		f, err := parquet.OpenFile(b, attr.Size)
+		if err != nil {
+			return err
+		}
+
+		schema, err := dynparquet.SchemaFromParquetFile(f)
+		if err != nil {
+			return err
+		}
+
+		tbl, err := db.Table(tableName, NewTableConfig(schema))
+		db.tables[tableName] = tbl
+
+		return nil
+	}, objstore.WithRecursiveIter); err != nil {
+		return nil, err
+	}
 
 	s.dbs[name] = db
 	return db, nil
@@ -520,13 +560,6 @@ func NewDBTableProvider(db *DB) *DBTableProvider {
 }
 
 func (p *DBTableProvider) GetTable(name string) (tbl logicalplan.TableReader, err error) {
-	var schema *dynparquet.Schema
-	defer func() {
-		// TODO THOR this should just get moved into the DB function; have it scan all the tables
-		// Open the table with the derived schema
-		fmt.Println("creating table: ", name, schema)
-		tbl, err = p.db.Table(name, NewTableConfig(schema))
-	}()
 	p.db.mtx.RLock()
 	defer p.db.mtx.RUnlock()
 	tbl, ok := p.db.tables[name]
@@ -534,47 +567,7 @@ func (p *DBTableProvider) GetTable(name string) (tbl logicalplan.TableReader, er
 		return tbl, nil
 	}
 
-	if p.db.bucket == nil {
-		return nil, ErrTableNotFound{name}
-	}
-
-	// Perform a scan of the bucket storage to determine if this table exists
-	ctx := context.TODO()
-
-	// TODO THOR: should this be in the open DB function instead?
-	// TODO probably...
-	if err := p.db.bucket.Iter(ctx, name, func(table string) error {
-		attr, err := p.db.bucket.Attributes(context.TODO(), table)
-		if err != nil {
-			return err
-		}
-
-		b := &BucketReaderAt{
-			name:   table,
-			ctx:    ctx,
-			Bucket: p.db.bucket,
-		}
-
-		f, err := parquet.OpenFile(b, attr.Size)
-		if err != nil {
-			return err
-		}
-
-		schema, err = dynparquet.SchemaFromParquetFile(f)
-		if err != nil {
-			return err
-		}
-
-		return nil
-	}, objstore.WithRecursiveIter); err != nil {
-		return nil, err
-	}
-
-	if tbl == nil {
-		return nil, ErrTableNotFound{name}
-	}
-
-	return tbl, nil
+	return nil, ErrTableNotFound{name}
 }
 
 // beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.
