@@ -280,13 +280,7 @@ func Test_SchemaFromParquetFile(t *testing.T) {
 	file, err := parquet.OpenFile(bytes.NewReader(b), int64(len(b)))
 	require.NoError(t, err)
 
-	// TODO
 	def, err := DefinitionFromParquetFile(file)
 	require.NoError(t, err)
-
-	fmt.Println("-------------------------------")
-	fmt.Println(SampleDefinition())
-	fmt.Println("-------------------------------")
-	fmt.Println(def)
-	fmt.Println("-------------------------------")
+	require.Equal(t, SampleDefinition(), def)
 }
