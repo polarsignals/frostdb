@@ -3,7 +3,6 @@ package frostdb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -391,7 +390,8 @@ func Test_DB_ColdStart(t *testing.T) {
 	pool := memory.NewGoAllocator()
 	engine := query.NewEngine(pool, db.TableProvider())
 	require.NoError(t, engine.ScanTable("test").Execute(context.Background(), func(r arrow.Record) error {
-		fmt.Println(r)
+		require.Equal(t, int64(6), r.NumCols())
+		require.Equal(t, int64(3), r.NumRows())
 		return nil
 	}))
 }
