@@ -266,43 +266,45 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 	ctx := context.TODO()
 
 	// If bucket storage is configured; scan for existing tables in the database
-	if err := db.bucket.Iter(ctx, name, func(block string) error {
-		attr, err := db.bucket.Attributes(ctx, block)
-		if err != nil {
-			return err
-		}
+	if db.bucket != nil {
+		if err := db.bucket.Iter(ctx, "", func(block string) error {
+			attr, err := db.bucket.Attributes(ctx, block)
+			if err != nil {
+				return err
+			}
 
-		// grab table name
-		tableName := block
-		if i := strings.Index(block, "/"); i >= 0 {
-			tableName = block[:i]
-		}
+			// grab table name
+			tableName := block
+			if i := strings.Index(block, "/"); i >= 0 {
+				tableName = block[:i]
+			}
 
-		b := &BucketReaderAt{
-			name:   block,
-			ctx:    ctx,
-			Bucket: db.bucket,
-		}
+			b := &BucketReaderAt{
+				name:   block,
+				ctx:    ctx,
+				Bucket: db.bucket,
+			}
 
-		f, err := parquet.OpenFile(b, attr.Size)
-		if err != nil {
-			return err
-		}
+			f, err := parquet.OpenFile(b, attr.Size)
+			if err != nil {
+				return err
+			}
 
-		schema, err := dynparquet.SchemaFromParquetFile(f)
-		if err != nil {
-			return err
-		}
+			schema, err := dynparquet.SchemaFromParquetFile(f)
+			if err != nil {
+				return err
+			}
 
-		tbl, err := db.Table(tableName, NewTableConfig(schema))
-		if err != nil {
-			return err
-		}
-		db.tables[tableName] = tbl
+			tbl, err := db.Table(tableName, NewTableConfig(schema))
+			if err != nil {
+				return err
+			}
+			db.tables[tableName] = tbl
 
-		return nil
-	}, objstore.WithRecursiveIter); err != nil {
-		return nil, err
+			return nil
+		}, objstore.WithRecursiveIter); err != nil {
+			return nil, err
+		}
 	}
 
 	s.dbs[name] = db
@@ -562,15 +564,10 @@ func NewDBTableProvider(db *DB) *DBTableProvider {
 	}
 }
 
-func (p *DBTableProvider) GetTable(name string) (tbl logicalplan.TableReader, err error) {
+func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
 	p.db.mtx.RLock()
 	defer p.db.mtx.RUnlock()
-	tbl, ok := p.db.tables[name]
-	if ok {
-		return tbl, nil
-	}
-
-	return nil, ErrTableNotFound{name}
+	return p.db.tables[name]
 }
 
 // beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.

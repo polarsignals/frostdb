@@ -65,12 +65,12 @@ type TableScan struct {
 }
 
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
-	table, err := s.options.TableProvider.GetTable(s.options.TableName)
-	if err != nil || table == nil {
-		return fmt.Errorf("table not found: %v", err)
+	table := s.options.TableProvider.GetTable(s.options.TableName)
+	if table == nil {
+		return fmt.Errorf("table not found")
 	}
 
-	err = table.View(func(tx uint64) error {
+	err := table.View(func(tx uint64) error {
 		schema, err := table.ArrowSchema(
 			ctx,
 			tx,
@@ -110,11 +110,11 @@ type SchemaScan struct {
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
-	table, err := s.options.TableProvider.GetTable(s.options.TableName)
-	if err != nil || table == nil {
-		return fmt.Errorf("table not found: %v", err)
+	table := s.options.TableProvider.GetTable(s.options.TableName)
+	if table == nil {
+		return fmt.Errorf("table not found")
 	}
-	err = table.View(func(tx uint64) error {
+	err := table.View(func(tx uint64) error {
 		return table.SchemaIterator(
 			ctx,
 			tx,

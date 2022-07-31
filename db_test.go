@@ -307,10 +307,10 @@ func Test_DB_ColdStart(t *testing.T) {
 
 	db, err := c.DB("test")
 	require.NoError(t, err)
-	table, err := db.Table("test", config)
+	table, err := db.Table(t.Name(), config)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		os.RemoveAll("./test")
+		os.RemoveAll(t.Name())
 	})
 
 	samples := dynparquet.Samples{
@@ -379,7 +379,7 @@ func Test_DB_ColdStart(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 	engine := query.NewEngine(pool, db.TableProvider())
-	require.NoError(t, engine.ScanTable("test").Execute(context.Background(), func(r arrow.Record) error {
+	require.NoError(t, engine.ScanTable(t.Name()).Execute(context.Background(), func(r arrow.Record) error {
 		require.Equal(t, int64(6), r.NumCols())
 		require.Equal(t, int64(3), r.NumRows())
 		return nil

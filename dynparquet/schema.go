@@ -707,7 +707,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 	), nil
 }
 
-// sortingColumnsFromDynamic generate the parquet sorting columns from the given set of dynamic columns
+// sortingColumnsFromDynamic generate the parquet sorting columns from the given set of dynamic columns.
 func (s *Schema) sortingColumnsFromDynamic(dynamicColumns map[string][]string) []parquet.SortingColumn {
 	sortingCols := []parquet.SortingColumn{}
 	for _, sc := range s.sortingColumns {
