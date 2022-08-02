@@ -127,7 +127,7 @@ func WithStoragePath(path string) Option {
 	}
 }
 
-// WithIgnoreStorageOnQuery storage paths aren't included in queries
+// WithIgnoreStorageOnQuery storage paths aren't included in queries.
 func WithIgnoreStorageOnQuery() Option {
 	return func(s *ColumnStore) error {
 		s.ignoreStorageOnQuery = true
