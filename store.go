@@ -29,7 +29,7 @@ func (t *TableBlock) Persist() error {
 }
 
 func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
-	if t.db.bucket == nil {
+	if t.db.bucket == nil || t.db.ignoreStorageOnQuery {
 		return nil
 	}
 
