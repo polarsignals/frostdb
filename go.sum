@@ -420,6 +420,8 @@ github.com/segmentio/parquet-go v0.0.0-20220713215308-e2be471e1d7b h1:Ejstj1ited
 github.com/segmentio/parquet-go v0.0.0-20220713215308-e2be471e1d7b/go.mod h1:BuMbRhCCg3gFchup9zucJaUjQ4m6RxX+iVci37CoMPQ=
 github.com/segmentio/parquet-go v0.0.0-20220725200142-047e5979dfcf h1:5yLngjz3nAomA1BbuHoRdPaCSsmy2RP2n+KF2Ew+VUs=
 github.com/segmentio/parquet-go v0.0.0-20220725200142-047e5979dfcf/go.mod h1:BuMbRhCCg3gFchup9zucJaUjQ4m6RxX+iVci37CoMPQ=
+github.com/segmentio/parquet-go v0.0.0-20220802221544-d84ed320251d h1:IxYmTiYCMaR3B0fjD9igXDr1AE5M8KRFbhEhEJ1WYx4=
+github.com/segmentio/parquet-go v0.0.0-20220802221544-d84ed320251d/go.mod h1:BuMbRhCCg3gFchup9zucJaUjQ4m6RxX+iVci37CoMPQ=
 github.com/shurcooL/sanitized_anchor_name v1.0.0/go.mod h1:1NzhyTcUVG4SuEtjjoZeVRXNmyL/1OwPU0+IJeTBvfc=
 github.com/sirupsen/logrus v1.2.0/go.mod h1:LxeOpSwHxABJmUn/MG1IvRgCAasNZTLOkJPxbbu5VWo=
 github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=

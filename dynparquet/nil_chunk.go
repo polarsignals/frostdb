@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/segmentio/parquet-go"
+	"github.com/segmentio/parquet-go/encoding"
 )
 
 // NilColumnChunk is a column chunk that contains a single page with all null
@@ -228,7 +229,7 @@ func (p *nilPage) Slice(i, j int64) parquet.BufferedPage {
 // Data is unimplemented, since the page is virtual and does not need to be
 // written in its current usage in this package. If that changes this method
 // needs to be implemented. Implements the parquet.BufferedPage interface.
-func (p *nilPage) Data() []byte {
+func (p *nilPage) Data() encoding.Values {
 	panic("not implemented")
 }
 
