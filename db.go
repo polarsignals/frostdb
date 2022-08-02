@@ -26,15 +26,16 @@ import (
 )
 
 type ColumnStore struct {
-	mtx              *sync.RWMutex
-	dbs              map[string]*DB
-	reg              prometheus.Registerer
-	logger           log.Logger
-	granuleSize      int
-	activeMemorySize int64
-	storagePath      string
-	bucket           objstore.Bucket
-	enableWAL        bool
+	mtx                  *sync.RWMutex
+	dbs                  map[string]*DB
+	reg                  prometheus.Registerer
+	logger               log.Logger
+	granuleSize          int
+	activeMemorySize     int64
+	storagePath          string
+	bucket               objstore.Bucket
+	ignoreStorageOnQuery bool
+	enableWAL            bool
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
@@ -126,6 +127,14 @@ func WithStoragePath(path string) Option {
 	}
 }
 
+// WithIgnoreStorageOnQuery storage paths aren't included in queries
+func WithIgnoreStorageOnQuery() Option {
+	return func(s *ColumnStore) error {
+		s.ignoreStorageOnQuery = true
+		return nil
+	}
+}
+
 func (s *ColumnStore) Close() error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
@@ -191,9 +200,10 @@ type DB struct {
 	tables map[string]*Table
 	reg    prometheus.Registerer
 
-	storagePath string
-	wal         WAL
-	bucket      objstore.Bucket
+	storagePath          string
+	wal                  WAL
+	bucket               objstore.Bucket
+	ignoreStorageOnQuery bool
 	// Databases monotonically increasing transaction id
 	tx *atomic.Uint64
 
@@ -227,16 +237,17 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 	highWatermark := atomic.NewUint64(0)
 	reg := prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg)
 	db = &DB{
-		columnStore:   s,
-		name:          name,
-		mtx:           &sync.RWMutex{},
-		tables:        map[string]*Table{},
-		reg:           reg,
-		tx:            atomic.NewUint64(0),
-		highWatermark: highWatermark,
-		storagePath:   filepath.Join(s.DatabasesDir(), name),
-		logger:        s.logger,
-		wal:           &wal.NopWAL{},
+		columnStore:          s,
+		name:                 name,
+		mtx:                  &sync.RWMutex{},
+		tables:               map[string]*Table{},
+		reg:                  reg,
+		tx:                   atomic.NewUint64(0),
+		highWatermark:        highWatermark,
+		storagePath:          filepath.Join(s.DatabasesDir(), name),
+		logger:               s.logger,
+		wal:                  &wal.NopWAL{},
+		ignoreStorageOnQuery: s.ignoreStorageOnQuery,
 		metrics: &dbMetrics{
 			txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
 				Name: "tx_high_watermark",
