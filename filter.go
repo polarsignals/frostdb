@@ -86,6 +86,21 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error)
 			Left:  left,
 			Right: right,
 		}, nil
+	case logicalplan.OpOr:
+		left, err := booleanExpr(expr.Left)
+		if err != nil {
+			return nil, err
+		}
+
+		right, err := booleanExpr(expr.Right)
+		if err != nil {
+			return nil, err
+		}
+
+		return &OrExpr{
+			Left:  left,
+			Right: right,
+		}, nil
 	default:
 		return &AlwaysTrueFilter{}, nil
 	}
@@ -112,6 +127,28 @@ func (a *AndExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
 
 	// This stores the result in place to avoid allocations.
 	return left && right, nil
+}
+
+type OrExpr struct {
+	Left  TrueNegativeFilter
+	Right TrueNegativeFilter
+}
+
+func (a *OrExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
+	left, err := a.Left.Eval(rg)
+	if err != nil {
+		return false, err
+	}
+	if left {
+		return true, nil
+	}
+
+	right, err := a.Right.Eval(rg)
+	if err != nil {
+		return false, err
+	}
+
+	return right, nil
 }
 
 func booleanExpr(expr logicalplan.Expr) (TrueNegativeFilter, error) {
