@@ -25,9 +25,6 @@ func TestDBWithWAL(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	bucket, err := filesystem.NewBucket(".")
-	require.NoError(t, err)
-
 	logger := newTestLogger(t)
 
 	dir, err := ioutil.TempDir("", "frostdb-with-wal-test")
@@ -42,7 +39,6 @@ func TestDBWithWAL(t *testing.T) {
 		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
-		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
 
@@ -147,7 +143,6 @@ func TestDBWithWAL(t *testing.T) {
 		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
-		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
 
