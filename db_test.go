@@ -18,6 +18,8 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
 func TestDBWithWAL(t *testing.T) {
@@ -414,4 +416,143 @@ func Test_DB_ColdStart(t *testing.T) {
 			}))
 		})
 	}
+}
+
+func Test_DB_ColdStart_MissingColumn(t *testing.T) {
+	schemaDef := &schemapb.Schema{
+		Name: "test",
+		Columns: []*schemapb.Column{
+			{
+				Name: "example_type",
+				StorageLayout: &schemapb.StorageLayout{
+					Type:     schemapb.StorageLayout_TYPE_STRING,
+					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				},
+				Dynamic: false,
+			},
+			{
+				Name: "labels",
+				StorageLayout: &schemapb.StorageLayout{
+					Type:     schemapb.StorageLayout_TYPE_STRING,
+					Nullable: true,
+					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				},
+				Dynamic: true,
+			},
+			{
+				Name: "pprof_labels",
+				StorageLayout: &schemapb.StorageLayout{
+					Type:     schemapb.StorageLayout_TYPE_STRING,
+					Nullable: true,
+					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				},
+				Dynamic: true,
+			},
+		},
+		SortingColumns: []*schemapb.SortingColumn{
+			{
+				Name:      "example_type",
+				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+			},
+			{
+				Name:       "labels",
+				Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+				NullsFirst: true,
+			},
+			{
+				Name:       "pprof_labels",
+				Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+				NullsFirst: true,
+			},
+		},
+	}
+
+	s, err := dynparquet.SchemaFromDefinition(schemaDef)
+	require.NoError(t, err)
+	config := NewTableConfig(s)
+
+	bucket, err := filesystem.NewBucket(".")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.RemoveAll(t.Name())
+	})
+
+	logger := newTestLogger(t)
+
+	c, err := New(
+		logger,
+		prometheus.NewRegistry(),
+		WithBucketStorage(bucket),
+	)
+	require.NoError(t, err)
+
+	db, err := c.DB(context.Background(), t.Name())
+	require.NoError(t, err)
+	table, err := db.Table(t.Name(), config)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.RemoveAll(t.Name())
+	})
+
+	buf, err := s.NewBuffer(map[string][]string{
+		"labels": {
+			"label1",
+			"label2",
+		},
+		"pprof_labels": {},
+	})
+	require.NoError(t, err)
+
+	_, err = buf.WriteRows([]parquet.Row{
+		{
+			parquet.ValueOf("test").Level(0, 0, 0),
+			parquet.ValueOf("value1").Level(0, 1, 1),
+			parquet.ValueOf("value1").Level(0, 1, 2),
+		},
+	})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	// Gracefully close the db to persist blocks
+	c.Close()
+
+	// Open a new database pointed to the same bucket storage
+	c, err = New(
+		logger,
+		prometheus.NewRegistry(),
+		WithBucketStorage(bucket),
+	)
+	require.NoError(t, err)
+
+	// connect to our test db
+	db, err = c.DB(context.Background(), t.Name())
+	require.NoError(t, err)
+
+	// fetch new table
+	table, err = db.Table(t.Name(), config)
+	require.NoError(t, err)
+
+	buf, err = s.NewBuffer(map[string][]string{
+		"labels": {
+			"label1",
+			"label2",
+		},
+		"pprof_labels": {},
+	})
+	require.NoError(t, err)
+
+	_, err = buf.WriteRows([]parquet.Row{
+		{
+			parquet.ValueOf("test").Level(0, 0, 0),
+			parquet.ValueOf("value2").Level(0, 1, 1),
+			parquet.ValueOf("value2").Level(0, 1, 2),
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
 }
