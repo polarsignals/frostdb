@@ -43,23 +43,21 @@ You can explore the [examples](https://github.com/polarsignals/frostdb/tree/main
 
 ```go
 // Create a new column store
-columnstore := frostdb.New(
+columnstore, _ := frostdb.New(
+    log.NewNopLogger(),
     prometheus.NewRegistry(),
-    8192,
-    10*1024*1024, // 10MiB
 )
 
 // Open up a database in the column store
 database, _ := columnstore.DB("simple_db")
 
 // Define our simple schema of labels and values
-schema := simpleSchema()
+schema, _ := simpleSchema()
 
 // Create a table named simple in our database
 table, _ := database.Table(
     "simple_table",
     frostdb.NewTableConfig(schema),
-    log.NewNopLogger(),
 )
 
 // Create values to insert into the database these first rows havel dynamic label names of 'firstname' and 'surname'
@@ -68,32 +66,32 @@ buf, _ := schema.NewBuffer(map[string][]string{
 })
 
 // firstname:Frederic surname:Brancz 100
-buf.WriteRow([]parquet.Value{
+buf.WriteRows([]parquet.Row{{
     parquet.ValueOf("Frederic").Level(0, 1, 0),
     parquet.ValueOf("Brancz").Level(0, 1, 1),
     parquet.ValueOf(100).Level(0, 0, 2),
-})
+}})
 
 // firstname:Thor surname:Hansen 10
-buf.WriteRow([]parquet.Value{
+buf.WriteRows([]parquet.Row{{
     parquet.ValueOf("Thor").Level(0, 1, 0),
     parquet.ValueOf("Hansen").Level(0, 1, 1),
     parquet.ValueOf(10).Level(0, 0, 2),
-})
-table.InsertBuffer(buf)
+}})
+table.InsertBuffer(context.Background(), buf)
 
 // Now we can insert rows that have middle names into our dynamic column
 buf, _ = schema.NewBuffer(map[string][]string{
     "names": {"firstname", "middlename", "surname"},
 })
 // firstname:Matthias middlename:Oliver surname:Loibl 1
-buf.WriteRow([]parquet.Value{
+buf.WriteRows([]parquet.Row{{
     parquet.ValueOf("Matthias").Level(0, 1, 0),
     parquet.ValueOf("Oliver").Level(0, 1, 1),
     parquet.ValueOf("Loibl").Level(0, 1, 2),
     parquet.ValueOf(1).Level(0, 0, 3),
-})
-table.InsertBuffer(buf)
+}})
+table.InsertBuffer(context.Background(), buf)
 
 // Create a new query engine to retrieve data and print the results
 engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
@@ -140,30 +138,42 @@ package arcticprometheus
 
 import (
 	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/segmentio/parquet-go"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
-func Schema() *dynparquet.Schema {
-	return dynparquet.NewSchema(
-		"prometheus",
-		[]dynparquet.ColumnDefinition{{
-			Name:          "labels",
-			StorageLayout: parquet.Encoded(parquet.Optional(parquet.String()), &parquet.RLEDictionary),
-			Dynamic:       true,
+func Schema() (*dynparquet.Schema, error) {
+	return dynparquet.SchemaFromDefinition(&schemapb.Schema{
+		Name: "prometheus",
+		Columns: []*schemapb.Column{{
+			Name: "labels",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				Nullable: true,
+			},
+			Dynamic: true,
 		}, {
-			Name:          "timestamp",
-			StorageLayout: parquet.Int(64),
-			Dynamic:       false,
+			Name: "timestamp",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
 		}, {
-			Name:          "value",
-			StorageLayout: parquet.Leaf(parquet.DoubleType),
-			Dynamic:       false,
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_DOUBLE,
+			},
+			Dynamic: false,
 		}},
-		[]dynparquet.SortingColumn{
-			dynparquet.NullsFirst(dynparquet.Ascending("labels")),
-			dynparquet.Ascending("timestamp"),
-		},
-	)
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:       "labels",
+			NullsFirst: true,
+			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
+			Name:      "timestamp",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	})
 }
 ```
 
