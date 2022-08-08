@@ -14,6 +14,7 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
@@ -135,6 +136,8 @@ func WithIgnoreStorageOnQuery() Option {
 	}
 }
 
+// Close persists all data from the columnstore to storage.
+// It is no longer valid to use the coumnstore for reads or writes, and the object should not longer be reused.
 func (s *ColumnStore) Close() error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
@@ -176,7 +179,7 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 	for _, f := range files {
 		databaseName := f.Name()
 		g.Go(func() error {
-			db, err := s.DB(databaseName)
+			db, err := s.DB(context.Background(), databaseName)
 			if err != nil {
 				return err
 			}
@@ -216,7 +219,7 @@ type DB struct {
 	metrics *dbMetrics
 }
 
-func (s *ColumnStore) DB(name string) (*DB, error) {
+func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 	s.mtx.RLock()
 	db, ok := s.dbs[name]
 	s.mtx.RUnlock()
@@ -271,6 +274,45 @@ func (s *ColumnStore) DB(name string) (*DB, error) {
 	}
 
 	db.txPool = NewTxPool(db.highWatermark)
+
+	// If bucket storage is configured; scan for existing tables in the database
+	if db.bucket != nil {
+		if err := db.bucket.Iter(ctx, "", func(block string) error {
+			attr, err := db.bucket.Attributes(ctx, block)
+			if err != nil {
+				return err
+			}
+
+			// grab table name
+			tableName := filepath.Dir(filepath.Dir(block))
+
+			b := &BucketReaderAt{
+				name:   block,
+				ctx:    ctx,
+				Bucket: db.bucket,
+			}
+
+			f, err := parquet.OpenFile(b, attr.Size)
+			if err != nil {
+				return err
+			}
+
+			schema, err := dynparquet.SchemaFromParquetFile(f)
+			if err != nil {
+				return err
+			}
+
+			tbl, err := db.Table(tableName, NewTableConfig(schema))
+			if err != nil {
+				return err
+			}
+			db.tables[tableName] = tbl
+
+			return nil
+		}, objstore.WithRecursiveIter); err != nil {
+			return nil, err
+		}
+	}
 
 	s.dbs[name] = db
 	return db, nil
@@ -417,11 +459,24 @@ func (db *DB) replayWAL(ctx context.Context) error {
 }
 
 func (db *DB) Close() error {
-	if db.columnStore.enableWAL {
+	switch {
+	case db.bucket != nil:
+		// Persist blocks to storage
+		for _, table := range db.tables {
+			table.writeBlock(table.ActiveBlock())
+		}
+
+		// If we've successfully persisted all the table blocks we can remove the wal
+		if err := os.RemoveAll(db.walDir()); err != nil {
+			return err
+		}
+
+	case db.columnStore.enableWAL:
 		if err := db.wal.Close(); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 

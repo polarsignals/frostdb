@@ -26,7 +26,7 @@ func main() {
 	)
 
 	// Open up a database in the column store
-	database, _ := columnstore.DB("simple_db")
+	database, _ := columnstore.DB(context.Background(), "simple_db")
 
 	// Define our simple schema of labels and values
 	schema, _ := simpleSchema()
