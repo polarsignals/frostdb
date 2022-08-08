@@ -629,8 +629,6 @@ var rowBufPool = &sync.Pool{
 	},
 }
 
-// NewWriter returns a new parquet writer with a concrete parquet schema
-// generated using the given concrete dynamic column names.
 func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
 	b := bytes.NewBuffer(nil)
 	w, err := s.GetWriter(b, buffer.DynamicColumns())
@@ -698,45 +696,8 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 			DynamicColumnsKey,
 			serializeDynamicColumns(dynamicColumns),
 		),
-		parquet.SortingColumns(s.sortingColumnsFromDynamic(dynamicColumns)...),
+		parquet.SortingColumns(cols...),
 	), nil
-}
-
-// sortingColumnsFromDynamic generate the parquet sorting columns from the given set of dynamic columns.
-func (s *Schema) sortingColumnsFromDynamic(dynamicColumns map[string][]string) []parquet.SortingColumn {
-	sortingCols := []parquet.SortingColumn{}
-	for _, sc := range s.sortingColumns {
-		// Convert dynamic columns into sorting columns if appropriate
-		dynamic := false // innocent until proven guilty
-		for col, vals := range dynamicColumns {
-			if sc.ColumnName() == col {
-				for _, val := range vals {
-					name := col + "." + val
-					var col SortingColumn
-					switch sc.Descending() {
-					case true:
-						col = Descending(name)
-					default:
-						col = Ascending(name)
-					}
-					switch sc.NullsFirst() {
-					case true:
-						sortingCols = append(sortingCols, NullsFirst(col))
-					default:
-						sortingCols = append(sortingCols, col)
-					}
-				}
-				dynamic = true
-				break
-			}
-		}
-
-		if !dynamic {
-			sortingCols = append(sortingCols, sc)
-		}
-	}
-
-	return sortingCols
 }
 
 type PooledWriter struct {
