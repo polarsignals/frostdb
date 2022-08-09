@@ -24,7 +24,7 @@ func (t *TableBlock) Persist() error {
 	if err != nil {
 		return err
 	}
-	fileName := filepath.Join(t.table.name, t.ulid.String(), "data.parquet")
+	fileName := filepath.Join(t.table.name, t.ulid.String(), dataFileName)
 	return t.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
 }
 
@@ -35,7 +35,12 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filt
 
 	n := 0
 	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
-		blockUlid, err := ulid.Parse(filepath.Base(blockDir))
+		f := filepath.Base(blockDir)
+		if f != dataFileName {
+			return nil
+		}
+
+		blockUlid, err := ulid.Parse(f)
 		if err != nil {
 			return err
 		}
@@ -44,7 +49,7 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filt
 			return nil
 		}
 
-		blockName := filepath.Join(blockDir, "data.parquet")
+		blockName := filepath.Join(blockDir, dataFileName)
 		attribs, err := t.db.bucket.Attributes(ctx, blockName)
 		if err != nil {
 			return err

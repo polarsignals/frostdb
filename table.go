@@ -37,6 +37,9 @@ import (
 const (
 	// schemaFileName is the name of the schema file that is written for each table if persistence is enabled.
 	schemaFileName = "schema.json"
+
+	// dataFileName is the name of the parquet blocks that are written to storage if persistence is enabled.
+	dataFileName = "data.parquet"
 )
 
 var ErrNoSchema = fmt.Errorf("no schema")
