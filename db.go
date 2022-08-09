@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,13 +15,13 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/wal"
@@ -278,30 +279,27 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 	// If bucket storage is configured; scan for existing tables in the database
 	if db.bucket != nil {
 		if err := db.bucket.Iter(ctx, "", func(block string) error {
-			attr, err := db.bucket.Attributes(ctx, block)
+			if filepath.Base(block) != schemaFileName {
+				return nil
+			}
+
+			r, err := db.bucket.Get(ctx, block)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to get schema.json: %w", err)
+			}
+			defer r.Close()
+
+			definition := &schemapb.Schema{}
+			if err := json.NewDecoder(r).Decode(definition); err != nil {
+				return fmt.Errorf("failed to decode schema.json: %w", err)
 			}
 
-			// grab table name
-			tableName := filepath.Dir(filepath.Dir(block))
-
-			b := &BucketReaderAt{
-				name:   block,
-				ctx:    ctx,
-				Bucket: db.bucket,
-			}
-
-			f, err := parquet.OpenFile(b, attr.Size)
+			schema, err := dynparquet.SchemaFromDefinition(definition)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to create schema from definition: %w", err)
 			}
 
-			schema, err := dynparquet.SchemaFromParquetFile(f)
-			if err != nil {
-				return err
-			}
-
+			tableName := filepath.Dir(block)
 			tbl, err := db.Table(tableName, NewTableConfig(schema))
 			if err != nil {
 				return err

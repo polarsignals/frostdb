@@ -3,11 +3,13 @@ package frostdb
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"math/rand"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -30,6 +32,11 @@ import (
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+)
+
+const (
+	// schemaFileName is the name of the schema file that is written for each table if persistence is enabled.
+	schemaFileName = "schema.json"
 )
 
 var ErrNoSchema = fmt.Errorf("no schema")
@@ -198,6 +205,10 @@ func newTable(
 	}, func() float64 {
 		return float64(t.ActiveBlock().Size())
 	})
+
+	if err := t.persistTableSchema(context.Background()); err != nil {
+		return nil, err
+	}
 
 	return t, nil
 }
@@ -1368,4 +1379,17 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 	}
 
 	return rowGroups, nil
+}
+
+// persistTableSchema will write a schema.json file to storage if enabled.
+func (t *Table) persistTableSchema(ctx context.Context) error {
+	if t.db.bucket == nil {
+		return nil
+	}
+
+	b, err := json.Marshal(t.config.schema.Definition())
+	if err != nil {
+		return fmt.Errorf("failed to marshal schema definition: %w", err)
+	}
+	return t.db.bucket.Upload(ctx, filepath.Join(t.name, schemaFileName), bytes.NewBuffer(b))
 }
