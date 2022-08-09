@@ -648,7 +648,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 			})
 		}
 
-		buf, err := rows.ToBuffer(config.schema)
+		buf, err := rows.ToBuffer(config.Schema())
 		require.NoError(b, err)
 
 		buf.Sort()

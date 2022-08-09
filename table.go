@@ -5,11 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"math"
 	"math/rand"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -28,7 +26,6 @@ import (
 	"github.com/segmentio/parquet-go"
 	"go.uber.org/atomic"
 
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/polarsignals/frostdb/dynparquet"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
@@ -36,8 +33,12 @@ import (
 )
 
 const (
+
+	// schemasPrefix is the prefix for the schema files
+	schemasPrefix = "schemas"
+
 	// schemaFileNameFormat is the format string of the schema file name that is written for each table if persistence is enabled.
-	schemaFileNameFormat = "schemas/schema_%v.json"
+	schemaFileNameFormat = "schema_%v.json"
 
 	// dataFileName is the name of the parquet blocks that are written to storage if persistence is enabled.
 	dataFileName = "data.parquet"
@@ -60,14 +61,17 @@ func (e ErrCreateSchemaWriter) Error() string {
 }
 
 type TableConfig struct {
-	schema *dynparquet.Schema
+	schemas []*dynparquet.Schema
 }
 
-func NewTableConfig(
-	schema *dynparquet.Schema,
-) *TableConfig {
+// Schema returns the latest schema in the table config
+func (t *TableConfig) Schema() *dynparquet.Schema {
+	return t.schemas[0] // TODO THOR
+}
+
+func NewTableConfig(schemas ...*dynparquet.Schema) *TableConfig {
 	return &TableConfig{
-		schema: schema,
+		schemas: schemas,
 	}
 }
 
@@ -210,10 +214,6 @@ func newTable(
 		return float64(t.ActiveBlock().Size())
 	})
 
-	if err := t.persistTableSchema(context.Background()); err != nil {
-		return nil, err
-	}
-
 	return t, nil
 }
 
@@ -229,7 +229,7 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 				NewTableBlock: &walpb.Entry_NewTableBlock{
 					TableName: t.name,
 					BlockId:   b,
-					Schema:    t.config.schema.Definition(),
+					Schema:    t.Schema().Definition(),
 				},
 			},
 		},
@@ -353,7 +353,7 @@ func (t *Table) ActiveWriteBlock() (*TableBlock, func()) {
 }
 
 func (t *Table) Schema() *dynparquet.Schema {
-	return t.config.schema
+	return t.config.schemas[0] // TODO THOR determine the latest schema
 }
 
 func (t *Table) Sync() {
@@ -361,7 +361,7 @@ func (t *Table) Sync() {
 }
 
 func (t *Table) InsertBuffer(ctx context.Context, buf *dynparquet.Buffer) (uint64, error) {
-	b, err := t.config.schema.SerializeBuffer(buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
+	b, err := t.Schema().SerializeBuffer(buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
 	if err != nil {
 		return 0, fmt.Errorf("serialize buffer: %w", err)
 	}
@@ -469,7 +469,7 @@ func (t *Table) Iterator(
 			if schema == nil {
 				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
 					ctx,
-					t.config.schema,
+					t.Schema(),
 					rg,
 					physicalProjections,
 					projections,
@@ -582,7 +582,7 @@ func (t *Table) ArrowSchema(
 		default:
 			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
 				ctx,
-				t.config.schema,
+				t.Schema(),
 				rg,
 				physicalProjections,
 				projections,
@@ -726,7 +726,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		return
 	}
 
-	merge, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
+	merge, err := t.table.Schema().MergeDynamicRowGroups(bufs)
 	if err != nil {
 		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to merge dynamic row groups", "err", err)
@@ -735,13 +735,13 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	b := bytes.NewBuffer(nil)
 	cols := merge.DynamicColumns()
-	w, err := t.table.config.schema.GetWriter(b, cols)
+	w, err := t.table.Schema().GetWriter(b, cols)
 	if err != nil {
 		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to create new schema writer", "err", err)
 		return
 	}
-	defer t.table.config.schema.PutWriter(w)
+	defer t.table.Schema().PutWriter(w)
 
 	rowBuf := make([]parquet.Row, 1)
 	rows := merge.Rows()
@@ -932,11 +932,11 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 		b := bytes.NewBuffer(nil)
 
 		cols := buf.DynamicColumns()
-		w, err := t.table.config.schema.GetWriter(b, cols)
+		w, err := t.table.Schema().GetWriter(b, cols)
 		if err != nil {
 			return nil, ErrCreateSchemaWriter{err}
 		}
-		defer t.table.config.schema.PutWriter(w)
+		defer t.table.Schema().PutWriter(w)
 
 		rowBuf := make([]parquet.Row, 1)
 		rows := buf.Reader()
@@ -973,7 +973,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 	bufByGranule := map[*Granule]*bytes.Buffer{}
 	defer func() {
 		for _, w := range writerByGranule {
-			t.table.config.schema.PutWriter(w)
+			t.table.Schema().PutWriter(w)
 		}
 	}()
 
@@ -996,13 +996,13 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 
 		for {
 			least := g.Least()
-			isLess := t.table.config.schema.RowLessThan(row, least)
+			isLess := t.table.Schema().RowLessThan(row, least)
 			if isLess {
 				if prev != nil {
 					w, ok := writerByGranule[prev]
 					if !ok {
 						b := bytes.NewBuffer(nil)
-						w, err = t.table.config.schema.GetWriter(b, buf.DynamicColumns())
+						w, err = t.table.Schema().GetWriter(b, buf.DynamicColumns())
 						if err != nil {
 							ascendErr = ErrCreateSchemaWriter{err}
 							return false
@@ -1044,7 +1044,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 		w, ok := writerByGranule[prev]
 		if !ok {
 			b := bytes.NewBuffer(nil)
-			w, err = t.table.config.schema.GetWriter(b, buf.DynamicColumns())
+			w, err = t.table.Schema().GetWriter(b, buf.DynamicColumns())
 			if err != nil {
 				return nil, ErrCreateSchemaWriter{err}
 			}
@@ -1098,7 +1098,7 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 
 	var prev *Granule
 	for _, g := range granules {
-		if g.tableConfig.schema.RowLessThan(row, g.Least()) {
+		if g.tableConfig.Schema().RowLessThan(row, g.Least()) {
 			if prev != nil {
 				if _, err := prev.addPart(p, row); err != nil {
 					return err
@@ -1143,18 +1143,18 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 		return nil, err
 	}
 
-	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
+	merged, err := t.table.Schema().MergeDynamicRowGroups(rowGroups)
 	if err != nil {
 		return nil, err
 	}
 
 	buf := bytes.NewBuffer(nil)
 	cols := merged.DynamicColumns()
-	w, err := t.table.config.schema.GetWriter(buf, cols)
+	w, err := t.table.Schema().GetWriter(buf, cols)
 	if err != nil {
 		return nil, err
 	}
-	defer t.table.config.schema.PutWriter(w)
+	defer t.table.Schema().PutWriter(w)
 
 	rows := merged.Rows()
 	n := 0
@@ -1383,23 +1383,4 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 	}
 
 	return rowGroups, nil
-}
-
-// persistTableSchema will write a schema.json file to storage if enabled.
-func (t *Table) persistTableSchema(ctx context.Context) error {
-	if t.db.bucket == nil {
-		return nil
-	}
-
-	m := &jsonpb.Marshaler{}
-	b := &bytes.Buffer{}
-	if err := m.Marshal(b, t.config.schema.Definition()); err != nil {
-		return fmt.Errorf("failed to marshal schema definition: %w", err)
-	}
-
-	h := fnv.New64()
-	_, _ = h.Write(b.Bytes())
-
-	name := fmt.Sprintf(schemaFileNameFormat, h.Sum64())
-	return t.db.bucket.Upload(ctx, filepath.Join(t.name, name), b)
 }

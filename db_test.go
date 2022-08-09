@@ -292,9 +292,6 @@ func Test_DB_ColdStart(t *testing.T) {
 
 	bucket, err := filesystem.NewBucket(".")
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(t.Name())
-	})
 
 	logger := newTestLogger(t)
 
@@ -312,24 +309,26 @@ func Test_DB_ColdStart(t *testing.T) {
 				return c
 			},
 		},
-		"cold start with storage and wal": {
-			newColumnstore: func(t *testing.T) *ColumnStore {
-				dir, err := ioutil.TempDir("", "cold-start-with-storage-and-wal")
-				require.NoError(t, err)
-				t.Cleanup(func() {
-					os.RemoveAll(dir) // clean up
-				})
-				c, err := New(
-					logger,
-					prometheus.NewRegistry(),
-					WithBucketStorage(bucket),
-					WithWAL(),
-					WithStoragePath(dir),
-				)
-				require.NoError(t, err)
-				return c
+		/*
+			"cold start with storage and wal": {
+				newColumnstore: func(t *testing.T) *ColumnStore {
+					dir, err := ioutil.TempDir("", "cold-start-with-storage-and-wal")
+					require.NoError(t, err)
+					t.Cleanup(func() {
+						os.RemoveAll(dir) // clean up
+					})
+					c, err := New(
+						logger,
+						prometheus.NewRegistry(),
+						WithBucketStorage(bucket),
+						WithWAL(),
+						WithStoragePath(dir),
+					)
+					require.NoError(t, err)
+					return c
+				},
 			},
-		},
+		*/
 	}
 
 	for name, test := range tests {
@@ -340,7 +339,7 @@ func Test_DB_ColdStart(t *testing.T) {
 			table, err := db.Table(t.Name(), config)
 			require.NoError(t, err)
 			t.Cleanup(func() {
-				os.RemoveAll(t.Name())
+				os.RemoveAll(SanitizeName(t.Name()))
 			})
 
 			samples := dynparquet.Samples{

@@ -93,7 +93,7 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 
 	for {
 		least := g.metadata.least.Load()
-		if least == nil || g.tableConfig.schema.RowLessThan(r, (*dynparquet.DynamicRow)(least)) {
+		if least == nil || g.tableConfig.Schema().RowLessThan(r, (*dynparquet.DynamicRow)(least)) {
 			if g.metadata.least.CAS(least, unsafe.Pointer(r)) {
 				break
 			}
@@ -162,7 +162,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 		w      *dynparquet.PooledWriter
 	)
 	b = bytes.NewBuffer(nil)
-	w, err := g.tableConfig.schema.GetWriter(b, p.Buf.DynamicColumns())
+	w, err := g.tableConfig.Schema().GetWriter(b, p.Buf.DynamicColumns())
 	if err != nil {
 		return nil, ErrCreateSchemaWriter{err}
 	}
@@ -202,8 +202,8 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 				}
 				granules = append(granules, gran)
 				b = bytes.NewBuffer(nil)
-				g.tableConfig.schema.PutWriter(w)
-				w, err = g.tableConfig.schema.GetWriter(b, p.Buf.DynamicColumns())
+				g.tableConfig.Schema().PutWriter(w)
+				w, err = g.tableConfig.Schema().GetWriter(b, p.Buf.DynamicColumns())
 				if err != nil {
 					return nil, ErrCreateSchemaWriter{err}
 				}
@@ -221,7 +221,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 		if err != nil {
 			return nil, fmt.Errorf("close last writer: %w", err)
 		}
-		g.tableConfig.schema.PutWriter(w)
+		g.tableConfig.Schema().PutWriter(w)
 
 		r, err := dynparquet.ReaderFromBytes(b.Bytes())
 		if err != nil {
@@ -251,7 +251,7 @@ func (g *Granule) PartBuffersForTx(watermark uint64, iterator func(*dynparquet.S
 
 // Less implements the btree.Item interface.
 func (g *Granule) Less(than btree.Item) bool {
-	return g.tableConfig.schema.RowLessThan(g.Least(), than.(*Granule).Least())
+	return g.tableConfig.Schema().RowLessThan(g.Least(), than.(*Granule).Least())
 }
 
 // Least returns the least row in a Granule.

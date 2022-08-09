@@ -3,10 +3,13 @@ package frostdb
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"hash/fnv"
 	"path/filepath"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore"
@@ -25,7 +28,27 @@ func (t *TableBlock) Persist() error {
 		return err
 	}
 	fileName := filepath.Join(t.table.name, t.ulid.String(), dataFileName)
-	return t.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
+	err = t.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to upload table block: %w", err)
+	}
+
+	return t.persistTableSchema(context.Background())
+}
+
+// persistTableSchema will write a schema.json file to storage if enabled.
+func (t *TableBlock) persistTableSchema(ctx context.Context) error {
+	m := &jsonpb.Marshaler{}
+	b := &bytes.Buffer{}
+	if err := m.Marshal(b, t.table.Schema().Definition()); err != nil {
+		return fmt.Errorf("failed to marshal schema definition: %w", err)
+	}
+
+	h := fnv.New64()
+	_, _ = h.Write(b.Bytes())
+
+	name := filepath.Join(schemasPrefix, fmt.Sprintf(schemaFileNameFormat, h.Sum64()))
+	return t.table.db.bucket.Upload(ctx, filepath.Join(t.table.name, name), b)
 }
 
 func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {

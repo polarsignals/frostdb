@@ -2,16 +2,17 @@ package frostdb
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -221,6 +222,8 @@ type DB struct {
 }
 
 func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
+	name = SanitizeName(name)
+
 	s.mtx.RLock()
 	db, ok := s.dbs[name]
 	s.mtx.RUnlock()
@@ -278,37 +281,8 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 	// If bucket storage is configured; scan for existing tables in the database
 	if db.bucket != nil {
-		if err := db.bucket.Iter(ctx, "", func(block string) error {
-			if filepath.Base(block) != schemaFileName {
-				return nil
-			}
-
-			r, err := db.bucket.Get(ctx, block)
-			if err != nil {
-				return fmt.Errorf("failed to get schema.json: %w", err)
-			}
-			defer r.Close()
-
-			definition := &schemapb.Schema{}
-			if err := json.NewDecoder(r).Decode(definition); err != nil {
-				return fmt.Errorf("failed to decode schema.json: %w", err)
-			}
-
-			schema, err := dynparquet.SchemaFromDefinition(definition)
-			if err != nil {
-				return fmt.Errorf("failed to create schema from definition: %w", err)
-			}
-
-			tableName := filepath.Dir(block)
-			tbl, err := db.Table(tableName, NewTableConfig(schema))
-			if err != nil {
-				return err
-			}
-			db.tables[tableName] = tbl
-
-			return nil
-		}, objstore.WithRecursiveIter); err != nil {
-			return nil, err
+		if err := db.IterateBucketTables(ctx); err != nil {
+			return nil, fmt.Errorf("failed to populate existing tables: %w", err)
 		}
 	}
 
@@ -400,7 +374,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 			table.pendingBlocks[table.active] = struct{}{}
 			go table.writeBlock(table.active)
 
-			if !proto.Equal(entry.Schema, table.config.schema.Definition()) {
+			if !proto.Equal(entry.Schema, table.Schema().Definition()) {
 				// If schemas are identical from block to block we should we
 				// reuse the previous schema in order to retain pooled memory
 				// for it.
@@ -410,7 +384,8 @@ func (db *DB) replayWAL(ctx context.Context) error {
 					return fmt.Errorf("instantiate schema: %w", err)
 				}
 
-				table.config.schema = schema
+				// TODO THOR
+				table.config.schemas = append(table.config.schemas, schema)
 			}
 
 			table.active, err = newTableBlock(table, table.active.minTx, tx, id)
@@ -499,6 +474,8 @@ func (db *DB) maintainWAL() {
 }
 
 func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
+	name = SanitizeName(name)
+
 	db.mtx.RLock()
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
@@ -549,6 +526,7 @@ func (e ErrTableNotFound) Error() string {
 }
 
 func (db *DB) GetTable(name string) (*Table, error) {
+	name = SanitizeName(name)
 	db.mtx.RLock()
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
@@ -573,6 +551,7 @@ func NewDBTableProvider(db *DB) *DBTableProvider {
 }
 
 func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
+	name = SanitizeName(name)
 	p.db.mtx.RLock()
 	defer p.db.mtx.RUnlock()
 	return p.db.tables[name]
@@ -610,4 +589,53 @@ func (db *DB) Wait(tx uint64) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func (db *DB) IterateBucketTables(ctx context.Context) error {
+	if err := db.bucket.Iter(ctx, "", func(tableName string) error {
+		schemas := []*dynparquet.Schema{}
+		if err := db.bucket.Iter(ctx, filepath.Join(tableName, schemasPrefix), func(schemaFile string) error {
+			tableName = SanitizeName(tableName)
+
+			r, err := db.bucket.Get(ctx, schemaFile)
+			if err != nil {
+				return fmt.Errorf("failed to get schema.json: %w", err)
+			}
+			defer r.Close()
+
+			definition := &schemapb.Schema{}
+			m := &jsonpb.Unmarshaler{}
+			if err := m.Unmarshal(r, definition); err != nil {
+				return fmt.Errorf("failed to decode schema.json: %w", err)
+			}
+
+			schema, err := dynparquet.SchemaFromDefinition(definition)
+			if err != nil {
+				return fmt.Errorf("failed to create schema from definition: %w", err)
+			}
+
+			schemas = append(schemas, schema)
+			return nil
+
+		}); err != nil {
+			return err
+		}
+
+		tbl, err := db.Table(tableName, NewTableConfig(schemas...))
+		if err != nil {
+			return err
+		}
+		db.tables[tableName] = tbl
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// SanitizeName takes a table or database name and replaces any '/' with '-'
+func SanitizeName(n string) string {
+	return strings.Replace(strings.TrimSuffix(n, "/"), "/", "-", -1)
 }
