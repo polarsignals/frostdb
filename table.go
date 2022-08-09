@@ -3,9 +3,9 @@ package frostdb
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"math"
 	"math/rand"
@@ -28,6 +28,7 @@ import (
 	"github.com/segmentio/parquet-go"
 	"go.uber.org/atomic"
 
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/polarsignals/frostdb/dynparquet"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
@@ -35,8 +36,8 @@ import (
 )
 
 const (
-	// schemaFileName is the name of the schema file that is written for each table if persistence is enabled.
-	schemaFileName = "schema.json"
+	// schemaFileNameFormat is the format string of the schema file name that is written for each table if persistence is enabled.
+	schemaFileNameFormat = "schemas/schema_%v.json"
 
 	// dataFileName is the name of the parquet blocks that are written to storage if persistence is enabled.
 	dataFileName = "data.parquet"
@@ -1390,9 +1391,15 @@ func (t *Table) persistTableSchema(ctx context.Context) error {
 		return nil
 	}
 
-	b, err := json.Marshal(t.config.schema.Definition())
-	if err != nil {
+	m := &jsonpb.Marshaler{}
+	b := &bytes.Buffer{}
+	if err := m.Marshal(b, t.config.schema.Definition()); err != nil {
 		return fmt.Errorf("failed to marshal schema definition: %w", err)
 	}
-	return t.db.bucket.Upload(ctx, filepath.Join(t.name, schemaFileName), bytes.NewBuffer(b))
+
+	h := fnv.New64()
+	_, _ = h.Write(b.Bytes())
+
+	name := fmt.Sprintf(schemaFileNameFormat, h.Sum64())
+	return t.db.bucket.Upload(ctx, filepath.Join(t.name, name), b)
 }
