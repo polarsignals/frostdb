@@ -385,8 +385,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 					return fmt.Errorf("instantiate schema: %w", err)
 				}
 
-				// TODO THOR how do we handle the wal here...
-				table.config.schemas = append(table.config.schemas, schema)
+				table.config.schemas = append([]*dynparquet.Schema{schema}, table.config.schemas...)
 			}
 
 			table.active, err = newTableBlock(table, table.active.minTx, tx, id)
