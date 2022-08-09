@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -384,7 +385,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 					return fmt.Errorf("instantiate schema: %w", err)
 				}
 
-				// TODO THOR
+				// TODO THOR how do we handle the wal here...
 				table.config.schemas = append(table.config.schemas, schema)
 			}
 
@@ -593,20 +594,25 @@ func (db *DB) Wait(tx uint64) {
 
 func (db *DB) IterateBucketTables(ctx context.Context) error {
 	if err := db.bucket.Iter(ctx, "", func(tableName string) error {
-		schemas := []*dynparquet.Schema{}
+		schemas := sortableSchemaList{}
 		if err := db.bucket.Iter(ctx, filepath.Join(tableName, schemasPrefix), func(schemaFile string) error {
 			tableName = SanitizeName(tableName)
 
+			attr, err := db.bucket.Attributes(ctx, schemaFile)
+			if err != nil {
+				return fmt.Errorf("failed to get %s attributes: %w", schemaFile, err)
+			}
+
 			r, err := db.bucket.Get(ctx, schemaFile)
 			if err != nil {
-				return fmt.Errorf("failed to get schema.json: %w", err)
+				return fmt.Errorf("failed to get %s: %w", schemaFile, err)
 			}
 			defer r.Close()
 
 			definition := &schemapb.Schema{}
 			m := &jsonpb.Unmarshaler{}
 			if err := m.Unmarshal(r, definition); err != nil {
-				return fmt.Errorf("failed to decode schema.json: %w", err)
+				return fmt.Errorf("failed to decode %s: %w", schemaFile, err)
 			}
 
 			schema, err := dynparquet.SchemaFromDefinition(definition)
@@ -614,14 +620,15 @@ func (db *DB) IterateBucketTables(ctx context.Context) error {
 				return fmt.Errorf("failed to create schema from definition: %w", err)
 			}
 
-			schemas = append(schemas, schema)
+			schemas = append(schemas, sortableSchema{ts: attr.LastModified, schema: schema})
 			return nil
 
 		}); err != nil {
 			return err
 		}
 
-		tbl, err := db.Table(tableName, NewTableConfig(schemas...))
+		sort.Sort(sort.Reverse(schemas)) // Place the most recently modified schema at the front
+		tbl, err := db.Table(tableName, NewTableConfig(schemas.Slice()...))
 		if err != nil {
 			return err
 		}
@@ -638,4 +645,22 @@ func (db *DB) IterateBucketTables(ctx context.Context) error {
 // SanitizeName takes a table or database name and replaces any '/' with '-'
 func SanitizeName(n string) string {
 	return strings.Replace(strings.TrimSuffix(n, "/"), "/", "-", -1)
+}
+
+type sortableSchema struct {
+	ts     time.Time
+	schema *dynparquet.Schema
+}
+
+type sortableSchemaList []sortableSchema
+
+func (s sortableSchemaList) Len() int           { return len(s) }
+func (s sortableSchemaList) Less(i, j int) bool { return s[i].ts.Before(s[j].ts) }
+func (s sortableSchemaList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s sortableSchemaList) Slice() []*dynparquet.Schema {
+	schemas := make([]*dynparquet.Schema, 0, len(s))
+	for _, schema := range s {
+		schemas = append(schemas, schema.schema)
+	}
+	return schemas
 }

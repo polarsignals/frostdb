@@ -34,7 +34,7 @@ import (
 
 const (
 
-	// schemasPrefix is the prefix for the schema files
+	// schemasPrefix is the prefix for the schema files.
 	schemasPrefix = "schemas"
 
 	// schemaFileNameFormat is the format string of the schema file name that is written for each table if persistence is enabled.
@@ -64,9 +64,9 @@ type TableConfig struct {
 	schemas []*dynparquet.Schema
 }
 
-// Schema returns the latest schema in the table config
+// Schema returns the latest schema in the table config.
 func (t *TableConfig) Schema() *dynparquet.Schema {
-	return t.schemas[0] // TODO THOR
+	return t.schemas[0] // first schema is the most recent schema
 }
 
 func NewTableConfig(schemas ...*dynparquet.Schema) *TableConfig {
@@ -353,7 +353,7 @@ func (t *Table) ActiveWriteBlock() (*TableBlock, func()) {
 }
 
 func (t *Table) Schema() *dynparquet.Schema {
-	return t.config.schemas[0] // TODO THOR determine the latest schema
+	return t.config.Schema()
 }
 
 func (t *Table) Sync() {

@@ -48,6 +48,14 @@ func (t *TableBlock) persistTableSchema(ctx context.Context) error {
 	_, _ = h.Write(b.Bytes())
 
 	name := filepath.Join(schemasPrefix, fmt.Sprintf(schemaFileNameFormat, h.Sum64()))
+	exists, err := t.table.db.bucket.Exists(ctx, filepath.Join(t.table.name, name))
+	if err != nil {
+		return fmt.Errorf("failed to check if schema already exists: %w", err)
+	}
+	if exists {
+		return nil
+	}
+
 	return t.table.db.bucket.Upload(ctx, filepath.Join(t.table.name, name), b)
 }
 
