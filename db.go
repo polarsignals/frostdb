@@ -622,7 +622,6 @@ func (db *DB) IterateBucketTables(ctx context.Context) error {
 
 			schemas = append(schemas, sortableSchema{ts: attr.LastModified, schema: schema})
 			return nil
-
 		}); err != nil {
 			return err
 		}
@@ -642,7 +641,7 @@ func (db *DB) IterateBucketTables(ctx context.Context) error {
 	return nil
 }
 
-// SanitizeName takes a table or database name and replaces any '/' with '-'
+// SanitizeName takes a table or database name and replaces any '/' with '-'.
 func SanitizeName(n string) string {
 	return strings.Replace(strings.TrimSuffix(n, "/"), "/", "-", -1)
 }
