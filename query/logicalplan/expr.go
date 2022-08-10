@@ -6,8 +6,8 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow/convert"
 )
 
@@ -76,7 +76,7 @@ func (e *BinaryExpr) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(e)
 }
 
-func (e *BinaryExpr) DataType(_ *dynparquet.Schema) (arrow.DataType, error) {
+func (e *BinaryExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
 	return &arrow.BooleanType{}, nil
 }
 
@@ -121,13 +121,14 @@ func (c *Column) Name() string {
 	return c.ColumnName
 }
 
-func (c *Column) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
-	colDef, found := s.ColumnByName(c.ColumnName)
-	if !found {
-		return nil, errors.New("column not found")
+func (c *Column) DataType(s *parquet.Schema) (arrow.DataType, error) {
+	for _, field := range s.Fields() {
+		if field.Name() == c.ColumnName {
+			return convert.ParquetNodeToType(field)
+		}
 	}
 
-	return convert.ParquetNodeToType(colDef.StorageLayout)
+	return nil, errors.New("column not found")
 }
 
 func (c *Column) Alias(alias string) AliasExpr {
@@ -255,13 +256,14 @@ func DynCol(name string) *DynamicColumn {
 	return &DynamicColumn{ColumnName: name}
 }
 
-func (c *DynamicColumn) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
-	colDef, found := s.ColumnByName(c.ColumnName)
-	if !found {
-		return nil, errors.New("column not found")
+func (c *DynamicColumn) DataType(s *parquet.Schema) (arrow.DataType, error) {
+	for _, field := range s.Fields() {
+		if field.Name() == c.ColumnName {
+			return convert.ParquetNodeToType(field)
+		}
 	}
 
-	return convert.ParquetNodeToType(colDef.StorageLayout)
+	return nil, errors.New("column not found")
 }
 
 func (c *DynamicColumn) ColumnsUsedExprs() []Expr {
@@ -302,7 +304,7 @@ func Literal(v interface{}) *LiteralExpr {
 	}
 }
 
-func (e *LiteralExpr) DataType(_ *dynparquet.Schema) (arrow.DataType, error) {
+func (e *LiteralExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
 	return e.Value.DataType(), nil
 }
 
@@ -330,7 +332,7 @@ type AggregationFunction struct {
 	Expr Expr
 }
 
-func (f *AggregationFunction) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
+func (f *AggregationFunction) DataType(s *parquet.Schema) (arrow.DataType, error) {
 	return f.Expr.DataType(s)
 }
 
@@ -392,7 +394,7 @@ type AliasExpr struct {
 	Alias string
 }
 
-func (e *AliasExpr) DataType(s *dynparquet.Schema) (arrow.DataType, error) {
+func (e *AliasExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
 	return e.Expr.DataType(s)
 }
 
