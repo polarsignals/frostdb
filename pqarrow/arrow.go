@@ -20,7 +20,6 @@ import (
 // ParquetRowGroupToArrowSchema converts a parquet row group to an arrow schema.
 func ParquetRowGroupToArrowSchema(
 	ctx context.Context,
-	schema *dynparquet.Schema,
 	rg parquet.RowGroup,
 	physicalProjections []logicalplan.Expr,
 	projections []logicalplan.Expr,
@@ -70,7 +69,7 @@ func ParquetRowGroupToArrowSchema(
 
 	for _, distinctExpr := range distinctColumns {
 		if distinctExpr.Computed() {
-			dataType, err := distinctExpr.DataType(schema)
+			dataType, err := distinctExpr.DataType(rg.Schema())
 			if err != nil {
 				return nil, err
 			}

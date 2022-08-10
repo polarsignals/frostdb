@@ -454,7 +454,6 @@ func (t *Table) Iterator(
 			if schema == nil {
 				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
 					ctx,
-					t.config.schema,
 					rg,
 					physicalProjections,
 					projections,
@@ -567,7 +566,6 @@ func (t *Table) ArrowSchema(
 		default:
 			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
 				ctx,
-				t.config.schema,
 				rg,
 				physicalProjections,
 				projections,
