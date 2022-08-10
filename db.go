@@ -529,7 +529,6 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 		table.config = config
 		delete(db.roTables, name)
 	} else {
-
 		var err error
 		table, err = newTable(
 			db,
