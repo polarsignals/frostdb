@@ -14,7 +14,6 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
@@ -199,9 +198,10 @@ type DB struct {
 	logger      log.Logger
 	name        string
 
-	mtx    *sync.RWMutex
-	tables map[string]*Table
-	reg    prometheus.Registerer
+	mtx      *sync.RWMutex
+	roTables map[string]*Table
+	tables   map[string]*Table
+	reg      prometheus.Registerer
 
 	storagePath          string
 	wal                  WAL
@@ -244,6 +244,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		name:                 name,
 		mtx:                  &sync.RWMutex{},
 		tables:               map[string]*Table{},
+		roTables:             map[string]*Table{},
 		reg:                  reg,
 		tx:                   atomic.NewUint64(0),
 		highWatermark:        highWatermark,
@@ -277,36 +278,15 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 	// If bucket storage is configured; scan for existing tables in the database
 	if db.bucket != nil {
-		if err := db.bucket.Iter(ctx, "", func(block string) error {
-			attr, err := db.bucket.Attributes(ctx, block)
-			if err != nil {
-				return err
-			}
+		if err := db.bucket.Iter(ctx, "", func(block string) error { // TODO fix this iter to not be recursive
 
 			// grab table name
 			tableName := filepath.Dir(filepath.Dir(block))
 
-			b := &BucketReaderAt{
-				name:   block,
-				ctx:    ctx,
-				Bucket: db.bucket,
-			}
-
-			f, err := parquet.OpenFile(b, attr.Size)
+			_, err := db.readOnlyTable(tableName)
 			if err != nil {
 				return err
 			}
-
-			schema, err := dynparquet.SchemaFromParquetFile(f)
-			if err != nil {
-				return err
-			}
-
-			tbl, err := db.Table(tableName, NewTableConfig(schema))
-			if err != nil {
-				return err
-			}
-			db.tables[tableName] = tbl
 
 			return nil
 		}, objstore.WithRecursiveIter); err != nil {
@@ -500,6 +480,28 @@ func (db *DB) maintainWAL() {
 	}
 }
 
+func (db *DB) readOnlyTable(name string) (*Table, error) {
+	table, ok := db.tables[name]
+	if ok {
+		return table, nil
+	}
+
+	table, err := newTable(
+		db,
+		name,
+		nil,
+		db.reg,
+		db.logger,
+		db.wal,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create table: %w", err)
+	}
+
+	db.roTables[name] = table
+	return table, nil
+}
+
 func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 	db.mtx.RLock()
 	table, ok := db.tables[name]
@@ -518,16 +520,25 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 		return table, nil
 	}
 
-	table, err := newTable(
-		db,
-		name,
-		config,
-		db.reg,
-		db.logger,
-		db.wal,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create table: %w", err)
+	// Check if this table exists as a read only table
+	table, ok = db.roTables[name]
+	if ok {
+		table.config = config
+		delete(db.roTables, name)
+	} else {
+
+		var err error
+		table, err = newTable(
+			db,
+			name,
+			config,
+			db.reg,
+			db.logger,
+			db.wal,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create table: %w", err)
+		}
 	}
 
 	tx, _, commit := db.begin()
@@ -577,7 +588,12 @@ func NewDBTableProvider(db *DB) *DBTableProvider {
 func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
 	p.db.mtx.RLock()
 	defer p.db.mtx.RUnlock()
-	return p.db.tables[name]
+	tbl, ok := p.db.tables[name]
+	if ok {
+		return tbl
+	}
+
+	return p.db.roTables[name]
 }
 
 // beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.

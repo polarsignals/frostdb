@@ -164,13 +164,15 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 			phyPlan = Distinct(pool, plan.Distinct.Exprs)
 		case plan.Filter != nil:
 			phyPlan, err = Filter(pool, plan.Filter.Expr)
-		case plan.Aggregation != nil:
-			var agg *HashAggregate
-			agg, err = Aggregate(pool, s, plan.Aggregation)
-			phyPlan = agg
-			if agg != nil {
-				finisher = agg.Finish
-			}
+			/* TODO: how do we get this to be a parquet.Schema?
+			case plan.Aggregation != nil:
+				var agg *HashAggregate
+				agg, err = Aggregate(pool, s, plan.Aggregation)
+				phyPlan = agg
+				if agg != nil {
+					finisher = agg.Finish
+				}
+			*/
 		default:
 			panic("Unsupported plan")
 		}
