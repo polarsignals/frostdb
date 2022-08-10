@@ -583,6 +583,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 		newColumnstore func(t *testing.T) *ColumnStore
 		filterExpr     logicalplan.Expr
 		projections    []logicalplan.Expr
+		distinct       []logicalplan.Expr
 		rows           int64
 		cols           int64
 	}{
@@ -592,6 +593,22 @@ func Test_DB_Filter_Block(t *testing.T) {
 			),
 			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
 			rows:        2,
+			cols:        2,
+			newColumnstore: func(t *testing.T) *ColumnStore {
+				c, err := New(
+					logger,
+					prometheus.NewRegistry(),
+					WithBucketStorage(bucket),
+				)
+				require.NoError(t, err)
+				return c
+			},
+		},
+		"distinct": {
+			filterExpr:  nil,
+			distinct:    []logicalplan.Expr{logicalplan.DynCol("labels")},
+			projections: nil,
+			rows:        1,
 			cols:        2,
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
@@ -685,14 +702,21 @@ func Test_DB_Filter_Block(t *testing.T) {
 				db.TableProvider(),
 			)
 
-			err = engine.ScanTable(sanitize(t.Name())).
-				Filter(test.filterExpr).
-				Project(test.projections...).
-				Execute(context.Background(), func(ar arrow.Record) error {
-					require.Equal(t, test.rows, ar.NumRows())
-					require.Equal(t, test.cols, ar.NumCols())
-					return nil
-				})
+			query := engine.ScanTable(sanitize(t.Name()))
+			if test.filterExpr != nil {
+				query = query.Filter(test.filterExpr)
+			}
+			if test.projections != nil {
+				query = query.Project(test.projections...)
+			}
+			if test.distinct != nil {
+				query = query.Distinct(test.distinct...)
+			}
+			err = query.Execute(context.Background(), func(ar arrow.Record) error {
+				require.Equal(t, test.rows, ar.NumRows())
+				require.Equal(t, test.cols, ar.NumCols())
+				return nil
+			})
 			require.NoError(t, err)
 		})
 	}
