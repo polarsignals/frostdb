@@ -239,6 +239,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 	highWatermark := atomic.NewUint64(0)
 	reg := prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg)
+	logger := log.WithPrefix(s.logger, "db", name)
 	db = &DB{
 		columnStore:          s,
 		name:                 name,
@@ -248,7 +249,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		tx:                   atomic.NewUint64(0),
 		highWatermark:        highWatermark,
 		storagePath:          filepath.Join(s.DatabasesDir(), name),
-		logger:               s.logger,
+		logger:               logger,
 		wal:                  &wal.NopWAL{},
 		ignoreStorageOnQuery: s.ignoreStorageOnQuery,
 		metrics: &dbMetrics{
