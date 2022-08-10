@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -220,6 +221,9 @@ type DB struct {
 }
 
 func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
+	if !validateName(name) {
+		return nil, errors.New("invalid database name")
+	}
 	s.mtx.RLock()
 	db, ok := s.dbs[name]
 	s.mtx.RUnlock()
@@ -278,18 +282,14 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 	// If bucket storage is configured; scan for existing tables in the database
 	if db.bucket != nil {
-		if err := db.bucket.Iter(ctx, "", func(block string) error { // TODO fix this iter to not be recursive
-
-			// grab table name
-			tableName := filepath.Dir(filepath.Dir(block))
-
-			_, err := db.readOnlyTable(tableName)
+		if err := db.bucket.Iter(ctx, "", func(tableName string) error {
+			_, err := db.readOnlyTable(strings.TrimSuffix(tableName, "/"))
 			if err != nil {
 				return err
 			}
 
 			return nil
-		}, objstore.WithRecursiveIter); err != nil {
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -503,6 +503,9 @@ func (db *DB) readOnlyTable(name string) (*Table, error) {
 }
 
 func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
+	if !validateName(name) {
+		return nil, errors.New("invalid table name")
+	}
 	db.mtx.RLock()
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
@@ -628,4 +631,9 @@ func (db *DB) Wait(tx uint64) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// validateName ensures that the passed in name doesn't violate any constrainsts.
+func validateName(name string) bool {
+	return !strings.Contains(name, "/")
 }

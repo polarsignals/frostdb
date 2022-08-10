@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -286,6 +287,10 @@ func Test_DB_WithStorage(t *testing.T) {
 }
 
 func Test_DB_ColdStart(t *testing.T) {
+	sanitize := func(name string) string {
+		return strings.Replace(name, "/", "-", -1)
+	}
+
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
 	)
@@ -293,7 +298,7 @@ func Test_DB_ColdStart(t *testing.T) {
 	bucket, err := filesystem.NewBucket(".")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		os.RemoveAll(t.Name())
+		os.RemoveAll(sanitize(t.Name()))
 	})
 
 	logger := newTestLogger(t)
@@ -335,12 +340,12 @@ func Test_DB_ColdStart(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			c := test.newColumnstore(t)
-			db, err := c.DB(context.Background(), t.Name())
+			db, err := c.DB(context.Background(), sanitize(t.Name()))
 			require.NoError(t, err)
-			table, err := db.Table(t.Name(), config)
+			table, err := db.Table(sanitize(t.Name()), config)
 			require.NoError(t, err)
 			t.Cleanup(func() {
-				os.RemoveAll(t.Name())
+				os.RemoveAll(sanitize(t.Name()))
 			})
 
 			samples := dynparquet.Samples{
@@ -404,12 +409,12 @@ func Test_DB_ColdStart(t *testing.T) {
 			require.NoError(t, err)
 
 			// connect to our test db
-			db, err = c.DB(context.Background(), t.Name())
+			db, err = c.DB(context.Background(), sanitize(t.Name()))
 			require.NoError(t, err)
 
 			pool := memory.NewGoAllocator()
 			engine := query.NewEngine(pool, db.TableProvider())
-			require.NoError(t, engine.ScanTable(t.Name()).Execute(context.Background(), func(r arrow.Record) error {
+			require.NoError(t, engine.ScanTable(sanitize(t.Name())).Execute(context.Background(), func(r arrow.Record) error {
 				require.Equal(t, int64(6), r.NumCols())
 				require.Equal(t, int64(3), r.NumRows())
 				return nil
