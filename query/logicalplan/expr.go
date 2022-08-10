@@ -258,8 +258,10 @@ func DynCol(name string) *DynamicColumn {
 
 func (c *DynamicColumn) DataType(s *parquet.Schema) (arrow.DataType, error) {
 	for _, field := range s.Fields() {
-		if field.Name() == c.ColumnName {
-			return convert.ParquetNodeToType(field)
+		if names := strings.Split(field.Name(), "."); len(names) == 2 {
+			if names[0] == c.ColumnName {
+				return convert.ParquetNodeToType(field)
+			}
 		}
 	}
 
