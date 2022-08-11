@@ -1115,7 +1115,7 @@ func (t *TableBlock) abort(granule *Granule) {
 	}
 }
 
-func (t *TableBlock) Serialize() ([]byte, error) {
+func (t *TableBlock) Serialize(writer io.Writer) error {
 	ctx := context.Background()
 
 	// Read all row groups
@@ -1126,19 +1126,18 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 		return true
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	buf := bytes.NewBuffer(nil)
 	cols := merged.DynamicColumns()
-	w, err := t.table.config.schema.GetWriter(buf, cols)
+	w, err := t.table.config.schema.GetWriter(writer, cols)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer t.table.config.schema.PutWriter(w)
 
@@ -1151,11 +1150,11 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 		_, err = w.WriteRows(rowsBuf)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		n++
 	}
@@ -1163,7 +1162,7 @@ func (t *TableBlock) Serialize() ([]byte, error) {
 	err = w.Close()
 
 	level.Info(t.logger).Log("msg", "writing rows to disk", "rows_count", n)
-	return buf.Bytes(), err
+	return err
 }
 
 // filterGranule returns false if this granule does not contain useful data.
