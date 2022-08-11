@@ -11,14 +11,14 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/dgryski/go-metro"
+	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 func Aggregate(
 	pool memory.Allocator,
-	s *dynparquet.Schema,
+	s *parquet.Schema,
 	agg *logicalplan.Aggregation,
 ) (*HashAggregate, error) {
 	var (

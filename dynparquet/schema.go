@@ -390,6 +390,14 @@ func (s *Schema) Columns() []ColumnDefinition {
 	return s.columns
 }
 
+func (s *Schema) ParquetSchema() *parquet.Schema {
+	g := parquet.Group{}
+	for _, col := range s.columns {
+		g[col.Name] = col.StorageLayout
+	}
+	return parquet.NewSchema(s.def.Name, g)
+}
+
 // parquetSchema returns the parquet schema for the dynamic schema with the
 // concrete dynamic column names given in the argument.
 func (s Schema) parquetSchema(

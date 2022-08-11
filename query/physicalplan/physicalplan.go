@@ -166,7 +166,7 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 			phyPlan, err = Filter(pool, plan.Filter.Expr)
 		case plan.Aggregation != nil:
 			var agg *HashAggregate
-			agg, err = Aggregate(pool, s, plan.Aggregation)
+			agg, err = Aggregate(pool, s.ParquetSchema(), plan.Aggregation)
 			phyPlan = agg
 			if agg != nil {
 				finisher = agg.Finish

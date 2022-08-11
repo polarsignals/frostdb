@@ -97,7 +97,7 @@ func TestMergeToArrow(t *testing.T) {
 	ctx := context.Background()
 	pool := memory.DefaultAllocator
 
-	as, err := ParquetRowGroupToArrowSchema(ctx, dynSchema, merge, nil, nil, nil, nil)
+	as, err := ParquetRowGroupToArrowSchema(ctx, merge, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 8)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
@@ -141,7 +141,7 @@ func BenchmarkParquetToArrow(b *testing.B) {
 	ctx := context.Background()
 	pool := memory.NewGoAllocator()
 
-	schema, err := ParquetRowGroupToArrowSchema(ctx, dynSchema, buf, nil, nil, nil, nil)
+	schema, err := ParquetRowGroupToArrowSchema(ctx, buf, nil, nil, nil, nil)
 	require.NoError(b, err)
 
 	b.ResetTimer()
@@ -270,7 +270,6 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 	}
 	as, err := ParquetRowGroupToArrowSchema(
 		ctx,
-		dynSchema,
 		buf,
 		[]logicalplan.Expr{
 			logicalplan.Col("example_type"),
@@ -354,7 +353,6 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	}
 	as, err := ParquetRowGroupToArrowSchema(
 		ctx,
-		dynSchema,
 		buf,
 		[]logicalplan.Expr{
 			logicalplan.Col("example_type"),

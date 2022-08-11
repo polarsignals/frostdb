@@ -40,7 +40,7 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filt
 			return err
 		}
 
-		if blockUlid.Time() >= lastBlockTimestamp {
+		if lastBlockTimestamp != 0 && blockUlid.Time() >= lastBlockTimestamp {
 			return nil
 		}
 

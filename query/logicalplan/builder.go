@@ -2,8 +2,7 @@ package logicalplan
 
 import (
 	"github.com/apache/arrow/go/v8/arrow"
-
-	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/segmentio/parquet-go"
 )
 
 type Builder struct {
@@ -57,7 +56,7 @@ type Visitor interface {
 }
 
 type Expr interface {
-	DataType(*dynparquet.Schema) (arrow.DataType, error)
+	DataType(*parquet.Schema) (arrow.DataType, error)
 	Accept(Visitor) bool
 	Name() string
 

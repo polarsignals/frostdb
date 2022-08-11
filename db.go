@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,7 +15,6 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
@@ -199,9 +199,10 @@ type DB struct {
 	logger      log.Logger
 	name        string
 
-	mtx    *sync.RWMutex
-	tables map[string]*Table
-	reg    prometheus.Registerer
+	mtx      *sync.RWMutex
+	roTables map[string]*Table
+	tables   map[string]*Table
+	reg      prometheus.Registerer
 
 	storagePath          string
 	wal                  WAL
@@ -220,6 +221,9 @@ type DB struct {
 }
 
 func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
+	if !validateName(name) {
+		return nil, errors.New("invalid database name")
+	}
 	s.mtx.RLock()
 	db, ok := s.dbs[name]
 	s.mtx.RUnlock()
@@ -245,6 +249,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		name:                 name,
 		mtx:                  &sync.RWMutex{},
 		tables:               map[string]*Table{},
+		roTables:             map[string]*Table{},
 		reg:                  reg,
 		tx:                   atomic.NewUint64(0),
 		highWatermark:        highWatermark,
@@ -278,39 +283,14 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 	// If bucket storage is configured; scan for existing tables in the database
 	if db.bucket != nil {
-		if err := db.bucket.Iter(ctx, "", func(block string) error {
-			attr, err := db.bucket.Attributes(ctx, block)
+		if err := db.bucket.Iter(ctx, "", func(tableName string) error {
+			_, err := db.readOnlyTable(strings.TrimSuffix(tableName, "/"))
 			if err != nil {
 				return err
 			}
-
-			// grab table name
-			tableName := filepath.Dir(filepath.Dir(block))
-
-			b := &BucketReaderAt{
-				name:   block,
-				ctx:    ctx,
-				Bucket: db.bucket,
-			}
-
-			f, err := parquet.OpenFile(b, attr.Size)
-			if err != nil {
-				return err
-			}
-
-			schema, err := dynparquet.SchemaFromParquetFile(f)
-			if err != nil {
-				return err
-			}
-
-			tbl, err := db.Table(tableName, NewTableConfig(schema))
-			if err != nil {
-				return err
-			}
-			db.tables[tableName] = tbl
 
 			return nil
-		}, objstore.WithRecursiveIter); err != nil {
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -501,7 +481,32 @@ func (db *DB) maintainWAL() {
 	}
 }
 
+func (db *DB) readOnlyTable(name string) (*Table, error) {
+	table, ok := db.tables[name]
+	if ok {
+		return table, nil
+	}
+
+	table, err := newTable(
+		db,
+		name,
+		nil,
+		db.reg,
+		db.logger,
+		db.wal,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create table: %w", err)
+	}
+
+	db.roTables[name] = table
+	return table, nil
+}
+
 func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
+	if !validateName(name) {
+		return nil, errors.New("invalid table name")
+	}
 	db.mtx.RLock()
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
@@ -519,16 +524,24 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 		return table, nil
 	}
 
-	table, err := newTable(
-		db,
-		name,
-		config,
-		db.reg,
-		db.logger,
-		db.wal,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create table: %w", err)
+	// Check if this table exists as a read only table
+	table, ok = db.roTables[name]
+	if ok {
+		table.config = config
+		delete(db.roTables, name)
+	} else {
+		var err error
+		table, err = newTable(
+			db,
+			name,
+			config,
+			db.reg,
+			db.logger,
+			db.wal,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create table: %w", err)
+		}
 	}
 
 	tx, _, commit := db.begin()
@@ -578,7 +591,12 @@ func NewDBTableProvider(db *DB) *DBTableProvider {
 func (p *DBTableProvider) GetTable(name string) logicalplan.TableReader {
 	p.db.mtx.RLock()
 	defer p.db.mtx.RUnlock()
-	return p.db.tables[name]
+	tbl, ok := p.db.tables[name]
+	if ok {
+		return tbl
+	}
+
+	return p.db.roTables[name]
 }
 
 // beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.
@@ -613,4 +631,9 @@ func (db *DB) Wait(tx uint64) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// validateName ensures that the passed in name doesn't violate any constrainsts.
+func validateName(name string) bool {
+	return !strings.Contains(name, "/")
 }

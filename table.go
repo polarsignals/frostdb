@@ -338,6 +338,9 @@ func (t *Table) ActiveWriteBlock() (*TableBlock, func()) {
 }
 
 func (t *Table) Schema() *dynparquet.Schema {
+	if t.config == nil {
+		return nil
+	}
 	return t.config.schema
 }
 
@@ -454,7 +457,6 @@ func (t *Table) Iterator(
 			if schema == nil {
 				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
 					ctx,
-					t.config.schema,
 					rg,
 					physicalProjections,
 					projections,
@@ -567,7 +569,6 @@ func (t *Table) ArrowSchema(
 		default:
 			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
 				ctx,
-				t.config.schema,
 				rg,
 				physicalProjections,
 				projections,
@@ -1325,6 +1326,10 @@ func tombstone(parts []*Part) {
 func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
+
+	if t.active == nil { // this is currently a read only table
+		return nil, 0
+	}
 
 	lastReadBlockTimestamp := t.active.ulid.Time()
 	memoryBlocks := []*TableBlock{t.active}
