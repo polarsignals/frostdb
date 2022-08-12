@@ -1,26 +1,26 @@
 package frostdb
 
 import (
+	satomic "sync/atomic"
 	"time"
-	"unsafe"
 
 	"go.uber.org/atomic"
 )
 
 type TxNode struct {
-	next *atomic.UnsafePointer
+	next satomic.Pointer[TxNode]
 	tx   uint64
 }
 
 type TxPool struct {
-	next  *atomic.UnsafePointer
+	next  satomic.Pointer[TxNode]
 	drain chan interface{}
 }
 
 // NewTxPool returns a new TxPool and starts the pool cleaner routine.
 func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	txpool := &TxPool{
-		next:  atomic.NewUnsafePointer(unsafe.Pointer(nil)),
+		next:  satomic.Pointer[TxNode]{},
 		drain: make(chan interface{}, 1),
 	}
 	go txpool.cleaner(watermark)
@@ -34,8 +34,8 @@ func (l *TxPool) Prepend(tx uint64) *TxNode {
 	}
 	for { // continue until a successful compare and swap occurs.
 		next := l.next.Load()
-		node.next = atomic.NewUnsafePointer(next)
-		if l.next.CAS(next, unsafe.Pointer(node)) {
+		node.next.Store(next)
+		if l.next.CompareAndSwap(next, node) {
 			select {
 			case l.drain <- true:
 				return node
@@ -49,22 +49,22 @@ func (l *TxPool) Prepend(tx uint64) *TxNode {
 // Iterate accesses every node in the list.
 func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
 	next := l.next.Load()
-	prev := unsafe.Pointer(nil)
+	prev := satomic.Pointer[TxNode]{}
 	for {
 		node := (*TxNode)(next)
 		if node == nil {
 			return
 		}
 		if iterate(node.tx) {
-			if prev == nil { // we're removing the first node
-				l.next.CAS(nil, node.next.Load())
+			if prev.Load() == nil { // we're removing the first node
+				l.next.CompareAndSwap(nil, node.next.Load())
 			} else {
 				// set the previous nodes next to this nodes nex
-				prevnode := (*TxNode)(prev)
-				prevnode.next.CAS(prevnode.next.Load(), node.next.Load())
+				prevnode := prev.Load()
+				prevnode.next.CompareAndSwap(prevnode.next.Load(), node.next.Load())
 			}
 		}
-		prev = next
+		prev.Store(next)
 		next = node.next.Load()
 	}
 }

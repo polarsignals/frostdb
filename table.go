@@ -10,8 +10,8 @@ import (
 	"math/rand"
 	"sort"
 	"sync"
+	satomic "sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -100,7 +100,7 @@ type TableBlock struct {
 	prevTx uint64
 
 	size  *atomic.Int64
-	index *atomic.UnsafePointer // *btree.BTree
+	index satomic.Pointer[btree.BTree] // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
 
@@ -605,10 +605,12 @@ func generateULID() ulid.ULID {
 }
 
 func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, error) {
-	index := btree.New(table.db.columnStore.indexDegree)
+	index := satomic.Pointer[btree.BTree]{}
+	index.Store(btree.New(table.db.columnStore.indexDegree))
+
 	tb := &TableBlock{
 		table:  table,
-		index:  atomic.NewUnsafePointer(unsafe.Pointer(index)),
+		index:  index,
 		wg:     &sync.WaitGroup{},
 		mtx:    &sync.RWMutex{},
 		ulid:   id,
@@ -849,7 +851,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		}
 
 		// Point to the new index
-		if t.index.CAS(unsafe.Pointer(curIndex), unsafe.Pointer(index)) {
+		if t.index.CompareAndSwap(curIndex, index) {
 			sizeDiff := serBuf.ParquetFile().Size() - sizeBefore
 			t.size.Add(sizeDiff)
 			return
