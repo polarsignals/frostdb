@@ -157,6 +157,44 @@ func TestFilter(t *testing.T) {
 			filterExpr: logicalplan.Col("labels.label1").RegexMatch("values."),
 			rows:       0,
 		},
+		"== string or == string": {
+			filterExpr: logicalplan.Or(
+				logicalplan.Col("labels.label1").Eq(logicalplan.Literal("value1")),
+				logicalplan.Col("labels.label1").Eq(logicalplan.Literal("value2")),
+			),
+			cols: 6,
+			rows: 2,
+		},
+		"regexp or == missing column": {
+			filterExpr: logicalplan.Or(
+				logicalplan.Col("labels.label1").RegexMatch("value."),
+				logicalplan.Col("labels.label5").Eq(logicalplan.Literal("")),
+			),
+			cols: 7,
+			rows: 3,
+		},
+		"regexp and (== string or == string)": {
+			filterExpr: logicalplan.And(
+				logicalplan.Col("labels.label3").RegexMatch("value."),
+				logicalplan.Or(
+					logicalplan.Col("labels.label1").Eq(logicalplan.Literal("value1")),
+					logicalplan.Col("labels.label1").Eq(logicalplan.Literal("value2")),
+				),
+			),
+			cols: 6,
+			rows: 1,
+		},
+		"== string or (regexp and == string)": {
+			filterExpr: logicalplan.Or(
+				logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4")),
+				logicalplan.And(
+					logicalplan.Col("labels.label2").RegexMatch("value."),
+					logicalplan.Col("labels.label1").Eq(logicalplan.Literal("value2")),
+				),
+			),
+			cols: 7,
+			rows: 2,
+		},
 	}
 
 	engine := query.NewEngine(
