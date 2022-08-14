@@ -218,32 +218,7 @@ func And(exprs ...Expr) Expr {
 }
 
 func and(exprs []Expr) Expr {
-	nonNilExprs := make([]Expr, 0, len(exprs))
-	for _, expr := range exprs {
-		if expr != nil {
-			nonNilExprs = append(nonNilExprs, expr)
-		}
-	}
-
-	if len(nonNilExprs) == 0 {
-		return nil
-	}
-	if len(nonNilExprs) == 1 {
-		return nonNilExprs[0]
-	}
-	if len(nonNilExprs) == 2 {
-		return &BinaryExpr{
-			Left:  nonNilExprs[0],
-			Op:    OpAnd,
-			Right: nonNilExprs[1],
-		}
-	}
-
-	return &BinaryExpr{
-		Left:  nonNilExprs[0],
-		Op:    OpAnd,
-		Right: and(nonNilExprs[1:]),
-	}
+	return computeBinaryExpr(exprs, OpAnd)
 }
 
 func Or(exprs ...Expr) Expr {
@@ -251,6 +226,10 @@ func Or(exprs ...Expr) Expr {
 }
 
 func or(exprs []Expr) Expr {
+	return computeBinaryExpr(exprs, OpOr)
+}
+
+func computeBinaryExpr(exprs []Expr, op Op) Expr {
 	nonNilExprs := make([]Expr, 0, len(exprs))
 	for _, expr := range exprs {
 		if expr != nil {
@@ -267,15 +246,15 @@ func or(exprs []Expr) Expr {
 	if len(nonNilExprs) == 2 {
 		return &BinaryExpr{
 			Left:  nonNilExprs[0],
-			Op:    OpOr,
+			Op:    op,
 			Right: nonNilExprs[1],
 		}
 	}
 
 	return &BinaryExpr{
 		Left:  nonNilExprs[0],
-		Op:    OpOr,
-		Right: or(nonNilExprs[1:]),
+		Op:    op,
+		Right: computeBinaryExpr(nonNilExprs[1:], op),
 	}
 }
 
