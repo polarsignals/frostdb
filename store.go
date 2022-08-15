@@ -1,8 +1,9 @@
 package frostdb
 
 import (
-	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/go-kit/log"
@@ -20,12 +21,20 @@ func (t *TableBlock) Persist() error {
 		return nil
 	}
 
-	data, err := t.Serialize()
-	if err != nil {
-		return err
-	}
+	r, w := io.Pipe()
+	var err error
+	go func() {
+		defer w.Close()
+		err = t.Serialize(w)
+	}()
+	defer r.Close()
+
 	fileName := filepath.Join(t.table.name, t.ulid.String(), "data.parquet")
-	return t.table.db.bucket.Upload(context.Background(), fileName, bytes.NewReader(data))
+	if err := t.table.db.bucket.Upload(context.Background(), fileName, r); err != nil {
+		return fmt.Errorf("failed to upload block %v", err)
+	}
+
+	return fmt.Errorf("failed to serialize block: %v", err)
 }
 
 func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {

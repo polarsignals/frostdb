@@ -1115,55 +1115,88 @@ func (t *TableBlock) abort(granule *Granule) {
 	}
 }
 
-func (t *TableBlock) Serialize() ([]byte, error) {
+func (t *TableBlock) Serialize(writer io.Writer) error {
 	ctx := context.Background()
 
 	// Read all row groups
 	rowGroups := []dynparquet.DynamicRowGroup{}
-	// math.MaxUint64 is passed because we want to serialize everything.
+
+	// Collect all the row groups just to determine the dynamic cols
 	err := t.RowGroupIterator(ctx, math.MaxUint64, nil, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-
 	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	buf := bytes.NewBuffer(nil)
 	cols := merged.DynamicColumns()
-	w, err := t.table.config.schema.GetWriter(buf, cols)
+	w, err := t.table.config.schema.GetWriter(writer, cols)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer t.table.config.schema.PutWriter(w)
+	defer w.Close()
+
+	// Iterate over all the row groups, and write them to storage
+	count := 0
+	maxRows := 8192
+	j := 0
+	for i, rg := range rowGroups {
+		count += int(rg.NumRows())
+		if count < maxRows { // count can exceed maxRows
+			continue
+		}
+
+		err := t.writeRows(w, count, rowGroups[j:i])
+		if err != nil {
+			return err
+		}
+		j = i
+		count = 0
+	}
+	if count != 0 {
+		err := t.writeRows(w, count, rowGroups[j:])
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeRows writes a set of dynamic row groups to a writer.
+func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups []dynparquet.DynamicRowGroup) error {
+	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
+	if err != nil {
+		return err
+	}
 
 	rows := merged.Rows()
-	n := 0
 	for {
-		rowsBuf := make([]parquet.Row, 1)
-		_, err := rows.ReadRows(rowsBuf)
+		rowsBuf := make([]parquet.Row, count)
+		n, err := rows.ReadRows(rowsBuf)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+
+		if _, err = w.WriteRows(rowsBuf); err != nil {
+			return err
+		}
+
 		if err == io.EOF {
 			break
 		}
-		if err != nil {
-			return nil, err
-		}
-		_, err = w.WriteRows(rowsBuf)
-		if err != nil {
-			return nil, err
-		}
-		n++
 	}
 
-	err = w.Close()
-
-	level.Info(t.logger).Log("msg", "writing rows to disk", "rows_count", n)
-	return buf.Bytes(), err
+	return nil
 }
 
 // filterGranule returns false if this granule does not contain useful data.
