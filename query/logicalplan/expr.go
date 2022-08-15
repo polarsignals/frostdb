@@ -24,6 +24,7 @@ const (
 	OpRegexMatch
 	OpRegexNotMatch
 	OpAnd
+	OpOr
 )
 
 func (o Op) String() string {
@@ -46,6 +47,8 @@ func (o Op) String() string {
 		return "!~"
 	case OpAnd:
 		return "&&"
+	case OpOr:
+		return "||"
 	default:
 		panic("unknown operator")
 	}
@@ -216,6 +219,18 @@ func And(exprs ...Expr) Expr {
 }
 
 func and(exprs []Expr) Expr {
+	return computeBinaryExpr(exprs, OpAnd)
+}
+
+func Or(exprs ...Expr) Expr {
+	return or(exprs)
+}
+
+func or(exprs []Expr) Expr {
+	return computeBinaryExpr(exprs, OpOr)
+}
+
+func computeBinaryExpr(exprs []Expr, op Op) Expr {
 	nonNilExprs := make([]Expr, 0, len(exprs))
 	for _, expr := range exprs {
 		if expr != nil {
@@ -232,15 +247,15 @@ func and(exprs []Expr) Expr {
 	if len(nonNilExprs) == 2 {
 		return &BinaryExpr{
 			Left:  nonNilExprs[0],
-			Op:    OpAnd,
+			Op:    op,
 			Right: nonNilExprs[1],
 		}
 	}
 
 	return &BinaryExpr{
 		Left:  nonNilExprs[0],
-		Op:    OpAnd,
-		Right: and(nonNilExprs[1:]),
+		Op:    op,
+		Right: computeBinaryExpr(nonNilExprs[1:], op),
 	}
 }
 

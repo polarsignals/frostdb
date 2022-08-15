@@ -251,7 +251,7 @@ func ValidateFilterExpr(plan *LogicalPlan, e Expr) *ExprValidationError {
 
 // ValidateFilterBinaryExpr validates the filter's binary expression.
 func ValidateFilterBinaryExpr(plan *LogicalPlan, expr *BinaryExpr) *ExprValidationError {
-	if expr.Op == OpAnd {
+	if expr.Op == OpAnd || expr.Op == OpOr {
 		return ValidateFilterAndBinaryExpr(plan, expr)
 	}
 

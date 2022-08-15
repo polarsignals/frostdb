@@ -114,6 +114,21 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Left:  left,
 			Right: right,
 		}, nil
+	case logicalplan.OpOr:
+		left, err := booleanExpr(expr.Left)
+		if err != nil {
+			return nil, err
+		}
+
+		right, err := booleanExpr(expr.Right)
+		if err != nil {
+			return nil, err
+		}
+
+		return &OrExpr{
+			Left:  left,
+			Right: right,
+		}, nil
 	default:
 		panic("unsupported binary boolean expression")
 	}
@@ -142,6 +157,31 @@ func (a *AndExpr) Eval(r arrow.Record) (*Bitmap, error) {
 
 func (a *AndExpr) String() string {
 	return "(" + a.Left.String() + " AND " + a.Right.String() + ")"
+}
+
+type OrExpr struct {
+	Left  BooleanExpression
+	Right BooleanExpression
+}
+
+func (a *OrExpr) Eval(r arrow.Record) (*Bitmap, error) {
+	left, err := a.Left.Eval(r)
+	if err != nil {
+		return nil, err
+	}
+
+	right, err := a.Right.Eval(r)
+	if err != nil {
+		return nil, err
+	}
+
+	// This stores the result in place to avoid allocations.
+	left.Or(right)
+	return left, nil
+}
+
+func (a *OrExpr) String() string {
+	return "(" + a.Left.String() + " OR " + a.Right.String() + ")"
 }
 
 func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
