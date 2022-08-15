@@ -1169,7 +1169,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	return nil
 }
 
-// writeRows writes a set of dynamic row groups to a writer
+// writeRows writes a set of dynamic row groups to a writer.
 func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups []dynparquet.DynamicRowGroup) error {
 	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
 	if err != nil {
