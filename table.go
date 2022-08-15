@@ -1144,7 +1144,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 
 	// Iterate over all the row groups, and write them to storage
 	count := 0
-	maxRows := 8096
+	maxRows := 8192
 	j := 0
 	for i, rg := range rowGroups {
 		count += int(rg.NumRows())
