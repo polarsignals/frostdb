@@ -69,6 +69,8 @@ func TestWAL(t *testing.T) {
 
 	require.NoError(t, w.Close())
 
+	// Test after removing wal dir.
+	require.NoError(t, os.RemoveAll(dir))
 	w, err = Open(
 		log.NewNopLogger(),
 		prometheus.NewRegistry(),
