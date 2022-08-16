@@ -34,7 +34,10 @@ func (t *TableBlock) Persist() error {
 		return fmt.Errorf("failed to upload block %v", err)
 	}
 
-	return fmt.Errorf("failed to serialize block: %v", err)
+	if err != nil {
+		return fmt.Errorf("failed to serialize block: %v", err)
+	}
+	return nil
 }
 
 func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
