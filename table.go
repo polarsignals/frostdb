@@ -106,7 +106,7 @@ type TableBlock struct {
 	prevTx uint64
 
 	size  *atomic.Int64
-	index satomic.Pointer[btree.BTree] // *btree.BTree
+	index *satomic.Pointer[btree.BTree] // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
 
@@ -822,7 +822,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 
 	tb := &TableBlock{
 		table:  table,
-		index:  index,
+		index:  &index,
 		wg:     &sync.WaitGroup{},
 		mtx:    &sync.RWMutex{},
 		ulid:   id,

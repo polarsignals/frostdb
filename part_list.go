@@ -23,7 +23,7 @@ type Node struct {
 }
 
 type PartList struct {
-	next  satomic.Pointer[Node]
+	next  *satomic.Pointer[Node]
 	total *atomic.Uint64
 
 	// listType indicates the type of list this list is
@@ -31,7 +31,7 @@ type PartList struct {
 }
 
 // NewPartList creates a new PartList using atomic constructs.
-func NewPartList(next satomic.Pointer[Node], total uint64, s SentinelType) *PartList {
+func NewPartList(next *satomic.Pointer[Node], total uint64, s SentinelType) *PartList {
 	return &PartList{
 		next:     next,
 		total:    atomic.NewUint64(total),
