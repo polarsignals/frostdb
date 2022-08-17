@@ -50,7 +50,7 @@ type GranuleMetadata struct {
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
 	g := &Granule{
 		granulesCreated: granulesCreated,
-		parts:           NewPartList(satomic.Pointer[Node]{}, 0, None),
+		parts:           NewPartList(&satomic.Pointer[Node]{}, 0, None),
 		tableConfig:     tableConfig,
 
 		metadata: GranuleMetadata{
