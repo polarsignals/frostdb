@@ -53,21 +53,24 @@ func NewEngine(
 }
 
 type LocalQueryBuilder struct {
-	pool        memory.Allocator
-	planBuilder logicalplan.Builder
+	pool          memory.Allocator
+	planBuilder   logicalplan.Builder
+	optimizations []logicalplan.Optimizer
 }
 
 func (e *LocalEngine) ScanTable(name string) Builder {
 	return LocalQueryBuilder{
-		pool:        e.pool,
-		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name),
+		pool:          e.pool,
+		planBuilder:   (&logicalplan.Builder{}).Scan(e.tableProvider, name),
+		optimizations: e.optimizations,
 	}
 }
 
 func (e *LocalEngine) ScanSchema(name string) Builder {
 	return LocalQueryBuilder{
-		pool:        e.pool,
-		planBuilder: (&logicalplan.Builder{}).ScanSchema(e.tableProvider, name),
+		pool:          e.pool,
+		planBuilder:   (&logicalplan.Builder{}).ScanSchema(e.tableProvider, name),
+		optimizations: e.optimizations,
 	}
 }
 
@@ -76,8 +79,9 @@ func (b LocalQueryBuilder) Aggregate(
 	groupExprs ...logicalplan.Expr,
 ) Builder {
 	return LocalQueryBuilder{
-		pool:        b.pool,
-		planBuilder: b.planBuilder.Aggregate(aggExpr, groupExprs...),
+		pool:          b.pool,
+		planBuilder:   b.planBuilder.Aggregate(aggExpr, groupExprs...),
+		optimizations: b.optimizations,
 	}
 }
 
@@ -85,8 +89,9 @@ func (b LocalQueryBuilder) Filter(
 	expr logicalplan.Expr,
 ) Builder {
 	return LocalQueryBuilder{
-		pool:        b.pool,
-		planBuilder: b.planBuilder.Filter(expr),
+		pool:          b.pool,
+		planBuilder:   b.planBuilder.Filter(expr),
+		optimizations: b.optimizations,
 	}
 }
 
@@ -94,8 +99,9 @@ func (b LocalQueryBuilder) Distinct(
 	expr ...logicalplan.Expr,
 ) Builder {
 	return LocalQueryBuilder{
-		pool:        b.pool,
-		planBuilder: b.planBuilder.Distinct(expr...),
+		pool:          b.pool,
+		planBuilder:   b.planBuilder.Distinct(expr...),
+		optimizations: b.optimizations,
 	}
 }
 
@@ -103,8 +109,9 @@ func (b LocalQueryBuilder) Project(
 	projections ...logicalplan.Expr,
 ) Builder {
 	return LocalQueryBuilder{
-		pool:        b.pool,
-		planBuilder: b.planBuilder.Project(projections...),
+		pool:          b.pool,
+		planBuilder:   b.planBuilder.Project(projections...),
+		optimizations: b.optimizations,
 	}
 }
 
@@ -115,6 +122,10 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Re
 	}
 
 	for _, optimizer := range logicalplan.DefaultOptimizers {
+		logicalPlan = optimizer.Optimize(logicalPlan)
+	}
+
+	for _, optimizer := range b.optimizations {
 		logicalPlan = optimizer.Optimize(logicalPlan)
 	}
 
