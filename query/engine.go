@@ -21,11 +21,24 @@ type Builder interface {
 type LocalEngine struct {
 	pool          memory.Allocator
 	tableProvider logicalplan.TableProvider
+
+	timestampColHint string
+}
+
+// Hint is a suggestion to be made to the query engine about how it might more effectively query
+type Hint func(*LocalEngine)
+
+// ColAsTimestamp is a query engine hint that informs the engine which column to use as a timestamp during historical queries
+func ColAsTimestamp(columnName string) func(*LocalEngine) {
+	return func(l *LocalEngine) {
+		l.timestampColHint = columnName
+	}
 }
 
 func NewEngine(
 	pool memory.Allocator,
 	tableProvider logicalplan.TableProvider,
+	hints ...Hint,
 ) *LocalEngine {
 	return &LocalEngine{
 		pool:          pool,
@@ -41,14 +54,14 @@ type LocalQueryBuilder struct {
 func (e *LocalEngine) ScanTable(name string) Builder {
 	return LocalQueryBuilder{
 		pool:        e.pool,
-		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name),
+		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name, logicalplan.TableScanColAsTimestamp(e.timestampColHint)),
 	}
 }
 
 func (e *LocalEngine) ScanSchema(name string) Builder {
 	return LocalQueryBuilder{
 		pool:        e.pool,
-		planBuilder: (&logicalplan.Builder{}).ScanSchema(e.tableProvider, name),
+		planBuilder: (&logicalplan.Builder{}).ScanSchema(e.tableProvider, name, logicalplan.SchemaScanColAsTimestamp(e.timestampColHint)),
 	}
 }
 

@@ -79,6 +79,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			s.options.Projection,
 			s.options.Filter,
 			s.options.Distinct,
+			s.options.ColAsTimestamp,
 		)
 		if err != nil {
 			return err
@@ -93,6 +94,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			s.options.Projection,
 			s.options.Filter,
 			s.options.Distinct,
+			s.options.ColAsTimestamp,
 			s.next.Callback,
 		)
 	})
@@ -123,6 +125,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			s.options.Projection,
 			s.options.Filter,
 			s.options.Distinct,
+			s.options.ColAsTimestamp,
 			s.next.Callback,
 		)
 	})

@@ -112,6 +112,7 @@ type TableReader interface {
 		projection []Expr,
 		filter Expr,
 		distinctColumns []Expr,
+		timestampCol string,
 		callback func(r arrow.Record) error,
 	) error
 	SchemaIterator(
@@ -122,6 +123,7 @@ type TableReader interface {
 		projection []Expr,
 		filter Expr,
 		distinctColumns []Expr,
+		timestampCol string,
 		callback func(r arrow.Record) error,
 	) error
 	ArrowSchema(
@@ -132,12 +134,21 @@ type TableReader interface {
 		projection []Expr,
 		filter Expr, // TODO: We probably don't need this
 		distinctColumns []Expr,
+		timestampCol string,
 	) (*arrow.Schema, error)
 	Schema() *dynparquet.Schema
 }
 
 type TableProvider interface {
 	GetTable(name string) TableReader
+}
+
+type TableScanHint func(*TableScan)
+
+func TableScanColAsTimestamp(col string) func(*TableScan) {
+	return func(t *TableScan) {
+		t.ColAsTimestamp = col
+	}
 }
 
 type TableScan struct {
@@ -157,6 +168,9 @@ type TableScan struct {
 
 	// Projection is the list of columns that are to be projected.
 	Projection []Expr
+
+	// ColAsTimestamp is an optional scan hint that allows the iterator to ignore blocks based on a timestamp column
+	ColAsTimestamp string
 }
 
 func (scan *TableScan) String() string {
@@ -165,6 +179,14 @@ func (scan *TableScan) String() string {
 		" Projection: " + fmt.Sprint(scan.Projection) +
 		" Filter: " + fmt.Sprint(scan.Filter) +
 		" Distinct: " + fmt.Sprint(scan.Distinct)
+}
+
+type SchemaScanHint func(*SchemaScan)
+
+func SchemaScanColAsTimestamp(col string) func(*SchemaScan) {
+	return func(t *SchemaScan) {
+		t.ColAsTimestamp = col
+	}
 }
 
 type SchemaScan struct {
@@ -184,6 +206,9 @@ type SchemaScan struct {
 
 	// Projection is the list of columns that are to be projected.
 	Projection []Expr
+
+	// ColAsTimestamp is an optional scan hint that allows the iterator to ignore blocks based on a timestamp column
+	ColAsTimestamp string
 }
 
 func (s *SchemaScan) String() string {
