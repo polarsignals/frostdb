@@ -78,7 +78,6 @@ func (b *BlockFilter) LastBlockTimestamp(lastBlockTimestamp uint64) *BlockFilter
 
 // TODO
 func (b *BlockFilter) TimestampFilter(timestampCol string, filter logicalplan.Expr) *BlockFilter {
-	fmt.Println("TimestampFilter: ", timestampCol, filter)
 	if timestampCol == "" {
 		return b
 	}
@@ -181,54 +180,72 @@ func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 }
 
 func compareTimestamp(col string, ts uint64, expr logicalplan.Expr) (bool, error) {
-	fmt.Println("TODO THOR: ", expr)
 	if expr == nil {
 		return false, nil
+	}
+
+	parseExpr := func(e *logicalplan.BinaryExpr) (uint64, error) {
+		var leftColumnRef *ColumnRef
+		e.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+			switch e := expr.(type) {
+			case *logicalplan.Column:
+				leftColumnRef = &ColumnRef{
+					ColumnName: e.ColumnName,
+				}
+				return false
+			}
+			return true
+		}))
+		if leftColumnRef == nil {
+			return 0, errors.New("left side of binary expression must be a column")
+		}
+
+		// Not the timestamp column; don't care about it.
+		if leftColumnRef.ColumnName != col {
+			return 0, nil // TODO maybe return an error?
+		}
+
+		var (
+			rightValue parquet.Value
+			err        error
+		)
+		e.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+			switch e := expr.(type) {
+			case *logicalplan.LiteralExpr:
+				rightValue, err = pqarrow.ArrowScalarToParquetValue(e.Value)
+				return false
+			}
+			return true
+		}))
+		if err != nil {
+			return 0, err
+		}
+
+		return rightValue.Uint64(), nil
 	}
 
 	switch e := expr.(type) {
 	case *logicalplan.BinaryExpr:
 		switch e.Op {
-		case logicalplan.OpEq:
-			var leftColumnRef *ColumnRef
-			e.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
-				switch e := expr.(type) {
-				case *logicalplan.Column:
-					leftColumnRef = &ColumnRef{
-						ColumnName: e.ColumnName,
-					}
-					return false
-				}
-				return true
-			}))
-			if leftColumnRef == nil {
-				return false, errors.New("left side of binary expression must be a column")
-			}
-
-			// Not the timestamp column; don't care about it.
-			if leftColumnRef.ColumnName != col {
-				return false, nil
-			} // TODO is false correct here?
-
-			var (
-				rightValue parquet.Value
-				err        error
-			)
-			e.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
-				switch e := expr.(type) {
-				case *logicalplan.LiteralExpr:
-					rightValue, err = pqarrow.ArrowScalarToParquetValue(e.Value)
-					return false
-				}
-				return true
-			}))
+		case logicalplan.OpGtEq:
+			v, err := parseExpr(e)
 			if err != nil {
 				return false, err
 			}
 
-			// Perform comparison
-			// TODO with correct comparison operator
-			return ts == rightValue.Uint64(), nil
+			// TODO this isn't a correct way to do this since a block contains a range and the ulid is just the start of the block
+			fmt.Printf("compareTimestamp OpGtEq: %v >= %v = %v\n", v, ts, v >= ts)
+			return v >= ts, nil
+		case logicalplan.OpEq:
+			fmt.Println("compareTimestamp OpEq")
+
+			v, err := parseExpr(e)
+			if err != nil {
+				return false, err
+			}
+
+			// TODO this isn't a correct way to do this since a block contains a range and the ulid is just the start of the block
+			return ts == v, nil
 
 		case logicalplan.OpAnd:
 			left, err := compareTimestamp(col, ts, e.Left)
