@@ -169,7 +169,7 @@ func TestTable(t *testing.T) {
 	pool := memory.NewGoAllocator()
 
 	err = table.View(func(tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil)
 		if err != nil {
 			return err
 		}
@@ -179,9 +179,6 @@ func TestTable(t *testing.T) {
 			tx,
 			pool,
 			as,
-			nil,
-			nil,
-			nil,
 			nil,
 			func(ar arrow.Record) error {
 				t.Log(ar)
@@ -317,12 +314,12 @@ func Test_Table_GranuleSplit(t *testing.T) {
 
 	err = table.View(func(tx uint64) error {
 		pool := memory.NewGoAllocator()
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil)
 		if err != nil {
 			return err
 		}
 
-		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(r arrow.Record) error {
+		return table.Iterator(ctx, tx, pool, as, nil, func(r arrow.Record) error {
 			defer r.Release()
 			t.Log(r)
 			return nil
@@ -469,12 +466,12 @@ func Test_Table_InsertLowest(t *testing.T) {
 	pool := memory.NewGoAllocator()
 
 	err = table.View(func(tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil)
 		if err != nil {
 			return err
 		}
 
-		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(r arrow.Record) error {
+		return table.Iterator(ctx, tx, pool, as, nil, func(r arrow.Record) error {
 			defer r.Release()
 			t.Log(r)
 			return nil
@@ -571,12 +568,12 @@ func Test_Table_Concurrency(t *testing.T) {
 			err := table.View(func(tx uint64) error {
 				totalrows := int64(0)
 
-				as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+				as, err := table.ArrowSchema(ctx, tx, pool, nil)
 				if err != nil {
 					return err
 				}
 
-				err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+				err = table.Iterator(ctx, tx, pool, as, nil, func(ar arrow.Record) error {
 					totalrows += ar.NumRows()
 					defer ar.Release()
 
@@ -699,11 +696,11 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		// Calculate the number of entries in database
 		totalrows := int64(0)
 		err = table.View(func(tx uint64) error {
-			as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+			as, err := table.ArrowSchema(ctx, tx, pool, nil)
 			if err != nil {
 				return err
 			}
-			return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+			return table.Iterator(ctx, tx, pool, as, nil, func(ar arrow.Record) error {
 				defer ar.Release()
 				totalrows += ar.NumRows()
 
@@ -795,11 +792,11 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	pool := memory.NewGoAllocator()
 
 	err = table.View(func(tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil)
 		require.NoError(t, err)
 
 		rows := int64(0)
-		err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+		err = table.Iterator(ctx, tx, pool, as, nil, func(ar arrow.Record) error {
 			rows += ar.NumRows()
 			defer ar.Release()
 
@@ -816,11 +813,11 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.highWatermark.Store(3)
 
 	err = table.View(func(tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil)
 		require.NoError(t, err)
 
 		rows := int64(0)
-		err = table.Iterator(ctx, table.db.highWatermark.Load(), pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+		err = table.Iterator(ctx, table.db.highWatermark.Load(), pool, as, nil, func(ar arrow.Record) error {
 			rows += ar.NumRows()
 			defer ar.Release()
 
@@ -1146,12 +1143,12 @@ func Test_Table_Filter(t *testing.T) {
 	err = table.View(func(tx uint64) error {
 		iterated := false
 
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil)
 		if err != nil {
 			return err
 		}
 
-		err = table.Iterator(ctx, tx, pool, as, nil, nil, filterExpr, nil, func(ar arrow.Record) error {
+		err = table.Iterator(ctx, tx, pool, as, &logicalplan.IterOptions{Filter: filterExpr}, func(ar arrow.Record) error {
 			defer ar.Release()
 
 			iterated = true
@@ -1220,7 +1217,7 @@ func Test_Table_Bloomfilter(t *testing.T) {
 
 	iterations := 0
 	err := table.View(func(tx uint64) error {
-		err := table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4")), nil, func(ar arrow.Record) error {
+		err := table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, &logicalplan.IterOptions{Filter: logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))}, func(ar arrow.Record) error {
 			defer ar.Release()
 			iterations++
 			return nil
@@ -1320,12 +1317,12 @@ func Test_Table_InsertCancellation(t *testing.T) {
 			err := table.View(func(tx uint64) error {
 				totalrows := int64(0)
 
-				as, err := table.ArrowSchema(context.Background(), tx, pool, nil, nil, nil, nil)
+				as, err := table.ArrowSchema(context.Background(), tx, pool, nil)
 				if err != nil {
 					return err
 				}
 
-				err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+				err = table.Iterator(context.Background(), tx, pool, as, nil, func(ar arrow.Record) error {
 					totalrows += ar.NumRows()
 					defer ar.Release()
 
@@ -1396,12 +1393,12 @@ func Test_Table_CancelBasic(t *testing.T) {
 	err = table.View(func(tx uint64) error {
 		totalrows := int64(0)
 
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil)
 		if err != nil {
 			return err
 		}
 
-		err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+		err = table.Iterator(ctx, tx, pool, as, nil, func(ar arrow.Record) error {
 			totalrows += ar.NumRows()
 			defer ar.Release()
 
@@ -1466,7 +1463,7 @@ func Test_Table_ArrowSchema(t *testing.T) {
 	// because transaction 1 is just the new block creation, therefore there
 	// would be no schema to read (schemas only materialize when data is
 	// inserted).
-	schema, err := table.ArrowSchema(ctx, 2, pool, nil, nil, nil, nil)
+	schema, err := table.ArrowSchema(ctx, 2, pool, nil)
 	require.NoError(t, err)
 
 	require.Len(t, schema.Fields(), 6)
@@ -1498,12 +1495,7 @@ func Test_Table_ArrowSchema(t *testing.T) {
 	// Read two schemas for two different queries within the same transaction.
 
 	err = table.View(func(tx uint64) error {
-		schema, err := table.ArrowSchema(
-			ctx,
-			tx,
-			pool,
-			nil, nil, nil, nil,
-		)
+		schema, err := table.ArrowSchema(ctx, tx, pool, nil)
 		require.NoError(t, err)
 
 		require.Len(t, schema.Fields(), 7)
@@ -1540,11 +1532,12 @@ func Test_Table_ArrowSchema(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			[]logicalplan.Expr{
-				&logicalplan.DynamicColumn{ColumnName: "labels"},
-				&logicalplan.Column{ColumnName: "value"},
+			&logicalplan.IterOptions{
+				PhysicalProjection: []logicalplan.Expr{
+					&logicalplan.DynamicColumn{ColumnName: "labels"},
+					&logicalplan.Column{ColumnName: "value"},
+				},
 			},
-			nil, nil, nil,
 		)
 		require.NoError(t, err)
 
@@ -1632,12 +1625,12 @@ func Test_DoubleTable(t *testing.T) {
 	err = table.View(func(tx uint64) error {
 		pool := memory.NewGoAllocator()
 
-		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
+		as, err := table.ArrowSchema(ctx, tx, pool, nil)
 		if err != nil {
 			return err
 		}
 
-		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+		return table.Iterator(ctx, tx, pool, as, nil, func(ar arrow.Record) error {
 			defer ar.Release()
 			require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
 			return nil

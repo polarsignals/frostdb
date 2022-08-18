@@ -433,14 +433,13 @@ func (t *Table) Iterator(
 	tx uint64,
 	pool memory.Allocator,
 	schema *arrow.Schema,
-	physicalProjections []logicalplan.Expr,
-	projections []logicalplan.Expr,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
-	timestampCol string,
+	iterOpts *logicalplan.IterOptions,
 	iterator func(r arrow.Record) error,
 ) error {
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr, timestampCol)
+	if iterOpts == nil {
+		iterOpts = &logicalplan.IterOptions{}
+	}
+	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.TimestampCol)
 	if err != nil {
 		return err
 	}
@@ -459,10 +458,10 @@ func (t *Table) Iterator(
 				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
 					ctx,
 					rg,
-					physicalProjections,
-					projections,
-					filterExpr,
-					distinctColumns,
+					iterOpts.PhysicalProjection,
+					iterOpts.Projection,
+					iterOpts.Filter,
+					iterOpts.DistinctColumns,
 				)
 				if err != nil {
 					return err
@@ -475,8 +474,8 @@ func (t *Table) Iterator(
 				pool,
 				rg,
 				schema,
-				filterExpr,
-				distinctColumns,
+				iterOpts.Filter,
+				iterOpts.DistinctColumns,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
@@ -498,14 +497,13 @@ func (t *Table) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	physicalProjections []logicalplan.Expr,
-	projections []logicalplan.Expr,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
-	timestampCol string, // TODO: these should all be extracted into an iterator options struct
+	iterOpts *logicalplan.IterOptions,
 	iterator func(r arrow.Record) error,
 ) error {
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr, timestampCol)
+	if iterOpts == nil {
+		iterOpts = &logicalplan.IterOptions{}
+	}
+	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.TimestampCol)
 	if err != nil {
 		return err
 	}
@@ -548,13 +546,12 @@ func (t *Table) ArrowSchema(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	physicalProjections []logicalplan.Expr,
-	projections []logicalplan.Expr,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
-	timestampCol string,
+	iterOpts *logicalplan.IterOptions,
 ) (*arrow.Schema, error) {
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr, timestampCol)
+	if iterOpts == nil {
+		iterOpts = &logicalplan.IterOptions{}
+	}
+	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.TimestampCol)
 	if err != nil {
 		return nil, err
 	}
@@ -573,10 +570,10 @@ func (t *Table) ArrowSchema(
 			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
 				ctx,
 				rg,
-				physicalProjections,
-				projections,
-				filterExpr,
-				distinctColumns,
+				iterOpts.PhysicalProjection,
+				iterOpts.Projection,
+				iterOpts.Filter,
+				iterOpts.DistinctColumns,
 			)
 			if err != nil {
 				return nil, err
