@@ -41,14 +41,13 @@ func (t *TableBlock) Persist() error {
 	return nil
 }
 
-func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
-	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks")
-	span.SetAttributes(attribute.Int64("lastBlockTimestamp", int64(lastBlockTimestamp)))
-	defer span.End()
-
+func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, lastBlockTimestamp uint64, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool) error {
 	if t.db.bucket == nil || t.db.ignoreStorageOnQuery {
 		return nil
 	}
+	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks")
+	span.SetAttributes(attribute.Int64("lastBlockTimestamp", int64(lastBlockTimestamp)))
+	defer span.End()
 
 	n := 0
 	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
@@ -83,6 +82,15 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filt
 		file, err := parquet.OpenFile(b, attribs.Size)
 		if err != nil {
 			return err
+		}
+
+		// Check if the block can be filtered out
+		mayContainUsefulData, err := filter.Eval(&ParquetFileParticulate{File: file})
+		if err != nil {
+			return err
+		}
+		if !mayContainUsefulData { // skip the block entirely
+			return nil
 		}
 
 		// Get a reader from the file bytes

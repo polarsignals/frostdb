@@ -112,10 +112,12 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			ctx,
 			tx,
 			pool,
-			s.options.PhysicalProjection,
-			s.options.Projection,
-			s.options.Filter,
-			s.options.Distinct,
+			logicalplan.IterOptions{
+				PhysicalProjection: s.options.PhysicalProjection,
+				Projection:         s.options.Projection,
+				Filter:             s.options.Filter,
+				DistinctColumns:    s.options.Distinct,
+			},
 		)
 		if err != nil {
 			return err
@@ -126,10 +128,12 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			tx,
 			pool,
 			schema,
-			s.options.PhysicalProjection,
-			s.options.Projection,
-			s.options.Filter,
-			s.options.Distinct,
+			logicalplan.IterOptions{
+				PhysicalProjection: s.options.PhysicalProjection,
+				Projection:         s.options.Projection,
+				Filter:             s.options.Filter,
+				DistinctColumns:    s.options.Distinct,
+			},
 			s.next.Callback,
 		)
 	})
@@ -164,10 +168,12 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			ctx,
 			tx,
 			pool,
-			s.options.PhysicalProjection,
-			s.options.Projection,
-			s.options.Filter,
-			s.options.Distinct,
+			logicalplan.IterOptions{
+				PhysicalProjection: s.options.PhysicalProjection,
+				Projection:         s.options.Projection,
+				Filter:             s.options.Filter,
+				DistinctColumns:    s.options.Distinct,
+			},
 			s.next.Callback,
 		)
 	})

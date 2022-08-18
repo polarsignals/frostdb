@@ -6,7 +6,6 @@ import (
 
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -21,18 +20,33 @@ func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
 	return false
 }
 
+type Particulate interface {
+	Schema() *parquet.Schema
+	ColumnChunks() []parquet.ColumnChunk
+}
+
 type TrueNegativeFilter interface {
-	Eval(dynparquet.DynamicRowGroup) (bool, error)
+	Eval(Particulate) (bool, error)
 }
 
 type AlwaysTrueFilter struct{}
 
-func (f *AlwaysTrueFilter) Eval(dynparquet.DynamicRowGroup) (bool, error) {
+func (f *AlwaysTrueFilter) Eval(p Particulate) (bool, error) {
 	return true, nil
 }
 
 func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error) {
 	switch expr.Op {
+	case logicalplan.OpNotEq:
+		fallthrough
+	case logicalplan.OpLt:
+		fallthrough
+	case logicalplan.OpLtEq:
+		fallthrough
+	case logicalplan.OpGt:
+		fallthrough
+	case logicalplan.OpGtEq:
+		fallthrough
 	case logicalplan.OpEq: //, logicalplan.OpNotEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpRegexMatch, logicalplan.RegexNotMatch:
 		var leftColumnRef *ColumnRef
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
@@ -111,8 +125,8 @@ type AndExpr struct {
 	Right TrueNegativeFilter
 }
 
-func (a *AndExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
-	left, err := a.Left.Eval(rg)
+func (a *AndExpr) Eval(p Particulate) (bool, error) {
+	left, err := a.Left.Eval(p)
 	if err != nil {
 		return false, err
 	}
@@ -120,7 +134,7 @@ func (a *AndExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
 		return false, nil
 	}
 
-	right, err := a.Right.Eval(rg)
+	right, err := a.Right.Eval(p)
 	if err != nil {
 		return false, err
 	}
@@ -134,8 +148,8 @@ type OrExpr struct {
 	Right TrueNegativeFilter
 }
 
-func (a *OrExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
-	left, err := a.Left.Eval(rg)
+func (a *OrExpr) Eval(p Particulate) (bool, error) {
+	left, err := a.Left.Eval(p)
 	if err != nil {
 		return false, err
 	}
@@ -143,7 +157,7 @@ func (a *OrExpr) Eval(rg dynparquet.DynamicRowGroup) (bool, error) {
 		return true, nil
 	}
 
-	right, err := a.Right.Eval(rg)
+	right, err := a.Right.Eval(p)
 	if err != nil {
 		return false, err
 	}

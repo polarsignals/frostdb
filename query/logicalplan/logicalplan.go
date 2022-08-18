@@ -25,6 +25,15 @@ type LogicalPlan struct {
 	Aggregation *Aggregation
 }
 
+// IterOptions are a set of options for the TableReader Iterators
+// TODO: should we instead use the option pattern? Is that possible with the way the Iterator functions work?
+type IterOptions struct {
+	PhysicalProjection []Expr
+	Projection         []Expr
+	Filter             Expr
+	DistinctColumns    []Expr
+}
+
 func (plan *LogicalPlan) String() string {
 	return plan.string(0)
 }
@@ -106,30 +115,21 @@ type TableReader interface {
 		tx uint64,
 		pool memory.Allocator,
 		schema *arrow.Schema,
-		physicalProjection []Expr,
-		projection []Expr,
-		filter Expr,
-		distinctColumns []Expr,
+		options IterOptions,
 		callback func(ctx context.Context, r arrow.Record) error,
 	) error
 	SchemaIterator(
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		physicalProjection []Expr,
-		projection []Expr,
-		filter Expr,
-		distinctColumns []Expr,
+		options IterOptions,
 		callback func(ctx context.Context, r arrow.Record) error,
 	) error
 	ArrowSchema(
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		physicalProjection []Expr,
-		projection []Expr,
-		filter Expr, // TODO: We probably don't need this
-		distinctColumns []Expr,
+		options IterOptions,
 	) (*arrow.Schema, error)
 	Schema() *dynparquet.Schema
 }

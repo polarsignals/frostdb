@@ -442,19 +442,16 @@ func (t *Table) Iterator(
 	tx uint64,
 	pool memory.Allocator,
 	schema *arrow.Schema,
-	physicalProjections []logicalplan.Expr,
-	projections []logicalplan.Expr,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
+	iterOpts logicalplan.IterOptions,
 	iterator func(ctx context.Context, r arrow.Record) error,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
-	span.SetAttributes(attribute.Int("physicalProjections", len(physicalProjections)))
-	span.SetAttributes(attribute.Int("projections", len(projections)))
-	span.SetAttributes(attribute.Int("distinct", len(distinctColumns)))
+	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
+	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
+	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
+	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
 	if err != nil {
 		return err
 	}
@@ -473,10 +470,10 @@ func (t *Table) Iterator(
 				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
 					ctx,
 					rg,
-					physicalProjections,
-					projections,
-					filterExpr,
-					distinctColumns,
+					iterOpts.PhysicalProjection,
+					iterOpts.Projection,
+					iterOpts.Filter,
+					iterOpts.DistinctColumns,
 				)
 				if err != nil {
 					return err
@@ -489,8 +486,8 @@ func (t *Table) Iterator(
 				pool,
 				rg,
 				schema,
-				filterExpr,
-				distinctColumns,
+				iterOpts.Filter,
+				iterOpts.DistinctColumns,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
@@ -512,19 +509,16 @@ func (t *Table) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	physicalProjections []logicalplan.Expr,
-	projections []logicalplan.Expr,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
+	iterOpts logicalplan.IterOptions,
 	iterator func(ctx context.Context, r arrow.Record) error,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/SchemaIterator")
-	span.SetAttributes(attribute.Int("physicalProjections", len(physicalProjections)))
-	span.SetAttributes(attribute.Int("projections", len(projections)))
-	span.SetAttributes(attribute.Int("distinct", len(distinctColumns)))
+	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
+	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
+	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
+	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
 	if err != nil {
 		return err
 	}
@@ -567,18 +561,15 @@ func (t *Table) ArrowSchema(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	physicalProjections []logicalplan.Expr,
-	projections []logicalplan.Expr,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
+	iterOpts logicalplan.IterOptions,
 ) (*arrow.Schema, error) {
 	ctx, span := t.tracer.Start(ctx, "Table/ArrowSchema")
-	span.SetAttributes(attribute.Int("physicalProjections", len(physicalProjections)))
-	span.SetAttributes(attribute.Int("projections", len(projections)))
-	span.SetAttributes(attribute.Int("distinct", len(distinctColumns)))
+	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
+	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
+	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
+	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
 	if err != nil {
 		return nil, err
 	}
@@ -597,10 +588,10 @@ func (t *Table) ArrowSchema(
 			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
 				ctx,
 				rg,
-				physicalProjections,
-				projections,
-				filterExpr,
-				distinctColumns,
+				iterOpts.PhysicalProjection,
+				iterOpts.Projection,
+				iterOpts.Filter,
+				iterOpts.DistinctColumns,
 			)
 			if err != nil {
 				return nil, err
@@ -1424,7 +1415,7 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 	// to avoid to iterate on them again while reading the block file
 	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
-	memoryBlocks, lastReadBlockTimestamp := t.memoryBlocks()
+	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
 	for _, block := range memoryBlocks {
 		span.AddEvent("memoryBlock")
 		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
@@ -1432,7 +1423,7 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 		}
 	}
 
-	if err := t.IterateBucketBlocks(ctx, t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
+	if err := t.IterateBucketBlocks(ctx, t.logger, lastBlockTimestamp, filter, iteratorFunc); err != nil {
 		return nil, err
 	}
 
