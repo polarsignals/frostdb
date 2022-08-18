@@ -44,7 +44,7 @@ func (t *TableBlock) Persist() error {
 }
 
 // BlockFilterFunc takes a block ULID and returns true if this block can be ignored during this query
-type BlockFilterFunc func(ulid.ULID) bool
+type BlockFilterFunc func(ulid.ULID, objstore.ObjectAttributes) bool
 
 // A BlockFilter is a logical construction of multiple block filters
 type BlockFilter struct {
@@ -53,23 +53,23 @@ type BlockFilter struct {
 }
 
 // Filter will recursively call input filters until one returns true or the final filter is reached
-func (b *BlockFilter) Filter(block ulid.ULID) bool {
+func (b *BlockFilter) Filter(block ulid.ULID, info objstore.ObjectAttributes) bool {
 	if b.BlockFilterFunc == nil {
 		return false
 	}
 
-	if b.BlockFilterFunc(block) {
+	if b.BlockFilterFunc(block, info) {
 		return true
 	}
 
-	return b.input.Filter(block)
+	return b.input.Filter(block, info)
 }
 
 // LastBlockTimestamp adds a LastBlockTimestamp filter to the block filter
 // TODO better description
 func (b *BlockFilter) LastBlockTimestamp(lastBlockTimestamp uint64) *BlockFilter {
 	return &BlockFilter{
-		BlockFilterFunc: func(block ulid.ULID) bool {
+		BlockFilterFunc: func(block ulid.ULID, _ objstore.ObjectAttributes) bool {
 			return lastBlockTimestamp != 0 && block.Time() >= lastBlockTimestamp
 		},
 		input: b,
@@ -83,19 +83,19 @@ func (b *BlockFilter) TimestampFilter(timestampCol string, filter logicalplan.Ex
 	}
 
 	return &BlockFilter{
-		BlockFilterFunc: func(block ulid.ULID) bool {
-			ok, err := compareTimestamp(timestampCol, block.Time(), filter)
+		BlockFilterFunc: func(block ulid.ULID, info objstore.ObjectAttributes) bool {
+			ok, err := compareTimestamp(timestampCol, block.Time(), uint64(info.LastModified.UnixMilli()), filter)
 			if err != nil {
 				// TODO have a logger maybe?
 			}
-			return ok
+			return !ok
 		},
 		input: b,
 	}
 }
 
 type BlockFilterIf interface {
-	Filter(ulid.ULID) bool
+	Filter(ulid.ULID, objstore.ObjectAttributes) bool
 }
 
 func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, blockFilter BlockFilterIf, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool) error {
@@ -110,16 +110,15 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, bloc
 			return err
 		}
 
-		// TODO THOR NOTE: we can't accurately perform a filter on just a ulid since it doesn't give us a range, it only tells us
-		// the ulid is the beginning of the block, and so the attributes modified at is the ending of the block. So we can know the time range using that
-		if blockFilter.Filter(blockUlid) {
-			return nil
-		}
-
 		blockName := filepath.Join(blockDir, "data.parquet")
 		attribs, err := t.db.bucket.Attributes(ctx, blockName)
 		if err != nil {
 			return err
+		}
+
+		// NOTE: we probably could infer the timestamp width of a block if we just compare it to the next blocks ulid thus avoiding the attributes call
+		if blockFilter.Filter(blockUlid, attribs) {
+			return nil
 		}
 
 		b := &BucketReaderAt{
@@ -179,7 +178,9 @@ func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	return rc.Read(p)
 }
 
-func compareTimestamp(col string, ts uint64, expr logicalplan.Expr) (bool, error) {
+// compareTimestamp returns true if the block contains timestamps covered in expr
+func compareTimestamp(col string, start, end uint64, expr logicalplan.Expr) (bool, error) {
+	fmt.Println("compareTimestamp: ", col)
 	if expr == nil {
 		return false, nil
 	}
@@ -227,15 +228,34 @@ func compareTimestamp(col string, ts uint64, expr logicalplan.Expr) (bool, error
 	switch e := expr.(type) {
 	case *logicalplan.BinaryExpr:
 		switch e.Op {
+		case logicalplan.OpLtEq:
+			v, err := parseExpr(e)
+			if err != nil {
+				return false, err
+			}
+
+			return start <= v, nil
+		case logicalplan.OpLt:
+			v, err := parseExpr(e)
+			if err != nil {
+				return false, err
+			}
+
+			return start < v, nil
+		case logicalplan.OpGt:
+			v, err := parseExpr(e)
+			if err != nil {
+				return false, err
+			}
+
+			return end > v, nil
 		case logicalplan.OpGtEq:
 			v, err := parseExpr(e)
 			if err != nil {
 				return false, err
 			}
 
-			// TODO this isn't a correct way to do this since a block contains a range and the ulid is just the start of the block
-			fmt.Printf("compareTimestamp OpGtEq: %v >= %v = %v\n", v, ts, v >= ts)
-			return v >= ts, nil
+			return end >= v, nil
 		case logicalplan.OpEq:
 			fmt.Println("compareTimestamp OpEq")
 
@@ -244,28 +264,27 @@ func compareTimestamp(col string, ts uint64, expr logicalplan.Expr) (bool, error
 				return false, err
 			}
 
-			// TODO this isn't a correct way to do this since a block contains a range and the ulid is just the start of the block
-			return ts == v, nil
+			return v >= start && v <= end, nil
 
 		case logicalplan.OpAnd:
-			left, err := compareTimestamp(col, ts, e.Left)
+			left, err := compareTimestamp(col, start, end, e.Left)
 			if err != nil {
 				return false, err
 			}
 
-			right, err := compareTimestamp(col, ts, e.Right)
+			right, err := compareTimestamp(col, start, end, e.Right)
 			if err != nil {
 				return false, err
 			}
 
 			return left && right, nil
 		case logicalplan.OpOr:
-			left, err := compareTimestamp(col, ts, e.Left)
+			left, err := compareTimestamp(col, start, end, e.Left)
 			if err != nil {
 				return false, err
 			}
 
-			right, err := compareTimestamp(col, ts, e.Right)
+			right, err := compareTimestamp(col, start, end, e.Right)
 			if err != nil {
 				return false, err
 			}
