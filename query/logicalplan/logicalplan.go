@@ -141,14 +141,6 @@ type TableProvider interface {
 	GetTable(name string) TableReader
 }
 
-type TableScanHint func(*TableScan)
-
-func TableScanColAsTimestamp(col string) func(*TableScan) {
-	return func(t *TableScan) {
-		t.ColAsTimestamp = col
-	}
-}
-
 type TableScan struct {
 	TableProvider TableProvider
 	TableName     string
@@ -177,14 +169,6 @@ func (scan *TableScan) String() string {
 		" Projection: " + fmt.Sprint(scan.Projection) +
 		" Filter: " + fmt.Sprint(scan.Filter) +
 		" Distinct: " + fmt.Sprint(scan.Distinct)
-}
-
-type SchemaScanHint func(*SchemaScan)
-
-func SchemaScanColAsTimestamp(col string) func(*SchemaScan) {
-	return func(t *SchemaScan) {
-		t.ColAsTimestamp = col
-	}
 }
 
 type SchemaScan struct {

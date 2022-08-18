@@ -12,21 +12,13 @@ type Builder struct {
 func (b Builder) Scan(
 	provider TableProvider,
 	tableName string,
-	hints ...TableScanHint,
 ) Builder {
-
-	scan := &TableScan{
-		TableProvider: provider,
-		TableName:     tableName,
-	}
-
-	for _, hint := range hints {
-		hint(scan)
-	}
-
 	return Builder{
 		plan: &LogicalPlan{
-			TableScan: scan,
+			TableScan: &TableScan{
+				TableProvider: provider,
+				TableName:     tableName,
+			},
 		},
 	}
 }
@@ -34,21 +26,13 @@ func (b Builder) Scan(
 func (b Builder) ScanSchema(
 	provider TableProvider,
 	tableName string,
-	hints ...SchemaScanHint,
 ) Builder {
-
-	scan := &SchemaScan{
-		TableProvider: provider,
-		TableName:     tableName,
-	}
-
-	for _, hint := range hints {
-		hint(scan)
-	}
-
 	return Builder{
 		plan: &LogicalPlan{
-			SchemaScan: scan,
+			SchemaScan: &SchemaScan{
+				TableProvider: provider,
+				TableName:     tableName,
+			},
 		},
 	}
 }

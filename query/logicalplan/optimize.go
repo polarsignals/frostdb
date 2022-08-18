@@ -233,3 +233,23 @@ func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []Expr) {
 		p.optimize(plan.Input, distinctColumns)
 	}
 }
+
+// TimestampColumnOptimization will set the name of the column that represents timestamps in the table
+type TimestampColumnOptimization string
+
+// Optimize will perform the timestamp column optimization
+func (t TimestampColumnOptimization) Optimize(plan *LogicalPlan) *LogicalPlan {
+	t.optimize(plan)
+	return plan
+}
+
+func (t TimestampColumnOptimization) optimize(plan *LogicalPlan) {
+	switch {
+	case plan.SchemaScan != nil:
+		plan.SchemaScan.ColAsTimestamp = string(t)
+	case plan.TableScan != nil:
+		plan.TableScan.ColAsTimestamp = string(t)
+	case plan.Input != nil:
+		t.optimize(plan.Input)
+	}
+}
