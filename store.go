@@ -180,7 +180,6 @@ func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 
 // compareTimestamp returns true if the block contains timestamps covered in expr
 func compareTimestamp(col string, start, end uint64, expr logicalplan.Expr) (bool, error) {
-	fmt.Println("compareTimestamp: ", col)
 	if expr == nil {
 		return false, nil
 	}
@@ -257,15 +256,12 @@ func compareTimestamp(col string, start, end uint64, expr logicalplan.Expr) (boo
 
 			return end >= v, nil
 		case logicalplan.OpEq:
-			fmt.Println("compareTimestamp OpEq")
-
 			v, err := parseExpr(e)
 			if err != nil {
 				return false, err
 			}
 
 			return v >= start && v <= end, nil
-
 		case logicalplan.OpAnd:
 			left, err := compareTimestamp(col, start, end, e.Left)
 			if err != nil {
