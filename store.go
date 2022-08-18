@@ -78,6 +78,7 @@ func (b *BlockFilter) LastBlockTimestamp(lastBlockTimestamp uint64) *BlockFilter
 
 // TODO
 func (b *BlockFilter) TimestampFilter(timestampCol string, filter logicalplan.Expr) *BlockFilter {
+	fmt.Println("TimestampFilter: ", timestampCol, filter)
 	if timestampCol == "" {
 		return b
 	}
@@ -110,6 +111,8 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, bloc
 			return err
 		}
 
+		// TODO THOR NOTE: we can't accurately perform a filter on just a ulid since it doesn't give us a range, it only tells us
+		// the ulid is the beginning of the block, and so the attributes modified at is the ending of the block. So we can know the time range using that
 		if blockFilter.Filter(blockUlid) {
 			return nil
 		}
