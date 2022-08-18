@@ -935,7 +935,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			filterExpr:  logicalplan.Col("timestamp").GtEq(logicalplan.Literal(now.Add(-1 * time.Minute).UnixMilli())),
 			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
 			rows:        3,
-			cols:        5,
+			cols:        2,
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
 					logger,
@@ -1040,7 +1040,6 @@ func Test_DB_Block_Optimization(t *testing.T) {
 				query = query.Distinct(test.distinct...)
 			}
 			err = query.Execute(context.Background(), func(ar arrow.Record) error {
-				fmt.Println(ar)
 				require.Equal(t, test.rows, ar.NumRows())
 				require.Equal(t, test.cols, ar.NumCols())
 				return nil
