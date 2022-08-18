@@ -437,9 +437,10 @@ func (t *Table) Iterator(
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
+	timestampCol string,
 	iterator func(r arrow.Record) error,
 ) error {
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
+	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr, timestampCol)
 	if err != nil {
 		return err
 	}
@@ -501,9 +502,10 @@ func (t *Table) SchemaIterator(
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
+	timestampCol string, // TODO: these should all be extracted into an iterator options struct
 	iterator func(r arrow.Record) error,
 ) error {
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
+	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr, timestampCol)
 	if err != nil {
 		return err
 	}
@@ -550,8 +552,9 @@ func (t *Table) ArrowSchema(
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
+	timestampCol string,
 ) (*arrow.Schema, error) {
-	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
+	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr, timestampCol)
 	if err != nil {
 		return nil, err
 	}
@@ -1378,7 +1381,7 @@ func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 }
 
 // collectRowGroups collects all the row groups from the table for the given filter.
-func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logicalplan.Expr) ([]dynparquet.DynamicRowGroup, error) {
+func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logicalplan.Expr, timestampCol string) ([]dynparquet.DynamicRowGroup, error) {
 	filter, err := booleanExpr(filterExpr)
 	if err != nil {
 		return nil, err
@@ -1402,7 +1405,8 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 	}
 
 	blockFilter := (&BlockFilter{}).
-		LastBlockTimestamp(lastReadBlockTimestamp)
+		LastBlockTimestamp(lastReadBlockTimestamp).
+		TimestampFilter(timestampCol, filterExpr)
 	if err := t.IterateBucketBlocks(ctx, t.logger, blockFilter, filter, iteratorFunc); err != nil {
 		return nil, err
 	}

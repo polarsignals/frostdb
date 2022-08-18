@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"github.com/thanos-io/objstore"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 // Persist uploads the block to the underlying bucket.
@@ -68,6 +71,24 @@ func (b *BlockFilter) LastBlockTimestamp(lastBlockTimestamp uint64) *BlockFilter
 	return &BlockFilter{
 		BlockFilterFunc: func(block ulid.ULID) bool {
 			return lastBlockTimestamp != 0 && block.Time() >= lastBlockTimestamp
+		},
+		input: b,
+	}
+}
+
+// TODO
+func (b *BlockFilter) TimestampFilter(timestampCol string, filter logicalplan.Expr) *BlockFilter {
+	if timestampCol == "" {
+		return b
+	}
+
+	return &BlockFilter{
+		BlockFilterFunc: func(block ulid.ULID) bool {
+			ok, err := compareTimestamp(timestampCol, block.Time(), filter)
+			if err != nil {
+				// TODO have a logger maybe?
+			}
+			return ok
 		},
 		input: b,
 	}
@@ -154,4 +175,85 @@ func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	}()
 
 	return rc.Read(p)
+}
+
+func compareTimestamp(col string, ts uint64, expr logicalplan.Expr) (bool, error) {
+	fmt.Println("TODO THOR: ", expr)
+	if expr == nil {
+		return false, nil
+	}
+
+	switch e := expr.(type) {
+	case *logicalplan.BinaryExpr:
+		switch e.Op {
+		case logicalplan.OpEq:
+			var leftColumnRef *ColumnRef
+			e.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+				switch e := expr.(type) {
+				case *logicalplan.Column:
+					leftColumnRef = &ColumnRef{
+						ColumnName: e.ColumnName,
+					}
+					return false
+				}
+				return true
+			}))
+			if leftColumnRef == nil {
+				return false, errors.New("left side of binary expression must be a column")
+			}
+
+			// Not the timestamp column; don't care about it.
+			if leftColumnRef.ColumnName != col {
+				return false, nil
+			} // TODO is false correct here?
+
+			var (
+				rightValue parquet.Value
+				err        error
+			)
+			e.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+				switch e := expr.(type) {
+				case *logicalplan.LiteralExpr:
+					rightValue, err = pqarrow.ArrowScalarToParquetValue(e.Value)
+					return false
+				}
+				return true
+			}))
+			if err != nil {
+				return false, err
+			}
+
+			// Perform comparison
+			// TODO with correct comparison operator
+			return ts == rightValue.Uint64(), nil
+
+		case logicalplan.OpAnd:
+			left, err := compareTimestamp(col, ts, e.Left)
+			if err != nil {
+				return false, err
+			}
+
+			right, err := compareTimestamp(col, ts, e.Right)
+			if err != nil {
+				return false, err
+			}
+
+			return left && right, nil
+		case logicalplan.OpOr:
+			left, err := compareTimestamp(col, ts, e.Left)
+			if err != nil {
+				return false, err
+			}
+
+			right, err := compareTimestamp(col, ts, e.Right)
+			if err != nil {
+				return false, err
+			}
+
+			return left || right, nil
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("unsupported expr %T", e)
+	}
 }
