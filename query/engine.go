@@ -40,10 +40,16 @@ func NewEngine(
 	tableProvider logicalplan.TableProvider,
 	hints ...Hint, // TODO THOR rename this to optimizer instead
 ) *LocalEngine {
-	return &LocalEngine{
+	e := &LocalEngine{
 		pool:          pool,
 		tableProvider: tableProvider,
 	}
+
+	for _, hint := range hints {
+		hint(e)
+	}
+
+	return e
 }
 
 type LocalQueryBuilder struct {
