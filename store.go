@@ -40,7 +40,44 @@ func (t *TableBlock) Persist() error {
 	return nil
 }
 
-func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
+// BlockFilterFunc takes a block ULID and returns true if this block can be ignored during this query
+type BlockFilterFunc func(ulid.ULID) bool
+
+// A BlockFilter is a logical construction of multiple block filters
+type BlockFilter struct {
+	BlockFilterFunc
+	input *BlockFilter
+}
+
+// Filter will recursively call input filters until one returns true or the final filter is reached
+func (b *BlockFilter) Filter(block ulid.ULID) bool {
+	if b.BlockFilterFunc == nil {
+		return false
+	}
+
+	if b.BlockFilterFunc(block) {
+		return true
+	}
+
+	return b.input.Filter(block)
+}
+
+// LastBlockTimestamp adds a LastBlockTimestamp filter to the block filter
+// TODO better description
+func (b *BlockFilter) LastBlockTimestamp(lastBlockTimestamp uint64) *BlockFilter {
+	return &BlockFilter{
+		BlockFilterFunc: func(block ulid.ULID) bool {
+			return lastBlockTimestamp != 0 && block.Time() >= lastBlockTimestamp
+		},
+		input: b,
+	}
+}
+
+type BlockFilterIf interface {
+	Filter(ulid.ULID) bool
+}
+
+func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, blockFilter BlockFilterIf, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool) error {
 	if t.db.bucket == nil || t.db.ignoreStorageOnQuery {
 		return nil
 	}
@@ -52,7 +89,7 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filt
 			return err
 		}
 
-		if lastBlockTimestamp != 0 && blockUlid.Time() >= lastBlockTimestamp {
+		if blockFilter.Filter(blockUlid) {
 			return nil
 		}
 

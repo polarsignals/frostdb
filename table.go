@@ -1401,7 +1401,9 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 		}
 	}
 
-	if err := t.IterateBucketBlocks(ctx, t.logger, filter, iteratorFunc, lastReadBlockTimestamp); err != nil {
+	blockFilter := (&BlockFilter{}).
+		LastBlockTimestamp(lastReadBlockTimestamp)
+	if err := t.IterateBucketBlocks(ctx, t.logger, blockFilter, filter, iteratorFunc); err != nil {
 		return nil, err
 	}
 
