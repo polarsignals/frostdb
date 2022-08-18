@@ -931,11 +931,26 @@ func Test_DB_Block_Optimization(t *testing.T) {
 		rows           int64
 		cols           int64
 	}{
-		"dynamic projection no optimization": {
+		"include block in filter": {
 			filterExpr:  logicalplan.Col("timestamp").GtEq(logicalplan.Literal(now.Add(-1 * time.Minute).UnixMilli())),
 			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
 			rows:        3,
 			cols:        2,
+			newColumnstore: func(t *testing.T) *ColumnStore {
+				c, err := New(
+					logger,
+					prometheus.NewRegistry(),
+					WithBucketStorage(bucket),
+				)
+				require.NoError(t, err)
+				return c
+			},
+		},
+		"exclude block in filter": {
+			filterExpr:  logicalplan.Col("timestamp").GtEq(logicalplan.Literal(now.Add(time.Minute).UnixMilli())),
+			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
+			rows:        0,
+			cols:        0,
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
 					logger,
@@ -1039,11 +1054,15 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			if test.distinct != nil {
 				query = query.Distinct(test.distinct...)
 			}
+			rows := int64(0)
+			cols := int64(0)
 			err = query.Execute(context.Background(), func(ar arrow.Record) error {
-				require.Equal(t, test.rows, ar.NumRows())
-				require.Equal(t, test.cols, ar.NumCols())
+				rows += ar.NumRows()
+				cols += ar.NumCols()
 				return nil
 			})
+			require.Equal(t, test.rows, rows)
+			require.Equal(t, test.cols, cols)
 			require.NoError(t, err)
 		})
 	}
