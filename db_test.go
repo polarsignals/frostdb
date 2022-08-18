@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -900,4 +901,151 @@ func Test_DB_OpenError(t *testing.T) {
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	require.NotNil(t, db)
+}
+
+func Test_DB_Block_Optimization(t *testing.T) {
+	sanitize := func(name string) string {
+		return strings.Replace(name, "/", "-", -1)
+	}
+
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	bucket, err := filesystem.NewBucket(".")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.RemoveAll(sanitize(t.Name()))
+	})
+
+	logger := newTestLogger(t)
+
+	now := time.Now()
+	ts := now.UnixMilli()
+
+	tests := map[string]struct {
+		newColumnstore func(t *testing.T) *ColumnStore
+		filterExpr     logicalplan.Expr
+		projections    []logicalplan.Expr
+		distinct       []logicalplan.Expr
+		rows           int64
+		cols           int64
+	}{
+		"dynamic projection no optimization": {
+			filterExpr:  logicalplan.Col("timestamp").GtEq(logicalplan.Literal(now.Add(-1 * time.Minute).UnixMilli())),
+			projections: []logicalplan.Expr{logicalplan.DynCol("labels")},
+			rows:        3,
+			cols:        5,
+			newColumnstore: func(t *testing.T) *ColumnStore {
+				c, err := New(
+					logger,
+					prometheus.NewRegistry(),
+					WithBucketStorage(bucket),
+				)
+				require.NoError(t, err)
+				return c
+			},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			c := test.newColumnstore(t)
+			db, err := c.DB(context.Background(), sanitize(t.Name()))
+			require.NoError(t, err)
+			table, err := db.Table(sanitize(t.Name()), config)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				os.RemoveAll(sanitize(t.Name()))
+			})
+
+			samples := dynparquet.Samples{
+				{
+					ExampleType: "test",
+					Labels: []dynparquet.Label{
+						{Name: "label1", Value: "value1"},
+						{Name: "label2", Value: "value2"},
+					},
+					Stacktrace: []uuid.UUID{
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+					},
+					Timestamp: ts,
+					Value:     1,
+				},
+				{
+					ExampleType: "test",
+					Labels: []dynparquet.Label{
+						{Name: "label1", Value: "value1"},
+						{Name: "label2", Value: "value2"},
+					},
+					Stacktrace: []uuid.UUID{
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+					},
+					Timestamp: ts,
+					Value:     2,
+				},
+				{
+					ExampleType: "test",
+					Labels: []dynparquet.Label{
+						{Name: "label1", Value: "value1"},
+						{Name: "label2", Value: "value2"},
+					},
+					Stacktrace: []uuid.UUID{
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+					},
+					Timestamp: ts,
+					Value:     3,
+				},
+			}
+
+			buf, err := samples.ToBuffer(table.Schema())
+			require.NoError(t, err)
+
+			ctx := context.Background()
+			_, err = table.InsertBuffer(ctx, buf)
+			require.NoError(t, err)
+
+			// Gracefully close the db to persist blocks
+			c.Close()
+
+			// Open a new database pointed to the same bucket storage
+			c, err = New(
+				logger,
+				prometheus.NewRegistry(),
+				WithBucketStorage(bucket),
+			)
+			require.NoError(t, err)
+
+			// connect to our test db
+			db, err = c.DB(context.Background(), sanitize(t.Name()))
+			require.NoError(t, err)
+
+			engine := query.NewEngine(
+				memory.NewGoAllocator(),
+				db.TableProvider(),
+				query.ColAsTimestamp("timestamp"),
+			)
+
+			query := engine.ScanTable(sanitize(t.Name()))
+			if test.filterExpr != nil {
+				query = query.Filter(test.filterExpr)
+			}
+			if test.projections != nil {
+				query = query.Project(test.projections...)
+			}
+			if test.distinct != nil {
+				query = query.Distinct(test.distinct...)
+			}
+			err = query.Execute(context.Background(), func(ar arrow.Record) error {
+				fmt.Println(ar)
+				require.Equal(t, test.rows, ar.NumRows())
+				require.Equal(t, test.cols, ar.NumCols())
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
 }

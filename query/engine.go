@@ -38,7 +38,7 @@ func ColAsTimestamp(columnName string) func(*LocalEngine) {
 func NewEngine(
 	pool memory.Allocator,
 	tableProvider logicalplan.TableProvider,
-	hints ...Hint,
+	hints ...Hint, // TODO THOR rename this to optimizer instead
 ) *LocalEngine {
 	return &LocalEngine{
 		pool:          pool,
