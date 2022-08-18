@@ -273,6 +273,11 @@ func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) er
 		return fmt.Errorf("read last index: %w", err)
 	}
 
+	// FirstIndex and LastIndex returns zero when there is no WAL files.
+	if firstIndex == 0 || lastIndex == 0 {
+		return nil
+	}
+
 	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", firstIndex, "last_index", lastIndex)
 
 	for tx := firstIndex; tx <= lastIndex; tx++ {
