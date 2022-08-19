@@ -354,14 +354,24 @@ func (db *DB) replayWAL(ctx context.Context) error {
 				if err != nil {
 					return fmt.Errorf("initialize schema: %w", err)
 				}
-				table, err = newTable(
-					db,
-					tableName,
-					NewTableConfig(schema),
-					db.reg,
-					db.logger,
-					db.wal,
-				)
+				config := NewTableConfig(schema)
+				// TODO: May be we should acquire mutux lock when mutating d.roTables and d.tables?
+				// s.DB creates read only Table instance when BucketStore is configured.
+				// Make sure to use the existing Table instace instead of creating new one to avoid dangling instance.
+				table, ok := db.roTables[tableName]
+				if ok {
+					delete(db.roTables, tableName)
+					table.config = config
+				} else {
+					table, err = newTable(
+						db,
+						tableName,
+						config,
+						db.reg,
+						db.logger,
+						db.wal,
+					)
+				}
 				if err != nil {
 					return fmt.Errorf("instantiate table: %w", err)
 				}
