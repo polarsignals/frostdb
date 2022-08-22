@@ -23,6 +23,64 @@ import (
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
+func TestDBWithWALAndBucket(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	logger := newTestLogger(t)
+
+	dir, err := ioutil.TempDir("", "frostdb-with-wal-test")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(dir) // clean up
+
+	bucket, err := filesystem.NewBucket(dir)
+	require.NoError(t, err)
+
+	reg := prometheus.NewRegistry()
+	c, err := New(
+		logger,
+		reg,
+		WithGranuleSize(8096),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithBucketStorage(bucket),
+		WithActiveMemorySize(100*1024),
+	)
+
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(t, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+	}
+	table.Sync()
+	require.NoError(t, db.wal.Close())
+
+	c, err = New(
+		logger,
+		prometheus.NewRegistry(),
+		WithGranuleSize(8096),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithBucketStorage(bucket),
+		WithActiveMemorySize(100*1024),
+	)
+	require.NoError(t, err)
+	require.NoError(t, c.ReplayWALs(context.Background()))
+}
+
 func TestDBWithWAL(t *testing.T) {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
