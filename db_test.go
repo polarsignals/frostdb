@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -897,7 +898,7 @@ func Test_DB_OpenError(t *testing.T) {
 	db, err := c.DB(context.Background(), "test")
 	require.Error(t, err)
 	require.Nil(t, db)
-	require.Equal(t, tempErr, err)
+	require.True(t, errors.Is(err, tempErr))
 
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)

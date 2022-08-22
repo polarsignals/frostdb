@@ -283,7 +283,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 			return nil
 		}); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("bucket iter on database open: %w", err)
 		}
 	}
 
