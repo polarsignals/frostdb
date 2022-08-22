@@ -178,6 +178,9 @@ func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	return rc.Read(p)
 }
 
+// ErrNonTimestampCol is returned by compareTimestamp when the expression is not for the given timestamp column
+var ErrNonTimestampCol = errors.New("non timestamp column")
+
 // compareTimestamp returns true if the block contains timestamps covered in expr
 func compareTimestamp(col string, start, end uint64, expr logicalplan.Expr) (bool, error) {
 	if expr == nil {
@@ -202,7 +205,7 @@ func compareTimestamp(col string, start, end uint64, expr logicalplan.Expr) (boo
 
 		// Not the timestamp column; don't care about it.
 		if leftColumnRef.ColumnName != col {
-			return 0, nil // TODO maybe return an error?
+			return 0, ErrNonTimestampCol
 		}
 
 		var (
@@ -227,6 +230,13 @@ func compareTimestamp(col string, start, end uint64, expr logicalplan.Expr) (boo
 	switch e := expr.(type) {
 	case *logicalplan.BinaryExpr:
 		switch e.Op {
+		case logicalplan.OpNotEq:
+			v, err := parseExpr(e)
+			if err != nil {
+				return false, err
+			}
+
+			return v < start && v > end, nil
 		case logicalplan.OpLtEq:
 			v, err := parseExpr(e)
 			if err != nil {
@@ -263,31 +273,33 @@ func compareTimestamp(col string, start, end uint64, expr logicalplan.Expr) (boo
 
 			return v >= start && v <= end, nil
 		case logicalplan.OpAnd:
-			left, err := compareTimestamp(col, start, end, e.Left)
-			if err != nil {
-				return false, err
+			left, lefterr := compareTimestamp(col, start, end, e.Left)
+			if lefterr != nil && lefterr != ErrNonTimestampCol {
+				return false, lefterr
 			}
 
-			right, err := compareTimestamp(col, start, end, e.Right)
-			if err != nil {
-				return false, err
+			right, righterr := compareTimestamp(col, start, end, e.Right)
+			if righterr != nil && righterr != ErrNonTimestampCol {
+				return false, righterr
 			}
 
-			return left && right, nil
+			return (left || lefterr != nil) && (right || righterr != nil), nil
 		case logicalplan.OpOr:
-			left, err := compareTimestamp(col, start, end, e.Left)
-			if err != nil {
-				return false, err
+			left, lefterr := compareTimestamp(col, start, end, e.Left)
+			if lefterr != nil && lefterr != ErrNonTimestampCol {
+				return false, lefterr
 			}
 
-			right, err := compareTimestamp(col, start, end, e.Right)
-			if err != nil {
-				return false, err
+			right, righterr := compareTimestamp(col, start, end, e.Right)
+			if righterr != nil && righterr != ErrNonTimestampCol {
+				return false, righterr
 			}
 
 			return left || right, nil
+		default:
+			// unsupported op; return true. Better to have false positives
+			return true, nil
 		}
-		return false, nil
 	default:
 		return false, fmt.Errorf("unsupported expr %T", e)
 	}
