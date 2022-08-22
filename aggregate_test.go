@@ -85,25 +85,44 @@ func TestAggregate(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	var res arrow.Record
-	err = engine.ScanTable("test").
-		Aggregate(
-			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
-			logicalplan.Col("labels.label2"),
-		).Execute(context.Background(), func(r arrow.Record) error {
-		r.Retain()
-		res = r
-		return nil
-	})
-	require.NoError(t, err)
-	defer res.Release()
+	for _, testCase := range []struct {
+		fn     func(logicalplan.Expr) *logicalplan.AggregationFunction
+		alias  string
+		expVal int64
+	}{
+		{
+			fn:     logicalplan.Sum,
+			alias:  "value_sum",
+			expVal: 6,
+		},
+		{
+			fn:     logicalplan.Max,
+			alias:  "value_max",
+			expVal: 3,
+		},
+	} {
+		t.Run(testCase.alias, func(t *testing.T) {
+			var res arrow.Record
+			err = engine.ScanTable("test").
+				Aggregate(
+					testCase.fn(logicalplan.Col("value")).Alias(testCase.alias),
+					logicalplan.Col("labels.label2"),
+				).Execute(context.Background(), func(r arrow.Record) error {
+				r.Retain()
+				res = r
+				return nil
+			})
+			require.NoError(t, err)
+			defer res.Release()
 
-	cols := res.Columns()
-	require.Equal(t, 2, len(cols))
-	for i, col := range cols {
-		require.Equal(t, 1, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
+			cols := res.Columns()
+			require.Equal(t, 2, len(cols))
+			for i, col := range cols {
+				require.Equal(t, 1, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
+			}
+			require.Equal(t, []int64{testCase.expVal}, cols[len(cols)-1].(*array.Int64).Int64Values())
+		})
 	}
-	require.Equal(t, []int64{6}, cols[len(cols)-1].(*array.Int64).Int64Values())
 }
 
 func TestAggregateNils(t *testing.T) {
@@ -167,25 +186,44 @@ func TestAggregateNils(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	var res arrow.Record
-	err = engine.ScanTable("test").
-		Aggregate(
-			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
-			logicalplan.Col("labels.label2"),
-		).Execute(context.Background(), func(r arrow.Record) error {
-		r.Retain()
-		res = r
-		return nil
-	})
-	require.NoError(t, err)
-	defer res.Release()
+	for _, testCase := range []struct {
+		fn      func(logicalplan.Expr) *logicalplan.AggregationFunction
+		alias   string
+		expVals []int64
+	}{
+		{
+			fn:      logicalplan.Sum,
+			alias:   "value_sum",
+			expVals: []int64{1, 5},
+		},
+		{
+			fn:      logicalplan.Max,
+			alias:   "value_max",
+			expVals: []int64{1, 3},
+		},
+	} {
+		t.Run(testCase.alias, func(t *testing.T) {
+			var res arrow.Record
+			err = engine.ScanTable("test").
+				Aggregate(
+					testCase.fn(logicalplan.Col("value")).Alias(testCase.alias),
+					logicalplan.Col("labels.label2"),
+				).Execute(context.Background(), func(r arrow.Record) error {
+				r.Retain()
+				res = r
+				return nil
+			})
+			require.NoError(t, err)
+			defer res.Release()
 
-	cols := res.Columns()
-	require.Equal(t, 2, len(cols))
-	for i, col := range cols {
-		require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
+			cols := res.Columns()
+			require.Equal(t, 2, len(cols))
+			for i, col := range cols {
+				require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
+			}
+			require.Equal(t, testCase.expVals, cols[len(cols)-1].(*array.Int64).Int64Values())
+		})
 	}
-	require.Equal(t, []int64{1, 5}, cols[len(cols)-1].(*array.Int64).Int64Values())
 }
 
 func TestAggregateInconsistentSchema(t *testing.T) {
@@ -251,23 +289,42 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	var res arrow.Record
-	err = engine.ScanTable("test").
-		Aggregate(
-			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
-			logicalplan.Col("labels.label2"),
-		).Execute(context.Background(), func(r arrow.Record) error {
-		r.Retain()
-		res = r
-		return nil
-	})
-	require.NoError(t, err)
-	defer res.Release()
+	for _, testCase := range []struct {
+		fn      func(logicalplan.Expr) *logicalplan.AggregationFunction
+		alias   string
+		expVals []int64
+	}{
+		{
+			fn:      logicalplan.Sum,
+			alias:   "value_sum",
+			expVals: []int64{5, 1},
+		},
+		{
+			fn:      logicalplan.Max,
+			alias:   "value_max",
+			expVals: []int64{3, 1},
+		},
+	} {
+		t.Run(testCase.alias, func(t *testing.T) {
+			var res arrow.Record
+			err = engine.ScanTable("test").
+				Aggregate(
+					testCase.fn(logicalplan.Col("value")).Alias(testCase.alias),
+					logicalplan.Col("labels.label2"),
+				).Execute(context.Background(), func(r arrow.Record) error {
+				r.Retain()
+				res = r
+				return nil
+			})
+			require.NoError(t, err)
+			defer res.Release()
 
-	cols := res.Columns()
-	require.Equal(t, 2, len(cols))
-	for i, col := range cols {
-		require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
+			cols := res.Columns()
+			require.Equal(t, 2, len(cols))
+			for i, col := range cols {
+				require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
+			}
+			require.Equal(t, testCase.expVals, cols[len(cols)-1].(*array.Int64).Int64Values())
+		})
 	}
-	require.Equal(t, []int64{5, 1}, cols[len(cols)-1].(*array.Int64).Int64Values())
 }

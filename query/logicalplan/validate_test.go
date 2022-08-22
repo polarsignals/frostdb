@@ -106,20 +106,34 @@ func TestAggregationExprColumnMustExistInSchema(t *testing.T) {
 	require.True(t, strings.HasPrefix(exprErr.message, "column not found"))
 }
 
-func TestAggregationCannotSumTextColumn(t *testing.T) {
-	_, err := (&Builder{}).
-		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-		Aggregate(Sum(Col("example_type"))).
-		Build()
+func TestAggregationCannotSumOrMaxTextColumn(t *testing.T) {
+	for _, testCase := range []struct {
+		fn     func(Expr) *AggregationFunction
+		errMsg string
+	}{
+		{
+			fn:     Sum,
+			errMsg: "cannot sum text column",
+		},
+		{
+			fn:     Max,
+			errMsg: "cannot max text column",
+		},
+	} {
+		_, err := (&Builder{}).
+			Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
+			Aggregate(testCase.fn(Col("example_type"))).
+			Build()
 
-	require.NotNil(t, err)
-	require.NotNil(t, err)
-	planErr, ok := err.(*PlanValidationError)
-	require.True(t, ok)
-	require.True(t, strings.HasPrefix(planErr.message, "invalid aggregation"))
-	require.Len(t, planErr.children, 1)
-	exprErr := planErr.children[0]
-	require.True(t, strings.HasPrefix(exprErr.message, "cannot sum text column"))
+		require.NotNil(t, err)
+		require.NotNil(t, err)
+		planErr, ok := err.(*PlanValidationError)
+		require.True(t, ok)
+		require.True(t, strings.HasPrefix(planErr.message, "invalid aggregation"))
+		require.Len(t, planErr.children, 1)
+		exprErr := planErr.children[0]
+		require.True(t, strings.HasPrefix(exprErr.message, testCase.errMsg))
+	}
 }
 
 func TestFilterBinaryExprLeftSideMustBeColumn(t *testing.T) {

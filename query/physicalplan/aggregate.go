@@ -81,6 +81,13 @@ func chooseAggregationFunction(
 		default:
 			return nil, fmt.Errorf("unsupported sum of type: %s", dataType.Name())
 		}
+	case logicalplan.AggFuncMax:
+		switch dataType.ID() {
+		case arrow.INT64:
+			return &Int64MaxAggregation{}, nil
+		default:
+			return nil, fmt.Errorf("unsupported max of type: %s", dataType.Name())
+		}
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
 	}
@@ -415,4 +422,51 @@ func sumInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
 
 func sumInt64array(arr *array.Int64) int64 {
 	return math.Int64.Sum(arr)
+}
+
+type Int64MaxAggregation struct{}
+
+var ErrUnsupportedMaxType = errors.New("unsupported type for max aggregation, expected int64")
+
+func (a *Int64MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	if len(arrs) == 0 {
+		return array.NewInt64Builder(pool).NewArray(), nil
+	}
+
+	typ := arrs[0].DataType().ID()
+	switch typ {
+	case arrow.INT64:
+		return maxInt64arrays(pool, arrs), nil
+	default:
+		return nil, fmt.Errorf("sum array of %s: %w", typ, ErrUnsupportedSumType)
+	}
+}
+
+func maxInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
+	res := array.NewInt64Builder(pool)
+	for _, arr := range arrs {
+		if arr.Len() == 0 {
+			res.AppendNull()
+			continue
+		}
+		res.Append(maxInt64array(arr.(*array.Int64)))
+	}
+
+	return res.NewArray()
+}
+
+// maxInt64Array finds the maximum value in arr. Note that we considered using
+// generics for this function, but the runtime doubled in comparison with
+// processing a slice of a concrete type.
+func maxInt64array(arr *array.Int64) int64 {
+	// Note that the zero-length check must be performed before calling this
+	// function.
+	vals := arr.Int64Values()
+	max := vals[0]
+	for _, v := range vals {
+		if v > max {
+			max = v
+		}
+	}
+	return max
 }

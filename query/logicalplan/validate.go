@@ -199,10 +199,18 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 	// check that the column type can be aggregated by the function type
 	columnType := column.StorageLayout.Type()
 	aggFuncExpr := aggFuncFinder.result.(*AggregationFunction)
-	if aggFuncExpr.Func == AggFuncSum && columnType.LogicalType().UTF8 != nil {
-		return &ExprValidationError{
-			message: "cannot sum text column",
-			expr:    plan.Aggregation.AggExpr,
+	if columnType.LogicalType().UTF8 != nil {
+		switch aggFuncExpr.Func {
+		case AggFuncSum:
+			return &ExprValidationError{
+				message: "cannot sum text column",
+				expr:    plan.Aggregation.AggExpr,
+			}
+		case AggFuncMax:
+			return &ExprValidationError{
+				message: "cannot max text column",
+				expr:    plan.Aggregation.AggExpr,
+			}
 		}
 	}
 
