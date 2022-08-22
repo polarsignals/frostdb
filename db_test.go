@@ -2,6 +2,8 @@ package frostdb
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/objstore"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -778,4 +781,125 @@ func Test_DB_Filter_Block(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+// ErrorBucket is an objstore.Bucket implementation that supports error injection
+type ErrorBucket struct {
+	iter             func(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error
+	get              func(ctx context.Context, name string) (io.ReadCloser, error)
+	getRange         func(ctx context.Context, name string, off, length int64) (io.ReadCloser, error)
+	exists           func(ctx context.Context, name string) (bool, error)
+	isObjNotFoundErr func(err error) bool
+	attributes       func(ctx context.Context, name string) (objstore.ObjectAttributes, error)
+
+	upload func(ctx context.Context, name string, r io.Reader) error
+	delete func(ctx context.Context, name string) error
+	close  func() error
+}
+
+func (e *ErrorBucket) Iter(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error {
+	if e.iter != nil {
+		return e.iter(ctx, dir, f, options...)
+	}
+
+	return nil
+}
+
+func (e *ErrorBucket) Get(ctx context.Context, name string) (io.ReadCloser, error) {
+	if e.get != nil {
+		return e.get(ctx, name)
+	}
+
+	return nil, nil
+}
+
+func (e *ErrorBucket) GetRange(ctx context.Context, name string, off, length int64) (io.ReadCloser, error) {
+	if e.getRange != nil {
+		return e.getRange(ctx, name, off, length)
+	}
+
+	return nil, nil
+}
+
+func (e *ErrorBucket) Exists(ctx context.Context, name string) (bool, error) {
+	if e.exists != nil {
+		return e.exists(ctx, name)
+	}
+
+	return false, nil
+}
+
+func (e *ErrorBucket) IsObjNotFoundErr(err error) bool {
+	if e.isObjNotFoundErr != nil {
+		return e.isObjNotFoundErr(err)
+	}
+
+	return false
+}
+
+func (e *ErrorBucket) Attributes(ctx context.Context, name string) (objstore.ObjectAttributes, error) {
+	if e.attributes != nil {
+		return e.attributes(ctx, name)
+	}
+
+	return objstore.ObjectAttributes{}, nil
+}
+
+func (e *ErrorBucket) Close() error {
+	if e.close != nil {
+		return e.close()
+	}
+
+	return nil
+}
+
+func (e *ErrorBucket) Upload(ctx context.Context, name string, r io.Reader) error {
+	if e.upload != nil {
+		return e.upload(ctx, name, r)
+	}
+
+	return nil
+}
+
+func (e *ErrorBucket) Delete(ctx context.Context, name string) error {
+	if e.delete != nil {
+		return e.delete(ctx, name)
+	}
+
+	return nil
+}
+
+func (e *ErrorBucket) Name() string { return "error bucket" }
+
+func Test_DB_OpenError(t *testing.T) {
+	logger := newTestLogger(t)
+
+	temp := true
+	tempErr := fmt.Errorf("injected temporary error")
+	e := &ErrorBucket{
+		iter: func(context.Context, string, func(string) error, ...objstore.IterOption) error {
+			if temp {
+				temp = false
+				return tempErr
+			}
+			return nil
+		},
+	}
+
+	c, err := New(
+		logger,
+		prometheus.NewRegistry(),
+		WithBucketStorage(e),
+	)
+	require.NoError(t, err)
+
+	// First time returns temporary error and triggers the chicken switch
+	db, err := c.DB(context.Background(), "test")
+	require.Error(t, err)
+	require.Nil(t, db)
+	require.Equal(t, tempErr, err)
+
+	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	require.NotNil(t, db)
 }
