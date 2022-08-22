@@ -257,14 +257,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		logger:               logger,
 		wal:                  &wal.NopWAL{},
 		ignoreStorageOnQuery: s.ignoreStorageOnQuery,
-		metrics: &dbMetrics{
-			txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-				Name: "tx_high_watermark",
-				Help: "The highest transaction number that has been released to be read",
-			}, func() float64 {
-				return float64(highWatermark.Load())
-			}),
-		},
 	}
 
 	if s.bucket != nil {
@@ -295,6 +287,15 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		}
 	}
 
+	// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
+	db.metrics = &dbMetrics{
+		txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "tx_high_watermark",
+			Help: "The highest transaction number that has been released to be read",
+		}, func() float64 {
+			return float64(highWatermark.Load())
+		}),
+	}
 	s.dbs[name] = db
 	return db, nil
 }
