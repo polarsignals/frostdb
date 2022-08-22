@@ -346,6 +346,7 @@ func parquetColumnToArrowArray(
 	defer b.Release()
 
 	err = writeColumnToArray(
+		n.Type(),
 		c,
 		optional,
 		repeated,
@@ -375,11 +376,14 @@ func parquetColumnToArrowArray(
 // column. Possilibities why it might not read the whole column:
 //
 // * If it has been requested to only read the dictionary it will only do that
-// (provided it's not a repeated type).
+// (provided it's not a repeated type). Additionally, decompression of all pages
+// are avoided if the column index indicates that there is only one value in the
+// column.
 //
 // If the type is a repeated type it will also write the starting offsets of
 // lists to the list builder.
 func writeColumnToArray(
+	t parquet.Type,
 	columnChunk parquet.ColumnChunk,
 	optional bool,
 	repeated bool,
@@ -387,6 +391,61 @@ func writeColumnToArray(
 	w writer.ValueWriter,
 	dictionaryOnly bool,
 ) error {
+	if !repeated && dictionaryOnly {
+		// Check all the page indexes of the column chunk. If they are
+		// trustworthy and there is only one value contained in the column
+		// chunk, we can avoid reading any pages and construct a dictionary from
+		// the index values.
+		// TODO(asubiotto): This optimization can be applied at a finer
+		// granularity at the page level as well.
+		columnIndex := columnChunk.ColumnIndex()
+		columnType := columnChunk.Type()
+
+		globalMinValue := columnIndex.MinValue(0)
+		readPages := false
+		for pageIdx := 0; pageIdx < columnIndex.NumPages(); pageIdx++ {
+			if columnType.Length() == 0 {
+				// Variable-length datatype. The index can only be trusted if
+				// the size of the values is less than the column index size,
+				// since we cannot otherwise know if the index values are
+				// truncated.
+				if len(columnIndex.MinValue(pageIdx).Bytes()) >= dynparquet.ColumnIndexSize ||
+					len(columnIndex.MaxValue(pageIdx).Bytes()) >= dynparquet.ColumnIndexSize {
+					readPages = true
+					break
+				}
+			}
+
+			minValue := columnIndex.MinValue(pageIdx)
+			maxValue := columnIndex.MaxValue(pageIdx)
+			if columnType.Compare(minValue, maxValue) != 0 ||
+				columnType.Compare(globalMinValue, minValue) != 0 {
+				readPages = true
+				break
+			}
+		}
+
+		if !readPages {
+			valBytes := globalMinValue.Bytes()
+			// TODO(asubiotto): columnType should be sufficient for this code.
+			// However, due to
+			// https://github.com/segmentio/parquet-go/issues/312,
+			// some tests panic when using a parquet.Buffer as a data source,
+			// so we use the explicitly passed in type here.
+			dict := t.NewDictionary(
+				columnChunk.Column(),
+				1,
+				t.NewValues(valBytes, []uint32{0, uint32(len(valBytes))}),
+			)
+			for pageIdx := 0; pageIdx < columnIndex.NumPages(); pageIdx++ {
+				if err := w.WritePage(dict.Page()); err != nil {
+					return fmt.Errorf("write dictionary page: %w", err)
+				}
+			}
+			return nil
+		}
+	}
+
 	pages := columnChunk.Pages()
 	defer pages.Close()
 	// We are potentially writing multiple pages to the same array, so we need
@@ -406,23 +465,21 @@ func writeColumnToArray(
 		case !repeated && dictionaryOnly && dict != nil:
 			// If we are only writing the dictionary, we don't need to read
 			// the values.
-			err = w.WritePage(dict.Page())
-			if err != nil {
+			if err := w.WritePage(dict.Page()); err != nil {
 				return fmt.Errorf("write dictionary page: %w", err)
 			}
 		case !repeated && !optional && dict == nil:
 			// If the column is not optional, we can read all values at once
 			// consecutively without worrying about null values.
-			err = w.WritePage(p)
-			if err != nil {
+			if err := w.WritePage(p); err != nil {
 				return fmt.Errorf("write page: %w", err)
 			}
 		default:
 			values := make([]parquet.Value, p.NumValues())
 			reader := p.Values()
-			_, err = reader.ReadValues(values)
+
 			// We're reading all values in the page so we always expect an io.EOF.
-			if err != nil && err != io.EOF {
+			if _, err := reader.ReadValues(values); err != nil && err != io.EOF {
 				return fmt.Errorf("read values: %w", err)
 			}
 
