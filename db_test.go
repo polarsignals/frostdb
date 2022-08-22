@@ -783,7 +783,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 	}
 }
 
-// ErrorBucket is an objstore.Bucket implementation that supports error injection
+// ErrorBucket is an objstore.Bucket implementation that supports error injection.
 type ErrorBucket struct {
 	iter             func(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error
 	get              func(ctx context.Context, name string) (io.ReadCloser, error)
