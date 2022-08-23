@@ -25,10 +25,10 @@ type LocalEngine struct {
 	optimizations []logicalplan.Optimizer
 }
 
-// Hint is a suggestion to be made to the query engine about how it might optimize the query
+// Hint is a suggestion to be made to the query engine about how it might optimize the query.
 type Hint func(*LocalEngine)
 
-// ColAsTimestamp is a query engine hint that informs the engine which column to use as a timestamp during historical queries
+// ColAsTimestamp is a query engine hint that informs the engine which column to use as a timestamp during historical queries.
 func ColAsTimestamp(columnName string) func(*LocalEngine) {
 	return func(l *LocalEngine) {
 		l.optimizations = append(l.optimizations, logicalplan.TimestampColumnOptimization(columnName))

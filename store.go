@@ -43,16 +43,16 @@ func (t *TableBlock) Persist() error {
 	return nil
 }
 
-// BlockFilterFunc takes a block ULID and returns true if this block can be ignored during this query
+// BlockFilterFunc takes a block ULID and returns true if this block can be ignored during this query.
 type BlockFilterFunc func(ulid.ULID, objstore.ObjectAttributes) bool
 
-// A BlockFilter is a logical construction of multiple block filters
+// A BlockFilter is a logical construction of multiple block filters.
 type BlockFilter struct {
 	BlockFilterFunc
 	input *BlockFilter
 }
 
-// Filter will recursively call input filters until one returns true or the final filter is reached
+// Filter will recursively call input filters until one returns true or the final filter is reached.
 func (b *BlockFilter) Filter(block ulid.ULID, info objstore.ObjectAttributes) bool {
 	if b.BlockFilterFunc == nil {
 		return false
@@ -65,8 +65,7 @@ func (b *BlockFilter) Filter(block ulid.ULID, info objstore.ObjectAttributes) bo
 	return b.input.Filter(block, info)
 }
 
-// LastBlockTimestamp adds a LastBlockTimestamp filter to the block filter
-// TODO better description
+// LastBlockTimestamp filters blocks that are still being written or still held in memory.
 func (b *BlockFilter) LastBlockTimestamp(lastBlockTimestamp uint64) *BlockFilter {
 	return &BlockFilter{
 		BlockFilterFunc: func(block ulid.ULID, _ objstore.ObjectAttributes) bool {
@@ -76,7 +75,7 @@ func (b *BlockFilter) LastBlockTimestamp(lastBlockTimestamp uint64) *BlockFilter
 	}
 }
 
-// TODO
+// TimestampFilter will filter blocks out based on a given query against the timestamp column using the blocks ulid as the start of the block.
 func (b *BlockFilter) TimestampFilter(timestampCol string, filter logicalplan.Expr) *BlockFilter {
 	if timestampCol == "" {
 		return b
@@ -86,7 +85,7 @@ func (b *BlockFilter) TimestampFilter(timestampCol string, filter logicalplan.Ex
 		BlockFilterFunc: func(block ulid.ULID, info objstore.ObjectAttributes) bool {
 			ok, err := compareTimestamp(timestampCol, block.Time(), uint64(info.LastModified.UnixMilli()), filter)
 			if err != nil {
-				// TODO have a logger maybe?
+				return false
 			}
 			return !ok
 		},
@@ -94,6 +93,7 @@ func (b *BlockFilter) TimestampFilter(timestampCol string, filter logicalplan.Ex
 	}
 }
 
+// BlockFilterIf is the interface for filtering blocks. The Filter function should return true if the block should be skipped.
 type BlockFilterIf interface {
 	Filter(ulid.ULID, objstore.ObjectAttributes) bool
 }
@@ -178,10 +178,10 @@ func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	return rc.Read(p)
 }
 
-// ErrNonTimestampCol is returned by compareTimestamp when the expression is not for the given timestamp column
+// ErrNonTimestampCol is returned by compareTimestamp when the expression is not for the given timestamp column.
 var ErrNonTimestampCol = errors.New("non timestamp column")
 
-// compareTimestamp returns true if the block contains timestamps covered in expr
+// compareTimestamp returns true if the block contains timestamps covered in expr.
 func compareTimestamp(col string, start, end uint64, expr logicalplan.Expr) (bool, error) {
 	if expr == nil {
 		return false, nil

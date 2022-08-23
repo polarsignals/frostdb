@@ -234,10 +234,10 @@ func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []Expr) {
 	}
 }
 
-// TimestampColumnOptimization will set the name of the column that represents timestamps in the table
+// TimestampColumnOptimization will set the name of the column that represents timestamps in the table.
 type TimestampColumnOptimization string
 
-// Optimize will perform the timestamp column optimization
+// Optimize will perform the timestamp column optimization.
 func (t TimestampColumnOptimization) Optimize(plan *LogicalPlan) *LogicalPlan {
 	t.optimize(plan)
 	return plan
