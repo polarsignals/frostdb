@@ -11,6 +11,7 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 )
@@ -41,16 +42,25 @@ func (t *TableBlock) Persist() error {
 }
 
 func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool, lastBlockTimestamp uint64) error {
+	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks")
+	span.SetAttributes(attribute.Int64("lastBlockTimestamp", int64(lastBlockTimestamp)))
+	defer span.End()
+
 	if t.db.bucket == nil || t.db.ignoreStorageOnQuery {
 		return nil
 	}
 
 	n := 0
 	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
+		ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter")
+		defer span.End()
+
 		blockUlid, err := ulid.Parse(filepath.Base(blockDir))
 		if err != nil {
 			return err
 		}
+
+		span.SetAttributes(attribute.String("ulid", blockUlid.String()))
 
 		if lastBlockTimestamp != 0 && blockUlid.Time() >= lastBlockTimestamp {
 			return nil
@@ -61,6 +71,8 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filt
 		if err != nil {
 			return err
 		}
+
+		span.SetAttributes(attribute.Int64("size", attribs.Size))
 
 		b := &BucketReaderAt{
 			name:   blockName,
@@ -81,6 +93,8 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, filt
 
 		n++
 		for i := 0; i < buf.NumRowGroups(); i++ {
+			span.AddEvent("rowgroup")
+
 			rg := buf.DynamicRowGroup(i)
 			var mayContainUsefulData bool
 			mayContainUsefulData, err = filter.Eval(rg)

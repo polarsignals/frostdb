@@ -1,11 +1,13 @@
 package physicalplan
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -133,16 +135,18 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 }
 
 type Projection struct {
-	pool memory.Allocator
+	pool   memory.Allocator
+	tracer trace.Tracer
 
 	colProjections []columnProjection
 
-	next func(r arrow.Record) error
+	next func(ctx context.Context, r arrow.Record) error
 }
 
-func Project(mem memory.Allocator, exprs []logicalplan.Expr) (*Projection, error) {
+func Project(mem memory.Allocator, tracer trace.Tracer, exprs []logicalplan.Expr) (*Projection, error) {
 	p := &Projection{
 		pool:           mem,
+		tracer:         tracer,
 		colProjections: make([]columnProjection, 0, len(exprs)),
 	}
 
@@ -157,7 +161,11 @@ func Project(mem memory.Allocator, exprs []logicalplan.Expr) (*Projection, error
 	return p, nil
 }
 
-func (p *Projection) Callback(r arrow.Record) error {
+func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
+	// Generates high volume of spans. Comment out if needed during development.
+	// ctx, span := p.tracer.Start(ctx, "Projection/Callback")
+	// defer span.End()
+
 	resFields := make([]arrow.Field, 0, len(p.colProjections))
 	resArrays := make([]arrow.Array, 0, len(p.colProjections))
 
@@ -184,9 +192,9 @@ func (p *Projection) Callback(r arrow.Record) error {
 		resArrays,
 		rows,
 	)
-	return p.next(ar)
+	return p.next(ctx, ar)
 }
 
-func (p *Projection) SetNextCallback(next func(r arrow.Record) error) {
+func (p *Projection) SetNextCallback(next func(ctx context.Context, r arrow.Record) error) {
 	p.next = next
 }

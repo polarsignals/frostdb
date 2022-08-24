@@ -2,9 +2,7 @@ package logicalplan
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -102,7 +100,7 @@ func (plan *LogicalPlan) Accept(visitor PlanVisitor) bool {
 }
 
 type TableReader interface {
-	View(func(tx uint64) error) error
+	View(ctx context.Context, fn func(ctx context.Context, tx uint64) error) error
 	Iterator(
 		ctx context.Context,
 		tx uint64,
@@ -112,7 +110,7 @@ type TableReader interface {
 		projection []Expr,
 		filter Expr,
 		distinctColumns []Expr,
-		callback func(r arrow.Record) error,
+		callback func(ctx context.Context, r arrow.Record) error,
 	) error
 	SchemaIterator(
 		ctx context.Context,
@@ -122,7 +120,7 @@ type TableReader interface {
 		projection []Expr,
 		filter Expr,
 		distinctColumns []Expr,
-		callback func(r arrow.Record) error,
+		callback func(ctx context.Context, r arrow.Record) error,
 	) error
 	ArrowSchema(
 		ctx context.Context,
@@ -135,7 +133,6 @@ type TableReader interface {
 	) (*arrow.Schema, error)
 	Schema() *dynparquet.Schema
 }
-
 type TableProvider interface {
 	GetTable(name string) TableReader
 }
@@ -192,40 +189,6 @@ func (s *SchemaScan) String() string {
 
 type Filter struct {
 	Expr Expr
-}
-
-func (f *Filter) MarshalJSON() ([]byte, error) {
-	type filterJSON struct {
-		ExprType string
-		Expr     Expr
-	}
-	return json.Marshal(filterJSON{
-		ExprType: reflect.TypeOf(f.Expr).String(),
-		Expr:     f.Expr,
-	})
-}
-
-func (f *Filter) UnmarshalJSON(data []byte) error {
-	type filterType struct {
-		ExprType string
-		Expr     json.RawMessage
-	}
-	var ft filterType
-	err := json.Unmarshal(data, &ft)
-	if err != nil {
-		return err
-	}
-	switch ft.ExprType {
-	case "*logicalplan.BinaryExpr":
-		var be BinaryExpr
-		err := json.Unmarshal(ft.Expr, &be)
-		if err != nil {
-			return err
-		}
-		f.Expr = &be
-	}
-
-	return nil
 }
 
 func (f *Filter) String() string {
