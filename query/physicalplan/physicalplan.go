@@ -140,7 +140,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 }
 
 func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
-	ctx, span := tracer.Start(ctx, "PhysicalPlan/Build")
+	_, span := tracer.Start(ctx, "PhysicalPlan/Build")
 	defer span.End()
 
 	outputPlan := &OutputPlan{}
