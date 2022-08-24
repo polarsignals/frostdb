@@ -19,7 +19,7 @@ func (m *mockTableReader) Schema() *dynparquet.Schema {
 	return m.schema
 }
 
-func (m *mockTableReader) View(fn func(tx uint64) error) error {
+func (m *mockTableReader) View(ctx context.Context, fn func(ctx context.Context, tx uint64) error) error {
 	return nil
 }
 
@@ -32,7 +32,7 @@ func (m *mockTableReader) Iterator(
 	projection []Expr,
 	filter Expr,
 	distinctColumns []Expr,
-	callback func(r arrow.Record) error,
+	callback func(ctx context.Context, r arrow.Record) error,
 ) error {
 	return nil
 }
@@ -45,7 +45,7 @@ func (m *mockTableReader) SchemaIterator(
 	projection []Expr,
 	filter Expr,
 	distinctColumns []Expr,
-	callback func(r arrow.Record) error,
+	callback func(ctx context.Context, r arrow.Record) error,
 ) error {
 	return nil
 }

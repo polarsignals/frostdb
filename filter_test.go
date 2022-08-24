@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
@@ -22,10 +23,12 @@ func TestFilter(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -199,6 +202,7 @@ func TestFilter(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -210,7 +214,7 @@ func TestFilter(t *testing.T) {
 			err := engine.ScanTable("test").
 				Project(logicalplan.DynCol("labels"), logicalplan.Col("stacktrace"), logicalplan.Col("timestamp"), logicalplan.Col("value")).
 				Filter(test.filterExpr).
-				Execute(context.Background(), func(ar arrow.Record) error {
+				Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 					cols = ar.NumCols()
 					rows += ar.NumRows()
 					defer ar.Release()
@@ -231,10 +235,12 @@ func Test_Projection(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -313,6 +319,7 @@ func Test_Projection(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -323,7 +330,7 @@ func Test_Projection(t *testing.T) {
 			err := engine.ScanTable("test").
 				Filter(test.filterExpr).
 				Project(test.projections...).
-				Execute(context.Background(), func(ar arrow.Record) error {
+				Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 					rows += ar.NumRows()
 					require.Equal(t, test.cols, ar.NumCols())
 					defer ar.Release()

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
@@ -23,10 +24,12 @@ func TestAggregate(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -82,6 +85,7 @@ func TestAggregate(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -107,7 +111,7 @@ func TestAggregate(t *testing.T) {
 				Aggregate(
 					testCase.fn(logicalplan.Col("value")).Alias(testCase.alias),
 					logicalplan.Col("labels.label2"),
-				).Execute(context.Background(), func(r arrow.Record) error {
+				).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 				r.Retain()
 				res = r
 				return nil
@@ -132,10 +136,12 @@ func TestAggregateNils(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -183,6 +189,7 @@ func TestAggregateNils(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -208,7 +215,7 @@ func TestAggregateNils(t *testing.T) {
 				Aggregate(
 					testCase.fn(logicalplan.Col("value")).Alias(testCase.alias),
 					logicalplan.Col("labels.label2"),
-				).Execute(context.Background(), func(r arrow.Record) error {
+				).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 				r.Retain()
 				res = r
 				return nil
@@ -233,10 +240,12 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -286,6 +295,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -311,7 +321,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 				Aggregate(
 					testCase.fn(logicalplan.Col("value")).Alias(testCase.alias),
 					logicalplan.Col("labels.label2"),
-				).Execute(context.Background(), func(r arrow.Record) error {
+				).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 				r.Retain()
 				res = r
 				return nil

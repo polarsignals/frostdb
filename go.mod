@@ -18,6 +18,8 @@ require (
 	github.com/stretchr/testify v1.7.1
 	github.com/thanos-io/objstore v0.0.0-20220715165016-ce338803bc1e
 	github.com/tidwall/wal v1.1.7
+	go.opentelemetry.io/otel v0.20.0
+	go.opentelemetry.io/otel/trace v0.20.0
 	go.uber.org/atomic v1.9.0
 	golang.org/x/sync v0.0.0-20220601150217-0de741cfad7f
 	google.golang.org/protobuf v1.28.0

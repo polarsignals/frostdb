@@ -7,6 +7,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -20,7 +21,7 @@ func (m *mockTableReader) Schema() *dynparquet.Schema {
 	return m.schema
 }
 
-func (m *mockTableReader) View(fn func(tx uint64) error) error {
+func (m *mockTableReader) View(ctx context.Context, fn func(ctx context.Context, tx uint64) error) error {
 	return nil
 }
 
@@ -33,7 +34,7 @@ func (m *mockTableReader) Iterator(
 	projection []logicalplan.Expr,
 	filter logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
-	callback func(r arrow.Record) error,
+	callback func(ctx context.Context, r arrow.Record) error,
 ) error {
 	return nil
 }
@@ -46,7 +47,7 @@ func (m *mockTableReader) SchemaIterator(
 	projection []logicalplan.Expr,
 	filter logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
-	callback func(r arrow.Record) error,
+	callback func(ctx context.Context, r arrow.Record) error,
 ) error {
 	return nil
 }
@@ -93,6 +94,12 @@ func TestBuildPhysicalPlan(t *testing.T) {
 		optimizer.Optimize(p)
 	}
 
-	_, err := Build(memory.DefaultAllocator, dynparquet.NewSampleSchema(), p)
+	_, err := Build(
+		context.Background(),
+		memory.DefaultAllocator,
+		trace.NewNoopTracerProvider().Tracer(""),
+		dynparquet.NewSampleSchema(),
+		p,
+	)
 	require.NoError(t, err)
 }
