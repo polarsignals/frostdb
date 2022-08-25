@@ -17,7 +17,7 @@ import (
 type Distinction struct {
 	pool     memory.Allocator
 	tracer   trace.Tracer
-	next     func(ctx context.Context, r arrow.Record) error
+	next     PhysicalPlan
 	columns  []logicalplan.Expr
 	hashSeed maphash.Seed
 
@@ -37,8 +37,8 @@ func Distinct(pool memory.Allocator, tracer trace.Tracer, columns []logicalplan.
 	}
 }
 
-func (d *Distinction) SetNextCallback(callback func(ctx context.Context, r arrow.Record) error) {
-	d.next = callback
+func (d *Distinction) SetNext(plan PhysicalPlan) {
+	d.next = plan
 }
 
 func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
@@ -128,7 +128,7 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 		rows,
 	)
 
-	err := d.next(ctx, distinctRecord)
+	err := d.next.Callback(ctx, distinctRecord)
 	distinctRecord.Release()
 	return err
 }

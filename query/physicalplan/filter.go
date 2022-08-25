@@ -16,10 +16,10 @@ import (
 )
 
 type PredicateFilter struct {
-	pool         memory.Allocator
-	tracer       trace.Tracer
-	filterExpr   BooleanExpression
-	nextCallback func(ctx context.Context, r arrow.Record) error
+	pool       memory.Allocator
+	tracer     trace.Tracer
+	filterExpr BooleanExpression
+	next       PhysicalPlan
 }
 
 type Bitmap = roaring.Bitmap
@@ -213,8 +213,8 @@ func newFilter(pool memory.Allocator, tracer trace.Tracer, filterExpr BooleanExp
 	}
 }
 
-func (f *PredicateFilter) SetNextCallback(callback func(ctx context.Context, r arrow.Record) error) {
-	f.nextCallback = callback
+func (f *PredicateFilter) SetNext(next PhysicalPlan) {
+	f.next = next
 }
 
 func (f *PredicateFilter) Callback(ctx context.Context, r arrow.Record) error {
@@ -231,7 +231,7 @@ func (f *PredicateFilter) Callback(ctx context.Context, r arrow.Record) error {
 	}
 
 	defer filtered.Release()
-	return f.nextCallback(ctx, filtered)
+	return f.next.Callback(ctx, filtered)
 }
 
 func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record) (arrow.Record, bool, error) {

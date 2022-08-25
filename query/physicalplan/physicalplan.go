@@ -14,7 +14,7 @@ import (
 
 type PhysicalPlan interface {
 	Callback(ctx context.Context, r arrow.Record) error
-	SetNextCallback(next func(ctx context.Context, r arrow.Record) error)
+	SetNext(next PhysicalPlan)
 }
 
 type ScanPhysicalPlan interface {
@@ -52,6 +52,12 @@ func (e *OutputPlan) Callback(ctx context.Context, r arrow.Record) error {
 
 func (e *OutputPlan) SetNextCallback(next func(ctx context.Context, r arrow.Record) error) {
 	e.callback = next
+}
+
+func (e *OutputPlan) SetNext(next PhysicalPlan) {
+	// OutputPlan should be the last step.
+	// If this gets called we're doing something wrong.
+	panic("bug in builder! output plan should not have a next plan!")
 }
 
 func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, callback func(ctx context.Context, r arrow.Record) error) error {
@@ -190,10 +196,12 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			return false
 		}
 
-		phyPlan.SetNextCallback(prev.Callback)
+		phyPlan.SetNext(prev)
 		prev = phyPlan
-
 		return true
 	}))
+
+	outputPlan.SetNextCallback(prev.Callback)
+
 	return outputPlan, err
 }
