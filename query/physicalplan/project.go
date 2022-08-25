@@ -140,7 +140,7 @@ type Projection struct {
 
 	colProjections []columnProjection
 
-	next func(ctx context.Context, r arrow.Record) error
+	next PhysicalPlan
 }
 
 func Project(mem memory.Allocator, tracer trace.Tracer, exprs []logicalplan.Expr) (*Projection, error) {
@@ -192,9 +192,9 @@ func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
 		resArrays,
 		rows,
 	)
-	return p.next(ctx, ar)
+	return p.next.Callback(ctx, ar)
 }
 
-func (p *Projection) SetNextCallback(next func(ctx context.Context, r arrow.Record) error) {
+func (p *Projection) SetNext(next PhysicalPlan) {
 	p.next = next
 }

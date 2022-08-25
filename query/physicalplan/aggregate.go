@@ -112,7 +112,7 @@ type HashAggregate struct {
 	columnToAggregate     logicalplan.Expr
 	aggregationFunction   AggregationFunction
 	hashSeed              maphash.Seed
-	nextCallback          func(ctx context.Context, r arrow.Record) error
+	next                  PhysicalPlan
 
 	// Buffers that are reused across callback calls.
 	groupByFields      []arrow.Field
@@ -147,8 +147,8 @@ func NewHashAggregate(
 	}
 }
 
-func (a *HashAggregate) SetNextCallback(nextCallback func(ctx context.Context, r arrow.Record) error) {
-	a.nextCallback = nextCallback
+func (a *HashAggregate) SetNext(next PhysicalPlan) {
+	a.next = next
 }
 
 // Go translation of boost's hash_combine function. Read here why these values
@@ -400,7 +400,7 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	aggregateField := arrow.Field{Name: a.resultColumnName, Type: aggregateArray.DataType()}
 	cols := append(groupByArrays, aggregateArray)
 
-	return a.nextCallback(ctx, array.NewRecord(
+	return a.next.Callback(ctx, array.NewRecord(
 		arrow.NewSchema(append(groupByFields, aggregateField), nil),
 		cols,
 		int64(numRows),
