@@ -388,12 +388,15 @@ type AggFunc uint32
 const (
 	AggFuncUnknown AggFunc = iota
 	AggFuncSum
+	AggFuncMax
 )
 
 func (f AggFunc) String() string {
 	switch f {
 	case AggFuncSum:
 		return "sum"
+	case AggFuncMax:
+		return "max"
 	default:
 		panic("unknown aggregation function")
 	}
@@ -402,6 +405,13 @@ func (f AggFunc) String() string {
 func Sum(expr Expr) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncSum,
+		Expr: expr,
+	}
+}
+
+func Max(expr Expr) *AggregationFunction {
+	return &AggregationFunction{
+		Func: AggFuncMax,
 		Expr: expr,
 	}
 }
