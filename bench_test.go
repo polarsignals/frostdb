@@ -11,6 +11,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -37,6 +38,7 @@ func newDBForBenchmarks(ctx context.Context, b testing.TB) (*DB, error) {
 	col, err := New(
 		log.NewNopLogger(),
 		prometheus.NewRegistry(),
+		trace.NewNoopTracerProvider().Tracer(""),
 		WithWAL(),
 		WithStoragePath(storagePath),
 	)
@@ -70,11 +72,12 @@ func getLatest15MinInterval(ctx context.Context, b testing.TB, engine *query.Loc
 	require.NoError(b, engine.ScanTable(tableName).
 		Aggregate(
 			logicalplan.Max(logicalplan.Col("timestamp")),
-		).Execute(ctx, func(r arrow.Record) error {
-		r.Retain()
-		result = r
-		return nil
-	}))
+		).Execute(ctx,
+		func(ctx context.Context, r arrow.Record) error {
+			r.Retain()
+			result = r
+			return nil
+		}))
 	defer result.Release()
 
 	require.Equal(b, int64(1), result.NumCols())
@@ -116,7 +119,11 @@ func BenchmarkQueryTypes(b *testing.B) {
 	db, err := newDBForBenchmarks(ctx, b)
 	require.NoError(b, err)
 
-	engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		trace.NewNoopTracerProvider().Tracer(""),
+		db.TableProvider(),
+	)
 
 	b.ResetTimer()
 
@@ -130,7 +137,7 @@ func BenchmarkQueryTypes(b *testing.B) {
 				logicalplan.Col("period_unit"),
 				logicalplan.Col("duration").Gt(logicalplan.Literal(0)),
 			).
-			Execute(ctx, func(r arrow.Record) error {
+			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 				if r.NumRows() == 0 {
 					b.Fatal("expected at least one row")
 				}
@@ -149,7 +156,11 @@ func BenchmarkQueryMerge(b *testing.B) {
 	db, err := newDBForBenchmarks(ctx, b)
 	require.NoError(b, err)
 
-	engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		trace.NewNoopTracerProvider().Tracer(""),
+		db.TableProvider(),
+	)
 	start, end := getLatest15MinInterval(ctx, b, engine)
 
 	b.ResetTimer()
@@ -163,7 +174,7 @@ func BenchmarkQueryMerge(b *testing.B) {
 				logicalplan.Sum(logicalplan.Col("value")),
 				logicalplan.Col("stacktrace"),
 			).
-			Execute(ctx, func(r arrow.Record) error {
+			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 				if r.NumRows() == 0 {
 					b.Fatal("expected at least one row")
 				}
@@ -182,7 +193,11 @@ func BenchmarkQueryRange(b *testing.B) {
 	db, err := newDBForBenchmarks(ctx, b)
 	require.NoError(b, err)
 
-	engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		trace.NewNoopTracerProvider().Tracer(""),
+		db.TableProvider(),
+	)
 	start, end := getLatest15MinInterval(ctx, b, engine)
 
 	b.ResetTimer()
@@ -197,7 +212,7 @@ func BenchmarkQueryRange(b *testing.B) {
 				logicalplan.DynCol("labels"),
 				logicalplan.Col("timestamp"),
 			).
-			Execute(ctx, func(r arrow.Record) error {
+			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 				if r.NumRows() == 0 {
 					b.Fatal("expected at least one row")
 				}
