@@ -435,6 +435,32 @@ func (t *Table) View(ctx context.Context, fn func(ctx context.Context, tx uint64
 	return fn(ctx, tx)
 }
 
+// recordBuilderExceedsNumRows assumes all the RecordBuilder's fields have equal
+// length and returns whether at least one field is longer than or equal to
+// threshold.
+func recordBuilderExceedsNumRows(builder *array.RecordBuilder, threshold int) bool {
+	for _, f := range builder.Fields() {
+		if f.Len() >= threshold {
+			return true
+		}
+	}
+	return false
+}
+
+// prepareForFlush sets the nullability on a Record column if the type is a
+// ListType.
+// TODO: Is this a bug in arrow? We already set the nullability in
+// parquetColumnToArrowArray, but it doesn't appear to transfer into the
+// resulting array's type. Needs to be investigated.
+func prepareForFlush(r arrow.Record, schema *parquet.Schema) {
+	for i, c := range r.Columns() {
+		switch t := c.DataType().(type) {
+		case *arrow.ListType:
+			t.SetElemNullable(schema.Fields()[i].Optional())
+		}
+	}
+}
+
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *Table) Iterator(
 	ctx context.Context,
@@ -460,6 +486,11 @@ func (t *Table) Iterator(
 	// the sorting so it's not worth it in the general case. Physical plans
 	// can decide to sort if they need to in order to exploit the
 	// characteristics of sorted data.
+
+	var builder *array.RecordBuilder
+	// builderBufferSize specifies a threshold of records past which the
+	// buffered results are flushed to the next operator.
+	const builderBufferSize = 1024
 	for _, rg := range rowGroups {
 		select {
 		case <-ctx.Done():
@@ -479,24 +510,41 @@ func (t *Table) Iterator(
 				}
 			}
 
-			var record arrow.Record
-			record, err = pqarrow.ParquetRowGroupToArrowRecord(
+			if builder == nil {
+				builder = array.NewRecordBuilder(pool, schema)
+				defer builder.Release()
+			}
+
+			if err := pqarrow.ParquetRowGroupToArrowRecord(
 				ctx,
 				pool,
 				rg,
 				schema,
 				iterOpts.Filter,
 				iterOpts.DistinctColumns,
-			)
-			if err != nil {
+				builder,
+			); err != nil {
 				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 			}
-			err = iterator(ctx, record)
-			record.Release()
-			if err != nil {
-				return err
+			if recordBuilderExceedsNumRows(builder, builderBufferSize) {
+				r := builder.NewRecord()
+				prepareForFlush(r, rg.Schema())
+				if err := iterator(ctx, r); err != nil {
+					return err
+				}
+				r.Release()
 			}
 		}
+	}
+
+	if builder != nil && recordBuilderExceedsNumRows(builder, 0) {
+		// Flush the builder.
+		r := builder.NewRecord()
+		prepareForFlush(r, rowGroups[0].Schema())
+		if err := iterator(ctx, r); err != nil {
+			return err
+		}
+		r.Release()
 	}
 
 	return nil

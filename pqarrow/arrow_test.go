@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
@@ -109,8 +110,10 @@ func TestMergeToArrow(t *testing.T) {
 	require.Equal(t, as.Field(6), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(7), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
 
-	ar, err := ParquetRowGroupToArrowRecord(ctx, pool, merge, as, nil, nil)
-	require.NoError(t, err)
+	builder := array.NewRecordBuilder(pool, as)
+	defer builder.Release()
+	require.NoError(t, ParquetRowGroupToArrowRecord(ctx, pool, merge, as, nil, nil, builder))
+	ar := builder.NewRecord()
 	require.Equal(t, int64(5), ar.NumRows())
 	require.Equal(t, int64(8), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 8)
@@ -144,18 +147,21 @@ func BenchmarkParquetToArrow(b *testing.B) {
 	schema, err := ParquetRowGroupToArrowSchema(ctx, buf, nil, nil, nil, nil)
 	require.NoError(b, err)
 
+	builder := array.NewRecordBuilder(pool, schema)
+	defer builder.Release()
+
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err = ParquetRowGroupToArrowRecord(
+		require.NoError(b, ParquetRowGroupToArrowRecord(
 			ctx,
 			pool,
 			buf,
 			schema,
 			nil,
 			nil,
-		)
-		require.NoError(b, err)
+			builder,
+		))
 	}
 }
 
@@ -286,8 +292,11 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 	require.Equal(t, as.Field(2), arrow.Field{Name: "timestamp > 0", Type: &arrow.BooleanType{}, Nullable: true})
 
 	pool := memory.DefaultAllocator
-	ar, err := ParquetRowGroupToArrowRecord(ctx, pool, buf, as, nil, distinctColumns)
+	builder := array.NewRecordBuilder(pool, as)
+	defer builder.Release()
+	require.NoError(t, ParquetRowGroupToArrowRecord(ctx, pool, buf, as, nil, distinctColumns, builder))
 	require.NoError(t, err)
+	ar := builder.NewRecord()
 	require.Equal(t, int64(1), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 3)
@@ -369,10 +378,57 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	require.Equal(t, as.Field(2), arrow.Field{Name: "value > 0", Type: &arrow.BooleanType{}, Nullable: true})
 
 	pool := memory.DefaultAllocator
-	ar, err := ParquetRowGroupToArrowRecord(ctx, pool, buf, as, nil, distinctColumns)
+	builder := array.NewRecordBuilder(pool, as)
+	defer builder.Release()
+	require.NoError(t, ParquetRowGroupToArrowRecord(ctx, pool, buf, as, nil, distinctColumns, builder))
 	require.NoError(t, err)
+	ar := builder.NewRecord()
 	t.Log(ar)
 	require.Equal(t, int64(2), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 3)
+}
+
+func TestList(t *testing.T) {
+	type model struct {
+		Data []int
+	}
+	data := []int{3, 9, 2}
+	buf := parquet.NewGenericBuffer[model]()
+	_, err := buf.Write([]model{{Data: data}})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	as, err := ParquetRowGroupToArrowSchema(ctx, buf, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	pool := memory.DefaultAllocator
+
+	builder := array.NewRecordBuilder(pool, as)
+	defer builder.Release()
+	require.NoError(t, ParquetRowGroupToArrowRecord(ctx, pool, buf, as, nil, nil, builder))
+
+	record := builder.NewRecord()
+	t.Log(record)
+	rows := record.NumRows()
+	require.Equal(t, int64(1), rows)
+	require.Equal(t, int64(1), record.NumCols())
+
+	column := record.Column(0)
+	colType := column.DataType().(*arrow.ListType)
+	require.True(t, colType.ElemField().Nullable)
+
+	listArray := column.(*array.List)
+	vals := listArray.ListValues().(*array.Int64).Int64Values()
+	for i := range vals {
+		require.Equal(
+			t,
+			data[i],
+			int(vals[i]),
+			"data mismatch at index %d, expected: %v, actual: %v",
+			i,
+			data,
+			vals,
+		)
+	}
 }
