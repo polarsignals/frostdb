@@ -1,6 +1,7 @@
 package physicalplan
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hash/maphash"
@@ -12,12 +13,14 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/dgryski/go-metro"
 	"github.com/segmentio/parquet-go"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 func Aggregate(
 	pool memory.Allocator,
+	tracer trace.Tracer,
 	s *parquet.Schema,
 	agg *logicalplan.Aggregation,
 ) (*HashAggregate, error) {
@@ -62,6 +65,7 @@ func Aggregate(
 
 	return NewHashAggregate(
 		pool,
+		tracer,
 		agg.AggExpr.Name(),
 		f,
 		aggColumnExpr,
@@ -99,6 +103,7 @@ type AggregationFunction interface {
 
 type HashAggregate struct {
 	pool                  memory.Allocator
+	tracer                trace.Tracer
 	resultColumnName      string
 	groupByCols           map[string]array.Builder
 	arraysToAggregate     []array.Builder
@@ -107,7 +112,7 @@ type HashAggregate struct {
 	columnToAggregate     logicalplan.Expr
 	aggregationFunction   AggregationFunction
 	hashSeed              maphash.Seed
-	nextCallback          func(r arrow.Record) error
+	nextCallback          func(ctx context.Context, r arrow.Record) error
 
 	// Buffers that are reused across callback calls.
 	groupByFields      []arrow.Field
@@ -117,6 +122,7 @@ type HashAggregate struct {
 
 func NewHashAggregate(
 	pool memory.Allocator,
+	tracer trace.Tracer,
 	resultColumnName string,
 	aggregationFunction AggregationFunction,
 	columnToAggregate logicalplan.Expr,
@@ -124,6 +130,7 @@ func NewHashAggregate(
 ) *HashAggregate {
 	return &HashAggregate{
 		pool:              pool,
+		tracer:            tracer,
 		resultColumnName:  resultColumnName,
 		groupByCols:       map[string]array.Builder{},
 		arraysToAggregate: make([]array.Builder, 0),
@@ -140,7 +147,7 @@ func NewHashAggregate(
 	}
 }
 
-func (a *HashAggregate) SetNextCallback(nextCallback func(r arrow.Record) error) {
+func (a *HashAggregate) SetNextCallback(nextCallback func(ctx context.Context, r arrow.Record) error) {
 	a.nextCallback = nextCallback
 }
 
@@ -211,7 +218,11 @@ func hashInt64Array(arr *array.Int64) []uint64 {
 	return res
 }
 
-func (a *HashAggregate) Callback(r arrow.Record) error {
+func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
+	// Generates high volume of spans. Comment out if needed during development.
+	// ctx, span := a.tracer.Start(ctx, "HashAggregate/Callback")
+	// defer span.End()
+
 	groupByFields := a.groupByFields
 	groupByFieldHashes := a.groupByFieldHashes
 	groupByArrays := a.groupByArrays
@@ -353,7 +364,10 @@ func appendValue(b array.Builder, arr arrow.Array, i int) error {
 	}
 }
 
-func (a *HashAggregate) Finish() error {
+func (a *HashAggregate) Finish(ctx context.Context) error {
+	ctx, span := a.tracer.Start(ctx, "HashAggregate/Finish")
+	defer span.End()
+
 	numCols := len(a.groupByCols) + 1
 	numRows := len(a.arraysToAggregate)
 
@@ -386,7 +400,7 @@ func (a *HashAggregate) Finish() error {
 	aggregateField := arrow.Field{Name: a.resultColumnName, Type: aggregateArray.DataType()}
 	cols := append(groupByArrays, aggregateArray)
 
-	return a.nextCallback(array.NewRecord(
+	return a.nextCallback(ctx, array.NewRecord(
 		arrow.NewSchema(append(groupByFields, aggregateField), nil),
 		cols,
 		int64(numRows),

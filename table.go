@@ -24,6 +24,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/segmentio/parquet-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -70,6 +72,7 @@ type Table struct {
 	name    string
 	metrics *tableMetrics
 	logger  log.Logger
+	tracer  trace.Tracer
 
 	config *TableConfig
 
@@ -125,6 +128,7 @@ func newTable(
 	tableConfig *TableConfig,
 	reg prometheus.Registerer,
 	logger log.Logger,
+	tracer trace.Tracer,
 	wal WAL,
 ) (*Table, error) {
 	if db.columnStore.indexDegree <= 0 {
@@ -144,6 +148,7 @@ func newTable(
 		config: tableConfig,
 		name:   name,
 		logger: logger,
+		tracer: tracer,
 		mtx:    &sync.RWMutex{},
 		wal:    wal,
 		metrics: &tableMetrics{
@@ -423,8 +428,12 @@ func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
 	return tx, nil
 }
 
-func (t *Table) View(fn func(tx uint64) error) error {
-	return fn(t.db.beginRead())
+func (t *Table) View(ctx context.Context, fn func(ctx context.Context, tx uint64) error) error {
+	ctx, span := t.tracer.Start(ctx, "Table/View")
+	tx := t.db.beginRead()
+	span.SetAttributes(attribute.Int64("tx", int64(tx))) // Attributes don't support uint64...
+	defer span.End()
+	return fn(ctx, tx)
 }
 
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
@@ -437,8 +446,14 @@ func (t *Table) Iterator(
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
-	iterator func(r arrow.Record) error,
+	iterator func(ctx context.Context, r arrow.Record) error,
 ) error {
+	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
+	span.SetAttributes(attribute.Int("physicalProjections", len(physicalProjections)))
+	span.SetAttributes(attribute.Int("projections", len(projections)))
+	span.SetAttributes(attribute.Int("distinct", len(distinctColumns)))
+	defer span.End()
+
 	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
 		return err
@@ -480,7 +495,7 @@ func (t *Table) Iterator(
 			if err != nil {
 				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 			}
-			err = iterator(record)
+			err = iterator(ctx, record)
 			record.Release()
 			if err != nil {
 				return err
@@ -501,8 +516,14 @@ func (t *Table) SchemaIterator(
 	projections []logicalplan.Expr,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
-	iterator func(r arrow.Record) error,
+	iterator func(ctx context.Context, r arrow.Record) error,
 ) error {
+	ctx, span := t.tracer.Start(ctx, "Table/SchemaIterator")
+	span.SetAttributes(attribute.Int("physicalProjections", len(physicalProjections)))
+	span.SetAttributes(attribute.Int("projections", len(projections)))
+	span.SetAttributes(attribute.Int("distinct", len(distinctColumns)))
+	defer span.End()
+
 	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
 		return err
@@ -530,7 +551,7 @@ func (t *Table) SchemaIterator(
 			b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
 
 			record := b.NewRecord()
-			err = iterator(record)
+			err = iterator(ctx, record)
 			record.Release()
 			b.Release()
 			if err != nil {
@@ -551,6 +572,12 @@ func (t *Table) ArrowSchema(
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
 ) (*arrow.Schema, error) {
+	ctx, span := t.tracer.Start(ctx, "Table/ArrowSchema")
+	span.SetAttributes(attribute.Int("physicalProjections", len(physicalProjections)))
+	span.SetAttributes(attribute.Int("projections", len(projections)))
+	span.SetAttributes(attribute.Int("distinct", len(distinctColumns)))
+	defer span.End()
+
 	rowGroups, err := t.collectRowGroups(ctx, tx, filterExpr)
 	if err != nil {
 		return nil, err
@@ -1379,6 +1406,9 @@ func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 
 // collectRowGroups collects all the row groups from the table for the given filter.
 func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logicalplan.Expr) ([]dynparquet.DynamicRowGroup, error) {
+	ctx, span := t.tracer.Start(ctx, "Table/collectRowGroups")
+	defer span.End()
+
 	filter, err := booleanExpr(filterExpr)
 	if err != nil {
 		return nil, err
@@ -1396,6 +1426,7 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
 	memoryBlocks, lastReadBlockTimestamp := t.memoryBlocks()
 	for _, block := range memoryBlocks {
+		span.AddEvent("memoryBlock")
 		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
 			return nil, err
 		}

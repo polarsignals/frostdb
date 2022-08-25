@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
@@ -22,10 +23,12 @@ func TestDistinct(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -112,6 +115,7 @@ func TestDistinct(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -121,7 +125,7 @@ func TestDistinct(t *testing.T) {
 			rows := int64(0)
 			err := engine.ScanTable("test").
 				Distinct(test.columns...).
-				Execute(context.Background(), func(ar arrow.Record) error {
+				Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 					rows += ar.NumRows()
 					defer ar.Release()
 
@@ -140,10 +144,12 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -183,6 +189,7 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -193,7 +200,7 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 			logicalplan.Col("labels.label2"),
 			logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(0))),
 		).
-		Execute(context.Background(), func(ar arrow.Record) error {
+		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 			ar.Retain()
 			r = ar
 
@@ -214,10 +221,12 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -257,6 +266,7 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -267,7 +277,7 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 			logicalplan.Col("labels.label2"),
 			logicalplan.Col("value").Gt(logicalplan.Literal(int64(0))),
 		).
-		Execute(context.Background(), func(ar arrow.Record) error {
+		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 			ar.Retain()
 			r = ar
 
@@ -288,10 +298,12 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -353,6 +365,7 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -363,7 +376,7 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 			logicalplan.Col("labels.label2"),
 			logicalplan.Col("value").Gt(logicalplan.Literal(int64(0))),
 		).
-		Execute(context.Background(), func(ar arrow.Record) error {
+		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 			ar.Retain()
 			r = ar
 
@@ -384,10 +397,12 @@ func TestDistinctProjectionAllNull(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -427,6 +442,7 @@ func TestDistinctProjectionAllNull(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
+		tracer,
 		db.TableProvider(),
 	)
 
@@ -434,7 +450,7 @@ func TestDistinctProjectionAllNull(t *testing.T) {
 		Distinct(
 			logicalplan.Col("labels.label2"),
 		).
-		Execute(context.Background(), func(ar arrow.Record) error {
+		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 			return nil
 		})
 	require.NoError(t, err)

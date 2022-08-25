@@ -1,6 +1,7 @@
 package physicalplan
 
 import (
+	"context"
 	"errors"
 	"regexp"
 
@@ -9,14 +10,16 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 type PredicateFilter struct {
 	pool         memory.Allocator
+	tracer       trace.Tracer
 	filterExpr   BooleanExpression
-	nextCallback func(r arrow.Record) error
+	nextCallback func(ctx context.Context, r arrow.Record) error
 }
 
 type Bitmap = roaring.Bitmap
@@ -193,27 +196,32 @@ func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
 	}
 }
 
-func Filter(pool memory.Allocator, filterExpr logicalplan.Expr) (*PredicateFilter, error) {
+func Filter(pool memory.Allocator, tracer trace.Tracer, filterExpr logicalplan.Expr) (*PredicateFilter, error) {
 	expr, err := booleanExpr(filterExpr)
 	if err != nil {
 		return nil, err
 	}
 
-	return newFilter(pool, expr), nil
+	return newFilter(pool, tracer, expr), nil
 }
 
-func newFilter(pool memory.Allocator, filterExpr BooleanExpression) *PredicateFilter {
+func newFilter(pool memory.Allocator, tracer trace.Tracer, filterExpr BooleanExpression) *PredicateFilter {
 	return &PredicateFilter{
 		pool:       pool,
+		tracer:     tracer,
 		filterExpr: filterExpr,
 	}
 }
 
-func (f *PredicateFilter) SetNextCallback(callback func(r arrow.Record) error) {
+func (f *PredicateFilter) SetNextCallback(callback func(ctx context.Context, r arrow.Record) error) {
 	f.nextCallback = callback
 }
 
-func (f *PredicateFilter) Callback(r arrow.Record) error {
+func (f *PredicateFilter) Callback(ctx context.Context, r arrow.Record) error {
+	// Generates high volume of spans. Comment out if needed during development.
+	// ctx, span := f.tracer.Start(ctx, "PredicateFilter/Callback")
+	// defer span.End()
+
 	filtered, empty, err := filter(f.pool, f.filterExpr, r)
 	if err != nil {
 		return err
@@ -223,7 +231,7 @@ func (f *PredicateFilter) Callback(r arrow.Record) error {
 	}
 
 	defer filtered.Release()
-	return f.nextCallback(filtered)
+	return f.nextCallback(ctx, filtered)
 }
 
 func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record) (arrow.Record, bool, error) {

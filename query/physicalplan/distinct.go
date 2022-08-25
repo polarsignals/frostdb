@@ -1,6 +1,7 @@
 package physicalplan
 
 import (
+	"context"
 	"hash/maphash"
 	"sync"
 
@@ -8,13 +9,15 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 type Distinction struct {
 	pool     memory.Allocator
-	next     func(r arrow.Record) error
+	tracer   trace.Tracer
+	next     func(ctx context.Context, r arrow.Record) error
 	columns  []logicalplan.Expr
 	hashSeed maphash.Seed
 
@@ -22,9 +25,10 @@ type Distinction struct {
 	seen map[uint64]struct{}
 }
 
-func Distinct(pool memory.Allocator, columns []logicalplan.Expr) *Distinction {
+func Distinct(pool memory.Allocator, tracer trace.Tracer, columns []logicalplan.Expr) *Distinction {
 	return &Distinction{
 		pool:     pool,
+		tracer:   tracer,
 		columns:  columns,
 		hashSeed: maphash.MakeSeed(),
 
@@ -33,11 +37,15 @@ func Distinct(pool memory.Allocator, columns []logicalplan.Expr) *Distinction {
 	}
 }
 
-func (d *Distinction) SetNextCallback(callback func(r arrow.Record) error) {
+func (d *Distinction) SetNextCallback(callback func(ctx context.Context, r arrow.Record) error) {
 	d.next = callback
 }
 
-func (d *Distinction) Callback(r arrow.Record) error {
+func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
+	// Generates high volume of spans. Comment out if needed during development.
+	// ctx, span := d.tracer.Start(ctx, "Distinction/Callback")
+	// defer span.End()
+
 	distinctFields := make([]arrow.Field, 0, 10)
 	distinctFieldHashes := make([]uint64, 0, 10)
 	distinctArrays := make([]arrow.Array, 0, 10)
@@ -120,7 +128,7 @@ func (d *Distinction) Callback(r arrow.Record) error {
 		rows,
 	)
 
-	err := d.next(distinctRecord)
+	err := d.next(ctx, distinctRecord)
 	distinctRecord.Release()
 	return err
 }

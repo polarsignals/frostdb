@@ -5,6 +5,7 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/query/physicalplan"
@@ -15,32 +16,37 @@ type Builder interface {
 	Filter(expr logicalplan.Expr) Builder
 	Distinct(expr ...logicalplan.Expr) Builder
 	Project(projections ...logicalplan.Expr) Builder
-	Execute(ctx context.Context, callback func(r arrow.Record) error) error
+	Execute(ctx context.Context, callback func(ctx context.Context, r arrow.Record) error) error
 }
 
 type LocalEngine struct {
 	pool          memory.Allocator
+	tracer        trace.Tracer
 	tableProvider logicalplan.TableProvider
 }
 
 func NewEngine(
 	pool memory.Allocator,
+	tracer trace.Tracer,
 	tableProvider logicalplan.TableProvider,
 ) *LocalEngine {
 	return &LocalEngine{
 		pool:          pool,
+		tracer:        tracer,
 		tableProvider: tableProvider,
 	}
 }
 
 type LocalQueryBuilder struct {
 	pool        memory.Allocator
+	tracer      trace.Tracer
 	planBuilder logicalplan.Builder
 }
 
 func (e *LocalEngine) ScanTable(name string) Builder {
 	return LocalQueryBuilder{
 		pool:        e.pool,
+		tracer:      e.tracer,
 		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name),
 	}
 }
@@ -48,6 +54,7 @@ func (e *LocalEngine) ScanTable(name string) Builder {
 func (e *LocalEngine) ScanSchema(name string) Builder {
 	return LocalQueryBuilder{
 		pool:        e.pool,
+		tracer:      e.tracer,
 		planBuilder: (&logicalplan.Builder{}).ScanSchema(e.tableProvider, name),
 	}
 }
@@ -58,6 +65,7 @@ func (b LocalQueryBuilder) Aggregate(
 ) Builder {
 	return LocalQueryBuilder{
 		pool:        b.pool,
+		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Aggregate(aggExpr, groupExprs...),
 	}
 }
@@ -67,6 +75,7 @@ func (b LocalQueryBuilder) Filter(
 ) Builder {
 	return LocalQueryBuilder{
 		pool:        b.pool,
+		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Filter(expr),
 	}
 }
@@ -76,6 +85,7 @@ func (b LocalQueryBuilder) Distinct(
 ) Builder {
 	return LocalQueryBuilder{
 		pool:        b.pool,
+		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Distinct(expr...),
 	}
 }
@@ -85,11 +95,15 @@ func (b LocalQueryBuilder) Project(
 ) Builder {
 	return LocalQueryBuilder{
 		pool:        b.pool,
+		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Project(projections...),
 	}
 }
 
-func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Record) error) error {
+func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(ctx context.Context, r arrow.Record) error) error {
+	ctx, span := b.tracer.Start(ctx, "LocalQueryBuilder/Execute")
+	defer span.End()
+
 	logicalPlan, err := b.planBuilder.Build()
 	if err != nil {
 		return err
@@ -100,7 +114,9 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(r arrow.Re
 	}
 
 	phyPlan, err := physicalplan.Build(
+		ctx,
 		b.pool,
+		b.tracer,
 		logicalPlan.InputSchema(),
 		logicalPlan,
 	)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"sync"
@@ -23,6 +22,7 @@ import (
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -59,10 +59,12 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 
 	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 		WithGranuleSize(granuleSize),
 	)
 	require.NoError(t, err)
@@ -168,7 +170,7 @@ func TestTable(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
 		if err != nil {
 			return err
@@ -183,7 +185,7 @@ func TestTable(t *testing.T) {
 			nil,
 			nil,
 			nil,
-			func(ar arrow.Record) error {
+			func(ctx context.Context, ar arrow.Record) error {
 				t.Log(ar)
 				defer ar.Release()
 				return nil
@@ -315,14 +317,14 @@ func Test_Table_GranuleSplit(t *testing.T) {
 		})
 	}
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		pool := memory.NewGoAllocator()
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
 		if err != nil {
 			return err
 		}
 
-		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(r arrow.Record) error {
+		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ctx context.Context, r arrow.Record) error {
 			defer r.Release()
 			t.Log(r)
 			return nil
@@ -336,21 +338,20 @@ func Test_Table_GranuleSplit(t *testing.T) {
 }
 
 /*
+This test is meant for the following case
+If the table index is as follows
 
-	This test is meant for the following case
-	If the table index is as follows
+[10,11]
 
-	[10,11]
-		\
-		[12,13,14]
+	\
+	[12,13,14]
 
+And we try and insert [8,9], we expect them to be inserted into the top granule
 
-	And we try and insert [8,9], we expect them to be inserted into the top granule
+[8,9,10,11]
 
-	[8,9,10,11]
-		\
-		[12,13]
-
+	\
+	[12,13]
 */
 func Test_Table_InsertLowest(t *testing.T) {
 	table := basicTable(t, 4)
@@ -468,13 +469,13 @@ func Test_Table_InsertLowest(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
 		if err != nil {
 			return err
 		}
 
-		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(r arrow.Record) error {
+		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ctx context.Context, r arrow.Record) error {
 			defer r.Release()
 			t.Log(r)
 			return nil
@@ -568,7 +569,7 @@ func Test_Table_Concurrency(t *testing.T) {
 
 			pool := memory.NewGoAllocator()
 
-			err := table.View(func(tx uint64) error {
+			err := table.View(ctx, func(ctx context.Context, tx uint64) error {
 				totalrows := int64(0)
 
 				as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
@@ -576,7 +577,7 @@ func Test_Table_Concurrency(t *testing.T) {
 					return err
 				}
 
-				err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+				err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ctx context.Context, ar arrow.Record) error {
 					totalrows += ar.NumRows()
 					defer ar.Release()
 
@@ -612,16 +613,18 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		)
 	)
 
-	dir, err := ioutil.TempDir("", "frostdb-benchmark")
+	dir, err := os.MkdirTemp("", "frostdb-benchmark")
 	require.NoError(b, err)
 	defer os.RemoveAll(dir) // clean up
 
 	reg := prometheus.NewRegistry()
 	logger := log.NewNopLogger()
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
 		logger,
 		reg,
+		tracer,
 		WithGranuleSize(512),
 		WithWAL(),
 		WithStoragePath(dir),
@@ -698,12 +701,12 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 
 		// Calculate the number of entries in database
 		totalrows := int64(0)
-		err = table.View(func(tx uint64) error {
+		err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 			as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
 			if err != nil {
 				return err
 			}
-			return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+			return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ctx context.Context, ar arrow.Record) error {
 				defer ar.Release()
 				totalrows += ar.NumRows()
 
@@ -794,12 +797,12 @@ func Test_Table_ReadIsolation(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		rows := int64(0)
-		err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+		err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ctx context.Context, ar arrow.Record) error {
 			rows += ar.NumRows()
 			defer ar.Release()
 
@@ -815,12 +818,12 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.tx.Store(3)
 	table.db.highWatermark.Store(3)
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		rows := int64(0)
-		err = table.Iterator(ctx, table.db.highWatermark.Load(), pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+		err = table.Iterator(ctx, table.db.highWatermark.Load(), pool, as, nil, nil, nil, nil, func(ctx context.Context, ar arrow.Record) error {
 			rows += ar.NumRows()
 			defer ar.Release()
 
@@ -953,7 +956,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 //	}
 //
 //	for i, table := range tables {
-//		err := table.Iterator(memory.NewGoAllocator(), func(ar arrow.Record) error {
+//		err := table.Iterator(memory.NewGoAllocator(), func(ctx context.Context,ar arrow.Record) error {
 //			switch i {
 //			case 0:
 //				require.Equal(t, "[3 2 1]", fmt.Sprintf("%v", ar.Column(6)))
@@ -1006,7 +1009,12 @@ func Test_Table_ReadIsolation(t *testing.T) {
 
 func Test_Table_NewTableValidIndexDegree(t *testing.T) {
 	config := NewTableConfig(dynparquet.NewSampleSchema())
-	c, err := New(newTestLogger(t), nil, WithIndexDegree(-1))
+	c, err := New(
+		newTestLogger(t),
+		nil,
+		trace.NewNoopTracerProvider().Tracer(""),
+		WithIndexDegree(-1),
+	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -1021,7 +1029,10 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	c, err := New(newTestLogger(t), nil, WithSplitSize(1))
+	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
+
+	c, err := New(logger, nil, tracer, WithSplitSize(1))
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -1029,7 +1040,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received 1)")
 
-	c, err = New(newTestLogger(t), nil, WithSplitSize(-1))
+	c, err = New(logger, nil, tracer, WithSplitSize(-1))
 	require.NoError(t, err)
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -1037,7 +1048,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received -1)")
 
-	c, err = New(newTestLogger(t), nil, WithSplitSize(2))
+	c, err = New(logger, nil, tracer, WithSplitSize(2))
 	require.NoError(t, err)
 	db, err = c.DB(context.Background(), "test")
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
@@ -1143,7 +1154,7 @@ func Test_Table_Filter(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		iterated := false
 
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
@@ -1151,7 +1162,7 @@ func Test_Table_Filter(t *testing.T) {
 			return err
 		}
 
-		err = table.Iterator(ctx, tx, pool, as, nil, nil, filterExpr, nil, func(ar arrow.Record) error {
+		err = table.Iterator(ctx, tx, pool, as, nil, nil, filterExpr, nil, func(ctx context.Context, ar arrow.Record) error {
 			defer ar.Release()
 
 			iterated = true
@@ -1219,8 +1230,8 @@ func Test_Table_Bloomfilter(t *testing.T) {
 	}
 
 	iterations := 0
-	err := table.View(func(tx uint64) error {
-		err := table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4")), nil, func(ar arrow.Record) error {
+	err := table.View(context.Background(), func(ctx context.Context, tx uint64) error {
+		err := table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, nil, nil, logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4")), nil, func(ctx context.Context, ar arrow.Record) error {
 			defer ar.Release()
 			iterations++
 			return nil
@@ -1317,7 +1328,7 @@ func Test_Table_InsertCancellation(t *testing.T) {
 
 			pool := memory.NewGoAllocator()
 
-			err := table.View(func(tx uint64) error {
+			err := table.View(ctx, func(ctx context.Context, tx uint64) error {
 				totalrows := int64(0)
 
 				as, err := table.ArrowSchema(context.Background(), tx, pool, nil, nil, nil, nil)
@@ -1325,7 +1336,7 @@ func Test_Table_InsertCancellation(t *testing.T) {
 					return err
 				}
 
-				err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+				err = table.Iterator(context.Background(), tx, pool, as, nil, nil, nil, nil, func(ctx context.Context, ar arrow.Record) error {
 					totalrows += ar.NumRows()
 					defer ar.Release()
 
@@ -1393,7 +1404,7 @@ func Test_Table_CancelBasic(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		totalrows := int64(0)
 
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
@@ -1401,7 +1412,7 @@ func Test_Table_CancelBasic(t *testing.T) {
 			return err
 		}
 
-		err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+		err = table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ctx context.Context, ar arrow.Record) error {
 			totalrows += ar.NumRows()
 			defer ar.Release()
 
@@ -1497,7 +1508,7 @@ func Test_Table_ArrowSchema(t *testing.T) {
 
 	// Read two schemas for two different queries within the same transaction.
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		schema, err := table.ArrowSchema(
 			ctx,
 			tx,
@@ -1594,9 +1605,12 @@ func Test_DoubleTable(t *testing.T) {
 	bucket, err := filesystem.NewBucket(".")
 	require.NoError(t, err)
 
+	logger := newTestLogger(t)
+	tracer := trace.NewNoopTracerProvider().Tracer("")
 	c, err := New(
-		newTestLogger(t),
+		logger,
 		nil,
+		tracer,
 		WithGranuleSize(4096),
 		WithBucketStorage(bucket),
 	)
@@ -1629,7 +1643,7 @@ func Test_DoubleTable(t *testing.T) {
 	// inserted).
 	require.Equal(t, uint64(2), n)
 
-	err = table.View(func(tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		pool := memory.NewGoAllocator()
 
 		as, err := table.ArrowSchema(ctx, tx, pool, nil, nil, nil, nil)
@@ -1637,7 +1651,7 @@ func Test_DoubleTable(t *testing.T) {
 			return err
 		}
 
-		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ar arrow.Record) error {
+		return table.Iterator(ctx, tx, pool, as, nil, nil, nil, nil, func(ctx context.Context, ar arrow.Record) error {
 			defer ar.Release()
 			require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
 			return nil

@@ -6,14 +6,15 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 type PhysicalPlan interface {
-	Callback(r arrow.Record) error
-	SetNextCallback(next func(r arrow.Record) error)
+	Callback(ctx context.Context, r arrow.Record) error
+	SetNextCallback(next func(ctx context.Context, r arrow.Record) error)
 }
 
 type ScanPhysicalPlan interface {
@@ -41,36 +42,40 @@ func (f PostPlanVisitorFunc) PostVisit(plan *logicalplan.LogicalPlan) bool {
 }
 
 type OutputPlan struct {
-	callback func(r arrow.Record) error
+	callback func(ctx context.Context, r arrow.Record) error
 	scan     ScanPhysicalPlan
 }
 
-func (e *OutputPlan) Callback(r arrow.Record) error {
-	return e.callback(r)
+func (e *OutputPlan) Callback(ctx context.Context, r arrow.Record) error {
+	return e.callback(ctx, r)
 }
 
-func (e *OutputPlan) SetNextCallback(next func(r arrow.Record) error) {
+func (e *OutputPlan) SetNextCallback(next func(ctx context.Context, r arrow.Record) error) {
 	e.callback = next
 }
 
-func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, callback func(r arrow.Record) error) error {
+func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, callback func(ctx context.Context, r arrow.Record) error) error {
 	e.callback = callback
 	return e.scan.Execute(ctx, pool)
 }
 
 type TableScan struct {
+	tracer   trace.Tracer
 	options  *logicalplan.TableScan
 	next     PhysicalPlan
-	finisher func() error
+	finisher func(ctx context.Context) error
 }
 
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
+	ctx, span := s.tracer.Start(ctx, "TableScan/Execute")
+	defer span.End()
+
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
 		return errors.New("table not found")
 	}
 
-	err := table.View(func(tx uint64) error {
+	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
 		schema, err := table.ArrowSchema(
 			ctx,
 			tx,
@@ -100,13 +105,14 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
-	return s.finisher()
+	return s.finisher(ctx)
 }
 
 type SchemaScan struct {
+	tracer   trace.Tracer
 	options  *logicalplan.SchemaScan
 	next     PhysicalPlan
-	finisher func() error
+	finisher func(ctx context.Context) error
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -114,7 +120,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	if table == nil {
 		return errors.New("table not found")
 	}
-	err := table.View(func(tx uint64) error {
+	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
 		return table.SchemaIterator(
 			ctx,
 			tx,
@@ -130,15 +136,18 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
-	return s.finisher()
+	return s.finisher(ctx)
 }
 
-func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
+func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
+	_, span := tracer.Start(ctx, "PhysicalPlan/Build")
+	defer span.End()
+
 	outputPlan := &OutputPlan{}
 	var (
 		err      error
 		prev     PhysicalPlan = outputPlan
-		finisher              = func() error { return nil }
+		finisher              = func(ctx context.Context) error { return nil }
 	)
 
 	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
@@ -146,6 +155,7 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 		switch {
 		case plan.SchemaScan != nil:
 			outputPlan.scan = &SchemaScan{
+				tracer:   tracer,
 				options:  plan.SchemaScan,
 				next:     prev,
 				finisher: finisher,
@@ -153,20 +163,21 @@ func Build(pool memory.Allocator, s *dynparquet.Schema, plan *logicalplan.Logica
 			return false
 		case plan.TableScan != nil:
 			outputPlan.scan = &TableScan{
+				tracer:   tracer,
 				options:  plan.TableScan,
 				next:     prev,
 				finisher: finisher,
 			}
 			return false
 		case plan.Projection != nil:
-			phyPlan, err = Project(pool, plan.Projection.Exprs)
+			phyPlan, err = Project(pool, tracer, plan.Projection.Exprs)
 		case plan.Distinct != nil:
-			phyPlan = Distinct(pool, plan.Distinct.Exprs)
+			phyPlan = Distinct(pool, tracer, plan.Distinct.Exprs)
 		case plan.Filter != nil:
-			phyPlan, err = Filter(pool, plan.Filter.Expr)
+			phyPlan, err = Filter(pool, tracer, plan.Filter.Expr)
 		case plan.Aggregation != nil:
 			var agg *HashAggregate
-			agg, err = Aggregate(pool, s.ParquetSchema(), plan.Aggregation)
+			agg, err = Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
 			phyPlan = agg
 			if agg != nil {
 				finisher = agg.Finish

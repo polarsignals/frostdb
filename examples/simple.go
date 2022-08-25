@@ -7,23 +7,25 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/go-kit/log"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/segmentio/parquet-go"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/segmentio/parquet-go"
 )
 
 // This example demonstrates how to create a simple FrostDB with a dynamic labels column that stores float values.
 func main() {
+	logger := log.NewNopLogger()
+	tracer := trace.NewNoopTracerProvider().Tracer("")
+	registry := prometheus.NewRegistry()
 
 	// Create a new column store
-	columnstore, _ := frostdb.New(
-		log.NewNopLogger(),
-		prometheus.NewRegistry(),
-	)
+	columnstore, _ := frostdb.New(logger, registry, tracer)
 
 	// Open up a database in the column store
 	database, _ := columnstore.DB(context.Background(), "simple_db")
@@ -43,40 +45,40 @@ func main() {
 	})
 
 	// firstname:Frederic surname:Brancz 100
-	buf.WriteRows([]parquet.Row{{
+	_, _ = buf.WriteRows([]parquet.Row{{
 		parquet.ValueOf("Frederic").Level(0, 1, 0),
 		parquet.ValueOf("Brancz").Level(0, 1, 1),
 		parquet.ValueOf(100).Level(0, 0, 2),
 	}})
 
 	// firstname:Thor surname:Hansen 10
-	buf.WriteRows([]parquet.Row{{
+	_, _ = buf.WriteRows([]parquet.Row{{
 		parquet.ValueOf("Thor").Level(0, 1, 0),
 		parquet.ValueOf("Hansen").Level(0, 1, 1),
 		parquet.ValueOf(10).Level(0, 0, 2),
 	}})
-	table.InsertBuffer(context.Background(), buf)
+	_, _ = table.InsertBuffer(context.Background(), buf)
 
 	// Now we can insert rows that have middle names into our dynamic column
 	buf, _ = schema.NewBuffer(map[string][]string{
 		"names": {"firstname", "middlename", "surname"},
 	})
 	// firstname:Matthias middlename:Oliver surname:Loibl 1
-	buf.WriteRows([]parquet.Row{{
+	_, _ = buf.WriteRows([]parquet.Row{{
 		parquet.ValueOf("Matthias").Level(0, 1, 0),
 		parquet.ValueOf("Oliver").Level(0, 1, 1),
 		parquet.ValueOf("Loibl").Level(0, 1, 2),
 		parquet.ValueOf(1).Level(0, 0, 3),
 	}})
-	table.InsertBuffer(context.Background(), buf)
+	_, _ = table.InsertBuffer(context.Background(), buf)
 
 	// Create a new query engine to retrieve data and print the results
-	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
-	engine.ScanTable("simple_table").
+	engine := query.NewEngine(memory.DefaultAllocator, tracer, database.TableProvider())
+	_ = engine.ScanTable("simple_table").
 		Project(logicalplan.DynCol("names")). // We don't know all dynamic columns at query time, but we want all of them to be returned.
 		Filter(
 			logicalplan.Col("names.firstname").Eq(logicalplan.Literal("Frederic")),
-		).Execute(context.Background(), func(r arrow.Record) error {
+		).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 		fmt.Println(r)
 		return nil
 	})

@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/thanos-io/objstore"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
@@ -31,6 +32,7 @@ type ColumnStore struct {
 	dbs                  map[string]*DB
 	reg                  prometheus.Registerer
 	logger               log.Logger
+	tracer               trace.Tracer
 	granuleSize          int
 	activeMemorySize     int64
 	storagePath          string
@@ -49,6 +51,7 @@ type Option func(*ColumnStore) error
 func New(
 	logger log.Logger,
 	reg prometheus.Registerer,
+	tracer trace.Tracer,
 	options ...Option,
 ) (*ColumnStore, error) {
 	if reg == nil {
@@ -60,6 +63,7 @@ func New(
 		dbs:              map[string]*DB{},
 		reg:              reg,
 		logger:           logger,
+		tracer:           tracer,
 		indexDegree:      2,
 		splitSize:        2,
 		granuleSize:      8192,
@@ -196,13 +200,14 @@ type dbMetrics struct {
 
 type DB struct {
 	columnStore *ColumnStore
+	reg         prometheus.Registerer
 	logger      log.Logger
+	tracer      trace.Tracer
 	name        string
 
 	mtx      *sync.RWMutex
 	roTables map[string]*Table
 	tables   map[string]*Table
-	reg      prometheus.Registerer
 
 	storagePath          string
 	wal                  WAL
@@ -251,10 +256,11 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		tables:               map[string]*Table{},
 		roTables:             map[string]*Table{},
 		reg:                  reg,
+		logger:               logger,
+		tracer:               s.tracer,
 		tx:                   atomic.NewUint64(0),
 		highWatermark:        highWatermark,
 		storagePath:          filepath.Join(s.DatabasesDir(), name),
-		logger:               logger,
 		wal:                  &wal.NopWAL{},
 		ignoreStorageOnQuery: s.ignoreStorageOnQuery,
 	}
@@ -370,6 +376,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 						config,
 						db.reg,
 						db.logger,
+						db.tracer,
 						db.wal,
 					)
 				}
@@ -504,6 +511,7 @@ func (db *DB) readOnlyTable(name string) (*Table, error) {
 		nil,
 		db.reg,
 		db.logger,
+		db.tracer,
 		db.wal,
 	)
 	if err != nil {
@@ -548,6 +556,7 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 			config,
 			db.reg,
 			db.logger,
+			db.tracer,
 			db.wal,
 		)
 		if err != nil {
@@ -617,9 +626,10 @@ func (db *DB) beginRead() uint64 {
 
 // begin is an internal function that Tables call to start a transaction for writes.
 // It returns:
-//   the write tx id
-//   The current high watermark
-//   A function to complete the transaction
+//
+//	the write tx id
+//	The current high watermark
+//	A function to complete the transaction
 func (db *DB) begin() (uint64, uint64, func()) {
 	tx := db.tx.Inc()
 	watermark := db.highWatermark.Load()
