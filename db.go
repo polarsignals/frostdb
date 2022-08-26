@@ -266,7 +266,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 	}
 
 	if s.bucket != nil {
-		db.bucket = NewPrefixedBucket(s.bucket, db.name)
+		db.bucket = objstore.NewPrefixedBucket(s.bucket, db.name)
 	}
 
 	if s.enableWAL {
