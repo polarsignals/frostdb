@@ -92,6 +92,8 @@ func chooseAggregationFunction(
 		default:
 			return nil, fmt.Errorf("unsupported max of type: %s", dataType.Name())
 		}
+	case logicalplan.AggFuncCount:
+		return &CountAggregation{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
 	}
@@ -483,4 +485,18 @@ func maxInt64array(arr *array.Int64) int64 {
 		}
 	}
 	return max
+}
+
+type CountAggregation struct{}
+
+func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	if len(arrs) == 0 {
+		return array.NewInt64Builder(pool).NewArray(), nil
+	}
+
+	res := array.NewInt64Builder(pool)
+	for _, arr := range arrs {
+		res.Append(int64(arr.Len()))
+	}
+	return res.NewArray(), nil
 }

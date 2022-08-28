@@ -389,6 +389,7 @@ const (
 	AggFuncUnknown AggFunc = iota
 	AggFuncSum
 	AggFuncMax
+	AggFuncCount
 )
 
 func (f AggFunc) String() string {
@@ -397,6 +398,8 @@ func (f AggFunc) String() string {
 		return "sum"
 	case AggFuncMax:
 		return "max"
+	case AggFuncCount:
+		return "count"
 	default:
 		panic("unknown aggregation function")
 	}
@@ -412,6 +415,13 @@ func Sum(expr Expr) *AggregationFunction {
 func Max(expr Expr) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncMax,
+		Expr: expr,
+	}
+}
+
+func Count(expr Expr) *AggregationFunction {
+	return &AggregationFunction{
+		Func: AggFuncCount,
 		Expr: expr,
 	}
 }
