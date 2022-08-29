@@ -104,6 +104,11 @@ func TestAggregate(t *testing.T) {
 			alias:  "value_max",
 			expVal: 3,
 		},
+		{
+			fn:     logicalplan.Count,
+			alias:  "value_count",
+			expVal: 3,
+		},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
 			var res arrow.Record
@@ -207,6 +212,11 @@ func TestAggregateNils(t *testing.T) {
 			fn:      logicalplan.Max,
 			alias:   "value_max",
 			expVals: []int64{1, 3},
+		},
+		{
+			fn:      logicalplan.Count,
+			alias:   "value_count",
+			expVals: []int64{1, 2},
 		},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
@@ -313,6 +323,11 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 			fn:      logicalplan.Max,
 			alias:   "value_max",
 			expVals: []int64{3, 1},
+		},
+		{
+			fn:      logicalplan.Count,
+			alias:   "value_count",
+			expVals: []int64{2, 1},
 		},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
