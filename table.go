@@ -786,13 +786,12 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	b := bytes.NewBuffer(nil)
 	cols := merge.DynamicColumns()
-	w, err := t.table.config.schema.GetWriter(b, cols)
+	w, err := t.table.config.schema.NewWriter(b, cols)
 	if err != nil {
 		t.abort(granule)
 		level.Error(t.logger).Log("msg", "failed to create new schema writer", "err", err)
 		return
 	}
-	defer t.table.config.schema.PutWriter(w)
 
 	rowBuf := make([]parquet.Row, 1)
 	rows := merge.Rows()
