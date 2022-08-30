@@ -721,15 +721,33 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	}
 
 	parts := []*Part{}
-	for granule, bufs := range rowsToInsertPerGranule {
+	for granule, indicies := range rowsToInsertPerGranule {
 		select {
 		case <-ctx.Done():
 			tombstone(parts)
 			return ctx.Err()
 		default:
-			_, err := w.WriteRows(bufs)
-			if err != nil {
-				return fmt.Errorf("failed to write rows: %w", err)
+
+			rowBuf := make([]parquet.Row, 1)
+			rows := buf.Reader()
+			for index := 0; ; index++ {
+				_, err := rows.ReadRows(rowBuf)
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return err
+				}
+
+				// Check if this index belongs in this granule
+				if _, ok := indicies[index]; !ok {
+					continue
+				}
+
+				_, err = w.WriteRows(rowBuf)
+				if err != nil {
+					return fmt.Errorf("failed to write rows: %w", err)
+				}
 			}
 			if err := w.Close(); err != nil {
 				return fmt.Errorf("failed to close writer: %w", err)
@@ -997,23 +1015,20 @@ func (t *TableBlock) Index() *btree.BTree {
 	return (*btree.BTree)(t.index.Load())
 }
 
-func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*Granule][]parquet.Row, error) {
-	// Special case: if there is only one granule, insert parts into it until full.
+func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*Granule]map[int]struct{}, error) {
 	index := t.Index()
 	if index.Len() == 1 {
-		rowBuf := make([]parquet.Row, buf.NumRows())
-		rows := buf.Reader()
-		_, err := rows.ReadRows(rowBuf)
-		if err != nil {
-			return nil, ErrReadRow{err}
+		rows := map[int]struct{}{}
+		for i := 0; i < int(buf.NumRows()); i++ {
+			rows[i] = struct{}{}
 		}
 
-		return map[*Granule][]parquet.Row{
-			index.Min().(*Granule): rowBuf,
+		return map[*Granule]map[int]struct{}{
+			index.Min().(*Granule): rows,
 		}, nil
 	}
 
-	rowsByGranule := map[*Granule][]parquet.Row{}
+	rowsByGranule := map[*Granule]map[int]struct{}{}
 
 	// TODO: we might be able to do ascend less than or ascend greater than here?
 	rows := buf.DynamicRows()
@@ -1025,6 +1040,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 	if err != nil {
 		return nil, ErrReadRow{err}
 	}
+	idx := 0
 	row := rowBuf.Get(0)
 
 	var ascendErr error
@@ -1040,9 +1056,9 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 					_, ok := rowsByGranule[prev]
 					if !ok {
 						// TODO
-						rowsByGranule[prev] = []parquet.Row{row.Row}
+						rowsByGranule[prev] = map[int]struct{}{idx: struct{}{}}
 					} else {
-						rowsByGranule[prev] = append(rowsByGranule[prev], row.Row)
+						rowsByGranule[prev][idx] = struct{}{}
 					}
 
 					n, err := rows.ReadRows(rowBuf)
@@ -1056,6 +1072,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 						return false
 					}
 					row = rowBuf.Get(0)
+					idx++
 					continue
 				}
 			}
@@ -1073,12 +1090,12 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 	if !exhaustedAllRows {
 		_, ok := rowsByGranule[prev]
 		if !ok {
-			rowsByGranule[prev] = []parquet.Row{}
+			rowsByGranule[prev] = map[int]struct{}{}
 		}
 
 		// Save any remaining rows that belong into prev
 		for {
-			rowsByGranule[prev] = append(rowsByGranule[prev], row.Row)
+			rowsByGranule[prev][idx] = struct{}{}
 			n, err := rows.ReadRows(rowBuf)
 			if err == io.EOF && n == 0 {
 				break
@@ -1086,6 +1103,8 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 			if err != nil && err != io.EOF {
 				return nil, ErrReadRow{err}
 			}
+			row = rowBuf.Get(0)
+			idx++
 		}
 	}
 
