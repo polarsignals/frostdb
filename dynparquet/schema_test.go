@@ -232,7 +232,6 @@ func TestMultipleIterations(t *testing.T) {
 }
 
 func Test_SchemaFromParquetFile(t *testing.T) {
-	t.Skip()
 	schema := NewSampleSchema()
 
 	samples := Samples{{

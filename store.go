@@ -93,17 +93,14 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, last
 			return nil
 		}
 
-		// Get a reader from the file bytes
-		buf, err := dynparquet.NewSerializedBuffer(file)
-		if err != nil {
-			return err
-		}
-
 		n++
-		for i := 0; i < buf.NumRowGroups(); i++ {
+		for i := 0; i < len(file.RowGroups()); i++ {
 			span.AddEvent("rowgroup")
 
-			rg := buf.DynamicRowGroup(i)
+			rg, err := dynparquet.DynamicRowGroupFromFile(i, file)
+			if err != nil {
+				return err
+			}
 			var mayContainUsefulData bool
 			mayContainUsefulData, err = filter.Eval(rg)
 			if err != nil {

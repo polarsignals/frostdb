@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/segmentio/parquet-go"
@@ -140,91 +141,91 @@ func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 
 // DefinitionFromParquetFile converts a parquet file into a schemapb.Schema.
 func DefinitionFromParquetFile(file *parquet.File) (*schemapb.Schema, error) {
-	/*
-		schema := file.Schema()
+	schema := file.Schema()
 
-		buf, err := NewSerializedBuffer(file)
+	var dyncols map[string][]string
+	dynColString, exists := file.Lookup(DynamicColumnsKey)
+	if exists {
+		var err error
+		dyncols, err = deserializeDynamicColumns(dynColString)
 		if err != nil {
 			return nil, err
 		}
-		dyncols := buf.DynamicColumns()
-		found := map[string]struct{}{}
-		columns := []*schemapb.Column{}
-		metadata := file.Metadata()
-		sortingCols := []*schemapb.SortingColumn{}
-		foundSortingCols := map[string]struct{}{}
-		for _, rg := range metadata.RowGroups {
-			// Extract the sorting column information
-			for _, sc := range rg.SortingColumns {
-				name := rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0]
-				isDynamic := false
-				split := strings.Split(name, ".")
-				colName := split[0]
-				if len(split) > 1 && len(dyncols[colName]) != 0 {
-					isDynamic = true
-				}
-
-				if isDynamic {
-					name = colName
-				}
-
-				// we need a set to filter out duplicates
-				if _, ok := foundSortingCols[name]; ok {
-					continue
-				}
-				foundSortingCols[name] = struct{}{}
-
-				direction := schemapb.SortingColumn_DIRECTION_ASCENDING
-				if sc.Descending {
-					direction = schemapb.SortingColumn_DIRECTION_DESCENDING
-				}
-				sortingCols = append(sortingCols, &schemapb.SortingColumn{
-					Name:       name,
-					Direction:  direction,
-					NullsFirst: sc.NullsFirst,
-				})
+	}
+	found := map[string]struct{}{}
+	columns := []*schemapb.Column{}
+	metadata := file.Metadata()
+	sortingCols := []*schemapb.SortingColumn{}
+	foundSortingCols := map[string]struct{}{}
+	for _, rg := range metadata.RowGroups {
+		// Extract the sorting column information
+		for _, sc := range rg.SortingColumns {
+			name := rg.Columns[sc.ColumnIdx].MetaData.PathInSchema[0]
+			isDynamic := false
+			split := strings.Split(name, ".")
+			colName := split[0]
+			if len(split) > 1 && len(dyncols[colName]) != 0 {
+				isDynamic = true
 			}
 
-			for _, col := range rg.Columns {
-				name := col.MetaData.PathInSchema[0] // we only support flat schemas
-
-				// Check if the column is optional
-				nullable := false
-				for _, node := range schema.Fields() {
-					if node.Name() == name {
-						nullable = node.Optional()
-					}
-				}
-
-				isDynamic := false
-				split := strings.Split(name, ".")
-				colName := split[0]
-				if len(split) > 1 && len(dyncols[colName]) != 0 {
-					isDynamic = true
-				}
-
-				// Mark the dynamic column as being found
-				if _, ok := found[colName]; ok {
-					continue
-				}
-				found[colName] = struct{}{}
-
-				columns = append(columns, &schemapb.Column{
-					Name:          split[0],
-					StorageLayout: parquetColumnMetaDataToStorageLayout(col.MetaData, nullable),
-					Dynamic:       isDynamic,
-				})
+			if isDynamic {
+				name = colName
 			}
+
+			// we need a set to filter out duplicates
+			if _, ok := foundSortingCols[name]; ok {
+				continue
+			}
+			foundSortingCols[name] = struct{}{}
+
+			direction := schemapb.SortingColumn_DIRECTION_ASCENDING
+			if sc.Descending {
+				direction = schemapb.SortingColumn_DIRECTION_DESCENDING
+			}
+			sortingCols = append(sortingCols, &schemapb.SortingColumn{
+				Name:       name,
+				Direction:  direction,
+				NullsFirst: sc.NullsFirst,
+			})
 		}
 
-		return &schemapb.Schema{
-			Name:           schema.Name(),
-			Columns:        columns,
-			SortingColumns: sortingCols,
-		}, nil
-	*/
+		for _, col := range rg.Columns {
+			name := col.MetaData.PathInSchema[0] // we only support flat schemas
 
-	return nil, nil
+			// Check if the column is optional
+			nullable := false
+			for _, node := range schema.Fields() {
+				if node.Name() == name {
+					nullable = node.Optional()
+				}
+			}
+
+			isDynamic := false
+			split := strings.Split(name, ".")
+			colName := split[0]
+			if len(split) > 1 && len(dyncols[colName]) != 0 {
+				isDynamic = true
+			}
+
+			// Mark the dynamic column as being found
+			if _, ok := found[colName]; ok {
+				continue
+			}
+			found[colName] = struct{}{}
+
+			columns = append(columns, &schemapb.Column{
+				Name:          split[0],
+				StorageLayout: parquetColumnMetaDataToStorageLayout(col.MetaData, nullable),
+				Dynamic:       isDynamic,
+			})
+		}
+	}
+
+	return &schemapb.Schema{
+		Name:           schema.Name(),
+		Columns:        columns,
+		SortingColumns: sortingCols,
+	}, nil
 }
 
 // SchemaFromParquetFile converts a parquet file into a dnyparquet.Schema.
