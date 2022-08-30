@@ -26,6 +26,10 @@ func serializeDynamicColumns(dynamicColumns map[string][]string) string {
 	return str
 }
 
+func DeserializeDynColumns(dynColString string) (map[string][]string, error) {
+	return DeserializeDynColumns(dynColString)
+}
+
 func deserializeDynamicColumns(dynColString string) (map[string][]string, error) {
 	dynCols := map[string][]string{}
 

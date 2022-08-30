@@ -1055,8 +1055,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 				if prev != nil {
 					_, ok := rowsByGranule[prev]
 					if !ok {
-						// TODO
-						rowsByGranule[prev] = map[int]struct{}{idx: struct{}{}}
+						rowsByGranule[prev] = map[int]struct{}{idx: {}}
 					} else {
 						rowsByGranule[prev][idx] = struct{}{}
 					}

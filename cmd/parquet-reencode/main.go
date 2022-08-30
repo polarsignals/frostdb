@@ -42,9 +42,14 @@ func main() {
 		log.Fatal(fmt.Errorf("stat parquet file: %w", err))
 	}
 
-	serBuf, err := dynparquet.NewSerializedBuffer(pqFile)
-	if err != nil {
-		log.Fatal(fmt.Errorf("initialize parquet file as dynamic parquet buffer: %w", err))
+	var dyncols map[string][]string
+	dynColString, exists := pqFile.Lookup(dynparquet.DynamicColumnsKey)
+	if exists {
+		var err error
+		dyncols, err = dynparquet.DeserializeDynColumns(dynColString)
+		if err != nil {
+			log.Fatalf("failed to deserialize dynamic cols: %v", err)
+		}
 	}
 
 	outf, err := os.Create(outputFile)
@@ -52,7 +57,7 @@ func main() {
 		log.Fatal(fmt.Errorf("create output file: %w", err))
 	}
 
-	w, err := newSchema.GetWriter(outf, serBuf.DynamicColumns())
+	w, err := newSchema.GetWriter(outf, dyncols)
 	if err != nil {
 		log.Fatal(fmt.Errorf("get writer: %w", err))
 	}
