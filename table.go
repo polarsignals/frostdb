@@ -983,8 +983,18 @@ func (t *TableBlock) RowGroupIterator(
 
 		g.PartBuffersForTx(tx, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
+			var dyncols map[string][]string
+			dyncolStr, ok := f.Lookup(dynparquet.DynamicColumnsKey)
+			if ok {
+				var err error
+				dyncols, err = dynparquet.DeserializeDynColumns(dyncolStr)
+				if err != nil {
+					return false
+				}
+			}
+
 			for i := range f.RowGroups() {
-				rg := buf.DynamicRowGroup(i)
+				rg := dynparquet.NewDynamicRowGroup(f.RowGroups()[i], dyncols, f.Schema().Fields())
 				var mayContainUsefulData bool
 				mayContainUsefulData, err = filter.Eval(rg)
 				if err != nil {

@@ -64,6 +64,14 @@ func (b *SerializedBuffer) DynamicRowGroup(i int) DynamicRowGroup {
 	return b.newDynamicRowGroup(b.ParquetFile().RowGroups()[i])
 }
 
+func NewDynamicRowGroup(rg parquet.RowGroup, dyncols map[string][]string, fields []parquet.Field) DynamicRowGroup {
+	return &serializedRowGroup{
+		RowGroup: rg,
+		dynCols:  dyncols,
+		fields:   fields,
+	}
+}
+
 func DynamicRowGroupFromFile(i int, f *parquet.File) (DynamicRowGroup, error) {
 	var dynCols map[string][]string
 	dynColString, found := f.Lookup(DynamicColumnsKey)
@@ -75,11 +83,7 @@ func DynamicRowGroupFromFile(i int, f *parquet.File) (DynamicRowGroup, error) {
 		}
 	}
 
-	return &serializedRowGroup{
-		RowGroup: f.RowGroups()[i],
-		dynCols:  dynCols,
-		fields:   f.Schema().Fields(),
-	}, nil
+	return NewDynamicRowGroup(f.RowGroups()[i], dynCols, f.Schema().Fields()), nil
 }
 
 func (b *SerializedBuffer) newDynamicRowGroup(rowGroup parquet.RowGroup) DynamicRowGroup {
