@@ -82,9 +82,10 @@ func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator) error {
 }
 
 type TableScan struct {
-	tracer  trace.Tracer
-	options *logicalplan.TableScan
-	next    PhysicalPlan
+	tracer      trace.Tracer
+	options     *logicalplan.TableScan
+	next        PhysicalPlan
+	concurrency uint
 }
 
 func (s *TableScan) Draw() *Diagram {
@@ -219,10 +220,17 @@ func Build(
 			}
 			return false
 		case plan.TableScan != nil:
+			var concurrency uint = 1
+			if plan.TableScan.Concurrent {
+				// TODO: Be smarter about the wanted concurrency
+				concurrency = 4
+			}
+
 			outputPlan.scan = &TableScan{
-				tracer:  tracer,
-				options: plan.TableScan,
-				next:    prev,
+				tracer:      tracer,
+				options:     plan.TableScan,
+				next:        prev,
+				concurrency: concurrency,
 			}
 			return false
 		case plan.Projection != nil:

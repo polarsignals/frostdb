@@ -460,7 +460,7 @@ func (t *Table) Iterator(
 	iterator := iterators[0]
 
 	errg, ctx := errgroup.WithContext(ctx)
-	errg.SetLimit(len(iterators)) // Get concurrency passed into
+	errg.SetLimit(len(iterators))
 
 	// Previously we sorted all row groups into a single row group here,
 	// but it turns out that none of the downstream uses actually rely on
@@ -468,6 +468,7 @@ func (t *Table) Iterator(
 	// can decide to sort if they need to in order to exploit the
 	// characteristics of sorted data.
 	for _, rg := range rowGroups {
+		rg := rg
 		errg.Go(func() error {
 			select {
 			case <-ctx.Done():
