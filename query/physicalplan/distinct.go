@@ -2,7 +2,9 @@ package physicalplan
 
 import (
 	"context"
+	"fmt"
 	"hash/maphash"
+	"strings"
 	"sync"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -23,6 +25,20 @@ type Distinction struct {
 
 	mtx  *sync.RWMutex
 	seen map[uint64]struct{}
+}
+
+func (d *Distinction) Draw() *Diagram {
+	var child *Diagram
+	if d.next != nil {
+		child = d.next.Draw()
+	}
+
+	var columns []string
+	for _, c := range d.columns {
+		columns = append(columns, c.Name())
+	}
+
+	return &Diagram{Details: fmt.Sprintf("Distinction (%s)", strings.Join(columns, ",")), Child: child}
 }
 
 func Distinct(pool memory.Allocator, tracer trace.Tracer, columns []logicalplan.Expr) *Distinction {

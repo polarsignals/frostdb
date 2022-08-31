@@ -3,9 +3,11 @@ package physicalplan
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -15,10 +17,12 @@ import (
 type PhysicalPlan interface {
 	Callback(ctx context.Context, r arrow.Record) error
 	SetNext(next PhysicalPlan)
+	Draw() *Diagram
 }
 
 type ScanPhysicalPlan interface {
 	Execute(ctx context.Context, pool memory.Allocator) error
+	Draw() *Diagram
 }
 
 type PrePlanVisitorFunc func(plan *logicalplan.LogicalPlan) bool
@@ -46,6 +50,15 @@ type OutputPlan struct {
 	scan     ScanPhysicalPlan
 }
 
+func (e *OutputPlan) Draw() *Diagram {
+	// Doesn't change anything anymore as it's the root of the plan.
+	return &Diagram{}
+}
+
+func (e *OutputPlan) DrawString() string {
+	return e.scan.Draw().String()
+}
+
 func (e *OutputPlan) Callback(ctx context.Context, r arrow.Record) error {
 	return e.callback(ctx, r)
 }
@@ -70,6 +83,15 @@ type TableScan struct {
 	options  *logicalplan.TableScan
 	next     PhysicalPlan
 	finisher func(ctx context.Context) error
+}
+
+func (s *TableScan) Draw() *Diagram {
+	var child *Diagram
+	if s.next != nil {
+		child = s.next.Draw()
+	}
+	details := fmt.Sprintf("TableScan")
+	return &Diagram{Details: details, Child: child}
 }
 
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -119,6 +141,14 @@ type SchemaScan struct {
 	options  *logicalplan.SchemaScan
 	next     PhysicalPlan
 	finisher func(ctx context.Context) error
+}
+
+func (s *SchemaScan) Draw() *Diagram {
+	var child *Diagram
+	if s.next != nil {
+		child = s.next.Draw()
+	}
+	return &Diagram{Details: "SchemaScan", Child: child}
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -202,6 +232,23 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 	}))
 
 	outputPlan.SetNextCallback(prev.Callback)
+	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
 
 	return outputPlan, err
+}
+
+type Diagram struct {
+	Details string
+	Child   *Diagram
+}
+
+func (d *Diagram) String() string {
+	if d.Child == nil {
+		return d.Details
+	}
+	child := d.Child.String()
+	if child == "" {
+		return d.Details
+	}
+	return d.Details + " - " + child
 }

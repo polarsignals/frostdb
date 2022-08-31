@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/maphash"
+	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -149,6 +150,21 @@ func NewHashAggregate(
 
 func (a *HashAggregate) SetNext(next PhysicalPlan) {
 	a.next = next
+}
+
+func (a *HashAggregate) Draw() *Diagram {
+	var child *Diagram
+	if a.next != nil {
+		child = a.next.Draw()
+	}
+
+	var groupings []string
+	for _, grouping := range a.groupByColumnMatchers {
+		groupings = append(groupings, grouping.Name())
+	}
+
+	details := fmt.Sprintf("HashAggregate (%s by %s)", a.columnToAggregate.Name(), strings.Join(groupings, ","))
+	return &Diagram{Details: details, Child: child}
 }
 
 // Go translation of boost's hash_combine function. Read here why these values
