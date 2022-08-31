@@ -3,6 +3,7 @@ package physicalplan
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -13,12 +14,17 @@ import (
 )
 
 type columnProjection interface {
+	Name() string
 	Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error)
 }
 
 type aliasProjection struct {
 	expr *logicalplan.AliasExpr
 	name string
+}
+
+func (a aliasProjection) Name() string {
+	return a.name
 }
 
 func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
@@ -34,6 +40,10 @@ func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow
 
 type binaryExprProjection struct {
 	boolExpr BooleanExpression
+}
+
+func (b binaryExprProjection) Name() string {
+	return b.boolExpr.String()
 }
 
 func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
@@ -79,6 +89,10 @@ type plainProjection struct {
 	expr *logicalplan.Column
 }
 
+func (p plainProjection) Name() string {
+	return p.expr.ColumnName
+}
+
 func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i, field := range ar.Schema().Fields() {
 		if p.expr.MatchColumn(field.Name) {
@@ -91,6 +105,10 @@ func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow
 
 type dynamicProjection struct {
 	expr *logicalplan.DynamicColumn
+}
+
+func (p dynamicProjection) Name() string {
+	return p.expr.ColumnName
 }
 
 func (p dynamicProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
@@ -201,4 +219,18 @@ func (p *Projection) Finish(ctx context.Context) error {
 
 func (p *Projection) SetNext(next PhysicalPlan) {
 	p.next = next
+}
+
+func (p *Projection) Draw() *Diagram {
+	var child *Diagram
+	if p.next != nil {
+		child = p.next.Draw()
+	}
+
+	var columns []string
+	for _, p := range p.colProjections {
+		columns = append(columns, p.Name())
+	}
+	details := fmt.Sprintf("Projection (%s)", strings.Join(columns, ","))
+	return &Diagram{Details: details, Child: child}
 }

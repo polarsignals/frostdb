@@ -3,6 +3,7 @@ package physicalplan
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 
 	"github.com/RoaringBitmap/roaring"
@@ -20,6 +21,15 @@ type PredicateFilter struct {
 	tracer     trace.Tracer
 	filterExpr BooleanExpression
 	next       PhysicalPlan
+}
+
+func (f *PredicateFilter) Draw() *Diagram {
+	var child *Diagram
+	if f.next != nil {
+		child = f.next.Draw()
+	}
+	details := fmt.Sprintf("PredicateFilter (%s)", f.filterExpr.String())
+	return &Diagram{Details: details, Child: child}
 }
 
 type Bitmap = roaring.Bitmap
