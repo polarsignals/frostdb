@@ -9,43 +9,43 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-// ParquetFileParticulate extends parquet.File with Particulate functions
+// ParquetFileParticulate extends parquet.File with Particulate functions.
 type ParquetFileParticulate struct {
 	*parquet.File
 }
 
-// Schema implements the Particulate interafce
+// Schema implements the Particulate interafce.
 func (p *ParquetFileParticulate) Schema() *parquet.Schema {
 	return p.File.Schema()
 }
 
-// VirtualSparseColumnChunk is a virtualization of a sparse ColumnChunk
+// VirtualSparseColumnChunk is a virtualization of a sparse ColumnChunk.
 type VirtualSparseColumnChunk struct {
 	i parquet.ColumnIndex
 }
 
-// Type implements the parquet.ColumnChunk interface; It is intentionally unimplemented
+// Type implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
 func (v VirtualSparseColumnChunk) Type() parquet.Type { return nil }
 
-// Column implements the parquet.ColumnChunk interface; It is intentionally unimplemented
+// Column implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
 func (v VirtualSparseColumnChunk) Column() int { return -1 }
 
-// Pages implements the parquet.ColumnChunk interface; It is intentionally unimplemented
+// Pages implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
 func (v VirtualSparseColumnChunk) Pages() parquet.Pages { return nil }
 
-// OffsetIndex implements the parquet.ColumnChunk interface; It is intentionally unimplemented
+// OffsetIndex implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
 func (v VirtualSparseColumnChunk) OffsetIndex() parquet.OffsetIndex { return nil }
 
-// BloomFilter implements the parquet.ColumnChunk interface; It is intentionally unimplemented
+// BloomFilter implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
 func (v VirtualSparseColumnChunk) BloomFilter() parquet.BloomFilter { return nil }
 
-// NumValues implements the parquet.ColumnChunk interface; It is intentionally unimplemented
+// NumValues implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
 func (v VirtualSparseColumnChunk) NumValues() int64 { return -1 }
 
-// ColumnIndex returns a column index for the VirtualSpareColumnChunk
+// ColumnIndex returns a column index for the VirtualSpareColumnChunk.
 func (v VirtualSparseColumnChunk) ColumnIndex() parquet.ColumnIndex { return v.i }
 
-// ColumnChunks implements the Particulate interafce
+// ColumnChunks implements the Particulate interafce.
 func (p *ParquetFileParticulate) ColumnChunks() []parquet.ColumnChunk {
 	var chunks []parquet.ColumnChunk
 	for i := range p.ColumnIndexes() {
@@ -160,7 +160,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 	}
 }
 
-// Min returns the minimum value found in the column chunk across all pages
+// Min returns the minimum value found in the column chunk across all pages.
 func Min(chunk parquet.ColumnChunk) parquet.Value {
 	columnIndex := chunk.ColumnIndex()
 	min := columnIndex.MinValue(0)
@@ -173,7 +173,7 @@ func Min(chunk parquet.ColumnChunk) parquet.Value {
 	return min
 }
 
-// Max returns the maximum value found in the column chunk across all pages
+// Max returns the maximum value found in the column chunk across all pages.
 func Max(chunk parquet.ColumnChunk) parquet.Value {
 	columnIndex := chunk.ColumnIndex()
 	max := columnIndex.MaxValue(0)
