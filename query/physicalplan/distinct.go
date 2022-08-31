@@ -41,6 +41,10 @@ func (d *Distinction) SetNext(plan PhysicalPlan) {
 	d.next = plan
 }
 
+func (d *Distinction) Finish(ctx context.Context) error {
+	return d.next.Finish(ctx)
+}
+
 func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 	// Generates high volume of spans. Comment out if needed during development.
 	// ctx, span := d.tracer.Start(ctx, "Distinction/Callback")

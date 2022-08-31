@@ -14,6 +14,7 @@ import (
 
 type PhysicalPlan interface {
 	Callback(ctx context.Context, r arrow.Record) error
+	Finish(ctx context.Context) error
 	SetNext(next PhysicalPlan)
 }
 
@@ -54,6 +55,10 @@ func (e *OutputPlan) SetNextCallback(next func(ctx context.Context, r arrow.Reco
 	e.callback = next
 }
 
+func (e *OutputPlan) Finish(ctx context.Context) error {
+	return nil
+}
+
 func (e *OutputPlan) SetNext(next PhysicalPlan) {
 	// OutputPlan should be the last step.
 	// If this gets called we're doing something wrong.
@@ -66,10 +71,9 @@ func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, callbac
 }
 
 type TableScan struct {
-	tracer   trace.Tracer
-	options  *logicalplan.TableScan
-	next     PhysicalPlan
-	finisher func(ctx context.Context) error
+	tracer  trace.Tracer
+	options *logicalplan.TableScan
+	next    PhysicalPlan
 }
 
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -111,14 +115,13 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
-	return s.finisher(ctx)
+	return s.next.Finish(ctx)
 }
 
 type SchemaScan struct {
-	tracer   trace.Tracer
-	options  *logicalplan.SchemaScan
-	next     PhysicalPlan
-	finisher func(ctx context.Context) error
+	tracer  trace.Tracer
+	options *logicalplan.SchemaScan
+	next    PhysicalPlan
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -142,7 +145,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
-	return s.finisher(ctx)
+	return s.next.Finish(ctx)
 }
 
 func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
@@ -151,9 +154,8 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 
 	outputPlan := &OutputPlan{}
 	var (
-		err      error
-		prev     PhysicalPlan = outputPlan
-		finisher              = func(ctx context.Context) error { return nil }
+		err  error
+		prev PhysicalPlan = outputPlan
 	)
 
 	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
@@ -161,18 +163,16 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 		switch {
 		case plan.SchemaScan != nil:
 			outputPlan.scan = &SchemaScan{
-				tracer:   tracer,
-				options:  plan.SchemaScan,
-				next:     prev,
-				finisher: finisher,
+				tracer:  tracer,
+				options: plan.SchemaScan,
+				next:    prev,
 			}
 			return false
 		case plan.TableScan != nil:
 			outputPlan.scan = &TableScan{
-				tracer:   tracer,
-				options:  plan.TableScan,
-				next:     prev,
-				finisher: finisher,
+				tracer:  tracer,
+				options: plan.TableScan,
+				next:    prev,
 			}
 			return false
 		case plan.Projection != nil:
@@ -182,12 +182,7 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 		case plan.Filter != nil:
 			phyPlan, err = Filter(pool, tracer, plan.Filter.Expr)
 		case plan.Aggregation != nil:
-			var agg *HashAggregate
-			agg, err = Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
-			phyPlan = agg
-			if agg != nil {
-				finisher = agg.Finish
-			}
+			phyPlan, err = Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
 		default:
 			panic("Unsupported plan")
 		}

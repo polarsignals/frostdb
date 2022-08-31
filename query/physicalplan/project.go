@@ -195,6 +195,10 @@ func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
 	return p.next.Callback(ctx, ar)
 }
 
+func (p *Projection) Finish(ctx context.Context) error {
+	return p.next.Finish(ctx)
+}
+
 func (p *Projection) SetNext(next PhysicalPlan) {
 	p.next = next
 }

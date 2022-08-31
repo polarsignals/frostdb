@@ -234,6 +234,10 @@ func (f *PredicateFilter) Callback(ctx context.Context, r arrow.Record) error {
 	return f.next.Callback(ctx, filtered)
 }
 
+func (f *PredicateFilter) Finish(ctx context.Context) error {
+	return f.next.Finish(ctx)
+}
+
 func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record) (arrow.Record, bool, error) {
 	bitmap, err := filterExpr.Eval(ar)
 	if err != nil {
