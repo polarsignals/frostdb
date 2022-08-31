@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/maphash"
 	"strings"
+	"sync"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -123,6 +124,9 @@ type HashAggregate struct {
 	groupByFields      []arrow.Field
 	groupByFieldHashes []uint64
 	groupByArrays      []arrow.Array
+
+	// TODO(metalmatze): This is a hacky lock to make this concurrent...
+	mtx sync.Mutex
 }
 
 func (a *HashAggregate) Callbacks() []logicalplan.Callback {
@@ -247,6 +251,9 @@ func (a *HashAggregate) SetNext(next PhysicalPlan) {
 			// Generates high volume of spans. Comment out if needed during development.
 			// ctx, span := a.tracer.Start(ctx, "HashAggregate/Callback")
 			// defer span.End()
+
+			a.mtx.Lock()
+			defer a.mtx.Unlock()
 
 			groupByFields := a.groupByFields
 			groupByFieldHashes := a.groupByFieldHashes

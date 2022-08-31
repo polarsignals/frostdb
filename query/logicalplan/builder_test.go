@@ -49,6 +49,7 @@ func TestLogicalPlanBuilder(t *testing.T) {
 					TableScan: &TableScan{
 						TableProvider: tableProvider,
 						TableName:     "table1",
+						Concurrent:    true,
 					},
 				},
 			},
@@ -71,6 +72,7 @@ func TestLogicalPlanBuilderWithoutProjection(t *testing.T) {
 			TableScan: &TableScan{
 				TableProvider: tableProvider,
 				TableName:     "table1",
+				Concurrent:    true,
 			},
 		},
 	}, p)

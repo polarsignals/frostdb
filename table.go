@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
@@ -458,51 +459,57 @@ func (t *Table) Iterator(
 	// TODO(metalmatze): Wrap the following in an errgroup to introduce concurrency
 	iterator := iterators[0]
 
+	errg, ctx := errgroup.WithContext(ctx)
+	errg.SetLimit(len(iterators)) // Get concurrency passed into
+
 	// Previously we sorted all row groups into a single row group here,
 	// but it turns out that none of the downstream uses actually rely on
 	// the sorting so it's not worth it in the general case. Physical plans
 	// can decide to sort if they need to in order to exploit the
 	// characteristics of sorted data.
 	for _, rg := range rowGroups {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if schema == nil {
-				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
+		errg.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				if schema == nil {
+					schema, err = pqarrow.ParquetRowGroupToArrowSchema(
+						ctx,
+						rg,
+						iterOpts.PhysicalProjection,
+						iterOpts.Projection,
+						iterOpts.Filter,
+						iterOpts.DistinctColumns,
+					)
+					if err != nil {
+						return err
+					}
+				}
+
+				var record arrow.Record
+				record, err = pqarrow.ParquetRowGroupToArrowRecord(
 					ctx,
+					pool,
 					rg,
-					iterOpts.PhysicalProjection,
-					iterOpts.Projection,
+					schema,
 					iterOpts.Filter,
 					iterOpts.DistinctColumns,
 				)
 				if err != nil {
+					return fmt.Errorf("failed to convert row group to arrow record: %v", err)
+				}
+				err = iterator(ctx, record)
+				record.Release()
+				if err != nil {
 					return err
 				}
 			}
-
-			var record arrow.Record
-			record, err = pqarrow.ParquetRowGroupToArrowRecord(
-				ctx,
-				pool,
-				rg,
-				schema,
-				iterOpts.Filter,
-				iterOpts.DistinctColumns,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
-			}
-			err = iterator(ctx, record)
-			record.Release()
-			if err != nil {
-				return err
-			}
-		}
+			return nil
+		})
 	}
 
-	return nil
+	return errg.Wait()
 }
 
 // SchemaIterator iterates in order over all granules in the table and returns
