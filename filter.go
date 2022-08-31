@@ -20,6 +20,9 @@ func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
 	return false
 }
 
+// Particulate is an abstraction of something that can be filtered.
+// A parquet.RowGroup is a particulate that is able to be filtered, and wrapping a parquet.File with
+// ParquetFileParticulate allows a file to be filtered.
 type Particulate interface {
 	Schema() *parquet.Schema
 	ColumnChunks() []parquet.ColumnChunk
