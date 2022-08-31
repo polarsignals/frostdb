@@ -96,6 +96,15 @@ func (s *TableScan) Draw() *Diagram {
 	return &Diagram{Details: details, Child: child}
 }
 
+func (s *TableScan) Draw() *Diagram {
+	var child *Diagram
+	if s.next != nil {
+		child = s.next.Draw()
+	}
+	details := fmt.Sprintf("TableScan")
+	return &Diagram{Details: details, Child: child}
+}
+
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	ctx, span := s.tracer.Start(ctx, "TableScan/Execute")
 	defer span.End()
@@ -146,6 +155,14 @@ type SchemaScan struct {
 	tracer  trace.Tracer
 	options *logicalplan.SchemaScan
 	next    PhysicalPlan
+}
+
+func (s *SchemaScan) Draw() *Diagram {
+	var child *Diagram
+	if s.next != nil {
+		child = s.next.Draw()
+	}
+	return &Diagram{Details: "SchemaScan", Child: child}
 }
 
 func (s *SchemaScan) Draw() *Diagram {
