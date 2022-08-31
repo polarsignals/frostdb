@@ -7,33 +7,33 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 )
 
-// MergeOperator is used to combined the results of multiple parallel streams
+// Synchronizer is used to combine the results of multiple parallel streams
 // into a single stream concurrent stream. It also forms a barrier on the
 // finishers, by waiting to call next plan's finish until all previous parallel
 // stages have finished.
-type MergeOperator struct {
-	wg        sync.WaitGroup
-	finishMtx sync.Mutex
+type Synchronizer struct {
 	next      PhysicalPlan
+	wg        *sync.WaitGroup
+	finishMtx sync.Mutex
 	nextMtx   sync.Mutex
 	finished  bool
 }
 
-func Merge() *MergeOperator {
-	return &MergeOperator{}
+func Synchronize() *Synchronizer {
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	return &Synchronizer{wg: wg}
 }
 
-func (m *MergeOperator) Start(ctx context.Context) error {
-	// TODO implement me
-	panic("implement me")
+func (m *Synchronizer) SetNext(next PhysicalPlan) {
+	m.next = next
 }
 
-func (m *MergeOperator) Draw() *Diagram {
-	// TODO implement me
-	panic("implement me")
+func (m *Synchronizer) Start(ctx context.Context) error {
+	return nil
 }
 
-func (m *MergeOperator) Callback(ctx context.Context, r arrow.Record) error {
+func (m *Synchronizer) Callback(ctx context.Context, r arrow.Record) error {
 	// multiple threads can emit the results to the next step, but they will do
 	// it synchronously
 	m.nextMtx.Lock()
@@ -46,11 +46,7 @@ func (m *MergeOperator) Callback(ctx context.Context, r arrow.Record) error {
 	return nil
 }
 
-func (m *MergeOperator) SetNext(next PhysicalPlan) {
-	m.next = next
-}
-
-func (m *MergeOperator) Finish(ctx context.Context) error {
+func (m *Synchronizer) Finish(ctx context.Context) error {
 	// all results from the previous step in this thread have been added to buffer
 	m.wg.Done()
 
@@ -68,4 +64,15 @@ func (m *MergeOperator) Finish(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (m *Synchronizer) Draw() *Diagram {
+	var child *Diagram
+	if m.next != nil {
+		child = m.next.Draw()
+	}
+	return &Diagram{
+		Details: "Synchronizer",
+		Child:   child,
+	}
 }

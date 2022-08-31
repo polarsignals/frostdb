@@ -76,12 +76,7 @@ func TestBuildPhysicalPlan(t *testing.T) {
 		Project(logicalplan.Col("stacktrace"), logicalplan.Col("value_sum")).
 		Build()
 
-	optimizers := []logicalplan.Optimizer{
-		&logicalplan.PhysicalProjectionPushDown{},
-		&logicalplan.FilterPushDown{},
-	}
-
-	for _, optimizer := range optimizers {
+	for _, optimizer := range logicalplan.DefaultOptimizers {
 		optimizer.Optimize(p)
 	}
 
@@ -94,4 +89,31 @@ func TestBuildPhysicalPlan(t *testing.T) {
 		func(ctx context.Context, record arrow.Record) error { return nil },
 	)
 	require.NoError(t, err)
+}
+
+type mockPhysicalPlan struct {
+	callback func(ctx context.Context, r arrow.Record) error
+	finish   func(ctx context.Context) error
+}
+
+func (m *mockPhysicalPlan) Start(ctx context.Context) error {
+	// noop
+	return nil
+}
+
+func (m *mockPhysicalPlan) Callback(ctx context.Context, r arrow.Record) error {
+	return m.callback(ctx, r)
+}
+
+func (m *mockPhysicalPlan) Finish(ctx context.Context) error {
+	return m.finish(ctx)
+}
+
+func (m *mockPhysicalPlan) SetNext(next PhysicalPlan) {
+	// noop
+}
+
+func (m *mockPhysicalPlan) Draw() *Diagram {
+	// noop
+	return nil
 }

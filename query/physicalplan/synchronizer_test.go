@@ -18,7 +18,7 @@ func TestNoRaceAndSingleFinish(t *testing.T) {
 
 	nextPlan := mockPhysicalPlan{
 		// testing if the callback really is run synchronously ...
-		// ensure that we get the correct count, if the callback is not sync'd it
+		// ensure that we get the correct count, if the callback is not synchronized it
 		// will be wrong (and/or the test will fail if the suite is run with the
 		// -race flag)
 		callback: func(context.Context, arrow.Record) error {
@@ -33,21 +33,21 @@ func TestNoRaceAndSingleFinish(t *testing.T) {
 		},
 	}
 
-	merge := Merge()
-	merge.SetNext(&nextPlan)
+	synchronize := Synchronize()
+	synchronize.SetNext(&nextPlan)
 
 	recChan := make(chan arrow.Record)
-	similateMergeCaller := func() {
-		merge.wg.Add(1)
+	simulateCaller := func() {
+		synchronize.wg.Add(1)
 		for rec := range recChan {
-			err := merge.Callback(context.TODO(), rec)
+			err := synchronize.Callback(context.Background(), rec)
 			require.Nil(t, err)
 		}
-		err := merge.Finish(context.TODO())
+		err := synchronize.Finish(context.Background())
 		require.Nil(t, err)
 	}
-	go similateMergeCaller()
-	go similateMergeCaller()
+	go simulateCaller()
+	go simulateCaller()
 	for i := 0; i < 10000; i++ {
 		recChan <- nil
 	}

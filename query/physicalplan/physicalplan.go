@@ -26,6 +26,7 @@ type PhysicalPlan interface {
 
 type ScanPhysicalPlan interface {
 	Execute(ctx context.Context, pool memory.Allocator) error
+	Concurrency() uint
 	Draw() *Diagram
 }
 
@@ -86,6 +87,10 @@ type TableScan struct {
 	options     *logicalplan.TableScan
 	next        PhysicalPlan
 	concurrency uint
+}
+
+func (s *TableScan) Concurrency() uint {
+	return s.concurrency
 }
 
 func (s *TableScan) Draw() *Diagram {
@@ -149,6 +154,10 @@ type SchemaScan struct {
 	next    PhysicalPlan
 }
 
+func (s *SchemaScan) Concurrency() uint {
+	return 0
+}
+
 func (s *SchemaScan) Draw() *Diagram {
 	var child *Diagram
 	if s.next != nil {
@@ -207,6 +216,7 @@ func Build(
 	var (
 		err  error
 		prev PhysicalPlan = outputPlan
+		tail PhysicalPlan // the last callback to get the arrow record
 	)
 
 	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
@@ -223,7 +233,7 @@ func Build(
 			var concurrency uint = 1
 			if plan.TableScan.Concurrent {
 				// TODO: Be smarter about the wanted concurrency
-				concurrency = 4
+				concurrency = uint(concurrencyHardcoded)
 			}
 
 			outputPlan.scan = &TableScan{
@@ -249,12 +259,17 @@ func Build(
 			return false
 		}
 
+		if tail == nil {
+			tail = phyPlan
+		}
+
 		phyPlan.SetNext(prev)
 		prev = phyPlan
 		return true
 	}))
 
 	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
+	// fmt.Println(outputPlan.scan.Draw().String()) // Comment out for debugging without tracing
 
 	return outputPlan, err
 }
