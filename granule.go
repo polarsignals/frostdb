@@ -331,3 +331,13 @@ func findMax(t parquet.Type, values []parquet.Value) *parquet.Value {
 func findMin(t parquet.Type, values []parquet.Value) *parquet.Value {
 	return find(-1, t, values)
 }
+
+// Schema implements the Particulate interface
+func (g *Granule) Schema() *parquet.Schema {
+	return nil // TODO THOR
+}
+
+// ColumnChunks implements the Particulate interface
+func (g *Granule) ColumnChunks() []parquet.ColumnChunk {
+	return nil // TODO THOR
+}

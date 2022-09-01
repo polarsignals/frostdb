@@ -16,7 +16,6 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
-	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
@@ -890,8 +889,9 @@ func (t *TableBlock) RowGroupIterator(
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
-		// Check if the entire granule can be skipped due to the filter expr
-		if !filterGranule(t.logger, filterExpr, g) {
+		// Check if the entire granule can be skipped due to the filter
+		mayContainUsefulData, err := filter.Eval(g)
+		if err != nil || !mayContainUsefulData {
 			return true
 		}
 
@@ -1215,155 +1215,6 @@ func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups 
 	}
 
 	return nil
-}
-
-// filterGranule returns false if this granule does not contain useful data.
-func filterGranule(logger log.Logger, filterExpr logicalplan.Expr, g *Granule) bool {
-	if filterExpr == nil {
-		return true
-	}
-
-	switch expr := filterExpr.(type) {
-	default: // unsupported filter
-		level.Info(logger).Log("msg", "unsupported filter")
-		return true
-	case *logicalplan.BinaryExpr:
-		var (
-			min, max   *parquet.Value
-			v          scalar.Scalar
-			leftresult bool
-			leftfound  bool
-		)
-		switch left := expr.Left.(type) {
-		case *logicalplan.BinaryExpr:
-			leftresult = filterGranule(logger, left, g)
-		case *logicalplan.Column:
-			min, max, leftfound = findColumnValues(left.ColumnsUsedExprs(), g)
-		case *logicalplan.LiteralExpr:
-			switch left.Value.(type) {
-			case *scalar.Int64:
-				v = left.Value.(*scalar.Int64)
-			case *scalar.String:
-				v = left.Value.(*scalar.String)
-			}
-		}
-
-		switch right := expr.Right.(type) {
-		case *logicalplan.BinaryExpr:
-			switch expr.Op {
-			case logicalplan.OpAnd:
-				if !leftresult {
-					return false
-				}
-				rightresult := filterGranule(logger, right, g)
-				return leftresult && rightresult
-			}
-		case *logicalplan.Column:
-			var found bool
-			min, max, found = findColumnValues(right.ColumnsUsedExprs(), g)
-			if !found {
-				// If we fallthrough to here, than we didn't find any columns that match so we can skip this granule
-				return false
-			}
-
-			switch val := v.(type) {
-			case *scalar.Int64:
-				switch expr.Op {
-				case logicalplan.OpLt:
-					return val.Value < max.Int64()
-				case logicalplan.OpGt:
-					return val.Value > min.Int64()
-				case logicalplan.OpEq:
-					return val.Value >= min.Int64() && val.Value <= max.Int64()
-				}
-			case *scalar.String:
-				s := string(val.Value.Bytes())
-				if len(val.Value.Bytes()) > dynparquet.ColumnIndexSize {
-					s = string(val.Value.Bytes()[:dynparquet.ColumnIndexSize])
-				}
-				switch expr.Op {
-				case logicalplan.OpLt:
-					return string(val.Value.Bytes()[:dynparquet.ColumnIndexSize]) < max.String()
-				case logicalplan.OpGt:
-					return string(val.Value.Bytes()[:dynparquet.ColumnIndexSize]) > min.String()
-				case logicalplan.OpEq:
-					return s >= min.String() && s <= max.String()
-				}
-			}
-
-		case *logicalplan.LiteralExpr:
-			switch v := right.Value.(type) {
-			case *scalar.Int64:
-				if !leftfound {
-					return false
-				}
-				switch expr.Op {
-				case logicalplan.OpLt:
-					return min.Int64() < v.Value
-				case logicalplan.OpGt:
-					return max.Int64() > v.Value
-				case logicalplan.OpEq:
-					return v.Value >= min.Int64() && v.Value <= max.Int64()
-				}
-			case *scalar.String:
-				s := string(v.Value.Bytes())
-				if len(v.Value.Bytes()) > dynparquet.ColumnIndexSize {
-					s = string(v.Value.Bytes()[:dynparquet.ColumnIndexSize])
-				}
-				if !leftfound {
-					switch {
-					case expr.Op == logicalplan.OpEq && len(s) == 0:
-						return true
-					case expr.Op == logicalplan.OpNotEq && len(s) != 0:
-						return true
-					case expr.Op == logicalplan.OpRegexNotMatch || expr.Op == logicalplan.OpRegexMatch:
-						// todo: run the regex on empty string to see if it matches
-						// this would allow to fully reject a granule faster.
-						// However it requires a bigger refactoring of the code to compile the regexp only once.
-						return true
-					default:
-						return false
-					}
-				}
-				switch expr.Op {
-				case logicalplan.OpLt:
-					return min.String() < s
-				case logicalplan.OpGt:
-					return max.String() > s
-				case logicalplan.OpEq:
-					return s >= min.String() && s <= max.String()
-				}
-			}
-		}
-	}
-
-	return true
-}
-
-func findColumnValues(matchers []logicalplan.Expr, g *Granule) (*parquet.Value, *parquet.Value, bool) {
-	findMinColumn := func() (*parquet.Value, string) {
-		g.metadata.minlock.RLock()
-		defer g.metadata.minlock.RUnlock()
-		for _, matcher := range matchers {
-			for column, min := range g.metadata.min {
-				if matcher.MatchColumn(column) {
-					return min, column
-				}
-			}
-		}
-		return nil, ""
-	}
-
-	min, column := findMinColumn()
-	if min == nil {
-		return nil, nil, false
-	}
-
-	g.metadata.maxlock.RLock()
-	max := g.metadata.max[column]
-	g.metadata.maxlock.RUnlock()
-
-	return min, max, true
 }
 
 // tombstone marks all the parts with the max tx id to ensure they aren't included in reads.
