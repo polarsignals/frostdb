@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -14,10 +15,12 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
+var concurrency = runtime.NumCPU()
+
 type PhysicalPlan interface {
-	Callback(ctx context.Context, r arrow.Record) error
-	Finish(ctx context.Context) error
+	Callbacks() []func(ctx context.Context, r arrow.Record) error
 	SetNext(next PhysicalPlan)
+	Finish(ctx context.Context) error
 	Draw() *Diagram
 }
 
@@ -47,8 +50,8 @@ func (f PostPlanVisitorFunc) PostVisit(plan *logicalplan.LogicalPlan) bool {
 }
 
 type OutputPlan struct {
-	callback func(ctx context.Context, r arrow.Record) error
-	scan     ScanPhysicalPlan
+	callbacks []func(ctx context.Context, r arrow.Record) error
+	scan      ScanPhysicalPlan
 }
 
 func (e *OutputPlan) Draw() *Diagram {
@@ -60,12 +63,8 @@ func (e *OutputPlan) DrawString() string {
 	return e.scan.Draw().String()
 }
 
-func (e *OutputPlan) Callback(ctx context.Context, r arrow.Record) error {
-	return e.callback(ctx, r)
-}
-
-func (e *OutputPlan) SetNextCallback(next func(ctx context.Context, r arrow.Record) error) {
-	e.callback = next
+func (e *OutputPlan) Callbacks() []func(ctx context.Context, r arrow.Record) error {
+	return e.callbacks
 }
 
 func (e *OutputPlan) Finish(ctx context.Context) error {
@@ -78,8 +77,7 @@ func (e *OutputPlan) SetNext(next PhysicalPlan) {
 	panic("bug in builder! output plan should not have a next plan!")
 }
 
-func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, callback func(ctx context.Context, r arrow.Record) error) error {
-	e.callback = callback
+func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, _ func(ctx context.Context, r arrow.Record) error) error {
 	return e.scan.Execute(ctx, pool)
 }
 
@@ -94,7 +92,7 @@ func (s *TableScan) Draw() *Diagram {
 	if s.next != nil {
 		child = s.next.Draw()
 	}
-	details := fmt.Sprintf("TableScan")
+	details := fmt.Sprintf("TableScan(%d)", len(s.next.Callbacks()))
 	return &Diagram{Details: details, Child: child}
 }
 
@@ -134,7 +132,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 				Filter:             s.options.Filter,
 				DistinctColumns:    s.options.Distinct,
 			},
-			s.next.Callback,
+			s.next.Callbacks(),
 		)
 	})
 	if err != nil {
@@ -174,7 +172,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 				Filter:             s.options.Filter,
 				DistinctColumns:    s.options.Distinct,
 			},
-			s.next.Callback,
+			s.next.Callbacks(),
 		)
 	})
 	if err != nil {
@@ -184,11 +182,27 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	return s.next.Finish(ctx)
 }
 
-func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
+func Build(
+	ctx context.Context,
+	pool memory.Allocator,
+	tracer trace.Tracer,
+	s *dynparquet.Schema,
+	plan *logicalplan.LogicalPlan,
+	callback func(ctx context.Context, record arrow.Record) error,
+) (*OutputPlan, error) {
 	_, span := tracer.Start(ctx, "PhysicalPlan/Build")
 	defer span.End()
 
-	outputPlan := &OutputPlan{}
+	// TODO(metalmatze): Right now we create all these callbacks but only ever use the first one (in the Table/Iterator)
+	// We also need to inject a Synchronizer here by default, to not call the passed in callback concurrently.
+	callbacks := make([]func(context.Context, arrow.Record) error, 0, concurrency)
+	for i := 0; i < concurrency; i++ {
+		callbacks = append(callbacks, func(ctx context.Context, r arrow.Record) error {
+			return callback(ctx, r)
+		})
+	}
+
+	outputPlan := &OutputPlan{callbacks: callbacks}
 	var (
 		err  error
 		prev PhysicalPlan = outputPlan
@@ -232,7 +246,6 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 		return true
 	}))
 
-	outputPlan.SetNextCallback(prev.Callback)
 	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
 
 	return outputPlan, err

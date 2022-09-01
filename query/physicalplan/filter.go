@@ -20,7 +20,9 @@ type PredicateFilter struct {
 	pool       memory.Allocator
 	tracer     trace.Tracer
 	filterExpr BooleanExpression
-	next       PhysicalPlan
+
+	next      PhysicalPlan
+	callbacks []func(ctx context.Context, r arrow.Record) error
 }
 
 func (f *PredicateFilter) Draw() *Diagram {
@@ -223,25 +225,31 @@ func newFilter(pool memory.Allocator, tracer trace.Tracer, filterExpr BooleanExp
 	}
 }
 
-func (f *PredicateFilter) SetNext(next PhysicalPlan) {
-	f.next = next
+func (f *PredicateFilter) Callbacks() []func(ctx context.Context, r arrow.Record) error {
+	return f.callbacks
 }
 
-func (f *PredicateFilter) Callback(ctx context.Context, r arrow.Record) error {
-	// Generates high volume of spans. Comment out if needed during development.
-	// ctx, span := f.tracer.Start(ctx, "PredicateFilter/Callback")
-	// defer span.End()
+func (f *PredicateFilter) SetNext(next PhysicalPlan) {
+	f.next = next
 
-	filtered, empty, err := filter(f.pool, f.filterExpr, r)
-	if err != nil {
-		return err
-	}
-	if empty {
-		return nil
-	}
+	f.callbacks = make([]func(ctx context.Context, r arrow.Record) error, 0, len(next.Callbacks()))
+	for _, callback := range next.Callbacks() {
+		f.callbacks = append(f.callbacks, func(ctx context.Context, r arrow.Record) error {
+			// Generates high volume of spans. Comment out if needed during development.
+			// ctx, span := f.tracer.Start(ctx, "PredicateFilter/Callback")
+			// defer span.End()
 
-	defer filtered.Release()
-	return f.next.Callback(ctx, filtered)
+			filtered, empty, err := filter(f.pool, f.filterExpr, r)
+			if err != nil {
+				return err
+			}
+			if empty {
+				return nil
+			}
+			defer filtered.Release()
+			return callback(ctx, filtered)
+		})
+	}
 }
 
 func (f *PredicateFilter) Finish(ctx context.Context) error {

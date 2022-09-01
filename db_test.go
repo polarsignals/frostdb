@@ -225,10 +225,12 @@ func TestDBWithWAL(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			func(ctx context.Context, ar arrow.Record) error {
-				t.Log(ar)
-				defer ar.Release()
-				return nil
+			[]func(ctx context.Context, ar arrow.Record) error{
+				func(ctx context.Context, ar arrow.Record) error {
+					t.Log(ar)
+					defer ar.Release()
+					return nil
+				},
 			},
 		)
 	})

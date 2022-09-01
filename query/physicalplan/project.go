@@ -158,7 +158,8 @@ type Projection struct {
 
 	colProjections []columnProjection
 
-	next PhysicalPlan
+	next      PhysicalPlan
+	callbacks []func(context.Context, arrow.Record) error
 }
 
 func Project(mem memory.Allocator, tracer trace.Tracer, exprs []logicalplan.Expr) (*Projection, error) {
@@ -179,38 +180,8 @@ func Project(mem memory.Allocator, tracer trace.Tracer, exprs []logicalplan.Expr
 	return p, nil
 }
 
-func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
-	// Generates high volume of spans. Comment out if needed during development.
-	// ctx, span := p.tracer.Start(ctx, "Projection/Callback")
-	// defer span.End()
-
-	resFields := make([]arrow.Field, 0, len(p.colProjections))
-	resArrays := make([]arrow.Array, 0, len(p.colProjections))
-
-	for _, proj := range p.colProjections {
-		f, a, err := proj.Project(p.pool, r)
-		if err != nil {
-			return err
-		}
-		if a == nil {
-			continue
-		}
-
-		resFields = append(resFields, f...)
-		resArrays = append(resArrays, a...)
-	}
-
-	rows := int64(0)
-	if len(resArrays) > 0 {
-		rows = int64(resArrays[0].Len())
-	}
-
-	ar := array.NewRecord(
-		arrow.NewSchema(resFields, nil),
-		resArrays,
-		rows,
-	)
-	return p.next.Callback(ctx, ar)
+func (p *Projection) Callbacks() []func(ctx context.Context, r arrow.Record) error {
+	return p.callbacks
 }
 
 func (p *Projection) Finish(ctx context.Context) error {
@@ -219,6 +190,43 @@ func (p *Projection) Finish(ctx context.Context) error {
 
 func (p *Projection) SetNext(next PhysicalPlan) {
 	p.next = next
+
+	p.callbacks = make([]func(context.Context, arrow.Record) error, 0, len(next.Callbacks()))
+	for _, callback := range next.Callbacks() {
+		p.callbacks = append(p.callbacks, func(ctx context.Context, r arrow.Record) error {
+			// Generates high volume of spans. Comment out if needed during development.
+			// ctx, span := p.tracer.Start(ctx, "Projection/Callback")
+			// defer span.End()
+
+			resFields := make([]arrow.Field, 0, len(p.colProjections))
+			resArrays := make([]arrow.Array, 0, len(p.colProjections))
+
+			for _, proj := range p.colProjections {
+				f, a, err := proj.Project(p.pool, r)
+				if err != nil {
+					return err
+				}
+				if a == nil {
+					continue
+				}
+
+				resFields = append(resFields, f...)
+				resArrays = append(resArrays, a...)
+			}
+
+			rows := int64(0)
+			if len(resArrays) > 0 {
+				rows = int64(resArrays[0].Len())
+			}
+
+			ar := array.NewRecord(
+				arrow.NewSchema(resFields, nil),
+				resArrays,
+				rows,
+			)
+			return callback(ctx, ar)
+		})
+	}
 }
 
 func (p *Projection) Draw() *Diagram {
@@ -231,6 +239,6 @@ func (p *Projection) Draw() *Diagram {
 	for _, p := range p.colProjections {
 		columns = append(columns, p.Name())
 	}
-	details := fmt.Sprintf("Projection (%s)", strings.Join(columns, ","))
+	details := fmt.Sprintf("Projection(%d) (%s)", len(p.callbacks), strings.Join(columns, ","))
 	return &Diagram{Details: details, Child: child}
 }

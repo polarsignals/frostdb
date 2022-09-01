@@ -442,7 +442,7 @@ func (t *Table) Iterator(
 	pool memory.Allocator,
 	schema *arrow.Schema,
 	iterOpts logicalplan.IterOptions,
-	iterator func(ctx context.Context, r arrow.Record) error,
+	iterators []func(ctx context.Context, r arrow.Record) error,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
@@ -454,6 +454,9 @@ func (t *Table) Iterator(
 	if err != nil {
 		return err
 	}
+
+	// TODO(metalmatze): Wrap the following in an errgroup to introduce concurrency
+	iterator := iterators[0]
 
 	// Previously we sorted all row groups into a single row group here,
 	// but it turns out that none of the downstream uses actually rely on
@@ -509,13 +512,16 @@ func (t *Table) SchemaIterator(
 	tx uint64,
 	pool memory.Allocator,
 	iterOpts logicalplan.IterOptions,
-	iterator func(ctx context.Context, r arrow.Record) error,
+	iterators []func(ctx context.Context, r arrow.Record) error,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/SchemaIterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
 	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
 	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
+
+	// TODO(metalmatze): Wrap the following in an errgroup to introduce concurrency
+	iterator := iterators[0]
 
 	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
 	if err != nil {

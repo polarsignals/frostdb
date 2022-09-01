@@ -133,6 +133,7 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(ctx contex
 		b.tracer,
 		logicalPlan.InputSchema(),
 		logicalPlan,
+		callback,
 	)
 	if err != nil {
 		return err

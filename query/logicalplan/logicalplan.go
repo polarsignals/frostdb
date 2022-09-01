@@ -116,14 +116,14 @@ type TableReader interface {
 		pool memory.Allocator,
 		schema *arrow.Schema,
 		options IterOptions,
-		callback func(ctx context.Context, r arrow.Record) error,
+		callbacks []func(ctx context.Context, r arrow.Record) error,
 	) error
 	SchemaIterator(
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
 		options IterOptions,
-		callback func(ctx context.Context, r arrow.Record) error,
+		callback []func(ctx context.Context, r arrow.Record) error,
 	) error
 	ArrowSchema(
 		ctx context.Context,
