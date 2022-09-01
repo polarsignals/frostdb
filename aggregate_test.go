@@ -8,9 +8,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
@@ -22,15 +20,9 @@ func TestAggregate(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
-	c, err := New(
-		logger,
-		reg,
-		tracer,
-	)
+	c, err := New(WithLogger(logger))
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -85,7 +77,6 @@ func TestAggregate(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		tracer,
 		db.TableProvider(),
 	)
 
@@ -139,14 +130,10 @@ func TestAggregateNils(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -194,7 +181,6 @@ func TestAggregateNils(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		tracer,
 		db.TableProvider(),
 	)
 
@@ -248,14 +234,10 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -305,7 +287,6 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		tracer,
 		db.TableProvider(),
 	)
 

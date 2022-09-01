@@ -14,12 +14,10 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
 	"github.com/thanos-io/objstore/providers/filesystem"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
@@ -34,7 +32,6 @@ func TestDBWithWALAndBucket(t *testing.T) {
 	)
 
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	dir, err := os.MkdirTemp("", "frostdb-with-wal-test")
 	if err != nil {
@@ -46,9 +43,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 	require.NoError(t, err)
 
 	c, err := New(
-		logger,
-		prometheus.NewRegistry(),
-		tracer,
+		WithLogger(logger),
 		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
@@ -75,9 +70,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 	require.NoError(t, db.wal.Close())
 
 	c, err = New(
-		logger,
-		prometheus.NewRegistry(),
-		tracer,
+		WithLogger(logger),
 		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
@@ -94,7 +87,6 @@ func TestDBWithWAL(t *testing.T) {
 	)
 
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	dir, err := os.MkdirTemp("", "frostdb-with-wal-test")
 	if err != nil {
@@ -103,9 +95,7 @@ func TestDBWithWAL(t *testing.T) {
 	defer os.RemoveAll(dir) // clean up
 
 	c, err := New(
-		logger,
-		prometheus.NewRegistry(),
-		tracer,
+		WithLogger(logger),
 		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
@@ -208,9 +198,7 @@ func TestDBWithWAL(t *testing.T) {
 	require.NoError(t, c.Close())
 
 	c, err = New(
-		logger,
-		prometheus.NewRegistry(),
-		tracer,
+		WithLogger(logger),
 		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
@@ -275,12 +263,9 @@ func Test_DB_WithStorage(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		prometheus.NewRegistry(),
-		tracer,
+		WithLogger(logger),
 		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
@@ -342,7 +327,7 @@ func Test_DB_WithStorage(t *testing.T) {
 	c.Close()
 
 	pool := memory.NewGoAllocator()
-	engine := query.NewEngine(pool, tracer, db.TableProvider())
+	engine := query.NewEngine(pool, db.TableProvider())
 	err = engine.ScanTable(t.Name()).
 		Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
 		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
@@ -369,7 +354,6 @@ func Test_DB_ColdStart(t *testing.T) {
 	})
 
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	tests := map[string]struct {
 		newColumnstore func(t *testing.T) *ColumnStore
@@ -377,9 +361,7 @@ func Test_DB_ColdStart(t *testing.T) {
 		"cold start with storage": {
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
-					logger,
-					prometheus.NewRegistry(),
-					tracer,
+					WithLogger(logger),
 					WithBucketStorage(bucket),
 				)
 				require.NoError(t, err)
@@ -394,9 +376,7 @@ func Test_DB_ColdStart(t *testing.T) {
 					os.RemoveAll(dir) // clean up
 				})
 				c, err := New(
-					logger,
-					prometheus.NewRegistry(),
-					tracer,
+					WithLogger(logger),
 					WithBucketStorage(bucket),
 					WithWAL(),
 					WithStoragePath(dir),
@@ -472,9 +452,7 @@ func Test_DB_ColdStart(t *testing.T) {
 
 			// Open a new database pointed to the same bucket storage
 			c, err = New(
-				logger,
-				prometheus.NewRegistry(),
-				tracer,
+				WithLogger(logger),
 				WithBucketStorage(bucket),
 			)
 			require.NoError(t, err)
@@ -484,7 +462,7 @@ func Test_DB_ColdStart(t *testing.T) {
 			require.NoError(t, err)
 
 			pool := memory.NewGoAllocator()
-			engine := query.NewEngine(pool, tracer, db.TableProvider())
+			engine := query.NewEngine(pool, db.TableProvider())
 			require.NoError(t, engine.ScanTable(sanitize(t.Name())).Execute(
 				context.Background(), func(ctx context.Context, r arrow.Record) error {
 					require.Equal(t, int64(6), r.NumCols())
@@ -556,12 +534,9 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 	})
 
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		prometheus.NewRegistry(),
-		tracer,
+		WithLogger(logger),
 		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
@@ -601,9 +576,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 
 	// Open a new database pointed to the same bucket storage
 	c, err = New(
-		logger,
-		prometheus.NewRegistry(),
-		tracer,
+		WithLogger(logger),
 		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
@@ -654,7 +627,6 @@ func Test_DB_Filter_Block(t *testing.T) {
 	})
 
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	tests := map[string]struct {
 		newColumnstore func(t *testing.T) *ColumnStore
@@ -673,9 +645,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 			cols:        2,
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
-					logger,
-					prometheus.NewRegistry(),
-					tracer,
+					WithLogger(logger),
 					WithBucketStorage(bucket),
 				)
 				require.NoError(t, err)
@@ -690,9 +660,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 			cols:        2,
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
-					logger,
-					prometheus.NewRegistry(),
-					tracer,
+					WithLogger(logger),
 					WithBucketStorage(bucket),
 				)
 				require.NoError(t, err)
@@ -766,9 +734,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 
 			// Open a new database pointed to the same bucket storage
 			c, err = New(
-				logger,
-				prometheus.NewRegistry(),
-				tracer,
+				WithLogger(logger),
 				WithBucketStorage(bucket),
 			)
 			require.NoError(t, err)
@@ -779,7 +745,6 @@ func Test_DB_Filter_Block(t *testing.T) {
 
 			engine := query.NewEngine(
 				memory.NewGoAllocator(),
-				tracer,
 				db.TableProvider(),
 			)
 
@@ -893,7 +858,6 @@ func (e *ErrorBucket) Name() string { return "error bucket" }
 
 func Test_DB_OpenError(t *testing.T) {
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	temp := true
 	tempErr := fmt.Errorf("injected temporary error")
@@ -908,9 +872,7 @@ func Test_DB_OpenError(t *testing.T) {
 	}
 
 	c, err := New(
-		logger,
-		prometheus.NewRegistry(),
-		tracer,
+		WithLogger(logger),
 		WithBucketStorage(e),
 	)
 	require.NoError(t, err)
@@ -945,7 +907,6 @@ func Test_DB_Block_Optimization(t *testing.T) {
 
 	now := time.Now()
 	ts := now.UnixMilli()
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	tests := map[string]struct {
 		newColumnstore func(t *testing.T) *ColumnStore
@@ -962,9 +923,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			cols:        2,
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
-					logger,
-					prometheus.NewRegistry(),
-					tracer,
+					WithLogger(logger),
 					WithBucketStorage(bucket),
 				)
 				require.NoError(t, err)
@@ -978,9 +937,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			cols:        0,
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
-					logger,
-					prometheus.NewRegistry(),
-					tracer,
+					WithLogger(logger),
 					WithBucketStorage(bucket),
 				)
 				require.NoError(t, err)
@@ -1054,9 +1011,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 
 			// Open a new database pointed to the same bucket storage
 			c, err = New(
-				logger,
-				prometheus.NewRegistry(),
-				tracer,
+				WithLogger(logger),
 				WithBucketStorage(bucket),
 			)
 			require.NoError(t, err)
@@ -1067,7 +1022,6 @@ func Test_DB_Block_Optimization(t *testing.T) {
 
 			engine := query.NewEngine(
 				memory.NewGoAllocator(),
-				tracer,
 				db.TableProvider(),
 			)
 

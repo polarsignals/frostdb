@@ -6,10 +6,7 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
-	"github.com/go-kit/log"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/parquet-go"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -20,12 +17,9 @@ import (
 
 // This example demonstrates how to create a simple FrostDB with a dynamic labels column that stores float values.
 func main() {
-	logger := log.NewNopLogger()
-	tracer := trace.NewNoopTracerProvider().Tracer("")
-	registry := prometheus.NewRegistry()
 
 	// Create a new column store
-	columnstore, _ := frostdb.New(logger, registry, tracer)
+	columnstore, _ := frostdb.New()
 
 	// Open up a database in the column store
 	database, _ := columnstore.DB(context.Background(), "simple_db")
@@ -73,7 +67,7 @@ func main() {
 	_, _ = table.InsertBuffer(context.Background(), buf)
 
 	// Create a new query engine to retrieve data and print the results
-	engine := query.NewEngine(memory.DefaultAllocator, tracer, database.TableProvider())
+	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
 	_ = engine.ScanTable("simple_table").
 		Project(logicalplan.DynCol("names")). // We don't know all dynamic columns at query time, but we want all of them to be returned.
 		Filter(
