@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"unsafe"
 
@@ -330,4 +331,56 @@ func findMax(t parquet.Type, values []parquet.Value) *parquet.Value {
 
 func findMin(t parquet.Type, values []parquet.Value) *parquet.Value {
 	return find(-1, t, values)
+}
+
+// Schema implements the Particulate interface. It generates a parquet.Schema from the min/max fields of the Granule.
+func (g *Granule) Schema() *parquet.Schema {
+	group := parquet.Group{}
+	g.metadata.maxlock.RLock()
+	defer g.metadata.maxlock.RUnlock()
+	for name, v := range g.metadata.max {
+		switch v.Kind() {
+		case parquet.Int32:
+			group[name] = parquet.Int(32)
+		case parquet.Int64:
+			group[name] = parquet.Int(64)
+		case parquet.Float:
+			group[name] = parquet.Leaf(parquet.FloatType)
+		case parquet.Double:
+			group[name] = parquet.Leaf(parquet.DoubleType)
+		case parquet.ByteArray:
+			group[name] = parquet.String()
+		case parquet.FixedLenByteArray:
+			group[name] = parquet.Leaf(parquet.ByteArrayType)
+		default:
+			group[name] = parquet.Leaf(parquet.DoubleType)
+		}
+	}
+	return parquet.NewSchema("granule", group)
+}
+
+// ColumnChunks implements the Particulate interface.
+func (g *Granule) ColumnChunks() []parquet.ColumnChunk {
+	var chunks []parquet.ColumnChunk
+	g.metadata.maxlock.RLock()
+	defer g.metadata.maxlock.RUnlock()
+	g.metadata.minlock.RLock()
+	defer g.metadata.minlock.RUnlock()
+
+	names := []string{}
+	for name := range g.metadata.max {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		chunks = append(chunks, VirtualSparseColumnChunk{
+			i: VirtualSparseColumnIndex{
+				Min: *g.metadata.min[name],
+				Max: *g.metadata.max[name],
+			},
+		})
+	}
+
+	return chunks
 }

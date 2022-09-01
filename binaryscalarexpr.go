@@ -42,8 +42,34 @@ func (v VirtualSparseColumnChunk) BloomFilter() parquet.BloomFilter { return nil
 // NumValues implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
 func (v VirtualSparseColumnChunk) NumValues() int64 { return -1 }
 
-// ColumnIndex returns a column index for the VirtualSpareColumnChunk.
+// ColumnIndex returns a column index for the VirtualSparseColumnChunk.
 func (v VirtualSparseColumnChunk) ColumnIndex() parquet.ColumnIndex { return v.i }
+
+type VirtualSparseColumnIndex struct {
+	Min parquet.Value
+	Max parquet.Value
+}
+
+// NumPages implements the parquet.ColumnIndex interface.
+func (v VirtualSparseColumnIndex) NumPages() int { return 1 }
+
+// NullCount implements the parquet.ColumnIndex interface.
+func (v VirtualSparseColumnIndex) NullCount(int) int64 { return 0 }
+
+// NullPage implements the parquet.ColumnIndex interface.
+func (v VirtualSparseColumnIndex) NullPage(int) bool { return false }
+
+// MinValue implements the parquet.ColumnIndex interface.
+func (v VirtualSparseColumnIndex) MinValue(int) parquet.Value { return v.Min }
+
+// MaxValue implements the parquet.ColumnIndex interface.
+func (v VirtualSparseColumnIndex) MaxValue(int) parquet.Value { return v.Max }
+
+// IsAscending implements the parquet.ColumnIndex interface.
+func (v VirtualSparseColumnIndex) IsAscending() bool { return true }
+
+// IsDescending implements the parquet.ColumnIndex interface.
+func (v VirtualSparseColumnIndex) IsDescending() bool { return false }
 
 // ColumnChunks implements the Particulate interafce.
 func (p *ParquetFileParticulate) ColumnChunks() []parquet.ColumnChunk {
