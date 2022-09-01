@@ -879,7 +879,6 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 func (t *TableBlock) RowGroupIterator(
 	ctx context.Context,
 	tx uint64,
-	filterExpr logicalplan.Expr,
 	filter TrueNegativeFilter,
 	iterator func(rg dynparquet.DynamicRowGroup) bool,
 ) error {
@@ -1140,7 +1139,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	rowGroups := []dynparquet.DynamicRowGroup{}
 
 	// Collect all the row groups just to determine the dynamic cols
-	err := t.RowGroupIterator(ctx, math.MaxUint64, nil, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicRowGroup) bool {
+	err := t.RowGroupIterator(ctx, math.MaxUint64, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
 		return true
 	})
@@ -1269,7 +1268,7 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
 	for _, block := range memoryBlocks {
 		span.AddEvent("memoryBlock")
-		if err := block.RowGroupIterator(ctx, tx, filterExpr, filter, iteratorFunc); err != nil {
+		if err := block.RowGroupIterator(ctx, tx, filter, iteratorFunc); err != nil {
 			return nil, err
 		}
 	}
