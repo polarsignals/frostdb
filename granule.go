@@ -333,7 +333,7 @@ func findMin(t parquet.Type, values []parquet.Value) *parquet.Value {
 	return find(-1, t, values)
 }
 
-// Schema implements the Particulate interface. It generates a parquet.Schema from the min/max fields of the Granule
+// Schema implements the Particulate interface. It generates a parquet.Schema from the min/max fields of the Granule.
 func (g *Granule) Schema() *parquet.Schema {
 	group := parquet.Group{}
 	g.metadata.maxlock.RLock()
