@@ -17,12 +17,10 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -57,14 +55,10 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 		WithGranuleSize(granuleSize),
 	)
 	require.NoError(t, err)
@@ -614,14 +608,10 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	require.NoError(b, err)
 	defer os.RemoveAll(dir) // clean up
 
-	reg := prometheus.NewRegistry()
 	logger := log.NewNopLogger()
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 		WithGranuleSize(512),
 		WithWAL(),
 		WithStoragePath(dir),
@@ -1007,9 +997,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 func Test_Table_NewTableValidIndexDegree(t *testing.T) {
 	config := NewTableConfig(dynparquet.NewSampleSchema())
 	c, err := New(
-		newTestLogger(t),
-		nil,
-		trace.NewNoopTracerProvider().Tracer(""),
+		WithLogger(newTestLogger(t)),
 		WithIndexDegree(-1),
 	)
 	require.NoError(t, err)
@@ -1027,9 +1015,8 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	)
 
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
-	c, err := New(logger, nil, tracer, WithSplitSize(1))
+	c, err := New(WithLogger(logger), WithSplitSize(1))
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -1037,7 +1024,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received 1)")
 
-	c, err = New(logger, nil, tracer, WithSplitSize(-1))
+	c, err = New(WithLogger(logger), WithSplitSize(-1))
 	require.NoError(t, err)
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -1045,7 +1032,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received -1)")
 
-	c, err = New(logger, nil, tracer, WithSplitSize(2))
+	c, err = New(WithLogger(logger), WithSplitSize(2))
 	require.NoError(t, err)
 	db, err = c.DB(context.Background(), "test")
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
@@ -1599,11 +1586,8 @@ func Test_DoubleTable(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 	c, err := New(
-		logger,
-		nil,
-		tracer,
+		WithLogger(logger),
 		WithGranuleSize(4096),
 		WithBucketStorage(bucket),
 	)

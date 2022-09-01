@@ -8,10 +8,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
-	"github.com/go-kit/log"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -36,9 +33,6 @@ func newDBForBenchmarks(ctx context.Context, b testing.TB) (*DB, error) {
 	b.Logf("initializing %s", b.Name())
 
 	col, err := New(
-		log.NewNopLogger(),
-		prometheus.NewRegistry(),
-		trace.NewNoopTracerProvider().Tracer(""),
 		WithWAL(),
 		WithStoragePath(storagePath),
 	)
@@ -121,7 +115,6 @@ func BenchmarkQueryTypes(b *testing.B) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		trace.NewNoopTracerProvider().Tracer(""),
 		db.TableProvider(),
 	)
 
@@ -158,7 +151,6 @@ func BenchmarkQueryMerge(b *testing.B) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		trace.NewNoopTracerProvider().Tracer(""),
 		db.TableProvider(),
 	)
 	start, end := getLatest15MinInterval(ctx, b, engine)
@@ -195,7 +187,6 @@ func BenchmarkQueryRange(b *testing.B) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		trace.NewNoopTracerProvider().Tracer(""),
 		db.TableProvider(),
 	)
 	start, end := getLatest15MinInterval(ctx, b, engine)

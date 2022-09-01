@@ -7,9 +7,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
@@ -21,14 +19,10 @@ func TestDistinct(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -115,7 +109,6 @@ func TestDistinct(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		tracer,
 		db.TableProvider(),
 	)
 
@@ -142,14 +135,10 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -189,7 +178,6 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		tracer,
 		db.TableProvider(),
 	)
 
@@ -219,14 +207,10 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -266,7 +250,6 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		tracer,
 		db.TableProvider(),
 	)
 
@@ -296,14 +279,10 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -365,7 +344,6 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		tracer,
 		db.TableProvider(),
 	)
 
@@ -395,14 +373,10 @@ func TestDistinctProjectionAllNull(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	reg := prometheus.NewRegistry()
 	logger := newTestLogger(t)
-	tracer := trace.NewNoopTracerProvider().Tracer("")
 
 	c, err := New(
-		logger,
-		reg,
-		tracer,
+		WithLogger(logger),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -442,7 +416,6 @@ func TestDistinctProjectionAllNull(t *testing.T) {
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
-		tracer,
 		db.TableProvider(),
 	)
 
