@@ -49,21 +49,14 @@ type ColumnStore struct {
 type Option func(*ColumnStore) error
 
 func New(
-	logger log.Logger,
-	reg prometheus.Registerer,
-	tracer trace.Tracer,
 	options ...Option,
 ) (*ColumnStore, error) {
-	if reg == nil {
-		reg = prometheus.NewRegistry()
-	}
-
 	s := &ColumnStore{
 		mtx:              &sync.RWMutex{},
 		dbs:              map[string]*DB{},
-		reg:              reg,
-		logger:           logger,
-		tracer:           tracer,
+		reg:              prometheus.NewRegistry(),
+		logger:           log.NewNopLogger(),
+		tracer:           trace.NewNoopTracerProvider().Tracer(""),
 		indexDegree:      2,
 		splitSize:        2,
 		granuleSize:      8192,
@@ -81,6 +74,27 @@ func New(
 	}
 
 	return s, nil
+}
+
+func WithLogger(logger log.Logger) Option {
+	return func(s *ColumnStore) error {
+		s.logger = logger
+		return nil
+	}
+}
+
+func WithTracer(tracer trace.Tracer) Option {
+	return func(s *ColumnStore) error {
+		s.tracer = tracer
+		return nil
+	}
+}
+
+func WithRegistry(reg prometheus.Registerer) Option {
+	return func(s *ColumnStore) error {
+		s.reg = reg
+		return nil
+	}
 }
 
 func WithGranuleSize(size int) Option {
