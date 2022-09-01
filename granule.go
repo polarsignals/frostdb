@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"unsafe"
 
@@ -366,11 +367,17 @@ func (g *Granule) ColumnChunks() []parquet.ColumnChunk {
 	g.metadata.minlock.RLock()
 	defer g.metadata.minlock.RUnlock()
 
-	for name, maxVal := range g.metadata.max {
+	names := []string{}
+	for name := range g.metadata.max {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
 		chunks = append(chunks, VirtualSparseColumnChunk{
 			i: VirtualSparseColumnIndex{
 				Min: *g.metadata.min[name],
-				Max: *maxVal,
+				Max: *g.metadata.max[name],
 			},
 		})
 	}
