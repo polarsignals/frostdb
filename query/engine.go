@@ -25,16 +25,30 @@ type LocalEngine struct {
 	tableProvider logicalplan.TableProvider
 }
 
+type Option func(*LocalEngine)
+
+func WithTracer(tracer trace.Tracer) Option {
+	return func(e *LocalEngine) {
+		e.tracer = tracer
+	}
+}
+
 func NewEngine(
 	pool memory.Allocator,
-	tracer trace.Tracer,
 	tableProvider logicalplan.TableProvider,
+	options ...Option,
 ) *LocalEngine {
-	return &LocalEngine{
+	e := &LocalEngine{
 		pool:          pool,
-		tracer:        tracer,
+		tracer:        trace.NewNoopTracerProvider().Tracer(""),
 		tableProvider: tableProvider,
 	}
+
+	for _, option := range options {
+		option(e)
+	}
+
+	return e
 }
 
 type LocalQueryBuilder struct {
