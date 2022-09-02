@@ -19,6 +19,8 @@ type binaryValueWriter struct {
 	firstWrite bool
 }
 
+type NewWriterFunc func(b array.Builder, numValues int) ValueWriter
+
 func NewBinaryValueWriter(b array.Builder, numValues int) ValueWriter {
 	return &binaryValueWriter{
 		b:          b.(*array.BinaryBuilder),

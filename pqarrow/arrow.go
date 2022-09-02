@@ -98,6 +98,7 @@ func includedProjection(projections []logicalplan.Expr, name string) bool {
 }
 
 // ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
+// The result is appended to builder.
 func ParquetRowGroupToArrowRecord(
 	ctx context.Context,
 	pool memory.Allocator,
@@ -105,10 +106,11 @@ func ParquetRowGroupToArrowRecord(
 	schema *arrow.Schema,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
-) (arrow.Record, error) {
+	builder *array.RecordBuilder,
+) error {
 	switch rg.(type) {
 	case *dynparquet.MergedRowGroup:
-		return rowBasedParquetRowGroupToArrowRecord(ctx, pool, rg, schema)
+		return rowBasedParquetRowGroupToArrowRecord(ctx, pool, rg, schema, builder)
 	default:
 		return contiguousParquetRowGroupToArrowRecord(
 			ctx,
@@ -117,6 +119,7 @@ func ParquetRowGroupToArrowRecord(
 			schema,
 			filterExpr,
 			distinctColumns,
+			builder,
 		)
 	}
 }
@@ -127,26 +130,27 @@ var rowBufPool = &sync.Pool{
 	},
 }
 
-// rowBasedParquetRowGroupToArrowRecord converts a parquet row group to an arrow record row by row.
+// rowBasedParquetRowGroupToArrowRecord converts a parquet row group to an arrow
+// record row by row. The result is appended to b.
 func rowBasedParquetRowGroupToArrowRecord(
 	ctx context.Context,
 	pool memory.Allocator,
 	rg parquet.RowGroup,
 	schema *arrow.Schema,
-) (arrow.Record, error) {
+	builder *array.RecordBuilder,
+) error {
 	parquetFields := rg.Schema().Fields()
 
 	if len(schema.Fields()) != len(parquetFields) {
-		return nil, fmt.Errorf("inconsistent schema between arrow and parquet")
+		return fmt.Errorf("inconsistent schema between arrow and parquet")
 	}
 
 	// Create arrow writers from arrow and parquet schema
 	writers := make([]writer.ValueWriter, len(parquetFields))
-	b := array.NewRecordBuilder(pool, schema)
-	for i, field := range b.Fields() {
+	for i, field := range builder.Fields() {
 		_, newValueWriter, err := convert.ParquetNodeToTypeWithWriterFunc(parquetFields[i])
 		if err != nil {
-			return nil, err
+			return err
 		}
 		writers[i] = newValueWriter(field, 0)
 	}
@@ -159,7 +163,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		default:
 		}
 		rowBuf = rowBuf[:cap(rowBuf)]
@@ -168,7 +172,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 			break
 		}
 		if err != nil && err != io.EOF {
-			return nil, fmt.Errorf("read row: %w", err)
+			return fmt.Errorf("read row: %w", err)
 		}
 		rowBuf = rowBuf[:n]
 
@@ -183,10 +187,11 @@ func rowBasedParquetRowGroupToArrowRecord(
 		}
 	}
 
-	return b.NewRecord(), nil
+	return nil
 }
 
-// contiguousParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
+// contiguousParquetRowGroupToArrowRecord converts a parquet row group to an
+// arrow record. The result is written to builder.
 func contiguousParquetRowGroupToArrowRecord(
 	ctx context.Context,
 	pool memory.Allocator,
@@ -194,39 +199,38 @@ func contiguousParquetRowGroupToArrowRecord(
 	schema *arrow.Schema,
 	filterExpr logicalplan.Expr,
 	distinctColumns []logicalplan.Expr,
-) (arrow.Record, error) {
+	builder *array.RecordBuilder,
+) error {
 	s := rg.Schema()
 	parquetColumns := rg.ColumnChunks()
 	parquetFields := s.Fields()
 
 	if filterExpr == nil && len(distinctColumns) == 0 && SingleMatchingColumn(distinctColumns, parquetFields) {
 		// We can use the faster path for a single distinct column by just
-		// returning its dictionary.
-		cols := make([]arrow.Array, 0, 1)
-		rows := int64(0)
+		// writing its dictionary.
 		for i, field := range parquetFields {
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return ctx.Err()
 			default:
+				// TODO(asubiotto): builder.Field(i) will panic as soon as the
+				// if statement is modified.
 				name := field.Name()
 				if distinctColumns[0].MatchColumn(name) {
-					array, err := parquetColumnToArrowArray(
+					if err := parquetColumnToArrowArray(
 						pool,
 						field,
 						parquetColumns[i],
 						true,
-					)
-					if err != nil {
-						return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+						builder.Field(i),
+					); err != nil {
+						return fmt.Errorf("convert parquet column to arrow array: %w", err)
 					}
-					cols = append(cols, array)
-					rows = int64(array.Len())
 				}
 			}
 		}
 
-		return array.NewRecord(schema, cols, rows), nil
+		return nil
 	}
 
 	if filterExpr == nil && len(distinctColumns) != 0 {
@@ -234,141 +238,89 @@ func contiguousParquetRowGroupToArrowRecord(
 		// columns. If all the distinct columns are dictionary encoded, we can
 		// check their dictionaries and if all of them have a single value, we
 		// can just return a single row with each of their values.
-		res, err := distinctColumnsToArrowRecord(
+		appliedOptimization, err := distinctColumnsToArrowRecord(
 			ctx,
 			pool,
 			schema,
 			parquetFields,
 			parquetColumns,
 			distinctColumns,
+			builder,
 		)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if res != nil {
-			return res, nil
+		if appliedOptimization {
+			return nil
 		}
 		// If we get here, we couldn't use the fast path.
 	}
 
-	cols := make([]arrow.Array, len(schema.Fields()))
-
 	for i, parquetField := range parquetFields {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		default:
-			if schema.HasField(parquetField.Name()) {
-				a, err := parquetColumnToArrowArray(
+			if indices := schema.FieldIndices(parquetField.Name()); len(indices) > 0 {
+				if err := parquetColumnToArrowArray(
 					pool,
 					parquetField,
 					parquetColumns[i],
 					false,
-				)
-				if err != nil {
-					return nil, fmt.Errorf("convert parquet column to arrow array: %w", err)
+					builder.Field(indices[0]),
+				); err != nil {
+					return fmt.Errorf("convert parquet column to arrow array: %w", err)
 				}
-
-				index := schema.FieldIndices(parquetField.Name())[0]
-				cols[index] = a
 			}
 		}
 	}
 
-	rows := rg.NumRows()
+	maxLen, _, anomaly := recordBuilderLength(builder)
+	if !anomaly {
+		return nil
+	}
 
-	for i, field := range schema.Fields() {
-		if cols[i] == nil {
-			// If the column is empty we need to append NULL as often as we have rows
+	for _, field := range builder.Fields() {
+		if fieldLen := field.Len(); fieldLen < maxLen {
+			// If the column is not the same length as the maximum length
+			// column, we need to append NULL as often as we have rows
 			// TODO: Is there a faster or better way?
-			b := array.NewBuilder(pool, field.Type)
-			for j := int64(0); j < rows; j++ {
-				b.AppendNull()
+			for i := 0; i < maxLen-fieldLen; i++ {
+				field.AppendNull()
 			}
-			cols[i] = b.NewArray()
 		}
 	}
 
-	r := array.NewRecord(schema, cols, rows)
-	return r, nil
+	return nil
 }
 
 // parquetColumnToArrowArray converts a single parquet column to an arrow array
-// and returns the type, nullability, and the actual resulting arrow array. If
-// a column is a repeated type, it automatically boxes it into the appropriate
-// arrow equivalent.
+// and writes the result to builder. If a column is a repeated type, it
+// automatically boxes it into the appropriate arrow equivalent.
 func parquetColumnToArrowArray(
 	pool memory.Allocator,
 	n parquet.Node,
 	c parquet.ColumnChunk,
 	dictionaryOnly bool,
-) (
-	arrow.Array,
-	error,
-) {
-	at, newValueWriter, err := convert.ParquetNodeToTypeWithWriterFunc(n)
+	builder array.Builder,
+) error {
+	_, newValueWriter, err := convert.ParquetNodeToTypeWithWriterFunc(n)
 	if err != nil {
-		return nil, fmt.Errorf("convert ParquetNodeToTypeWithWriterFunc failed: %v", err)
+		return fmt.Errorf("convert ParquetNodeToTypeWithWriterFunc failed: %v", err)
 	}
 
-	var (
-		w  writer.ValueWriter
-		b  array.Builder
-		lb *array.ListBuilder
-
-		repeated = false
-	)
-
-	optional := n.Optional()
-
-	// Using the retrieved arrow type and whether the type is repeated we can
-	// build a type-safe `writeValues` function that only casts the resulting
-	// builder once and can perform optimized transfers of the page values to
-	// the target array.
-	if n.Repeated() {
-		// If the column is repeated, we need to box it into a list.
-		lt := arrow.ListOf(at)
-		lt.SetElemNullable(optional)
-		at = lt
-
-		repeated = true
-
-		lb = array.NewBuilder(pool, at).(*array.ListBuilder)
-		// A list builder actually expects all values of all sublists to be
-		// written contiguously, the offsets where litsts start are recorded in
-		// the offsets array below.
-		w = newValueWriter(lb.ValueBuilder(), int(c.NumValues()))
-		b = lb
-	} else {
-		b = array.NewBuilder(pool, at)
-		w = newValueWriter(b, int(c.NumValues()))
-	}
-	defer b.Release()
-
-	err = writeColumnToArray(
+	if err := writeColumnToArray(
 		n.Type(),
 		c,
-		optional,
-		repeated,
-		lb,
-		w,
+		n.Optional(),
+		n.Repeated(),
+		newValueWriter(builder, int(c.NumValues())),
 		dictionaryOnly,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("writePagesToArray failed: %v", err)
+	); err != nil {
+		return fmt.Errorf("writePagesToArray failed: %v", err)
 	}
 
-	arr := b.NewArray()
-
-	// Is this a bug in arrow? We already set the nullability above, but it
-	// doesn't appear to transfer into the resulting array's type. Needs to be
-	// investigated.
-	switch t := arr.DataType().(type) {
-	case *arrow.ListType:
-		t.SetElemNullable(optional)
-	}
-
-	return arr, nil
+	return nil
 }
 
 // writeColumnToArray writes the values of a single parquet column to an arrow
@@ -387,7 +339,6 @@ func writeColumnToArray(
 	columnChunk parquet.ColumnChunk,
 	optional bool,
 	repeated bool,
-	lb *array.ListBuilder,
 	w writer.ValueWriter,
 	dictionaryOnly bool,
 ) error {
@@ -448,9 +399,6 @@ func writeColumnToArray(
 
 	pages := columnChunk.Pages()
 	defer pages.Close()
-	// We are potentially writing multiple pages to the same array, so we need
-	// to keep track of the index of the offsets in case this is a List-type.
-	i := 0
 	for {
 		p, err := pages.ReadPage()
 		if err != nil {
@@ -484,28 +432,6 @@ func writeColumnToArray(
 			}
 
 			w.Write(values)
-
-			if repeated {
-				offsets := []int32{}
-				validity := []bool{}
-				for _, v := range values {
-					rep := v.RepetitionLevel()
-					def := v.DefinitionLevel()
-					if rep == 0 && def == 1 {
-						offsets = append(offsets, int32(i))
-						validity = append(validity, true)
-					}
-					if rep == 0 && def == 0 {
-						offsets = append(offsets, int32(i))
-						validity = append(validity, false)
-					}
-					// rep == 1 && def == 1 means the item in the list is not null which is handled by the value writer
-					// rep == 1 && def == 0 means the item in the list is null which is handled by the value writer
-					i++
-				}
-
-				lb.AppendValues(offsets, validity)
-			}
 		}
 	}
 
@@ -530,6 +456,28 @@ func SingleMatchingColumn(distinctColumns []logicalplan.Expr, fields []parquet.F
 	return count == 1
 }
 
+// recordBuilderLength returns the maximum length of all of the
+// array.RecordBuilder's fields, the number of columns that have this maximum
+// length, and a boolean for convenience to indicate if this last number is
+// equal to the number of fields in the RecordBuilder (i.e. there is no anomaly
+// in the length of each field).
+func recordBuilderLength(rb *array.RecordBuilder) (maxLength, maxLengthFields int, anomaly bool) {
+	fields := rb.Fields()
+	maxLength = fields[0].Len()
+	maxLengthFields = 0
+	for _, field := range fields {
+		if fieldLen := field.Len(); fieldLen != maxLength {
+			if fieldLen > maxLength {
+				maxLengthFields = 1
+				maxLength = fieldLen
+			}
+		} else {
+			maxLengthFields++
+		}
+	}
+	return maxLength, maxLengthFields, !(maxLengthFields == len(rb.Fields()))
+}
+
 func distinctColumnsToArrowRecord(
 	ctx context.Context,
 	pool memory.Allocator,
@@ -537,12 +485,16 @@ func distinctColumnsToArrowRecord(
 	parquetFields []parquet.Field,
 	parquetColumns []parquet.ColumnChunk,
 	distinctColumns []logicalplan.Expr,
-) (arrow.Record, error) {
-	cols := make([]arrow.Array, len(schema.Fields()))
+	builder *array.RecordBuilder,
+) (bool, error) {
+	initialLength, _, anomaly := recordBuilderLength(builder)
+	if anomaly {
+		return false, fmt.Errorf("expected all fields in record builder to have equal length")
+	}
 	for i, field := range parquetFields {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return false, ctx.Err()
 		default:
 			name := field.Name()
 			for _, distinctColumn := range distinctColumns {
@@ -550,115 +502,92 @@ func distinctColumnsToArrowRecord(
 				if len(matchers) != 1 {
 					// The expression is more complex than just a single binary
 					// expression, so we can't apply the optimization.
-					return nil, nil
+					return false, nil
 				}
 				if matchers[0].MatchColumn(name) {
 					// Fast path for distinct queries.
-					array, err := writeDistinctColumnToArray(
+					optimizationApplied, err := writeDistinctColumnToArray(
 						pool,
 						field,
 						parquetColumns[i],
 						distinctColumn,
+						// Note: The builder has to be lazily passed in because
+						// the index evaluation may panic in certain cases when
+						// the optimizations cannot be applied (e.g. in the case
+						// of dynamic columns).
+						func() array.Builder {
+							return builder.Field(schema.FieldIndices(distinctColumn.Name())[0])
+						},
 					)
-					if err != nil {
-						return nil, err
+					if err != nil || !optimizationApplied {
+						return optimizationApplied, err
 					}
-					if array == nil {
-						// Optimization could not be applied.
-						return nil, nil
-					}
-
-					index := schema.FieldIndices(distinctColumn.Name())[0]
-					cols[index] = array
 				}
 			}
 		}
 	}
 
-	if allArraysNoRows(cols) {
-		for i, field := range schema.Fields() {
-			if cols[i] == nil {
-				cols[i] = array.NewBuilder(pool, field.Type).NewArray()
-			}
+	atLeastOneRow := false
+	for _, field := range builder.Fields() {
+		if field.Len() > initialLength {
+			atLeastOneRow = true
+			break
 		}
-		return array.NewRecord(schema, cols, 0), nil
+	}
+	if !atLeastOneRow {
+		// Exit early if no rows were written.
+		return true, nil
 	}
 
-	count, maxRows, maxColIndex := countArraysWithRowsLargerThanOne(cols)
-	if count > 1 {
-		// Can't apply the optimization as we can't know the combination of
-		// distinct values.
-		for _, col := range cols {
-			if col != nil {
-				col.Release()
+	newLength, maxLengthFields, anomaly := recordBuilderLength(builder)
+	if !anomaly {
+		// All columns have the same number of values.
+		return true, nil
+	}
+
+	if newLength > initialLength+1 && maxLengthFields > 1 {
+		// Can't apply the optimization as more than one column has more than
+		// one distinct value. We can't know the combination of distinct values.
+		for _, field := range builder.Fields() {
+			if field.Len() == initialLength {
+				continue
 			}
+			resetBuilderToLength(field, initialLength)
 		}
-		return nil, nil
+		return false, nil
 	}
 
 	// At this point we know there is at most one column with more than one
 	// row. Therefore we can repeat the values of the other columns as those
 	// are the only possible combinations within the rowgroup.
 
-	for i, field := range schema.Fields() {
+	for _, field := range builder.Fields() {
 		// Columns that had no values are just backfilled with null values.
-		if cols[i] == nil {
-			b := array.NewBuilder(pool, field.Type)
-			for j := 0; j < maxRows; j++ {
-				b.AppendNull()
+		if fieldLen := field.Len(); fieldLen == initialLength {
+			for j := initialLength; j < newLength; j++ {
+				field.AppendNull()
 			}
-			cols[i] = b.NewArray()
-		}
-
-		// Columns with a single value must be repeated to match the maximum
-		// number of rows. Also we need to make sure the column is not the one
-		// with the maximum values as that array we want to retain the exact
-		// values.
-		if maxRows > 1 && maxColIndex != i {
-			cols[i] = repeatArray(pool, cols[i], maxRows)
+		} else if fieldLen < newLength {
+			arr := field.NewArray()
+			// TODO(asubiotto): NewArray resets the builder, copy all the values
+			// again. There *must* be a better way to do this.
+			copyArrToBuilder(field, arr, fieldLen)
+			repeatLastValue(field, arr, newLength-fieldLen)
+			arr.Release()
 		}
 	}
-	return array.NewRecord(schema, cols, int64(maxRows)), nil
+	return true, nil
 }
 
-func allArraysNoRows(arrays []arrow.Array) bool {
-	for _, arr := range arrays {
-		if arr == nil {
-			continue
-		}
-		if arr.Len() != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func countArraysWithRowsLargerThanOne(arrays []arrow.Array) (int, int, int) {
-	count := 0
-	maxRows := 0
-	maxColIndex := 0
-	for i, arr := range arrays {
-		if arr == nil {
-			continue
-		}
-		len := arr.Len()
-		if len > maxRows {
-			maxRows = len
-			maxColIndex = i
-		}
-		if len > 1 {
-			count++
-		}
-	}
-	return count, maxRows, maxColIndex
-}
-
+// writeDistinctColumnToArray checks if the distinct expression can be optimized
+// at the scan level and returns whether the optimization was successful or not.
 func writeDistinctColumnToArray(
 	pool memory.Allocator,
 	node parquet.Node,
 	columnChunk parquet.ColumnChunk,
 	distinctExpr logicalplan.Expr,
-) (arrow.Array, error) {
+	builder func() array.Builder,
+) (bool, error) {
 	switch expr := distinctExpr.(type) {
 	case *logicalplan.BinaryExpr:
 		return binaryDistinctExpr(
@@ -666,16 +595,21 @@ func writeDistinctColumnToArray(
 			node.Type(),
 			columnChunk,
 			expr,
+			builder(),
 		)
 	case *logicalplan.Column:
-		return parquetColumnToArrowArray(
+		if err := parquetColumnToArrowArray(
 			pool,
 			node,
 			columnChunk,
 			true,
-		)
+			builder(),
+		); err != nil {
+			return false, err
+		}
+		return true, nil
 	default:
-		return nil, nil
+		return false, nil
 	}
 }
 
@@ -689,12 +623,16 @@ func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
 	return false
 }
 
+// binaryDistinctExpr checks the columnChunk's column index to see if the
+// expression can be evaluated on the index without reading the page values.
+// Returns whether the optimization was successful or not.
 func binaryDistinctExpr(
 	pool memory.Allocator,
 	typ parquet.Type,
 	columnChunk parquet.ColumnChunk,
 	expr *logicalplan.BinaryExpr,
-) (arrow.Array, error) {
+	builder array.Builder,
+) (bool, error) {
 	var (
 		value parquet.Value
 		err   error
@@ -708,7 +646,7 @@ func binaryDistinctExpr(
 		return true
 	}))
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 
 	switch expr.Op {
@@ -721,21 +659,20 @@ func binaryDistinctExpr(
 		)
 
 		if allGreater || noneGreater {
-			b := array.NewBooleanBuilder(pool)
-			defer b.Release()
+			b := builder.(*array.BooleanBuilder)
 			if allGreater {
 				b.Append(true)
 			}
 			if noneGreater {
 				b.Append(false)
 			}
-			return b.NewArray(), nil
+			return true, nil
 		}
 	default:
-		return nil, nil
+		return false, nil
 	}
 
-	return nil, nil
+	return false, nil
 }
 
 func allOrNoneGreaterThan(
@@ -762,104 +699,160 @@ func allOrNoneGreaterThan(
 	return allTrue, allFalse
 }
 
-func repeatArray(
-	pool memory.Allocator,
-	arr arrow.Array,
-	count int,
-) arrow.Array {
-	defer arr.Release()
+// resetBuilderToLength resets the builder to the given length, it is logically
+// equivalent to b = b[0:l]. It is unfortunately pretty expensive, since there
+// is currently no way to recreate a builder from a sliced array.
+func resetBuilderToLength(builder array.Builder, l int) {
+	arr := builder.NewArray()
+	copyArrToBuilder(builder, arr, l)
+	arr.Release()
+}
+
+func copyArrToBuilder(builder array.Builder, arr arrow.Array, toCopy int) {
+	// TODO(asubiotto): Is there a better way to do this in the arrow
+	// library? Maybe by copying buffers over, but I'm not sure if it's
+	// cheaper to convert the byte slices to valid slices/offsets.
+	// In any case, we should probably move this to a utils file.
+	// One other idea is to create a thin layer on top of a builder that
+	// only flushes writes when told to (will help with all these
+	// optimizations where we aren't sure we can apply them until the end).
+	builder.Reserve(toCopy)
 	switch arr := arr.(type) {
 	case *array.Boolean:
-		return repeatBooleanArray(pool, arr, count)
+		b := builder.(*array.BooleanBuilder)
+		for i := 0; i < toCopy; i++ {
+			if arr.IsNull(i) {
+				b.UnsafeAppendBoolToBitmap(false)
+			} else {
+				b.UnsafeAppend(arr.Value(i))
+			}
+		}
 	case *array.Binary:
-		return repeatBinaryArray(pool, arr, count)
+		b := builder.(*array.BinaryBuilder)
+		for i := 0; i < toCopy; i++ {
+			if arr.IsNull(i) {
+				b.UnsafeAppendBoolToBitmap(false)
+			} else {
+				b.Append(arr.Value(i))
+			}
+		}
 	case *array.Int64:
-		return repeatInt64Array(pool, arr, count)
+		b := builder.(*array.Int64Builder)
+		for i := 0; i < toCopy; i++ {
+			if arr.IsNull(i) {
+				b.UnsafeAppendBoolToBitmap(false)
+			} else {
+				b.UnsafeAppend(arr.Value(i))
+			}
+		}
 	case *array.Uint64:
-		return repeatUint64Array(pool, arr, count)
+		b := builder.(*array.Uint64Builder)
+		for i := 0; i < toCopy; i++ {
+			if arr.IsNull(i) {
+				b.UnsafeAppendBoolToBitmap(false)
+			} else {
+				b.UnsafeAppend(arr.Value(i))
+			}
+		}
 	case *array.Float64:
-		return repeatFloat64Array(pool, arr, count)
+		b := builder.(*array.Float64Builder)
+		for i := 0; i < toCopy; i++ {
+			if arr.IsNull(i) {
+				b.UnsafeAppendBoolToBitmap(false)
+			} else {
+				b.UnsafeAppend(arr.Value(i))
+			}
+		}
+	default:
+		panic(fmt.Sprintf("unsupported array type: %T", arr))
+	}
+}
+
+// repeatLastValue repeat's arr's last value count times and writes it to
+// builder.
+func repeatLastValue(
+	builder array.Builder,
+	arr arrow.Array,
+	count int,
+) {
+	switch arr := arr.(type) {
+	case *array.Boolean:
+		repeatBooleanArray(builder.(*array.BooleanBuilder), arr, count)
+	case *array.Binary:
+		repeatBinaryArray(builder.(*array.BinaryBuilder), arr, count)
+	case *array.Int64:
+		repeatInt64Array(builder.(*array.Int64Builder), arr, count)
+	case *array.Uint64:
+		repeatUint64Array(builder.(*array.Uint64Builder), arr, count)
+	case *array.Float64:
+		repeatFloat64Array(builder.(*array.Float64Builder), arr, count)
 	default:
 		panic(fmt.Sprintf("unsupported array type: %T", arr))
 	}
 }
 
 func repeatBooleanArray(
-	pool memory.Allocator,
+	b *array.BooleanBuilder,
 	arr *array.Boolean,
 	count int,
-) *array.Boolean {
-	b := array.NewBooleanBuilder(pool)
-	defer b.Release()
-	val := arr.Value(0)
+) {
+	val := arr.Value(arr.Len() - 1)
 	vals := make([]bool, count)
 	for i := 0; i < count; i++ {
 		vals[i] = val
 	}
+	// TODO(asubiotto): are we ignoring a possible null?
 	b.AppendValues(vals, nil)
-	return b.NewBooleanArray()
 }
 
 func repeatBinaryArray(
-	pool memory.Allocator,
+	b *array.BinaryBuilder,
 	arr *array.Binary,
 	count int,
-) *array.Binary {
-	b := array.NewBinaryBuilder(pool, &arrow.BinaryType{})
-	defer b.Release()
-	val := arr.Value(0)
+) {
+	val := arr.Value(arr.Len() - 1)
 	vals := make([][]byte, count)
 	for i := 0; i < count; i++ {
 		vals[i] = val
 	}
 	b.AppendValues(vals, nil)
-	return b.NewBinaryArray()
 }
 
 func repeatInt64Array(
-	pool memory.Allocator,
+	b *array.Int64Builder,
 	arr *array.Int64,
 	count int,
-) *array.Int64 {
-	b := array.NewInt64Builder(pool)
-	defer b.Release()
-	val := arr.Value(0)
+) {
+	val := arr.Value(arr.Len() - 1)
 	vals := make([]int64, count)
 	for i := 0; i < count; i++ {
 		vals[i] = val
 	}
 	b.AppendValues(vals, nil)
-	return b.NewInt64Array()
 }
 
 func repeatUint64Array(
-	pool memory.Allocator,
+	b *array.Uint64Builder,
 	arr *array.Uint64,
 	count int,
-) *array.Uint64 {
-	b := array.NewUint64Builder(pool)
-	defer b.Release()
-	val := arr.Value(0)
+) {
+	val := arr.Value(arr.Len() - 1)
 	vals := make([]uint64, count)
 	for i := 0; i < count; i++ {
 		vals[i] = val
 	}
 	b.AppendValues(vals, nil)
-	return b.NewUint64Array()
 }
 
 func repeatFloat64Array(
-	pool memory.Allocator,
+	b *array.Float64Builder,
 	arr *array.Float64,
 	count int,
-) *array.Float64 {
-	b := array.NewFloat64Builder(pool)
-	defer b.Release()
-	val := arr.Value(0)
+) {
+	val := arr.Value(arr.Len() - 1)
 	vals := make([]float64, count)
 	for i := 0; i < count; i++ {
 		vals[i] = val
 	}
 	b.AppendValues(vals, nil)
-	return b.NewFloat64Array()
 }
