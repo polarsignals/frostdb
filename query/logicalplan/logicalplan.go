@@ -11,6 +11,9 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 )
 
+// Callback receives an arrow.Record for further processing.
+type Callback func(ctx context.Context, r arrow.Record) error
+
 // LogicalPlan is a logical representation of a query. Each LogicalPlan is a
 // sub-tree of the query. It is built recursively.
 type LogicalPlan struct {
@@ -116,14 +119,14 @@ type TableReader interface {
 		pool memory.Allocator,
 		schema *arrow.Schema,
 		options IterOptions,
-		callbacks []func(ctx context.Context, r arrow.Record) error,
+		callbacks []Callback,
 	) error
 	SchemaIterator(
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
 		options IterOptions,
-		callback []func(ctx context.Context, r arrow.Record) error,
+		callback []Callback,
 	) error
 	ArrowSchema(
 		ctx context.Context,

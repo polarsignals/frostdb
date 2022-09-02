@@ -117,7 +117,7 @@ type HashAggregate struct {
 	hashSeed              maphash.Seed
 
 	next      PhysicalPlan
-	callbacks []func(ctx context.Context, r arrow.Record) error
+	callbacks []logicalplan.Callback
 
 	// Buffers that are reused across callback calls.
 	groupByFields      []arrow.Field
@@ -125,7 +125,7 @@ type HashAggregate struct {
 	groupByArrays      []arrow.Array
 }
 
-func (a *HashAggregate) Callbacks() []func(ctx context.Context, r arrow.Record) error {
+func (a *HashAggregate) Callbacks() []logicalplan.Callback {
 	return a.callbacks
 }
 
@@ -241,7 +241,7 @@ func hashInt64Array(arr *array.Int64) []uint64 {
 func (a *HashAggregate) SetNext(next PhysicalPlan) {
 	a.next = next
 
-	a.callbacks = make([]func(context.Context, arrow.Record) error, 0, len(next.Callbacks()))
+	a.callbacks = make([]logicalplan.Callback, 0, len(next.Callbacks()))
 	for range next.Callbacks() {
 		a.callbacks = append(a.callbacks, func(ctx context.Context, r arrow.Record) error {
 			// Generates high volume of spans. Comment out if needed during development.

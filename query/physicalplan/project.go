@@ -159,7 +159,7 @@ type Projection struct {
 	colProjections []columnProjection
 
 	next      PhysicalPlan
-	callbacks []func(context.Context, arrow.Record) error
+	callbacks []logicalplan.Callback
 }
 
 func Project(mem memory.Allocator, tracer trace.Tracer, exprs []logicalplan.Expr) (*Projection, error) {
@@ -180,7 +180,7 @@ func Project(mem memory.Allocator, tracer trace.Tracer, exprs []logicalplan.Expr
 	return p, nil
 }
 
-func (p *Projection) Callbacks() []func(ctx context.Context, r arrow.Record) error {
+func (p *Projection) Callbacks() []logicalplan.Callback {
 	return p.callbacks
 }
 
@@ -191,7 +191,7 @@ func (p *Projection) Finish(ctx context.Context) error {
 func (p *Projection) SetNext(next PhysicalPlan) {
 	p.next = next
 
-	p.callbacks = make([]func(context.Context, arrow.Record) error, 0, len(next.Callbacks()))
+	p.callbacks = make([]logicalplan.Callback, 0, len(next.Callbacks()))
 	for _, callback := range next.Callbacks() {
 		p.callbacks = append(p.callbacks, func(ctx context.Context, r arrow.Record) error {
 			// Generates high volume of spans. Comment out if needed during development.

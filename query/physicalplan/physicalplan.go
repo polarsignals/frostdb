@@ -15,10 +15,11 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-var concurrency = runtime.NumCPU()
+// TODO: Be smarter about the wanted concurrency
+var concurrencyHardcoded = runtime.NumCPU()
 
 type PhysicalPlan interface {
-	Callbacks() []func(ctx context.Context, r arrow.Record) error
+	Callbacks() []logicalplan.Callback
 	SetNext(next PhysicalPlan)
 	Finish(ctx context.Context) error
 	Draw() *Diagram
@@ -50,7 +51,7 @@ func (f PostPlanVisitorFunc) PostVisit(plan *logicalplan.LogicalPlan) bool {
 }
 
 type OutputPlan struct {
-	callbacks []func(ctx context.Context, r arrow.Record) error
+	callbacks []logicalplan.Callback
 	scan      ScanPhysicalPlan
 }
 
@@ -63,7 +64,7 @@ func (e *OutputPlan) DrawString() string {
 	return e.scan.Draw().String()
 }
 
-func (e *OutputPlan) Callbacks() []func(ctx context.Context, r arrow.Record) error {
+func (e *OutputPlan) Callbacks() []logicalplan.Callback {
 	return e.callbacks
 }
 
@@ -195,8 +196,8 @@ func Build(
 
 	// TODO(metalmatze): Right now we create all these callbacks but only ever use the first one (in the Table/Iterator)
 	// We also need to inject a Synchronizer here by default, to not call the passed in callback concurrently.
-	callbacks := make([]func(context.Context, arrow.Record) error, 0, concurrency)
-	for i := 0; i < concurrency; i++ {
+	callbacks := make([]logicalplan.Callback, 0, concurrencyHardcoded)
+	for i := 0; i < concurrencyHardcoded; i++ {
 		callbacks = append(callbacks, func(ctx context.Context, r arrow.Record) error {
 			return callback(ctx, r)
 		})

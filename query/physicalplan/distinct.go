@@ -23,7 +23,7 @@ type Distinction struct {
 	hashSeed maphash.Seed
 
 	next      PhysicalPlan
-	callbacks []func(ctx context.Context, r arrow.Record) error
+	callbacks []logicalplan.Callback
 
 	mtx  *sync.RWMutex
 	seen map[uint64]struct{}
@@ -41,7 +41,7 @@ func Distinct(pool memory.Allocator, tracer trace.Tracer, columns []logicalplan.
 	}
 }
 
-func (d *Distinction) Callbacks() []func(ctx context.Context, r arrow.Record) error {
+func (d *Distinction) Callbacks() []logicalplan.Callback {
 	return d.callbacks
 }
 
@@ -52,7 +52,7 @@ func (d *Distinction) Finish(ctx context.Context) error {
 func (d *Distinction) SetNext(plan PhysicalPlan) {
 	d.next = plan
 
-	d.callbacks = make([]func(context.Context, arrow.Record) error, 0, len(plan.Callbacks()))
+	d.callbacks = make([]logicalplan.Callback, 0, len(plan.Callbacks()))
 	for _, callback := range plan.Callbacks() {
 		d.callbacks = append(d.callbacks, func(ctx context.Context, r arrow.Record) error {
 			// Generates high volume of spans. Comment out if needed during development.

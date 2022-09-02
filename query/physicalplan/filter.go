@@ -22,7 +22,7 @@ type PredicateFilter struct {
 	filterExpr BooleanExpression
 
 	next      PhysicalPlan
-	callbacks []func(ctx context.Context, r arrow.Record) error
+	callbacks []logicalplan.Callback
 }
 
 func (f *PredicateFilter) Draw() *Diagram {
@@ -225,14 +225,14 @@ func newFilter(pool memory.Allocator, tracer trace.Tracer, filterExpr BooleanExp
 	}
 }
 
-func (f *PredicateFilter) Callbacks() []func(ctx context.Context, r arrow.Record) error {
+func (f *PredicateFilter) Callbacks() []logicalplan.Callback {
 	return f.callbacks
 }
 
 func (f *PredicateFilter) SetNext(next PhysicalPlan) {
 	f.next = next
 
-	f.callbacks = make([]func(ctx context.Context, r arrow.Record) error, 0, len(next.Callbacks()))
+	f.callbacks = make([]logicalplan.Callback, 0, len(next.Callbacks()))
 	for _, callback := range next.Callbacks() {
 		f.callbacks = append(f.callbacks, func(ctx context.Context, r arrow.Record) error {
 			// Generates high volume of spans. Comment out if needed during development.

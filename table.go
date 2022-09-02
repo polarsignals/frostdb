@@ -442,7 +442,7 @@ func (t *Table) Iterator(
 	pool memory.Allocator,
 	schema *arrow.Schema,
 	iterOpts logicalplan.IterOptions,
-	iterators []func(ctx context.Context, r arrow.Record) error,
+	iterators []logicalplan.Callback,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
@@ -512,7 +512,7 @@ func (t *Table) SchemaIterator(
 	tx uint64,
 	pool memory.Allocator,
 	iterOpts logicalplan.IterOptions,
-	iterators []func(ctx context.Context, r arrow.Record) error,
+	iterators []logicalplan.Callback,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/SchemaIterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))

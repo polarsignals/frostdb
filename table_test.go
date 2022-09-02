@@ -176,7 +176,7 @@ func TestTable(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					t.Log(r)
 					defer r.Release()
@@ -323,7 +323,7 @@ func Test_Table_GranuleSplit(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					defer r.Release()
 					t.Log(r)
@@ -483,7 +483,7 @@ func Test_Table_InsertLowest(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					defer r.Release()
 					t.Log(r)
@@ -594,7 +594,7 @@ func Test_Table_Concurrency(t *testing.T) {
 					pool,
 					as,
 					logicalplan.IterOptions{},
-					[]func(ctx context.Context, r arrow.Record) error{
+					[]logicalplan.Callback{
 						func(ctx context.Context, r arrow.Record) error {
 							totalrows += r.NumRows()
 							defer r.Release()
@@ -727,7 +727,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 				pool,
 				as,
 				logicalplan.IterOptions{},
-				[]func(ctx context.Context, r arrow.Record) error{
+				[]logicalplan.Callback{
 					func(ctx context.Context, r arrow.Record) error {
 						defer r.Release()
 						totalrows += r.NumRows()
@@ -832,7 +832,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					rows += r.NumRows()
 					defer r.Release()
@@ -862,7 +862,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					rows += r.NumRows()
 					defer r.Release()
@@ -1207,7 +1207,7 @@ func Test_Table_Filter(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{Filter: filterExpr},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					defer r.Release()
 
@@ -1285,7 +1285,7 @@ func Test_Table_Bloomfilter(t *testing.T) {
 			memory.NewGoAllocator(),
 			nil,
 			logicalplan.IterOptions{Filter: logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					defer r.Release()
 					iterations++
@@ -1399,7 +1399,7 @@ func Test_Table_InsertCancellation(t *testing.T) {
 					pool,
 					as,
 					logicalplan.IterOptions{},
-					[]func(ctx context.Context, r arrow.Record) error{
+					[]logicalplan.Callback{
 						func(ctx context.Context, r arrow.Record) error {
 							totalrows += r.NumRows()
 							defer r.Release()
@@ -1484,7 +1484,7 @@ func Test_Table_CancelBasic(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					totalrows += r.NumRows()
 					defer r.Release()
@@ -1725,7 +1725,7 @@ func Test_DoubleTable(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			[]func(ctx context.Context, r arrow.Record) error{
+			[]logicalplan.Callback{
 				func(ctx context.Context, r arrow.Record) error {
 					defer r.Release()
 					require.Equal(t, value, r.Column(1).(*array.Float64).Value(0))
