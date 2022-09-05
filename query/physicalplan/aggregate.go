@@ -392,7 +392,7 @@ func appendValue(b array.Builder, arr arrow.Array, i int) error {
 }
 
 func (a *HashAggregate) Finish(ctx context.Context) error {
-	for _, callback := range a.callbacks {
+	for i := range a.callbacks {
 		ctx, span := a.tracer.Start(ctx, "HashAggregate/Finish")
 		defer span.End()
 
@@ -428,7 +428,7 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 		aggregateField := arrow.Field{Name: a.resultColumnName, Type: aggregateArray.DataType()}
 		cols := append(groupByArrays, aggregateArray)
 
-		return callback(ctx, array.NewRecord(
+		return a.next.Callbacks()[i](ctx, array.NewRecord(
 			arrow.NewSchema(append(groupByFields, aggregateField), nil),
 			cols,
 			int64(numRows),
