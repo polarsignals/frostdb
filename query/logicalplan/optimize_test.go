@@ -27,7 +27,6 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 	require.Equal(t, &TableScan{
 		TableName:     "table1",
 		TableProvider: tableProvider,
-		Concurrent:    true,
 		// Only these columns are needed to compute the result. There can be
 		// duplicates because the statements just add the matchers for the
 		// columns they access. The optimizer could potentially deduplicate or
@@ -54,8 +53,7 @@ func TestOptimizeDistinctPushDown(t *testing.T) {
 	p = optimizer.Optimize(p)
 
 	require.Equal(t, &TableScan{
-		TableName:  "table1",
-		Concurrent: true,
+		TableName: "table1",
 		Distinct: []Expr{
 			&Column{ColumnName: "labels.test"},
 		},
@@ -83,7 +81,6 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 	require.Equal(t, &TableScan{
 		TableName:     "table1",
 		TableProvider: tableProvider,
-		Concurrent:    true,
 		// Only these columns are needed to compute the result.
 		Filter: &BinaryExpr{
 			Left: &Column{ColumnName: "labels.test"},
@@ -199,7 +196,6 @@ func TestAllOptimizers(t *testing.T) {
 	require.Equal(t, &TableScan{
 		TableName:     "table1",
 		TableProvider: tableProvider,
-		Concurrent:    true,
 		// Only these columns are needed to compute the result. There can be
 		// duplicates because the statements just add the matchers for the
 		// columns they access. The optimizer could potentially deduplicate or

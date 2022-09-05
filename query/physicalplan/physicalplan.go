@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -14,8 +13,8 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-// TODO: Make this smarter and concurrent.
-var concurrencyHardcoded = 1
+// TODO: Make this smarter.
+var concurrencyHardcoded = 2
 
 type PhysicalPlan interface {
 	Callbacks() []logicalplan.Callback
