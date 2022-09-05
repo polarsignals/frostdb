@@ -239,6 +239,6 @@ func (p *Projection) Draw() *Diagram {
 	for _, p := range p.colProjections {
 		columns = append(columns, p.Name())
 	}
-	details := fmt.Sprintf("Projection(%d) (%s)", len(p.callbacks), strings.Join(columns, ","))
+	details := fmt.Sprintf("Projection(%dx) (%s)", len(p.callbacks), strings.Join(columns, ","))
 	return &Diagram{Details: details, Child: child}
 }

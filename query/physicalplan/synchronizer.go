@@ -66,13 +66,13 @@ func (m *Synchronizer) Finish(ctx context.Context) error {
 	return nil
 }
 
-func (m *Synchronizer) Draw() *Diagram {
+func (s *Synchronizer) Draw() *Diagram {
 	var child *Diagram
-	if m.next != nil {
-		child = m.next.Draw()
+	if s.next != nil {
+		child = s.next.Draw()
 	}
 	return &Diagram{
-		Details: "Synchronizer",
+		Details: "Synchronizer (1x)",
 		Child:   child,
 	}
 }

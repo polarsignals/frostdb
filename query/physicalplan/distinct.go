@@ -159,5 +159,5 @@ func (d *Distinction) Draw() *Diagram {
 		columns = append(columns, c.Name())
 	}
 
-	return &Diagram{Details: fmt.Sprintf("Distinction(%d) (%s)", len(d.callbacks), strings.Join(columns, ",")), Child: child}
+	return &Diagram{Details: fmt.Sprintf("Distinction(%dx) (%s)", len(d.callbacks), strings.Join(columns, ",")), Child: child}
 }

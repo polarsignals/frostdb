@@ -171,7 +171,12 @@ func (a *HashAggregate) Draw() *Diagram {
 		groupings = append(groupings, grouping.Name())
 	}
 
-	details := fmt.Sprintf("HashAggregate (%s by %s)", a.columnToAggregate.Name(), strings.Join(groupings, ","))
+	details := fmt.Sprintf(
+		"HashAggregate(%dx) (%s by %s)",
+		len(a.callbacks),
+		a.columnToAggregate.Name(),
+		strings.Join(groupings, ","),
+	)
 	return &Diagram{Details: details, Child: child}
 }
 

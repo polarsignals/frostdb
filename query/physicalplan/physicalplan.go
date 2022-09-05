@@ -98,7 +98,7 @@ func (s *TableScan) Draw() *Diagram {
 	if s.next != nil {
 		child = s.next.Draw()
 	}
-	details := fmt.Sprintf("TableScan(%d)", len(s.next.Callbacks()))
+	details := fmt.Sprintf("TableScan(%dx)", len(s.next.Callbacks()))
 	return &Diagram{Details: details, Child: child}
 }
 
