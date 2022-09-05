@@ -28,8 +28,8 @@ func (m *mockTableReader) Iterator(
 	tx uint64,
 	pool memory.Allocator,
 	schema *arrow.Schema,
-	iterOpts IterOptions,
-	callback func(ctx context.Context, r arrow.Record) error,
+	options IterOptions,
+	callbacks []Callback,
 ) error {
 	return nil
 }
@@ -38,8 +38,8 @@ func (m *mockTableReader) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	iterOpts IterOptions,
-	callback func(ctx context.Context, r arrow.Record) error,
+	options IterOptions,
+	callback []Callback,
 ) error {
 	return nil
 }
