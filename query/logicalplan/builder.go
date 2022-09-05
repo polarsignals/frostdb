@@ -18,7 +18,6 @@ func (b Builder) Scan(
 			TableScan: &TableScan{
 				TableProvider: provider,
 				TableName:     tableName,
-				Concurrent:    true,
 			},
 		},
 	}

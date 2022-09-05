@@ -41,7 +41,7 @@ func (m *mockTableReader) SchemaIterator(
 	tx uint64,
 	pool memory.Allocator,
 	iterOpts logicalplan.IterOptions,
-	callback []logicalplan.Callback,
+	callbacks []logicalplan.Callback,
 ) error {
 	return nil
 }
@@ -86,31 +86,30 @@ func TestBuildPhysicalPlan(t *testing.T) {
 		trace.NewNoopTracerProvider().Tracer(""),
 		dynparquet.NewSampleSchema(),
 		p,
-		func(ctx context.Context, record arrow.Record) error { return nil },
+		func(ctx context.Context, r arrow.Record) error { return nil },
 	)
 	require.NoError(t, err)
 }
 
 type mockPhysicalPlan struct {
-	callback func(ctx context.Context, r arrow.Record) error
-	finish   func(ctx context.Context) error
+	callbacks []logicalplan.Callback
+	finish    func(ctx context.Context) error
 }
 
-func (m *mockPhysicalPlan) Start(ctx context.Context) error {
-	// noop
-	return nil
+func (m *mockPhysicalPlan) Callbacks() []logicalplan.Callback {
+	return m.callbacks
 }
 
-func (m *mockPhysicalPlan) Callback(ctx context.Context, r arrow.Record) error {
-	return m.callback(ctx, r)
+func (m *mockPhysicalPlan) SetNext(next PhysicalPlan) {
+	for _, callback := range next.Callbacks() {
+		m.callbacks = append(m.callbacks, func(ctx context.Context, r arrow.Record) error {
+			return callback(ctx, r)
+		})
+	}
 }
 
 func (m *mockPhysicalPlan) Finish(ctx context.Context) error {
 	return m.finish(ctx)
-}
-
-func (m *mockPhysicalPlan) SetNext(next PhysicalPlan) {
-	// noop
 }
 
 func (m *mockPhysicalPlan) Draw() *Diagram {

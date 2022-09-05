@@ -26,7 +26,6 @@ type PhysicalPlan interface {
 
 type ScanPhysicalPlan interface {
 	Execute(ctx context.Context, pool memory.Allocator) error
-	Concurrency() uint
 	Draw() *Diagram
 }
 
@@ -53,6 +52,7 @@ func (f PostPlanVisitorFunc) PostVisit(plan *logicalplan.LogicalPlan) bool {
 type OutputPlan struct {
 	callbacks []logicalplan.Callback
 	scan      ScanPhysicalPlan
+	finish    func(ctx context.Context) error
 }
 
 func (e *OutputPlan) Draw() *Diagram {
@@ -69,13 +69,14 @@ func (e *OutputPlan) Callbacks() []logicalplan.Callback {
 }
 
 func (e *OutputPlan) Finish(ctx context.Context) error {
+	if e.finish != nil {
+		return e.finish(ctx)
+	}
 	return nil
 }
 
 func (e *OutputPlan) SetNext(next PhysicalPlan) {
-	// OutputPlan should be the last step.
-	// If this gets called we're doing something wrong.
-	panic("bug in builder! output plan should not have a next plan!")
+	e.finish = next.Finish
 }
 
 func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -83,14 +84,9 @@ func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator) error {
 }
 
 type TableScan struct {
-	tracer      trace.Tracer
-	options     *logicalplan.TableScan
-	next        PhysicalPlan
-	concurrency uint
-}
-
-func (s *TableScan) Concurrency() uint {
-	return s.concurrency
+	tracer  trace.Tracer
+	options *logicalplan.TableScan
+	next    PhysicalPlan
 }
 
 func (s *TableScan) Draw() *Diagram {
@@ -154,10 +150,6 @@ type SchemaScan struct {
 	next    PhysicalPlan
 }
 
-func (s *SchemaScan) Concurrency() uint {
-	return 0
-}
-
 func (s *SchemaScan) Draw() *Diagram {
 	var child *Diagram
 	if s.next != nil {
@@ -198,25 +190,24 @@ func Build(
 	tracer trace.Tracer,
 	s *dynparquet.Schema,
 	plan *logicalplan.LogicalPlan,
-	callback func(ctx context.Context, record arrow.Record) error,
+	callback logicalplan.Callback,
 ) (*OutputPlan, error) {
 	_, span := tracer.Start(ctx, "PhysicalPlan/Build")
 	defer span.End()
 
-	// TODO(metalmatze): Right now we create all these callbacks but only ever use the first one (in the Table/Iterator)
-	// We also need to inject a Synchronizer here by default, to not call the passed in callback concurrently.
-	callbacks := make([]logicalplan.Callback, 0, concurrencyHardcoded)
-	for i := 0; i < concurrencyHardcoded; i++ {
-		callbacks = append(callbacks, func(ctx context.Context, r arrow.Record) error {
-			return callback(ctx, r)
-		})
-	}
+	outputPlan := &OutputPlan{}
 
-	outputPlan := &OutputPlan{callbacks: callbacks}
+	// There's a possibility of making the Synchronize optional depending on what the last operator is.
+	// Concurrent Distinct and Aggregations won't be concurrent at the end anymore.
+	// For now, this makes our lives easier, making sure it's always synchronous at the end.
+	synchronize := Synchronize(concurrencyHardcoded, callback)
+	synchronize.SetNext(outputPlan)
+	outputPlan.callbacks = synchronize.Callbacks()
+	outputPlan.SetNext(synchronize) // only ever calls the synchronize's Finish
+
 	var (
 		err  error
 		prev PhysicalPlan = outputPlan
-		tail PhysicalPlan // the last callback to get the arrow record
 	)
 
 	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
@@ -230,17 +221,10 @@ func Build(
 			}
 			return false
 		case plan.TableScan != nil:
-			var concurrency uint = 1
-			if plan.TableScan.Concurrent {
-				// TODO: Be smarter about the wanted concurrency
-				concurrency = uint(concurrencyHardcoded)
-			}
-
 			outputPlan.scan = &TableScan{
-				tracer:      tracer,
-				options:     plan.TableScan,
-				next:        prev,
-				concurrency: concurrency,
+				tracer:  tracer,
+				options: plan.TableScan,
+				next:    prev,
 			}
 			return false
 		case plan.Projection != nil:
@@ -257,10 +241,6 @@ func Build(
 
 		if err != nil {
 			return false
-		}
-
-		if tail == nil {
-			tail = phyPlan
 		}
 
 		phyPlan.SetNext(prev)

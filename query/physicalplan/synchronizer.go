@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	"github.com/apache/arrow/go/v8/arrow"
+
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 // Synchronizer is used to combine the results of multiple parallel streams
@@ -13,52 +15,59 @@ import (
 // stages have finished.
 type Synchronizer struct {
 	next      PhysicalPlan
+	callback  logicalplan.Callback   // synchronous
+	callbacks []logicalplan.Callback // concurrent
+
 	wg        *sync.WaitGroup
 	finishMtx sync.Mutex
 	nextMtx   sync.Mutex
 	finished  bool
 }
 
-func Synchronize() *Synchronizer {
+func (s *Synchronizer) Callbacks() []logicalplan.Callback {
+	return s.callbacks
+}
+
+func Synchronize(concurrency int, callback logicalplan.Callback) *Synchronizer {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
-	return &Synchronizer{wg: wg}
-}
 
-func (m *Synchronizer) SetNext(next PhysicalPlan) {
-	m.next = next
-}
+	s := &Synchronizer{wg: wg, callback: callback}
 
-func (m *Synchronizer) Start(ctx context.Context) error {
-	return nil
-}
+	s.callbacks = make([]logicalplan.Callback, 0, concurrency)
+	for i := 0; i < concurrency; i++ {
+		s.callbacks = append(s.callbacks, func(ctx context.Context, r arrow.Record) error {
+			s.nextMtx.Lock()
+			defer s.nextMtx.Unlock()
 
-func (m *Synchronizer) Callback(ctx context.Context, r arrow.Record) error {
-	// multiple threads can emit the results to the next step, but they will do
-	// it synchronously
-	m.nextMtx.Lock()
-	defer m.nextMtx.Unlock()
-
-	err := m.next.Callback(ctx, r)
-	if err != nil {
-		return err
+			return s.callback(ctx, r)
+		})
 	}
-	return nil
+
+	return s
 }
 
-func (m *Synchronizer) Finish(ctx context.Context) error {
+func (s *Synchronizer) SetNext(next PhysicalPlan) {
+	s.next = next
+}
+
+func (s *Synchronizer) Finish(ctx context.Context) error {
+	if s.finished {
+		return nil
+	}
+
 	// all results from the previous step in this thread have been added to buffer
-	m.wg.Done()
+	s.wg.Done()
 
 	// only one thread will emit the results and the thread that holds the finish
 	// mutex is the one that will do it
-	if m.finishMtx.TryLock() && !m.finished {
+	if s.finishMtx.TryLock() && !s.finished {
 		// wait for all threads to finish adding their results to buffer
-		m.wg.Wait()
-		defer m.finishMtx.Unlock()
-		m.finished = true
+		s.wg.Wait()
+		defer s.finishMtx.Unlock()
+		s.finished = true
 
-		err := m.next.Finish(ctx)
+		err := s.next.Finish(ctx)
 		if err != nil {
 			return err
 		}
