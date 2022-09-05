@@ -14,7 +14,7 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-// TODO: Make this smarter and concurrent
+// TODO: Make this smarter and concurrent.
 var concurrencyHardcoded = 1
 
 type PhysicalPlan interface {
