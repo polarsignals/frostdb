@@ -139,5 +139,5 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(ctx contex
 		return err
 	}
 
-	return phyPlan.Execute(ctx, b.pool, callback)
+	return phyPlan.Execute(ctx, b.pool)
 }

@@ -91,6 +91,7 @@ func TestBuildPhysicalPlan(t *testing.T) {
 		trace.NewNoopTracerProvider().Tracer(""),
 		dynparquet.NewSampleSchema(),
 		p,
+		func(ctx context.Context, record arrow.Record) error { return nil },
 	)
 	require.NoError(t, err)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -15,8 +14,8 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-// TODO: Be smarter about the wanted concurrency
-var concurrencyHardcoded = runtime.NumCPU()
+// TODO: Make this smarter and concurrent
+var concurrencyHardcoded = 1
 
 type PhysicalPlan interface {
 	Callbacks() []logicalplan.Callback
@@ -78,7 +77,7 @@ func (e *OutputPlan) SetNext(next PhysicalPlan) {
 	panic("bug in builder! output plan should not have a next plan!")
 }
 
-func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, _ func(ctx context.Context, r arrow.Record) error) error {
+func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator) error {
 	return e.scan.Execute(ctx, pool)
 }
 
