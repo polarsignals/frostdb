@@ -443,7 +443,7 @@ func (t *Table) Iterator(
 	pool memory.Allocator,
 	schema *arrow.Schema,
 	iterOpts logicalplan.IterOptions,
-	iterators []logicalplan.Callback,
+	callbacks []logicalplan.Callback,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
@@ -451,31 +451,22 @@ func (t *Table) Iterator(
 	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
-	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
-	if err != nil {
-		return err
-	}
-
-	// TODO(metalmatze): Wrap the following in an errgroup to introduce concurrency
-	iterator := iterators[0]
-
 	errg, ctx := errgroup.WithContext(ctx)
-	errg.SetLimit(len(iterators))
+	errg.SetLimit(len(callbacks))
 
-	// Previously we sorted all row groups into a single row group here,
-	// but it turns out that none of the downstream uses actually rely on
-	// the sorting so it's not worth it in the general case. Physical plans
-	// can decide to sort if they need to in order to exploit the
-	// characteristics of sorted data.
-	for _, rg := range rowGroups {
-		rg := rg
+	rowGroupsChan := make(chan dynparquet.DynamicRowGroup, len(callbacks))
+
+	// Spawn a worker goroutine per callback.
+	// They pick work from the rowGroupsChan and concurrently work on the data.
+	for _, callback := range callbacks {
+		callback := callback
 		errg.Go(func() error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			default:
+			case rg := <-rowGroupsChan:
 				if schema == nil {
-					schema, err = pqarrow.ParquetRowGroupToArrowSchema(
+					schema, err := pqarrow.ParquetRowGroupToArrowSchema(
 						ctx,
 						rg,
 						iterOpts.PhysicalProjection,
@@ -486,29 +477,38 @@ func (t *Table) Iterator(
 					if err != nil {
 						return err
 					}
-				}
 
-				var record arrow.Record
-				record, err = pqarrow.ParquetRowGroupToArrowRecord(
-					ctx,
-					pool,
-					rg,
-					schema,
-					iterOpts.Filter,
-					iterOpts.DistinctColumns,
-				)
-				if err != nil {
-					return fmt.Errorf("failed to convert row group to arrow record: %v", err)
-				}
-				err = iterator(ctx, record)
-				record.Release()
-				if err != nil {
-					return err
+					var record arrow.Record
+					record, err = pqarrow.ParquetRowGroupToArrowRecord(
+						ctx,
+						pool,
+						rg,
+						schema,
+						iterOpts.Filter,
+						iterOpts.DistinctColumns,
+					)
+					if err != nil {
+						return fmt.Errorf("failed to convert row group to arrow record: %v", err)
+					}
+					err = callback(ctx, record)
+					record.Release()
+					if err != nil {
+						return err
+					}
 				}
 			}
 			return nil
 		})
 	}
+
+	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
+	if err != nil {
+		return err
+	}
+	for _, rg := range rowGroups {
+		rowGroupsChan <- rg
+	}
+	close(rowGroupsChan)
 
 	return errg.Wait()
 }
@@ -1269,6 +1269,7 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 		return nil, err
 	}
 
+	// TODO: Send these directly to channel
 	rowGroups := []dynparquet.DynamicRowGroup{}
 	iteratorFunc := func(rg dynparquet.DynamicRowGroup) bool {
 		rowGroups = append(rowGroups, rg)
