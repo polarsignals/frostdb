@@ -29,6 +29,7 @@ import (
 	"github.com/segmentio/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
@@ -603,6 +604,18 @@ func (t *Table) View(ctx context.Context, fn func(ctx context.Context, tx uint64
 	return fn(ctx, tx)
 }
 
+// recordBuilderExceedsNumRows assumes all the RecordBuilder's fields have equal
+// length and returns whether at least one field is longer than or equal to
+// threshold.
+func recordBuilderExceedsNumRows(builder *array.RecordBuilder, threshold int) bool {
+	for _, f := range builder.Fields() {
+		if f.Len() >= threshold {
+			return true
+		}
+	}
+	return false
+}
+
 // prepareForFlush sets the nullability on a Record column if the type is a
 // ListType.
 // TODO: Is this a bug in arrow? We already set the nullability in
@@ -643,13 +656,7 @@ func (t *Table) Iterator(
 	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
-	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
-	if err != nil {
-		return err
-	}
-
-	// This is a compatibility call until we have concurrency.
-	callback := callbacks[0]
+	rowGroups := make(chan dynparquet.DynamicRowGroup, len(callbacks)*4) // buffer up to 4 row groups per callback
 
 	// Previously we sorted all row groups into a single row group here,
 	// but it turns out that none of the downstream uses actually rely on
@@ -657,40 +664,85 @@ func (t *Table) Iterator(
 	// can decide to sort if they need to in order to exploit the
 	// characteristics of sorted data.
 
-	converter := pqarrow.NewParquetConverter(pool, schema, iterOpts.Filter, iterOpts.DistinctColumns)
-	defer converter.Close()
-	// bufferSize specifies a threshold of records past which the
-	// buffered results are flushed to the next operator.
-	const bufferSize = 1024
-	for _, rg := range rowGroups {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if err := converter.Convert(ctx, rg); err != nil {
-				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
-			}
-			if converter.NumRows() >= bufferSize {
-				r := converter.NewRecord()
-				prepareForFlush(r, rg.Schema())
-				if err := callback(ctx, r); err != nil {
-					return err
+	errg, ctx := errgroup.WithContext(ctx)
+
+	for _, callback := range callbacks {
+		callback := callback
+		errg.Go(func() error {
+			var builder *array.RecordBuilder
+			// builderBufferSize specifies a threshold of records past which the
+			// buffered results are flushed to the next operator.
+			const builderBufferSize = 1024
+
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				case rg, ok := <-rowGroups:
+					if !ok {
+						if builder != nil && recordBuilderExceedsNumRows(builder, 0) {
+							// Flush the builder.
+							r := builder.NewRecord()
+							if err := callback(ctx, r); err != nil {
+								continue
+								// return err
+							}
+							r.Release()
+						}
+					}
+					if rg == nil {
+						return nil // shouldn't happen, but anyway
+					}
+					if schema == nil {
+						var err error
+						schema, err = pqarrow.ParquetRowGroupToArrowSchema(
+							ctx,
+							rg,
+							iterOpts.PhysicalProjection,
+							iterOpts.Projection,
+							iterOpts.Filter,
+							iterOpts.DistinctColumns,
+						)
+						if err != nil {
+							return err
+						}
+					}
+
+					if builder == nil {
+						builder = array.NewRecordBuilder(pool, schema)
+						defer builder.Release() // TODO
+					}
+
+					if err := pqarrow.ParquetRowGroupToArrowRecord(
+						ctx,
+						pool,
+						rg,
+						schema,
+						iterOpts.Filter,
+						iterOpts.DistinctColumns,
+						builder,
+					); err != nil {
+						return fmt.Errorf("failed to convert row group to arrow record: %v", err)
+					}
+					if recordBuilderExceedsNumRows(builder, builderBufferSize) {
+						r := builder.NewRecord()
+						prepareForFlush(r, rg.Schema())
+						if err := callback(ctx, r); err != nil {
+							return err
+						}
+						r.Release()
+					}
 				}
-				r.Release()
 			}
-		}
+		})
 	}
 
-	if len(rowGroups) > 0 {
-		r := converter.NewRecord()
-		prepareForFlush(r, rowGroups[0].Schema())
-		if err := callback(ctx, r); err != nil {
-			return err
-		}
-		r.Release()
+	if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
+		return err
 	}
 
-	return nil
+	close(rowGroups)
+	return errg.Wait()
 }
 
 // SchemaIterator iterates in order over all granules in the table and returns
@@ -708,13 +760,7 @@ func (t *Table) SchemaIterator(
 	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
-	// This is a compatibility call until we have concurrency.
-	callback := callbacks[0]
-
-	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
-	if err != nil {
-		return err
-	}
+	rowGroups := make(chan dynparquet.DynamicRowGroup, len(callbacks)*4) // buffer up to 4 row groups per callback
 
 	schema := arrow.NewSchema(
 		[]arrow.Field{
@@ -722,32 +768,51 @@ func (t *Table) SchemaIterator(
 		},
 		nil,
 	)
-	for _, rg := range rowGroups {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			b := array.NewRecordBuilder(pool, schema)
 
-			parquetFields := rg.Schema().Fields()
-			fieldNames := make([]string, 0, len(parquetFields))
-			for _, f := range parquetFields {
-				fieldNames = append(fieldNames, f.Name())
-			}
+	errg, ctx := errgroup.WithContext(ctx)
+	for _, callback := range callbacks {
+		callback := callback
+		errg.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case rg, ok := <-rowGroups:
+				if !ok {
+					return nil // we're done
+				}
+				if rg == nil {
+					return nil // shouldn't happen, but anyway
+				}
+				b := array.NewRecordBuilder(pool, schema)
 
-			b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
+				parquetFields := rg.Schema().Fields()
+				fieldNames := make([]string, 0, len(parquetFields))
+				for _, f := range parquetFields {
+					fieldNames = append(fieldNames, f.Name())
+				}
 
-			record := b.NewRecord()
-			err = callback(ctx, record)
-			record.Release()
-			b.Release()
-			if err != nil {
+				b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
+
+				record := b.NewRecord()
+				err := callback(ctx, record)
+				record.Release()
+				b.Release()
+
 				return err
 			}
-		}
+		})
 	}
 
-	return err
+	if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
+		return err
+	}
+
+	if err := errg.Wait(); err != nil {
+		return err
+	}
+	close(rowGroups)
+
+	return nil
 }
 
 func (t *Table) ArrowSchema(
@@ -762,10 +827,7 @@ func (t *Table) ArrowSchema(
 	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
-	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
-	if err != nil {
-		return nil, err
-	}
+	rowGroups := make(chan dynparquet.DynamicRowGroup)
 
 	// TODO: We should be able to figure out if dynamic columns are even queried.
 	// If not, then we can simply return the first schema.
@@ -773,30 +835,51 @@ func (t *Table) ArrowSchema(
 	fieldNames := make([]string, 0, 16)
 	fieldsMap := make(map[string]arrow.Field)
 
-	for _, rg := range rowGroups {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			schema, err := pqarrow.ParquetRowGroupToArrowSchema(
-				ctx,
-				rg,
-				iterOpts.PhysicalProjection,
-				iterOpts.Projection,
-				iterOpts.Filter,
-				iterOpts.DistinctColumns,
-			)
-			if err != nil {
-				return nil, err
-			}
+	// Since we only ever create one goroutine here there is no concurrency issue with the above maps.
+	errg, ctx := errgroup.WithContext(ctx)
+	errg.Go(func() error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case rg, ok := <-rowGroups:
+				if !ok {
+					return nil // we're done
+				}
+				if rg == nil {
+					return nil // shouldn't happen, but anyway
+				}
 
-			for _, f := range schema.Fields() {
-				if _, ok := fieldsMap[f.Name]; !ok {
-					fieldNames = append(fieldNames, f.Name)
-					fieldsMap[f.Name] = f
+				schema, err := pqarrow.ParquetRowGroupToArrowSchema(
+					ctx,
+					rg,
+					iterOpts.PhysicalProjection,
+					iterOpts.Projection,
+					iterOpts.Filter,
+					iterOpts.DistinctColumns,
+				)
+				if err != nil {
+					return err
+				}
+
+				for _, f := range schema.Fields() {
+					if _, ok := fieldsMap[f.Name]; !ok {
+						fieldNames = append(fieldNames, f.Name)
+						fieldsMap[f.Name] = f
+					}
 				}
 			}
 		}
+	})
+
+	err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups)
+	if err != nil {
+		return nil, err
+	}
+
+	close(rowGroups)
+	if err := errg.Wait(); err != nil {
+		return nil, err
 	}
 
 	sort.Strings(fieldNames)
@@ -1098,7 +1181,7 @@ func (t *TableBlock) RowGroupIterator(
 	ctx context.Context,
 	tx uint64,
 	filter TrueNegativeFilter,
-	iterator func(rg dynparquet.DynamicRowGroup) bool,
+	rowGroups chan<- dynparquet.DynamicRowGroup,
 ) error {
 	index := t.Index()
 
@@ -1122,9 +1205,7 @@ func (t *TableBlock) RowGroupIterator(
 					return false
 				}
 				if mayContainUsefulData {
-					if continu := iterator(rg); !continu {
-						return false
-					}
+					rowGroups <- rg
 				}
 			}
 			return true
@@ -1297,14 +1378,20 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	// Read all row groups
 	rowGroups := []dynparquet.DynamicRowGroup{}
 
+	rowGroupsChan := make(chan dynparquet.DynamicRowGroup)
+	go func() {
+		for rg := range rowGroupsChan {
+			rowGroups = append(rowGroups, rg)
+		}
+	}()
+
 	// Collect all the row groups just to determine the dynamic cols
-	err := t.RowGroupIterator(ctx, math.MaxUint64, &AlwaysTrueFilter{}, func(rg dynparquet.DynamicRowGroup) bool {
-		rowGroups = append(rowGroups, rg)
-		return true
-	})
+	err := t.RowGroupIterator(ctx, math.MaxUint64, &AlwaysTrueFilter{}, rowGroupsChan)
 	if err != nil {
 		return err
 	}
+	close(rowGroupsChan)
+
 	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
 	if err != nil {
 		return err
@@ -1406,19 +1493,18 @@ func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 }
 
 // collectRowGroups collects all the row groups from the table for the given filter.
-func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logicalplan.Expr) ([]dynparquet.DynamicRowGroup, error) {
+func (t *Table) collectRowGroups(
+	ctx context.Context,
+	tx uint64,
+	filterExpr logicalplan.Expr,
+	rowGroups chan<- dynparquet.DynamicRowGroup,
+) error {
 	ctx, span := t.tracer.Start(ctx, "Table/collectRowGroups")
 	defer span.End()
 
 	filter, err := booleanExpr(filterExpr)
 	if err != nil {
-		return nil, err
-	}
-
-	rowGroups := []dynparquet.DynamicRowGroup{}
-	iteratorFunc := func(rg dynparquet.DynamicRowGroup) bool {
-		rowGroups = append(rowGroups, rg)
-		return true
+		return err
 	}
 
 	// pending blocks could be uploaded to the bucket while we iterate on them.
@@ -1428,14 +1514,14 @@ func (t *Table) collectRowGroups(ctx context.Context, tx uint64, filterExpr logi
 	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
 	for _, block := range memoryBlocks {
 		span.AddEvent("memoryBlock")
-		if err := block.RowGroupIterator(ctx, tx, filter, iteratorFunc); err != nil {
-			return nil, err
+		if err := block.RowGroupIterator(ctx, tx, filter, rowGroups); err != nil {
+			return err
 		}
 	}
 
-	if err := t.IterateBucketBlocks(ctx, t.logger, lastBlockTimestamp, filter, iteratorFunc); err != nil {
-		return nil, err
+	if err := t.IterateBucketBlocks(ctx, t.logger, lastBlockTimestamp, filter, rowGroups); err != nil {
+		return err
 	}
 
-	return rowGroups, nil
+	return nil
 }

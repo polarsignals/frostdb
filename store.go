@@ -40,7 +40,13 @@ func (t *TableBlock) Persist() error {
 	return nil
 }
 
-func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, lastBlockTimestamp uint64, filter TrueNegativeFilter, iterator func(rg dynparquet.DynamicRowGroup) bool) error {
+func (t *Table) IterateBucketBlocks(
+	ctx context.Context,
+	logger log.Logger,
+	lastBlockTimestamp uint64,
+	filter TrueNegativeFilter,
+	rowGroups chan<- dynparquet.DynamicRowGroup,
+) error {
 	if t.db.bucket == nil || t.db.ignoreStorageOnQuery {
 		return nil
 	}
@@ -101,9 +107,7 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, last
 				return err
 			}
 			if mayContainUsefulData {
-				if continu := iterator(rg); !continu {
-					return err
-				}
+				rowGroups <- rg
 			}
 		}
 		return nil
