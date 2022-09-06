@@ -86,16 +86,16 @@ func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, callbac
 type TableScan struct {
 	tracer  trace.Tracer
 	options *logicalplan.TableScan
-	next    PhysicalPlan
+	plans   []PhysicalPlan
 }
 
 func (s *TableScan) Draw() *Diagram {
-	var child *Diagram
-	if s.next != nil {
-		child = s.next.Draw()
-	}
+	//var child *Diagram
+	//if s.plans != nil {
+	//	child = s.plans.Draw()
+	//}
 	details := fmt.Sprintf("TableScan")
-	return &Diagram{Details: details, Child: child}
+	return &Diagram{Details: details}
 }
 
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -105,6 +105,11 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
 		return errors.New("table not found")
+	}
+
+	callbacks := make([]logicalplan.Callback, 0, len(s.plans))
+	for _, plan := range s.plans {
+		callbacks = append(callbacks, plan.Callback)
 	}
 
 	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
@@ -134,28 +139,33 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 				Filter:             s.options.Filter,
 				DistinctColumns:    s.options.Distinct,
 			},
-			s.next.Callback,
+			callbacks,
 		)
 	})
 	if err != nil {
 		return err
 	}
 
-	return s.next.Finish(ctx)
+	for _, plan := range s.plans {
+		if err := plan.Finish(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type SchemaScan struct {
 	tracer  trace.Tracer
 	options *logicalplan.SchemaScan
-	next    PhysicalPlan
+	plans   []PhysicalPlan
 }
 
 func (s *SchemaScan) Draw() *Diagram {
-	var child *Diagram
-	if s.next != nil {
-		child = s.next.Draw()
-	}
-	return &Diagram{Details: "SchemaScan", Child: child}
+	//var children []*Diagram
+	//for _, plan := range s.plans {
+	//	children = append(children, plan.Draw())
+	//}
+	return &Diagram{Details: "SchemaScan"}
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -163,6 +173,12 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	if table == nil {
 		return errors.New("table not found")
 	}
+
+	callbacks := make([]logicalplan.Callback, 0, len(s.plans))
+	for _, plan := range s.plans {
+		callbacks = append(callbacks, plan.Callback)
+	}
+
 	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
 		return table.SchemaIterator(
 			ctx,
@@ -174,14 +190,19 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 				Filter:             s.options.Filter,
 				DistinctColumns:    s.options.Distinct,
 			},
-			s.next.Callback,
+			callbacks,
 		)
 	})
 	if err != nil {
 		return err
 	}
 
-	return s.next.Finish(ctx)
+	for _, plan := range s.plans {
+		if err := plan.Finish(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
@@ -201,14 +222,14 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			outputPlan.scan = &SchemaScan{
 				tracer:  tracer,
 				options: plan.SchemaScan,
-				next:    prev,
+				plans:   []PhysicalPlan{prev}, // TODO
 			}
 			return false
 		case plan.TableScan != nil:
 			outputPlan.scan = &TableScan{
 				tracer:  tracer,
 				options: plan.TableScan,
-				next:    prev,
+				plans:   []PhysicalPlan{prev}, // TODO
 			}
 			return false
 		case plan.Projection != nil:
