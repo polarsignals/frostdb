@@ -414,11 +414,7 @@ func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
 		return tx, fmt.Errorf("append to log: %w", err)
 	}
 
-	serBuf, err := dynparquet.ReaderFromBytes(buf)
-	if err != nil {
-		return tx, fmt.Errorf("deserialize buffer: %w", err)
-	}
-
+	serBuf := dynparquet.ReaderFromBytes(buf)
 	err = block.Insert(ctx, tx, serBuf)
 	if err != nil {
 		return tx, fmt.Errorf("insert buffer into block: %w", err)
@@ -699,13 +695,17 @@ func (t *TableBlock) Sync() {
 }
 
 func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.SerializedBuffer) error {
+	f, err := buf.Open()
+	if err != nil {
+		return err
+	}
 	defer func() {
-		t.table.metrics.rowsInserted.Add(float64(buf.NumRows()))
-		t.table.metrics.rowInsertSize.Observe(float64(buf.NumRows()))
+		t.table.metrics.rowsInserted.Add(float64(f.NumRows()))
+		t.table.metrics.rowInsertSize.Observe(float64(f.NumRows()))
 	}()
 
-	if buf.NumRows() == 0 {
-		t.table.metrics.zeroRowsInserted.Add(float64(buf.NumRows()))
+	if f.NumRows() == 0 {
+		t.table.metrics.zeroRowsInserted.Add(float64(f.NumRows()))
 		return nil
 	}
 
@@ -715,7 +715,11 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	}
 
 	b := bytes.NewBuffer(nil)
-	w, err := t.table.config.schema.GetWriter(b, buf.DynamicColumns())
+	dyncols, err := f.DynamicColumns()
+	if err != nil {
+		return err
+	}
+	w, err := t.table.config.schema.GetWriter(b, dyncols)
 	if err != nil {
 		return fmt.Errorf("failed to get writer: %w", err)
 	}
@@ -729,7 +733,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 		default:
 
 			rowBuf := make([]parquet.Row, 1)
-			rows := buf.Reader()
+			rows := f.Reader()
 			for index := 0; ; index++ {
 				_, err := rows.ReadRows(rowBuf)
 				if err == io.EOF {
@@ -753,11 +757,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 				return fmt.Errorf("failed to close writer: %w", err)
 			}
 
-			serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
-			if err != nil {
-				return fmt.Errorf("failed to get reader from bytes: %w", err)
-			}
-
+			serBuf := dynparquet.ReaderFromBytes(b.Bytes())
 			part := NewPart(tx, serBuf)
 			card, err := granule.AddPart(part)
 			if err != nil {
@@ -768,7 +768,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 				t.wg.Add(1)
 				go t.compact(granule)
 			}
-			t.size.Add(serBuf.ParquetFile().Size())
+			t.size.Add(int64(serBuf.Size()))
 
 			b = bytes.NewBuffer(nil)
 			w.Reset(b)
@@ -795,6 +795,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 	sizeBefore := int64(0)
 	// Convert all the parts into a set of rows
+	var iterErr error
 	parts.Iterate(func(p *Part) bool {
 		// Don't merge uncompleted transactions
 		if p.tx > tx {
@@ -804,13 +805,29 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 			return true
 		}
 
-		for i, n := 0, p.Buf.NumRowGroups(); i < n; i++ {
-			bufs = append(bufs, p.Buf.DynamicRowGroup(i))
+		f, err := p.Buf.Open()
+		if err != nil {
+			iterErr = err
+			return false
 		}
 
-		sizeBefore += p.Buf.ParquetFile().Size()
+		for i, n := 0, f.NumRowGroups(); i < n; i++ {
+			rg, err := f.DynamicRowGroup(i)
+			if err != nil {
+				iterErr = err
+				return false
+			}
+			bufs = append(bufs, rg)
+		}
+
+		sizeBefore += int64(p.Buf.Size())
 		return true
 	})
+	if iterErr != nil {
+		t.abort(granule)
+		level.Error(t.logger).Log("msg", "failed iteration over granules parts", "err", iterErr)
+		return
+	}
 
 	if len(bufs) == 0 { // aborting; nothing to do
 		t.abort(granule)
@@ -872,13 +889,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		return
 	}
 
-	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
-	if err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "failed to create reader from bytes", "err", err)
-		return
-	}
-
+	serBuf := dynparquet.ReaderFromBytes(b.Bytes())
 	g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, NewPart(tx, serBuf))
 	if err != nil {
 		t.abort(granule)
@@ -954,7 +965,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 		// Point to the new index
 		if t.index.CAS(unsafe.Pointer(curIndex), unsafe.Pointer(index)) {
-			sizeDiff := serBuf.ParquetFile().Size() - sizeBefore
+			sizeDiff := int64(serBuf.Size()) - sizeBefore
 			t.size.Add(sizeDiff)
 			return
 		}
@@ -976,17 +987,21 @@ func (t *TableBlock) RowGroupIterator(
 		g := i.(*Granule)
 
 		// Check if the entire granule can be skipped due to the filter
-		mayContainUsefulData, err := filter.Eval(g)
+		mayContainUsefulData := false
+		mayContainUsefulData, err = filter.Eval(g)
 		if err != nil || !mayContainUsefulData {
 			return true
 		}
 
 		g.PartBuffersForTx(tx, func(buf *dynparquet.SerializedBuffer) bool {
-			f := buf.ParquetFile()
+			var f *dynparquet.File
+			f, err = buf.Open()
+			if err != nil {
+				return false
+			}
 			var dyncols map[string][]string
 			dyncolStr, ok := f.Lookup(dynparquet.DynamicColumnsKey)
 			if ok {
-				var err error
 				dyncols, err = dynparquet.DeserializeDynColumns(dyncolStr)
 				if err != nil {
 					return false
@@ -1026,10 +1041,14 @@ func (t *TableBlock) Index() *btree.BTree {
 }
 
 func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*Granule]map[int]struct{}, error) {
+	f, err := buf.Open()
+	if err != nil {
+		return nil, err
+	}
 	index := t.Index()
 	if index.Len() == 1 {
 		rows := map[int]struct{}{}
-		for i := 0; i < int(buf.NumRows()); i++ {
+		for i := 0; i < int(f.NumRows()); i++ {
 			rows[i] = struct{}{}
 		}
 
@@ -1041,12 +1060,15 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 	rowsByGranule := map[*Granule]map[int]struct{}{}
 
 	// TODO: we might be able to do ascend less than or ascend greater than here?
-	rows := buf.DynamicRows()
+	rows, err := f.DynamicRows()
+	if err != nil {
+		return nil, err
+	}
 	var prev *Granule
 	exhaustedAllRows := false
 
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	_, err := rows.ReadRows(rowBuf)
+	_, err = rows.ReadRows(rowBuf)
 	if err != nil {
 		return nil, ErrReadRow{err}
 	}

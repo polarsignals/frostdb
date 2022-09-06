@@ -447,11 +447,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 				return fmt.Errorf("get table: %w", err)
 			}
 
-			serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
-			if err != nil {
-				return fmt.Errorf("deserialize buffer: %w", err)
-			}
-
+			serBuf := dynparquet.ReaderFromBytes(entry.Data)
 			if err := table.active.Insert(ctx, tx, serBuf); err != nil {
 				return fmt.Errorf("insert buffer into block: %w", err)
 			}

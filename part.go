@@ -25,7 +25,15 @@ func NewPart(tx uint64, buf *dynparquet.SerializedBuffer) *Part {
 // Least returns the least row  in the part.
 func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
+	f, err := p.Buf.Open()
+	if err != nil {
+		return nil, err
+	}
+	rg, err := f.DynamicRowGroup(0)
+	if err != nil {
+		return nil, err
+	}
+	reader := rg.DynamicRows()
 	n, err := reader.ReadRows(rowBuf)
 	if err != nil {
 		return nil, fmt.Errorf("read first row of part: %w", err)

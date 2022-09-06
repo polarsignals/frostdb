@@ -65,7 +65,12 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 
 	// Find the "smallest" row
 	if firstPart != nil {
-		g.metadata.card = atomic.NewUint64(uint64(firstPart.Buf.NumRows()))
+		f, err := firstPart.Buf.Open()
+		if err != nil {
+			return nil, err
+		}
+		rows := f.NumRows()
+		g.metadata.card = atomic.NewUint64(uint64(rows))
 		g.parts.Prepend(firstPart)
 		least, err := firstPart.Least()
 		if err != nil {
@@ -84,13 +89,17 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 }
 
 func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
-	rows := p.Buf.NumRows()
+	f, err := p.Buf.Open()
+	if err != nil {
+		return 0, err
+	}
+	rows := f.NumRows()
 	if rows == 0 {
 		return g.metadata.card.Load(), nil
 	}
 	node := g.parts.Prepend(p)
 
-	newcard := g.metadata.card.Add(uint64(p.Buf.NumRows()))
+	newcard := g.metadata.card.Add(uint64(rows))
 
 	for {
 		least := g.metadata.least.Load()
@@ -122,7 +131,15 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 // AddPart returns the new cardinality of the Granule.
 func (g *Granule) AddPart(p *Part) (uint64, error) {
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
+	f, err := p.Buf.Open()
+	if err != nil {
+		return 0, err
+	}
+	rg, err := f.DynamicRowGroup(0)
+	if err != nil {
+		return 0, err
+	}
+	reader := rg.DynamicRows()
 	n, err := reader.ReadRows(rowBuf)
 	if err != nil {
 		return 0, fmt.Errorf("read first row of part: %w", err)
@@ -151,7 +168,11 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 		return false
 	})
 	// How many granules we'll need to build
-	count := int(p.Buf.NumRows()) / n
+	f, err := p.Buf.Open()
+	if err != nil {
+		return nil, err
+	}
+	count := int(f.NumRows()) / n
 
 	// Build all the new granules
 	granules := make([]*Granule, 0, count)
@@ -159,14 +180,17 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	// TODO: Buffers should be able to efficiently slice themselves.
 	rowBuf := make([]parquet.Row, 1)
 	b := bytes.NewBuffer(nil)
-	w, err := g.tableConfig.schema.NewWriter(b, p.Buf.DynamicColumns())
+	dyncols, err := f.DynamicColumns()
+	if err != nil {
+		return nil, err
+	}
+	w, err := g.tableConfig.schema.NewWriter(b, dyncols)
 	if err != nil {
 		return nil, ErrCreateSchemaWriter{err}
 	}
 
 	rowsWritten := 0
 
-	f := p.Buf.ParquetFile()
 	for _, rowGroup := range f.RowGroups() {
 		rows := rowGroup.Rows()
 		for {
@@ -189,10 +213,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 				if err != nil {
 					return nil, fmt.Errorf("close writer: %w", err)
 				}
-				r, err := dynparquet.ReaderFromBytes(b.Bytes())
-				if err != nil {
-					return nil, fmt.Errorf("create reader: %w", err)
-				}
+				r := dynparquet.ReaderFromBytes(b.Bytes())
 				gran, err := NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r))
 				if err != nil {
 					return nil, fmt.Errorf("new granule failed: %w", err)
@@ -215,10 +236,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 			return nil, fmt.Errorf("close last writer: %w", err)
 		}
 
-		r, err := dynparquet.ReaderFromBytes(b.Bytes())
-		if err != nil {
-			return nil, fmt.Errorf("create last reader: %w", err)
-		}
+		r := dynparquet.ReaderFromBytes(b.Bytes())
 		gran, err := NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r))
 		if err != nil {
 			return nil, fmt.Errorf("new granule failed: %w", err)
@@ -253,7 +271,10 @@ func (g *Granule) Least() *dynparquet.DynamicRow {
 
 // minmaxes finds the mins and maxes of every column in a part.
 func (g *Granule) minmaxes(p *Part) error {
-	f := p.Buf.ParquetFile()
+	f, err := p.Buf.Open()
+	if err != nil {
+		return err
+	}
 
 	for _, rowGroup := range f.RowGroups() {
 		for _, columnChunk := range rowGroup.ColumnChunks() {

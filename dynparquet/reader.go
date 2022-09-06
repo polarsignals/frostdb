@@ -28,6 +28,10 @@ func ReaderFromBytes(buf []byte) *SerializedBuffer {
 	}
 }
 
+func (s *SerializedBuffer) Size() int {
+	return len(s.file)
+}
+
 func (b *SerializedBuffer) Open() (*File, error) {
 	f, err := parquet.OpenFile(bytes.NewReader(b.file), int64(len(b.file)))
 	if err != nil {
