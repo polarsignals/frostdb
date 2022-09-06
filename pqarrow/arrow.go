@@ -377,22 +377,7 @@ func writeColumnToArray(
 		}
 
 		if !readPages {
-			valBytes := globalMinValue.Bytes()
-			// TODO(asubiotto): columnType should be sufficient for this code.
-			// However, due to
-			// https://github.com/segmentio/parquet-go/issues/312,
-			// some tests panic when using a parquet.Buffer as a data source,
-			// so we use the explicitly passed in type here.
-			dict := t.NewDictionary(
-				columnChunk.Column(),
-				1,
-				t.NewValues(valBytes, []uint32{0, uint32(len(valBytes))}),
-			)
-			for pageIdx := 0; pageIdx < columnIndex.NumPages(); pageIdx++ {
-				if err := w.WritePage(dict.Page()); err != nil {
-					return fmt.Errorf("write dictionary page: %w", err)
-				}
-			}
+			w.Write([]parquet.Value{globalMinValue})
 			return nil
 		}
 	}
