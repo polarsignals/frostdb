@@ -212,34 +212,46 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 	outputPlan := &OutputPlan{}
 	var (
 		err  error
-		prev PhysicalPlan = outputPlan
+		prev = []PhysicalPlan{outputPlan}
 	)
 
 	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
-		var phyPlan PhysicalPlan
+		var phyPlans []PhysicalPlan
 		switch {
 		case plan.SchemaScan != nil:
 			outputPlan.scan = &SchemaScan{
 				tracer:  tracer,
 				options: plan.SchemaScan,
-				plans:   []PhysicalPlan{prev}, // TODO
+				plans:   prev,
 			}
 			return false
 		case plan.TableScan != nil:
 			outputPlan.scan = &TableScan{
 				tracer:  tracer,
 				options: plan.TableScan,
-				plans:   []PhysicalPlan{prev}, // TODO
+				plans:   prev,
 			}
 			return false
 		case plan.Projection != nil:
-			phyPlan, err = Project(pool, tracer, plan.Projection.Exprs)
+			p, err := Project(pool, tracer, plan.Projection.Exprs)
+			if err != nil {
+				return false
+			}
+			phyPlans = append(phyPlans, p)
 		case plan.Distinct != nil:
-			phyPlan = Distinct(pool, tracer, plan.Distinct.Exprs)
+			phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
 		case plan.Filter != nil:
-			phyPlan, err = Filter(pool, tracer, plan.Filter.Expr)
+			p, err := Filter(pool, tracer, plan.Filter.Expr)
+			if err != nil {
+				return false
+			}
+			phyPlans = append(phyPlans, p)
 		case plan.Aggregation != nil:
-			phyPlan, err = Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
+			p, err := Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
+			if err != nil {
+				return false
+			}
+			phyPlans = append(phyPlans, p)
 		default:
 			panic("Unsupported plan")
 		}
@@ -248,12 +260,19 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			return false
 		}
 
-		phyPlan.SetNext(prev)
-		prev = phyPlan
+		for i := 0; i < len(phyPlans); i++ {
+			phyPlans[i].SetNext(prev[i])
+		}
+		prev = phyPlans
 		return true
 	}))
 
-	outputPlan.SetNextCallback(prev.Callback)
+	if len(prev) == 1 {
+		outputPlan.SetNextCallback(prev[0].Callback)
+	} else {
+		// TODO: Update to use sychronizer's single callback if we have concurrency.
+	}
+
 	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
 
 	return outputPlan, err
