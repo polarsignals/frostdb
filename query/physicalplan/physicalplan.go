@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -13,6 +14,9 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
+
+// TODO: Make this smarter.
+var concurrencyHardcoded = runtime.NumCPU()
 
 type PhysicalPlan interface {
 	Callback(ctx context.Context, r arrow.Record) error
@@ -233,13 +237,32 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			}
 			return false
 		case plan.Projection != nil:
-			p, err := Project(pool, tracer, plan.Projection.Exprs)
-			if err != nil {
-				return false
+			// For each previous physical plan create one Projection
+			for i := 0; i < len(prev); i++ {
+				p, err := Project(pool, tracer, plan.Projection.Exprs)
+				if err != nil {
+					return false
+				}
+				phyPlans = append(phyPlans, p)
 			}
-			phyPlans = append(phyPlans, p)
 		case plan.Distinct != nil:
-			phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
+			for i := 0; i < concurrencyHardcoded; i++ {
+				phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
+			}
+
+			// If the prev is 1 then we need a synchronizer to handle the concurrency
+			// writing into a single callback of the previous PhysicalPlan.
+			if len(prev) == 1 {
+				// This Distinct is going to do a final distinct on the previous concurrent Distincts.
+				synchronizeDistinct := Distinct(pool, tracer, plan.Distinct.Exprs)
+				synchronizeDistinct.SetNext(prev[0])
+
+				synchronizer := Synchronize(ctx, synchronizeDistinct, len(phyPlans))
+
+				for _, plan := range phyPlans {
+					plan.SetNext(synchronizer)
+				}
+			}
 		case plan.Filter != nil:
 			p, err := Filter(pool, tracer, plan.Filter.Expr)
 			if err != nil {
@@ -260,9 +283,13 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			return false
 		}
 
-		for i := 0; i < len(phyPlans); i++ {
-			phyPlans[i].SetNext(prev[i])
+		// If these aren't the same the operator should handle how to synchronize
+		if len(phyPlans) == len(prev) {
+			for i := 0; i < len(phyPlans); i++ {
+				phyPlans[i].SetNext(prev[i])
+			}
 		}
+
 		prev = phyPlans
 		return true
 	}))
@@ -270,7 +297,7 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 	if len(prev) == 1 {
 		outputPlan.SetNextCallback(prev[0].Callback)
 	} else {
-		// TODO: Update to use sychronizer's single callback if we have concurrency.
+		// This case should be handled in the concurrent operator above.
 	}
 
 	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
