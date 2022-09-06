@@ -728,12 +728,12 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 			return ctx.Err()
 		default:
 			part := NewPart(tx, serBuf)
-			card, err := granule.AddPart(part)
+			size, err := granule.AddPart(part)
 			if err != nil {
 				return fmt.Errorf("failed to add part to granule: %w", err)
 			}
 			parts = append(parts, part)
-			if card >= uint64(t.table.db.columnStore.granuleSize) {
+			if size >= uint64(t.table.db.columnStore.granuleSizeBytes) {
 				t.wg.Add(1)
 				go t.compact(granule)
 			}
@@ -822,9 +822,11 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 		return fmt.Errorf("closing schema writer: %w", err)
 	}
 
-	if n < t.table.db.columnStore.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
-		return fmt.Errorf("not enough completed transactions")
-	}
+	/*
+		if n < t.table.db.columnStore.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
+			return fmt.Errorf("not enough completed transactions")
+		}
+	*/
 
 	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
 	if err != nil {
@@ -837,9 +839,10 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 	}
 
 	granules := []*Granule{g}
-	// only split the granule if it has exceeded the size
+
+	// only split the granule if it still exceeds the size
 	if serBuf.ParquetFile().Size() > t.table.db.columnStore.granuleSizeBytes {
-		granules, err = g.split(tx, t.table.db.columnStore.granuleSize/t.table.db.columnStore.splitSize)
+		granules, err = g.split(tx, 2)
 		if err != nil {
 			return fmt.Errorf("splitting granule: %w", err)
 		}
