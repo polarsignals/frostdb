@@ -119,6 +119,7 @@ type tableMetrics struct {
 	granulesCompactionAborted prometheus.Counter
 	rowInsertSize             prometheus.Histogram
 	lastCompletedBlockTx      prometheus.Gauge
+	numParts                  prometheus.Gauge
 }
 
 func newTable(
@@ -151,6 +152,10 @@ func newTable(
 		mtx:    &sync.RWMutex{},
 		wal:    wal,
 		metrics: &tableMetrics{
+			numParts: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+				Name: "num_parts",
+				Help: "Number of parts currently active.",
+			}),
 			blockRotated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "blocks_rotated_total",
 				Help: "Number of table blocks that have been rotated.",
@@ -735,6 +740,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 		}
 	}
 
+	t.table.metrics.numParts.Add(float64(len(parts)))
 	return nil
 }
 
@@ -917,6 +923,9 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		if t.index.CAS(unsafe.Pointer(curIndex), unsafe.Pointer(index)) {
 			sizeDiff := serBuf.ParquetFile().Size() - sizeBefore
 			t.size.Add(sizeDiff)
+
+			change := len(bufs) - len(granules) - len(remain)
+			t.table.metrics.numParts.Sub(float64(change))
 			return
 		}
 	}
