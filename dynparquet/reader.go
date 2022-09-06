@@ -18,60 +18,51 @@ type SerializedBuffer struct {
 	file []byte
 }
 
+type File struct {
+	*parquet.File
+}
+
 func ReaderFromBytes(buf []byte) *SerializedBuffer {
 	return &SerializedBuffer{
 		file: buf,
 	}
 }
 
-func (b *SerializedBuffer) Reader() (*parquet.Reader, error) {
-	f, err := b.ParquetFile()
-	if err != nil {
-		return nil, err
-	}
-	return parquet.NewReader(f), nil
-}
-
-func (b *SerializedBuffer) ParquetFile() (*parquet.File, error) {
+func (b *SerializedBuffer) Open() (*File, error) {
 	f, err := parquet.OpenFile(bytes.NewReader(b.file), int64(len(b.file)))
 	if err != nil {
 		return nil, err
 	}
-
-	return f, nil
+	return &File{f}, nil
 }
 
-func (b *SerializedBuffer) NumRows() (int64, error) {
-	r, err := b.Reader()
-	if err != nil {
-		return 0, err
-	}
-	return r.NumRows(), nil
+func (f *File) Reader() *parquet.Reader {
+	return parquet.NewReader(f)
 }
 
-func (b *SerializedBuffer) NumRowGroups() (int, error) {
-	f, err := b.ParquetFile()
-	if err != nil {
-		return 0, err
-	}
-	return len(f.RowGroups()), nil
+func (f *File) ParquetFile() *parquet.File {
+	return f.File
 }
 
-func (b *SerializedBuffer) DynamicRows() (DynamicRowReader, error) {
-	file, err := b.ParquetFile()
-	if err != nil {
-		return nil, err
-	}
-	rowGroups := file.RowGroups()
+func (f *File) NumRows() int64 {
+	return f.Reader().NumRows()
+}
+
+func (f *File) NumRowGroups() int {
+	return len(f.RowGroups())
+}
+
+func (f *File) DynamicRows() (DynamicRowReader, error) {
+	rowGroups := f.RowGroups()
 	drg := make([]DynamicRowGroup, len(rowGroups))
 	for i, rowGroup := range rowGroups {
 		var err error
-		drg[i], err = b.newDynamicRowGroup(rowGroup)
+		drg[i], err = f.newDynamicRowGroup(rowGroup)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return Concat(file.Schema().Fields(), drg...).DynamicRows(), nil
+	return Concat(f.Schema().Fields(), drg...).DynamicRows(), nil
 }
 
 type serializedRowGroup struct {
@@ -80,12 +71,8 @@ type serializedRowGroup struct {
 	fields  []parquet.Field
 }
 
-func (b *SerializedBuffer) DynamicRowGroup(i int) (DynamicRowGroup, error) {
-	f, err := b.ParquetFile()
-	if err != nil {
-		return nil, err
-	}
-	return b.newDynamicRowGroup(f.RowGroups()[i])
+func (f *File) DynamicRowGroup(i int) (DynamicRowGroup, error) {
+	return f.newDynamicRowGroup(f.RowGroups()[i])
 }
 
 func NewDynamicRowGroup(rg parquet.RowGroup, dyncols map[string][]string, fields []parquet.Field) DynamicRowGroup {
@@ -110,11 +97,7 @@ func DynamicRowGroupFromFile(i int, f *parquet.File) (DynamicRowGroup, error) {
 	return NewDynamicRowGroup(f.RowGroups()[i], dynCols, f.Schema().Fields()), nil
 }
 
-func (b *SerializedBuffer) newDynamicRowGroup(rowGroup parquet.RowGroup) (DynamicRowGroup, error) {
-	f, err := b.ParquetFile()
-	if err != nil {
-		return nil, err
-	}
+func (f *File) newDynamicRowGroup(rowGroup parquet.RowGroup) (DynamicRowGroup, error) {
 	dynColString, found := f.Lookup(DynamicColumnsKey)
 	if !found {
 		return nil, fmt.Errorf("dynamic columns key not found")
@@ -139,11 +122,7 @@ func (g *serializedRowGroup) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(g, g.fields)
 }
 
-func (b *SerializedBuffer) DynamicColumns() (map[string][]string, error) {
-	f, err := b.ParquetFile()
-	if err != nil {
-		return nil, err
-	}
+func (f *File) DynamicColumns() (map[string][]string, error) {
 	dynColString, found := f.Lookup(DynamicColumnsKey)
 	if !found {
 		return nil, fmt.Errorf("dynamic columns key not found")
