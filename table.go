@@ -1027,6 +1027,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 
 	// TODO: we might be able to do ascend less than or ascend greater than here?
 	rows := buf.DynamicRows()
+	defer rows.Close()
 	var prev *Granule
 	exhaustedAllRows := false
 
@@ -1216,6 +1217,7 @@ func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups 
 	}
 
 	rows := merged.Rows()
+	defer rows.Close()
 	for {
 		rowsBuf := make([]parquet.Row, count)
 		n, err := rows.ReadRows(rowsBuf)
