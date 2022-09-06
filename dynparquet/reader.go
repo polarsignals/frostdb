@@ -32,8 +32,8 @@ func (s *SerializedBuffer) Size() int {
 	return len(s.file)
 }
 
-func (b *SerializedBuffer) Open() (*File, error) {
-	f, err := parquet.OpenFile(bytes.NewReader(b.file), int64(len(b.file)))
+func (s *SerializedBuffer) Open() (*File, error) {
+	f, err := parquet.OpenFile(bytes.NewReader(s.file), int64(len(s.file)))
 	if err != nil {
 		return nil, err
 	}
