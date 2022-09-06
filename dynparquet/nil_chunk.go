@@ -198,21 +198,21 @@ func (p *nilValueReader) ReadValues(values []parquet.Value) (int, error) {
 
 // DefinitionLevels returns the definition levels of the page. Since the page
 // contains only null values, all of them are 0. Implements the
-// parquet.BufferedPage interface.
+// parquet.Page interface.
 func (p *nilPage) DefinitionLevels() []byte {
 	return nil
 }
 
 // RepetitionLevels returns the definition levels of the page. Since the page
 // contains only null values, all of them are 0. Implements the
-// parquet.BufferedPage interface.
+// parquet.Page interface.
 func (p *nilPage) RepetitionLevels() []byte {
 	return nil
 }
 
 // Data is unimplemented, since the page is virtual and does not need to be
 // written in its current usage in this package. If that changes this method
-// needs to be implemented. Implements the parquet.BufferedPage interface.
+// needs to be implemented. Implements the parquet.Page interface.
 func (p *nilPage) Data() encoding.Values {
 	panic("not implemented")
 }
@@ -224,7 +224,7 @@ func (p *nilPage) Slice(i, j int64) parquet.Page {
 	}
 }
 
-// Clone creates a copy of the nilPage. Implements the parquet.BufferedPage
+// Clone creates a copy of the nilPage. Implements the parquet.Page
 // interface.
 func (p *nilPage) Clone() parquet.Page {
 	return &nilPage{
