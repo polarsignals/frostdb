@@ -325,6 +325,7 @@ func (t *Table) RotateBlock(block *TableBlock) error {
 		return err
 	}
 	t.metrics.blockRotated.Inc()
+	t.metrics.numParts.Set(float64(0))
 
 	t.pendingBlocks[block] = struct{}{}
 	go t.writeBlock(block)
