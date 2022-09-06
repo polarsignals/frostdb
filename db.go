@@ -34,6 +34,7 @@ type ColumnStore struct {
 	logger               log.Logger
 	tracer               trace.Tracer
 	granuleSize          int
+	granuleSizeBytes     int64
 	activeMemorySize     int64
 	storagePath          string
 	bucket               objstore.Bucket
@@ -59,7 +60,8 @@ func New(
 		tracer:           trace.NewNoopTracerProvider().Tracer(""),
 		indexDegree:      2,
 		splitSize:        2,
-		granuleSize:      8192,
+		granuleSize:      8196,
+		granuleSizeBytes: 25 * 1024 * 1024,  // 25MB granule size before splitting
 		activeMemorySize: 512 * 1024 * 1024, // 512MB
 	}
 
@@ -93,6 +95,13 @@ func WithTracer(tracer trace.Tracer) Option {
 func WithRegistry(reg prometheus.Registerer) Option {
 	return func(s *ColumnStore) error {
 		s.reg = reg
+		return nil
+	}
+}
+
+func WithGranuleSizeBytes(bytes int64) Option {
+	return func(s *ColumnStore) error {
+		s.granuleSizeBytes = bytes
 		return nil
 	}
 }

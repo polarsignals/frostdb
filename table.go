@@ -835,9 +835,14 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 		return fmt.Errorf("new granule: %w", err)
 	}
 
-	granules, err := g.split(tx, t.table.db.columnStore.granuleSize/t.table.db.columnStore.splitSize)
-	if err != nil {
-		return fmt.Errorf("splitting granule: %w", err)
+	granules := []*Granule{g}
+	// only split the granule if it has exceeded the size
+	if serBuf.ParquetFile().Size() > t.table.db.columnStore.granuleSizeBytes {
+		granules, err = g.split(tx, t.table.db.columnStore.granuleSize/t.table.db.columnStore.splitSize)
+		if err != nil {
+			return fmt.Errorf("splitting granule: %w", err)
+		}
+
 	}
 
 	// add remaining parts onto new granules
