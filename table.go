@@ -744,10 +744,10 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	return nil
 }
 
-func (t *TableBlock) splitGranule(granule *Granule) {
+func (t *TableBlock) compactGranule(granule *Granule) error {
 	// Recheck to ensure the granule still needs to be split
 	if !granule.metadata.pruned.CAS(0, 1) {
-		return
+		return nil
 	}
 
 	// Use the latest watermark as the tx id
@@ -779,24 +779,19 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 	})
 
 	if len(bufs) == 0 { // aborting; nothing to do
-		t.abort(granule)
-		return
+		return nil
 	}
 
 	merge, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "failed to merge dynamic row groups", "err", err)
-		return
+		return fmt.Errorf("failed to merge dynamic row groups: %w", err)
 	}
 
 	b := bytes.NewBuffer(nil)
 	cols := merge.DynamicColumns()
 	w, err := t.table.config.schema.GetWriter(b, cols)
 	if err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "failed to create new schema writer", "err", err)
-		return
+		return fmt.Errorf("failed to create new schema writer: %w", err)
 	}
 	defer t.table.config.schema.PutWriter(w)
 
@@ -809,64 +804,47 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 			break
 		}
 		if err != nil {
-			t.abort(granule)
-			level.Error(t.logger).Log("msg", "error reading rows", "err", err)
-			return
+			return fmt.Errorf("reading rows: %w", err)
 		}
 		_, err = w.WriteRows(rowBuf)
 		if err != nil {
-			t.abort(granule)
-			level.Error(t.logger).Log("msg", "error writing rows", "err", err)
-			return
+			return fmt.Errorf("writing rows: %w", err)
 		}
 		n++
 	}
 
 	if err := rows.Close(); err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "error closing schema writer", "err", err)
-		return
+		return fmt.Errorf("closing schema reader: %w", err)
 	}
 
 	if err := w.Close(); err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "error closing schema writer", "err", err)
-		return
+		return fmt.Errorf("closing schema writer: %w", err)
 	}
 
 	if n < t.table.db.columnStore.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
-		t.abort(granule)
-		return
+		return fmt.Errorf("not enough completed transactions")
 	}
 
 	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
 	if err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "failed to create reader from bytes", "err", err)
-		return
+		return fmt.Errorf("reader from bytes: %w", err)
 	}
 
 	g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, NewPart(tx, serBuf))
 	if err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "failed to create granule", "err", err)
-		return
+		return fmt.Errorf("new granule: %w", err)
 	}
 
 	granules, err := g.split(tx, t.table.db.columnStore.granuleSize/t.table.db.columnStore.splitSize)
 	if err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "failed to split granule", "err", err)
-		return
+		return fmt.Errorf("splitting granule: %w", err)
 	}
 
 	// add remaining parts onto new granules
 	for _, p := range remain {
 		err := addPartToGranule(granules, p)
 		if err != nil {
-			t.abort(granule)
-			level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
-			return
+			return fmt.Errorf("add parts to granules: %w", err)
 		}
 	}
 
@@ -897,9 +875,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		return true
 	})
 	if err != nil {
-		t.abort(granule)
-		level.Error(t.logger).Log("msg", "failed to add part to granule", "err", err)
-		return
+		return fmt.Errorf("add part to granules: %w", err)
 	}
 
 	for {
@@ -911,6 +887,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 		deleted := index.Delete(granule)
 		if deleted == nil {
 			level.Error(t.logger).Log("msg", "failed to delete granule during split")
+			continue
 		}
 
 		for _, g := range granules {
@@ -926,7 +903,7 @@ func (t *TableBlock) splitGranule(granule *Granule) {
 
 			change := len(bufs) - len(granules) - len(remain)
 			t.table.metrics.numParts.Sub(float64(change))
-			return
+			return nil
 		}
 	}
 }
@@ -1146,7 +1123,10 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 // compact will compact a Granule; should be performed as a background go routine.
 func (t *TableBlock) compact(g *Granule) {
 	defer t.wg.Done()
-	t.splitGranule(g)
+	if err := t.compactGranule(g); err != nil {
+		t.abort(g)
+		level.Error(t.logger).Log("msg", "failed to compact granule", "err", err)
+	}
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
