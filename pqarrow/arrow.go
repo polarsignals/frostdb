@@ -97,6 +97,55 @@ func includedProjection(projections []logicalplan.Expr, name string) bool {
 	return false
 }
 
+// ParquetConverter converts parquet.RowGroups into arrow.Records. The converted
+// results are accumulated in the converter and can be retrieved by calling
+// NewRecord, at which point the converter is reset.
+type ParquetConverter struct {
+	pool            memory.Allocator
+	outputSchema    *arrow.Schema
+	filterExpr      logicalplan.Expr
+	distinctColumns []logicalplan.Expr
+
+	builder *array.RecordBuilder
+}
+
+func NewParquetConverter(
+	pool memory.Allocator,
+	outputSchema *arrow.Schema,
+	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.Expr,
+) *ParquetConverter {
+	return &ParquetConverter{
+		pool:            pool,
+		outputSchema:    outputSchema,
+		filterExpr:      filterExpr,
+		distinctColumns: distinctColumns,
+		builder:         array.NewRecordBuilder(pool, outputSchema),
+	}
+}
+
+func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) error {
+	if _, ok := rg.(*dynparquet.MergedRowGroup); ok {
+		return rowBasedParquetRowGroupToArrowRecord(ctx, c.pool, rg, c.outputSchema, c.builder)
+	}
+	return contiguousParquetRowGroupToArrowRecord(
+		ctx, c.pool, rg, c.outputSchema, c.filterExpr, c.distinctColumns, c.builder,
+	)
+}
+
+func (c *ParquetConverter) NumRows() int {
+	// NumRows assumes all fields have the same length. If not, this is a bug.
+	return c.builder.Field(0).Len()
+}
+
+func (c *ParquetConverter) NewRecord() arrow.Record {
+	return c.builder.NewRecord()
+}
+
+func (c *ParquetConverter) Close() {
+	c.builder.Release()
+}
+
 // ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
 // The result is appended to builder.
 func ParquetRowGroupToArrowRecord(

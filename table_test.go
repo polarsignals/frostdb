@@ -1101,19 +1101,24 @@ func Test_Table_Bloomfilter(t *testing.T) {
 
 	iterations := 0
 	err := table.View(context.Background(), func(ctx context.Context, tx uint64) error {
-		err := table.Iterator(
+		pool := memory.NewGoAllocator()
+		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
+		if err != nil {
+			return err
+		}
+
+		require.NoError(t, table.Iterator(
 			context.Background(),
 			tx,
-			memory.NewGoAllocator(),
-			nil,
+			pool,
+			as,
 			logicalplan.IterOptions{Filter: logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				defer ar.Release()
 				iterations++
 				return nil
 			}},
-		)
-		require.NoError(t, err)
+		))
 		return nil
 	})
 	require.NoError(t, err)
