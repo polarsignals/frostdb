@@ -3,6 +3,7 @@ package dynparquet
 import (
 	"bytes"
 	"errors"
+	"fmt"
 
 	"github.com/segmentio/parquet-go"
 )
@@ -17,41 +18,60 @@ type SerializedBuffer struct {
 	file []byte
 }
 
-func ReaderFromBytes(buf []byte) (*SerializedBuffer, error) {
+func ReaderFromBytes(buf []byte) *SerializedBuffer {
 	return &SerializedBuffer{
 		file: buf,
-	}, nil
+	}
 }
 
-func (b *SerializedBuffer) Reader() *parquet.Reader {
-	return parquet.NewReader(b.ParquetFile())
+func (b *SerializedBuffer) Reader() (*parquet.Reader, error) {
+	f, err := b.ParquetFile()
+	if err != nil {
+		return nil, err
+	}
+	return parquet.NewReader(f), nil
 }
 
-func (b *SerializedBuffer) ParquetFile() *parquet.File {
+func (b *SerializedBuffer) ParquetFile() (*parquet.File, error) {
 	f, err := parquet.OpenFile(bytes.NewReader(b.file), int64(len(b.file)))
 	if err != nil {
-		panic("at the disco")
+		return nil, err
 	}
 
-	return f
+	return f, nil
 }
 
-func (b *SerializedBuffer) NumRows() int64 {
-	return b.Reader().NumRows()
+func (b *SerializedBuffer) NumRows() (int64, error) {
+	r, err := b.Reader()
+	if err != nil {
+		return 0, err
+	}
+	return r.NumRows(), nil
 }
 
-func (b *SerializedBuffer) NumRowGroups() int {
-	return len(b.ParquetFile().RowGroups())
+func (b *SerializedBuffer) NumRowGroups() (int, error) {
+	f, err := b.ParquetFile()
+	if err != nil {
+		return 0, err
+	}
+	return len(f.RowGroups()), nil
 }
 
-func (b *SerializedBuffer) DynamicRows() DynamicRowReader {
-	file := b.ParquetFile()
+func (b *SerializedBuffer) DynamicRows() (DynamicRowReader, error) {
+	file, err := b.ParquetFile()
+	if err != nil {
+		return nil, err
+	}
 	rowGroups := file.RowGroups()
 	drg := make([]DynamicRowGroup, len(rowGroups))
 	for i, rowGroup := range rowGroups {
-		drg[i] = b.newDynamicRowGroup(rowGroup)
+		var err error
+		drg[i], err = b.newDynamicRowGroup(rowGroup)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return Concat(file.Schema().Fields(), drg...).DynamicRows()
+	return Concat(file.Schema().Fields(), drg...).DynamicRows(), nil
 }
 
 type serializedRowGroup struct {
@@ -60,8 +80,12 @@ type serializedRowGroup struct {
 	fields  []parquet.Field
 }
 
-func (b *SerializedBuffer) DynamicRowGroup(i int) DynamicRowGroup {
-	return b.newDynamicRowGroup(b.ParquetFile().RowGroups()[i])
+func (b *SerializedBuffer) DynamicRowGroup(i int) (DynamicRowGroup, error) {
+	f, err := b.ParquetFile()
+	if err != nil {
+		return nil, err
+	}
+	return b.newDynamicRowGroup(f.RowGroups()[i])
 }
 
 func NewDynamicRowGroup(rg parquet.RowGroup, dyncols map[string][]string, fields []parquet.Field) DynamicRowGroup {
@@ -86,22 +110,25 @@ func DynamicRowGroupFromFile(i int, f *parquet.File) (DynamicRowGroup, error) {
 	return NewDynamicRowGroup(f.RowGroups()[i], dynCols, f.Schema().Fields()), nil
 }
 
-func (b *SerializedBuffer) newDynamicRowGroup(rowGroup parquet.RowGroup) DynamicRowGroup {
-	f := b.ParquetFile()
+func (b *SerializedBuffer) newDynamicRowGroup(rowGroup parquet.RowGroup) (DynamicRowGroup, error) {
+	f, err := b.ParquetFile()
+	if err != nil {
+		return nil, err
+	}
 	dynColString, found := f.Lookup(DynamicColumnsKey)
 	if !found {
-		panic("at the disco")
+		return nil, fmt.Errorf("dynamic columns key not found")
 	}
 
 	dynCols, err := deserializeDynamicColumns(dynColString)
 	if err != nil {
-		panic("at the disco")
+		return nil, err
 	}
 	return &serializedRowGroup{
 		RowGroup: rowGroup,
 		dynCols:  dynCols,
 		fields:   f.Schema().Fields(),
-	}
+	}, nil
 }
 
 func (g *serializedRowGroup) DynamicColumns() map[string][]string {
@@ -112,17 +139,20 @@ func (g *serializedRowGroup) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(g, g.fields)
 }
 
-func (b *SerializedBuffer) DynamicColumns() map[string][]string {
-	f := b.ParquetFile()
+func (b *SerializedBuffer) DynamicColumns() (map[string][]string, error) {
+	f, err := b.ParquetFile()
+	if err != nil {
+		return nil, err
+	}
 	dynColString, found := f.Lookup(DynamicColumnsKey)
 	if !found {
-		panic("at the disco")
+		return nil, fmt.Errorf("dynamic columns key not found")
 	}
 
 	dynCols, err := deserializeDynamicColumns(dynColString)
 	if err != nil {
-		panic("at the disco")
+		return nil, err
 	}
 
-	return dynCols
+	return dynCols, nil
 }
