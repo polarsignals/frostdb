@@ -59,7 +59,7 @@ func New(
 		tracer:           trace.NewNoopTracerProvider().Tracer(""),
 		indexDegree:      2,
 		splitSize:        2,
-		granuleSizeBytes: 25 * 1024 * 1024,  // 25MB granule size before splitting
+		granuleSizeBytes: 1 * 1024 * 1024,   // 1MB granule size before splitting
 		activeMemorySize: 512 * 1024 * 1024, // 512MB
 	}
 
