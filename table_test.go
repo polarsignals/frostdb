@@ -1078,7 +1078,7 @@ func Test_Table_InsertCancellation(t *testing.T) {
 		"1024": {1024},
 	}
 
-	for name, _ := range tests {
+	for name := range tests {
 		t.Run(name, func(t *testing.T) {
 			table := basicTable(t)
 			ctx := context.Background()
