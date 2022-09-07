@@ -862,12 +862,6 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 		return fmt.Errorf("closing schema writer: %w", err)
 	}
 
-	/*
-		if n < t.table.db.columnStore.granuleSize { // It's possible to have a Granule marked for compaction but all the parts in it aren't completed tx's yet
-			return fmt.Errorf("not enough completed transactions")
-		}
-	*/
-
 	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
 	if err != nil {
 		return fmt.Errorf("reader from bytes: %w", err)
