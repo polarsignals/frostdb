@@ -44,7 +44,6 @@ func TestDBWithWALAndBucket(t *testing.T) {
 
 	c, err := New(
 		WithLogger(logger),
-		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
 		WithBucketStorage(bucket),
@@ -71,7 +70,6 @@ func TestDBWithWALAndBucket(t *testing.T) {
 
 	c, err = New(
 		WithLogger(logger),
-		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
 		WithBucketStorage(bucket),
@@ -96,7 +94,6 @@ func TestDBWithWAL(t *testing.T) {
 
 	c, err := New(
 		WithLogger(logger),
-		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
 	)
@@ -199,7 +196,6 @@ func TestDBWithWAL(t *testing.T) {
 
 	c, err = New(
 		WithLogger(logger),
-		WithGranuleSize(8096),
 		WithWAL(),
 		WithStoragePath(dir),
 	)
@@ -240,7 +236,6 @@ func TestDBWithWAL(t *testing.T) {
 	// One granule with 3 parts
 	require.Equal(t, 1, table.active.Index().Len())
 	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).parts.total.Load())
-	require.Equal(t, uint64(5), table.active.Index().Min().(*Granule).metadata.card.Load())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
