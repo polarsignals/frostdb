@@ -41,8 +41,8 @@ type GranuleMetadata struct {
 	maxlock sync.RWMutex
 	max     map[string]*parquet.Value
 
-	// card is the raw commited, and uncommited cardinality of the granule. It is used as a suggestion for potential compaction
-	card *atomic.Uint64
+	// size is the raw commited, and uncommited size of the granule. It is used as a suggestion for potential compaction
+	size *atomic.Uint64
 
 	// pruned indicates if this Granule is longer found in the index
 	pruned *atomic.Uint64
@@ -58,14 +58,14 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 			min:    map[string]*parquet.Value{},
 			max:    map[string]*parquet.Value{},
 			least:  atomic.NewUnsafePointer(nil),
-			card:   atomic.NewUint64(0),
+			size:   atomic.NewUint64(0),
 			pruned: atomic.NewUint64(0),
 		},
 	}
 
 	// Find the "smallest" row
 	if firstPart != nil {
-		g.metadata.card = atomic.NewUint64(uint64(firstPart.Buf.NumRows()))
+		g.metadata.size = atomic.NewUint64(uint64(firstPart.Buf.ParquetFile().Size()))
 		g.parts.Prepend(firstPart)
 		least, err := firstPart.Least()
 		if err != nil {
@@ -86,11 +86,11 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 	rows := p.Buf.NumRows()
 	if rows == 0 {
-		return g.metadata.card.Load(), nil
+		return g.metadata.size.Load(), nil
 	}
 	node := g.parts.Prepend(p)
 
-	newcard := g.metadata.card.Add(uint64(p.Buf.NumRows()))
+	newSize := g.metadata.size.Add(uint64(p.Buf.ParquetFile().NumRows()))
 
 	for {
 		least := g.metadata.least.Load()
@@ -116,10 +116,10 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 		}
 	}
 
-	return newcard, nil
+	return newSize, nil
 }
 
-// AddPart returns the new cardinality of the Granule.
+// AddPart returns the new size of the Granule.
 func (g *Granule) AddPart(p *Part) (uint64, error) {
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
 	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
@@ -138,10 +138,10 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 	return g.addPart(p, r)
 }
 
-// split a granule into n sized granules. With the last granule containing the remainder.
+// split a granule into n granules. With the last granule containing the remainder.
 // Returns the granules in order.
 // This assumes the Granule has had its parts merged into a single part.
-func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
+func (g *Granule) split(tx uint64, count int) ([]*Granule, error) {
 	// Get the first part in the granule's part list.
 	var p *Part
 	g.parts.Iterate(func(part *Part) bool {
@@ -150,8 +150,6 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 		p = part
 		return false
 	})
-	// How many granules we'll need to build
-	count := int(p.Buf.NumRows()) / n
 
 	// Build all the new granules
 	granules := make([]*Granule, 0, count)
@@ -169,6 +167,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 	}
 
 	rowsWritten := 0
+	n := int(p.Buf.NumRows()) / count
 
 	f := p.Buf.ParquetFile()
 	for _, rowGroup := range f.RowGroups() {
@@ -188,7 +187,7 @@ func (g *Granule) split(tx uint64, n int) ([]*Granule, error) {
 			}
 			rowsWritten++
 
-			if rowsWritten == n && len(granules) != count-1 { // If we have n rows, and aren't on the last granule, create the n-sized granule
+			if rowsWritten == n && len(granules) != count-1 { // If we have n rows, and aren't on the last granule create a new granule
 				err = w.Close()
 				if err != nil {
 					return nil, fmt.Errorf("close writer: %w", err)

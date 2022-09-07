@@ -50,7 +50,7 @@ func newTestLogger(t TestLogHelper) log.Logger {
 	return logger
 }
 
-func basicTable(t *testing.T, granuleSize int) *Table {
+func basicTable(t *testing.T, options ...Option) *Table {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
 	)
@@ -58,8 +58,7 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 	logger := newTestLogger(t)
 
 	c, err := New(
-		WithLogger(logger),
-		WithGranuleSize(granuleSize),
+		append([]Option{WithLogger(logger)}, options...)...,
 	)
 	require.NoError(t, err)
 
@@ -72,7 +71,7 @@ func basicTable(t *testing.T, granuleSize int) *Table {
 }
 
 func TestTable(t *testing.T) {
-	table := basicTable(t, 2^12)
+	table := basicTable(t)
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
@@ -191,7 +190,6 @@ func TestTable(t *testing.T) {
 	// One granule with 3 parts
 	require.Equal(t, 1, table.active.Index().Len())
 	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).parts.total.Load())
-	require.Equal(t, uint64(5), table.active.Index().Min().(*Granule).metadata.card.Load())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
@@ -206,7 +204,7 @@ func TestTable(t *testing.T) {
 }
 
 func Test_Table_GranuleSplit(t *testing.T) {
-	table := basicTable(t, 4)
+	table := basicTable(t, WithGranuleSizeBytes(40))
 
 	samples := dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -324,175 +322,22 @@ func Test_Table_GranuleSplit(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).metadata.card.Load())
-	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).metadata.card.Load())
-}
-
-/*
-This test is meant for the following case
-If the table index is as follows
-
-[10,11]
-
-	\
-	[12,13,14]
-
-And we try and insert [8,9], we expect them to be inserted into the top granule
-
-[8,9,10,11]
-
-	\
-	[12,13]
-*/
-func Test_Table_InsertLowest(t *testing.T) {
-	table := basicTable(t, 4)
-
-	samples := dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label13", Value: "value13"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label12", Value: "value12"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label11", Value: "value11"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label10", Value: "value10"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}}
-
-	buf, err := samples.ToBuffer(table.Schema())
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Since we are inserting 4 elements and the granule size is 4, the granule
-	// will immediately split.
-	_, err = table.InsertBuffer(ctx, buf)
-	require.NoError(t, err)
-
-	// Since a compaction happens async, it may abort if it runs before the transactions are completed. In that case; we'll manually compact the granule
-	table.Sync()
-	if table.active.Index().Len() == 1 {
-		table.active.wg.Add(1)
-		table.active.compact(table.active.Index().Min().(*Granule))
-		table.Sync()
-	}
-
-	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(2), table.active.Index().Min().(*Granule).metadata.card.Load()) // [13, 12]
-	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11, 10]
-
-	samples = dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label14", Value: "value14"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}}
-
-	buf, err = samples.ToBuffer(table.Schema())
-	require.NoError(t, err)
-
-	_, err = table.InsertBuffer(ctx, buf)
-	require.NoError(t, err)
-
-	// Wait for the index to be updated by the asynchronous granule split.
-	table.Sync()
-
-	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).metadata.card.Load()) // [14, 13, 12]
-	require.Equal(t, uint64(2), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11, 10]
-
-	// Insert a new column that is the lowest column yet; expect it to be added to the minimum column
-	samples = dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 10,
-		Value:     10,
-	}}
-
-	buf, err = samples.ToBuffer(table.Schema())
-	require.NoError(t, err)
-
-	_, err = table.InsertBuffer(ctx, buf)
-	require.NoError(t, err)
-
-	// Wait for the index to be updated by the asynchronous granule split.
-	table.Sync()
-
-	pool := memory.NewGoAllocator()
-
-	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		if err != nil {
-			return err
-		}
-
-		return table.Iterator(ctx, tx, pool, as, logicalplan.IterOptions{}, func(ctx context.Context, r arrow.Record) error {
-			defer r.Release()
-			t.Log(r)
-			return nil
-		})
-	})
-	require.NoError(t, err)
-
-	require.Equal(t, 2, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).metadata.card.Load()) // [14,13,12]
-	require.Equal(t, uint64(3), table.active.Index().Max().(*Granule).metadata.card.Load()) // [11,10,1]
 }
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
 func Test_Table_Concurrency(t *testing.T) {
 	tests := map[string]struct {
-		granuleSize int
+		granuleSize int64
 	}{
-		"8192": {8192},
-		"4096": {4096},
-		"2048": {2048},
-		"1024": {1024},
+		"25MB": {25 * 1024 * 1024},
+		"15MB": {15 * 1024 * 1024},
+		"8MB":  {8 * 1024 * 1024},
+		"1MB":  {1024 * 1024},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			table := basicTable(t, test.granuleSize)
+			table := basicTable(t, WithGranuleSizeBytes(test.granuleSize))
 			defer os.RemoveAll("test")
 
 			generateRows := func(n int) *dynparquet.Buffer {
@@ -612,7 +457,6 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 
 	c, err := New(
 		WithLogger(logger),
-		WithGranuleSize(512),
 		WithWAL(),
 		WithStoragePath(dir),
 	)
@@ -709,7 +553,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 }
 
 func Test_Table_ReadIsolation(t *testing.T) {
-	table := basicTable(t, 2<<12)
+	table := basicTable(t)
 
 	samples := dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -1040,7 +884,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 }
 
 func Test_Table_Filter(t *testing.T) {
-	table := basicTable(t, 2^12)
+	table := basicTable(t)
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
@@ -1161,7 +1005,7 @@ func Test_Table_Filter(t *testing.T) {
 }
 
 func Test_Table_Bloomfilter(t *testing.T) {
-	table := basicTable(t, 2^12)
+	table := basicTable(t)
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
@@ -1234,9 +1078,9 @@ func Test_Table_InsertCancellation(t *testing.T) {
 		"1024": {1024},
 	}
 
-	for name, test := range tests {
+	for name := range tests {
 		t.Run(name, func(t *testing.T) {
-			table := basicTable(t, test.granuleSize)
+			table := basicTable(t)
 			ctx := context.Background()
 			ctx, cancel := context.WithTimeout(ctx, 5*time.Millisecond)
 			defer cancel()
@@ -1336,7 +1180,7 @@ func Test_Table_InsertCancellation(t *testing.T) {
 }
 
 func Test_Table_CancelBasic(t *testing.T) {
-	table := basicTable(t, 8192)
+	table := basicTable(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -1410,7 +1254,7 @@ func Test_Table_CancelBasic(t *testing.T) {
 }
 
 func Test_Table_ArrowSchema(t *testing.T) {
-	table := basicTable(t, 8192)
+	table := basicTable(t)
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
@@ -1588,7 +1432,6 @@ func Test_DoubleTable(t *testing.T) {
 	logger := newTestLogger(t)
 	c, err := New(
 		WithLogger(logger),
-		WithGranuleSize(4096),
 		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
