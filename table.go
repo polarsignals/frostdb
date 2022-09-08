@@ -487,6 +487,7 @@ func (t *Table) Iterator(
 		return err
 	}
 
+	// This is a compatibility call until we have concurrency.
 	callback := callbacks[0]
 
 	// Previously we sorted all row groups into a single row group here,
@@ -573,6 +574,7 @@ func (t *Table) SchemaIterator(
 	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
+	// This is a compatibility call until we have concurrency.
 	callback := callbacks[0]
 
 	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
