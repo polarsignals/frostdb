@@ -417,7 +417,23 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 		arrs = append(arrs, arr.NewArray())
 	}
 
-	aggregateArray, err := a.aggregationFunction.Aggregate(a.pool, arrs)
+	var (
+		aggregateArray arrow.Array
+		err            error
+	)
+	switch a.aggregationFunction.(type) {
+	case *CountAggregation:
+		if a.finalStage {
+			// The final stage of aggregation needs to sum up all the counts of the previous steps,
+			// instead of counting the previous counts.
+			aggregateArray, err = (&Int64SumAggregation{}).Aggregate(a.pool, arrs)
+		} else {
+			// If this isn't the final stage we simply run the count aggregation.
+			aggregateArray, err = a.aggregationFunction.Aggregate(a.pool, arrs)
+		}
+	default:
+		aggregateArray, err = a.aggregationFunction.Aggregate(a.pool, arrs)
+	}
 	if err != nil {
 		return fmt.Errorf("aggregate batched arrays: %w", err)
 	}
