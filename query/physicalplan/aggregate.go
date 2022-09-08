@@ -24,6 +24,7 @@ func Aggregate(
 	tracer trace.Tracer,
 	s *parquet.Schema,
 	agg *logicalplan.Aggregation,
+	final bool,
 ) (*HashAggregate, error) {
 	var (
 		aggFunc      logicalplan.AggFunc
@@ -71,6 +72,7 @@ func Aggregate(
 		f,
 		aggColumnExpr,
 		agg.GroupExprs,
+		final,
 	), nil
 }
 
@@ -116,6 +118,9 @@ type HashAggregate struct {
 	aggregationFunction   AggregationFunction
 	hashSeed              maphash.Seed
 	next                  PhysicalPlan
+	// Indicate is this is the last aggregation or
+	// if this is a aggregation with another aggregation to follow after synchronizing.
+	finalStage bool
 
 	// Buffers that are reused across callback calls.
 	groupByFields      []arrow.Field
@@ -130,6 +135,7 @@ func NewHashAggregate(
 	aggregationFunction AggregationFunction,
 	columnToAggregate logicalplan.Expr,
 	groupByColumnMatchers []logicalplan.Expr,
+	finalStage bool,
 ) *HashAggregate {
 	return &HashAggregate{
 		pool:              pool,
@@ -143,6 +149,7 @@ func NewHashAggregate(
 		groupByColumnMatchers: groupByColumnMatchers,
 		hashSeed:              maphash.MakeSeed(),
 		aggregationFunction:   aggregationFunction,
+		finalStage:            finalStage,
 
 		groupByFields:      make([]arrow.Field, 0, 10),
 		groupByFieldHashes: make([]uint64, 0, 10),
@@ -415,14 +422,25 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 		return fmt.Errorf("aggregate batched arrays: %w", err)
 	}
 
-	aggregateField := arrow.Field{Name: a.resultColumnName, Type: aggregateArray.DataType()}
+	// Only the last Aggregation should rename the underlying column
+	fieldName := a.columnToAggregate.Name()
+	if a.finalStage {
+		fieldName = a.resultColumnName
+	}
+
+	aggregateField := arrow.Field{Name: fieldName, Type: aggregateArray.DataType()}
 	cols := append(groupByArrays, aggregateArray)
 
-	return a.next.Callback(ctx, array.NewRecord(
+	err = a.next.Callback(ctx, array.NewRecord(
 		arrow.NewSchema(append(groupByFields, aggregateField), nil),
 		cols,
 		int64(numRows),
 	))
+	if err != nil {
+		return err
+	}
+
+	return a.next.Finish(ctx)
 }
 
 type Int64SumAggregation struct{}
