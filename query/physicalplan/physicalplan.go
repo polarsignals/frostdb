@@ -246,7 +246,14 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 				phyPlans = append(phyPlans, p)
 			}
 		case plan.Distinct != nil:
-			for i := 0; i < concurrencyHardcoded; i++ {
+			concurrency := concurrencyHardcoded
+			if len(prev) > 1 {
+				// Just in case the previous plan's concurrency differs from the hardcoded concurrency
+				concurrency = len(prev)
+			}
+
+			phyPlans = make([]PhysicalPlan, 0, concurrency)
+			for i := 0; i < concurrency; i++ {
 				phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
 			}
 
@@ -257,24 +264,58 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 				synchronizeDistinct := Distinct(pool, tracer, plan.Distinct.Exprs)
 				synchronizeDistinct.SetNext(prev[0])
 
-				synchronizer := Synchronize(ctx, synchronizeDistinct, len(phyPlans))
+				synchronizer := Synchronize(len(phyPlans))
+				synchronizer.SetNext(synchronizeDistinct)
 
-				for _, plan := range phyPlans {
-					plan.SetNext(synchronizer)
+				for _, p := range phyPlans {
+					p.SetNext(synchronizer)
 				}
 			}
 		case plan.Filter != nil:
-			p, err := Filter(pool, tracer, plan.Filter.Expr)
-			if err != nil {
-				return false
+			// Create a filter for each previous plan.
+			// Can be multiple filters or just a single
+			// filter depending on the previous concurrency.
+			for range prev {
+				p, err := Filter(pool, tracer, plan.Filter.Expr)
+				if err != nil {
+					return false
+				}
+				phyPlans = append(phyPlans, p)
 			}
-			phyPlans = append(phyPlans, p)
 		case plan.Aggregation != nil:
-			p, err := Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
-			if err != nil {
-				return false
+			concurrency := concurrencyHardcoded
+			if len(prev) > 1 {
+				// Just in case the previous plan's concurrency differs from the hardcoded concurrency
+				concurrency = len(prev)
 			}
-			phyPlans = append(phyPlans, p)
+
+			schema := s.ParquetSchema()
+
+			phyPlans = make([]PhysicalPlan, 0, concurrency)
+			for i := 0; i < concurrency; i++ {
+				p, err := Aggregate(pool, tracer, schema, plan.Aggregation, false)
+				if err != nil {
+					return false
+				}
+				phyPlans = append(phyPlans, p)
+			}
+
+			// If the previous plan is not concurrent we need to add a synchronizer to
+			// fan-in/synchronize the concurrent callbacks before passing the data on to single previous plan.
+			if len(prev) == 1 {
+				synchronizeAggregate, err := Aggregate(pool, tracer, schema, plan.Aggregation, true)
+				if err != nil {
+					return false
+				}
+				synchronizeAggregate.SetNext(prev[0])
+
+				synchronizer := Synchronize(len(phyPlans))
+				synchronizer.SetNext(synchronizeAggregate)
+
+				for _, p := range phyPlans {
+					p.SetNext(synchronizer)
+				}
+			}
 		default:
 			panic("Unsupported plan")
 		}

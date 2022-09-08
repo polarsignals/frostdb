@@ -94,3 +94,23 @@ func TestBuildPhysicalPlan(t *testing.T) {
 	)
 	require.NoError(t, err)
 }
+
+type mockPhysicalPlan struct {
+	next PhysicalPlan
+}
+
+func (m *mockPhysicalPlan) Callback(ctx context.Context, r arrow.Record) error {
+	return m.next.Callback(ctx, r)
+}
+
+func (m *mockPhysicalPlan) Finish(ctx context.Context) error {
+	return m.next.Finish(ctx)
+}
+
+func (m *mockPhysicalPlan) SetNext(next PhysicalPlan) {
+	m.next = next
+}
+
+func (m *mockPhysicalPlan) Draw() *Diagram {
+	return &Diagram{}
+}
