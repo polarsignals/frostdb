@@ -25,6 +25,10 @@ type LogicalPlan struct {
 	Aggregation *Aggregation
 }
 
+// Callback is a function that is called throughout a chain of operators
+// modifying the underlying data.
+type Callback func(ctx context.Context, r arrow.Record) error
+
 // IterOptions are a set of options for the TableReader Iterators
 // TODO: should we instead use the option pattern? Is that possible with the way the Iterator functions work?
 type IterOptions struct {
@@ -116,14 +120,14 @@ type TableReader interface {
 		pool memory.Allocator,
 		schema *arrow.Schema,
 		options IterOptions,
-		callback func(ctx context.Context, r arrow.Record) error,
+		callbacks []Callback,
 	) error
 	SchemaIterator(
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
 		options IterOptions,
-		callback func(ctx context.Context, r arrow.Record) error,
+		callbacks []Callback,
 	) error
 	ArrowSchema(
 		ctx context.Context,

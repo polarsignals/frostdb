@@ -86,16 +86,16 @@ func (e *OutputPlan) Execute(ctx context.Context, pool memory.Allocator, callbac
 type TableScan struct {
 	tracer  trace.Tracer
 	options *logicalplan.TableScan
-	next    PhysicalPlan
+	plans   []PhysicalPlan
 }
 
 func (s *TableScan) Draw() *Diagram {
-	var child *Diagram
-	if s.next != nil {
-		child = s.next.Draw()
-	}
+	//var child *Diagram
+	//if s.plans != nil {
+	//	child = s.plans.Draw()
+	//}
 	details := fmt.Sprintf("TableScan")
-	return &Diagram{Details: details, Child: child}
+	return &Diagram{Details: details}
 }
 
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -105,6 +105,11 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	table := s.options.TableProvider.GetTable(s.options.TableName)
 	if table == nil {
 		return errors.New("table not found")
+	}
+
+	callbacks := make([]logicalplan.Callback, 0, len(s.plans))
+	for _, plan := range s.plans {
+		callbacks = append(callbacks, plan.Callback)
 	}
 
 	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
@@ -134,28 +139,33 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 				Filter:             s.options.Filter,
 				DistinctColumns:    s.options.Distinct,
 			},
-			s.next.Callback,
+			callbacks,
 		)
 	})
 	if err != nil {
 		return err
 	}
 
-	return s.next.Finish(ctx)
+	for _, plan := range s.plans {
+		if err := plan.Finish(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type SchemaScan struct {
 	tracer  trace.Tracer
 	options *logicalplan.SchemaScan
-	next    PhysicalPlan
+	plans   []PhysicalPlan
 }
 
 func (s *SchemaScan) Draw() *Diagram {
-	var child *Diagram
-	if s.next != nil {
-		child = s.next.Draw()
-	}
-	return &Diagram{Details: "SchemaScan", Child: child}
+	//var children []*Diagram
+	//for _, plan := range s.plans {
+	//	children = append(children, plan.Draw())
+	//}
+	return &Diagram{Details: "SchemaScan"}
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -163,6 +173,12 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	if table == nil {
 		return errors.New("table not found")
 	}
+
+	callbacks := make([]logicalplan.Callback, 0, len(s.plans))
+	for _, plan := range s.plans {
+		callbacks = append(callbacks, plan.Callback)
+	}
+
 	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
 		return table.SchemaIterator(
 			ctx,
@@ -174,14 +190,19 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 				Filter:             s.options.Filter,
 				DistinctColumns:    s.options.Distinct,
 			},
-			s.next.Callback,
+			callbacks,
 		)
 	})
 	if err != nil {
 		return err
 	}
 
-	return s.next.Finish(ctx)
+	for _, plan := range s.plans {
+		if err := plan.Finish(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
@@ -191,34 +212,46 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 	outputPlan := &OutputPlan{}
 	var (
 		err  error
-		prev PhysicalPlan = outputPlan
+		prev = []PhysicalPlan{outputPlan}
 	)
 
 	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
-		var phyPlan PhysicalPlan
+		var phyPlans []PhysicalPlan
 		switch {
 		case plan.SchemaScan != nil:
 			outputPlan.scan = &SchemaScan{
 				tracer:  tracer,
 				options: plan.SchemaScan,
-				next:    prev,
+				plans:   prev,
 			}
 			return false
 		case plan.TableScan != nil:
 			outputPlan.scan = &TableScan{
 				tracer:  tracer,
 				options: plan.TableScan,
-				next:    prev,
+				plans:   prev,
 			}
 			return false
 		case plan.Projection != nil:
-			phyPlan, err = Project(pool, tracer, plan.Projection.Exprs)
+			p, err := Project(pool, tracer, plan.Projection.Exprs)
+			if err != nil {
+				return false
+			}
+			phyPlans = append(phyPlans, p)
 		case plan.Distinct != nil:
-			phyPlan = Distinct(pool, tracer, plan.Distinct.Exprs)
+			phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
 		case plan.Filter != nil:
-			phyPlan, err = Filter(pool, tracer, plan.Filter.Expr)
+			p, err := Filter(pool, tracer, plan.Filter.Expr)
+			if err != nil {
+				return false
+			}
+			phyPlans = append(phyPlans, p)
 		case plan.Aggregation != nil:
-			phyPlan, err = Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
+			p, err := Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
+			if err != nil {
+				return false
+			}
+			phyPlans = append(phyPlans, p)
 		default:
 			panic("Unsupported plan")
 		}
@@ -227,12 +260,19 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			return false
 		}
 
-		phyPlan.SetNext(prev)
-		prev = phyPlan
+		for i := 0; i < len(phyPlans); i++ {
+			phyPlans[i].SetNext(prev[i])
+		}
+		prev = phyPlans
 		return true
 	}))
 
-	outputPlan.SetNextCallback(prev.Callback)
+	if len(prev) == 1 {
+		outputPlan.SetNextCallback(prev[0].Callback)
+	} else {
+		// TODO: Update to use sychronizer's single callback if we have concurrency.
+	}
+
 	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
 
 	return outputPlan, err

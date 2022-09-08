@@ -29,7 +29,7 @@ func (m *mockTableReader) Iterator(
 	pool memory.Allocator,
 	schema *arrow.Schema,
 	iterOpts IterOptions,
-	callback func(ctx context.Context, r arrow.Record) error,
+	callbacks []Callback,
 ) error {
 	return nil
 }
@@ -39,7 +39,7 @@ func (m *mockTableReader) SchemaIterator(
 	tx uint64,
 	pool memory.Allocator,
 	iterOpts IterOptions,
-	callback func(ctx context.Context, r arrow.Record) error,
+	callbacks []Callback,
 ) error {
 	return nil
 }

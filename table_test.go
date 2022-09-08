@@ -175,11 +175,11 @@ func TestTable(t *testing.T) {
 			pool,
 			as,
 			logicalplan.IterOptions{},
-			func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				t.Log(ar)
 				defer ar.Release()
 				return nil
-			},
+			}},
 		)
 	})
 	require.NoError(t, err)
@@ -313,11 +313,18 @@ func Test_Table_GranuleSplit(t *testing.T) {
 			return err
 		}
 
-		return table.Iterator(ctx, tx, pool, as, logicalplan.IterOptions{}, func(ctx context.Context, r arrow.Record) error {
-			defer r.Release()
-			t.Log(r)
-			return nil
-		})
+		return table.Iterator(
+			ctx,
+			tx,
+			pool,
+			as,
+			logicalplan.IterOptions{},
+			[]logicalplan.Callback{func(ctx context.Context, r arrow.Record) error {
+				defer r.Release()
+				t.Log(r)
+				return nil
+			}},
+		)
 	})
 	require.NoError(t, err)
 
@@ -413,12 +420,19 @@ func Test_Table_Concurrency(t *testing.T) {
 					return err
 				}
 
-				err = table.Iterator(ctx, tx, pool, as, logicalplan.IterOptions{}, func(ctx context.Context, ar arrow.Record) error {
-					totalrows += ar.NumRows()
-					defer ar.Release()
+				err = table.Iterator(
+					ctx,
+					tx,
+					pool,
+					as,
+					logicalplan.IterOptions{},
+					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+						totalrows += ar.NumRows()
+						defer ar.Release()
 
-					return nil
-				})
+						return nil
+					}},
+				)
 
 				require.NoError(t, err)
 				require.Equal(t, int64(n*inserts*rows), totalrows)
@@ -537,12 +551,19 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 			if err != nil {
 				return err
 			}
-			return table.Iterator(ctx, tx, pool, as, logicalplan.IterOptions{}, func(ctx context.Context, ar arrow.Record) error {
-				defer ar.Release()
-				totalrows += ar.NumRows()
+			return table.Iterator(
+				ctx,
+				tx,
+				pool,
+				as,
+				logicalplan.IterOptions{},
+				[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+					defer ar.Release()
+					totalrows += ar.NumRows()
 
-				return nil
-			})
+					return nil
+				}},
+			)
 		})
 		require.Equal(b, 0., testutil.ToFloat64(table.metrics.granulesCompactionAborted))
 		require.NoError(b, err)
@@ -633,12 +654,19 @@ func Test_Table_ReadIsolation(t *testing.T) {
 		require.NoError(t, err)
 
 		rows := int64(0)
-		err = table.Iterator(ctx, tx, pool, as, logicalplan.IterOptions{}, func(ctx context.Context, ar arrow.Record) error {
-			rows += ar.NumRows()
-			defer ar.Release()
+		err = table.Iterator(
+			ctx,
+			tx,
+			pool,
+			as,
+			logicalplan.IterOptions{},
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				rows += ar.NumRows()
+				defer ar.Release()
 
-			return nil
-		})
+				return nil
+			}},
+		)
 		require.NoError(t, err)
 		require.Equal(t, int64(3), rows)
 		return nil
@@ -654,12 +682,19 @@ func Test_Table_ReadIsolation(t *testing.T) {
 		require.NoError(t, err)
 
 		rows := int64(0)
-		err = table.Iterator(ctx, table.db.highWatermark.Load(), pool, as, logicalplan.IterOptions{}, func(ctx context.Context, ar arrow.Record) error {
-			rows += ar.NumRows()
-			defer ar.Release()
+		err = table.Iterator(
+			ctx,
+			table.db.highWatermark.Load(),
+			pool,
+			as,
+			logicalplan.IterOptions{},
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				rows += ar.NumRows()
+				defer ar.Release()
 
-			return nil
-		})
+				return nil
+			}},
+		)
 		require.NoError(t, err)
 		require.Equal(t, int64(4), rows)
 		return nil
@@ -990,13 +1025,20 @@ func Test_Table_Filter(t *testing.T) {
 			return err
 		}
 
-		err = table.Iterator(ctx, tx, pool, as, logicalplan.IterOptions{Filter: filterExpr}, func(ctx context.Context, ar arrow.Record) error {
-			defer ar.Release()
+		err = table.Iterator(
+			ctx,
+			tx,
+			pool,
+			as,
+			logicalplan.IterOptions{Filter: filterExpr},
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				defer ar.Release()
 
-			iterated = true
+				iterated = true
 
-			return nil
-		})
+				return nil
+			}},
+		)
 		require.NoError(t, err)
 		require.False(t, iterated)
 		return nil
@@ -1059,11 +1101,18 @@ func Test_Table_Bloomfilter(t *testing.T) {
 
 	iterations := 0
 	err := table.View(context.Background(), func(ctx context.Context, tx uint64) error {
-		err := table.Iterator(context.Background(), tx, memory.NewGoAllocator(), nil, logicalplan.IterOptions{Filter: logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))}, func(ctx context.Context, ar arrow.Record) error {
-			defer ar.Release()
-			iterations++
-			return nil
-		})
+		err := table.Iterator(
+			context.Background(),
+			tx,
+			memory.NewGoAllocator(),
+			nil,
+			logicalplan.IterOptions{Filter: logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))},
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				defer ar.Release()
+				iterations++
+				return nil
+			}},
+		)
 		require.NoError(t, err)
 		return nil
 	})
@@ -1164,12 +1213,19 @@ func Test_Table_InsertCancellation(t *testing.T) {
 					return err
 				}
 
-				err = table.Iterator(context.Background(), tx, pool, as, logicalplan.IterOptions{}, func(ctx context.Context, ar arrow.Record) error {
-					totalrows += ar.NumRows()
-					defer ar.Release()
+				err = table.Iterator(
+					context.Background(),
+					tx,
+					pool,
+					as,
+					logicalplan.IterOptions{},
+					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+						totalrows += ar.NumRows()
+						defer ar.Release()
 
-					return nil
-				})
+						return nil
+					}},
+				)
 				require.NoError(t, err)
 				require.Less(t, totalrows, int64(n*inserts*rows)) // We expect to cancel some subset of our writes
 				return nil
@@ -1240,12 +1296,19 @@ func Test_Table_CancelBasic(t *testing.T) {
 			return err
 		}
 
-		err = table.Iterator(ctx, tx, pool, as, logicalplan.IterOptions{}, func(ctx context.Context, ar arrow.Record) error {
-			totalrows += ar.NumRows()
-			defer ar.Release()
+		err = table.Iterator(
+			ctx,
+			tx,
+			pool,
+			as,
+			logicalplan.IterOptions{},
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				totalrows += ar.NumRows()
+				defer ar.Release()
 
-			return nil
-		})
+				return nil
+			}},
+		)
 		require.NoError(t, err)
 		require.Equal(t, int64(0), totalrows)
 		return nil
@@ -1471,11 +1534,18 @@ func Test_DoubleTable(t *testing.T) {
 			return err
 		}
 
-		return table.Iterator(ctx, tx, pool, as, logicalplan.IterOptions{}, func(ctx context.Context, ar arrow.Record) error {
-			defer ar.Release()
-			require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
-			return nil
-		})
+		return table.Iterator(
+			ctx,
+			tx,
+			pool,
+			as,
+			logicalplan.IterOptions{},
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				defer ar.Release()
+				require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
+				return nil
+			}},
+		)
 	})
 	require.NoError(t, err)
 }

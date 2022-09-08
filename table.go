@@ -474,7 +474,7 @@ func (t *Table) Iterator(
 	pool memory.Allocator,
 	schema *arrow.Schema,
 	iterOpts logicalplan.IterOptions,
-	iterator func(ctx context.Context, r arrow.Record) error,
+	callbacks []logicalplan.Callback,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
@@ -486,6 +486,9 @@ func (t *Table) Iterator(
 	if err != nil {
 		return err
 	}
+
+	// This is a compatibility call until we have concurrency.
+	callback := callbacks[0]
 
 	// Previously we sorted all row groups into a single row group here,
 	// but it turns out that none of the downstream uses actually rely on
@@ -535,7 +538,7 @@ func (t *Table) Iterator(
 			if recordBuilderExceedsNumRows(builder, builderBufferSize) {
 				r := builder.NewRecord()
 				prepareForFlush(r, rg.Schema())
-				if err := iterator(ctx, r); err != nil {
+				if err := callback(ctx, r); err != nil {
 					return err
 				}
 				r.Release()
@@ -547,7 +550,7 @@ func (t *Table) Iterator(
 		// Flush the builder.
 		r := builder.NewRecord()
 		prepareForFlush(r, rowGroups[0].Schema())
-		if err := iterator(ctx, r); err != nil {
+		if err := callback(ctx, r); err != nil {
 			return err
 		}
 		r.Release()
@@ -563,13 +566,16 @@ func (t *Table) SchemaIterator(
 	tx uint64,
 	pool memory.Allocator,
 	iterOpts logicalplan.IterOptions,
-	iterator func(ctx context.Context, r arrow.Record) error,
+	callbacks []logicalplan.Callback,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/SchemaIterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
 	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
 	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
+
+	// This is a compatibility call until we have concurrency.
+	callback := callbacks[0]
 
 	rowGroups, err := t.collectRowGroups(ctx, tx, iterOpts.Filter)
 	if err != nil {
@@ -598,7 +604,7 @@ func (t *Table) SchemaIterator(
 			b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
 
 			record := b.NewRecord()
-			err = iterator(ctx, record)
+			err = callback(ctx, record)
 			record.Release()
 			b.Release()
 			if err != nil {
