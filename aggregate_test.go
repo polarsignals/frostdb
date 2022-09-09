@@ -81,24 +81,30 @@ func TestAggregate(t *testing.T) {
 	)
 
 	for _, testCase := range []struct {
-		fn     func(logicalplan.Expr) *logicalplan.AggregationFunction
-		alias  string
-		expVal int64
+		fn             func(logicalplan.Expr) *logicalplan.AggregationFunction
+		alias          string
+		expInt64Vals   []int64
+		expFloat64Vals []float64
 	}{
 		{
-			fn:     logicalplan.Sum,
-			alias:  "value_sum",
-			expVal: 6,
+			fn:           logicalplan.Sum,
+			alias:        "value_sum",
+			expInt64Vals: []int64{6},
 		},
 		{
-			fn:     logicalplan.Max,
-			alias:  "value_max",
-			expVal: 3,
+			fn:           logicalplan.Max,
+			alias:        "value_max",
+			expInt64Vals: []int64{3},
 		},
 		{
-			fn:     logicalplan.Count,
-			alias:  "value_count",
-			expVal: 3,
+			fn:           logicalplan.Count,
+			alias:        "value_count",
+			expInt64Vals: []int64{3},
+		},
+		{
+			fn:             logicalplan.Avg,
+			alias:          "value_avg",
+			expFloat64Vals: []float64{2},
 		},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
@@ -120,7 +126,11 @@ func TestAggregate(t *testing.T) {
 			for i, col := range cols {
 				require.Equal(t, 1, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 			}
-			require.Equal(t, []int64{testCase.expVal}, cols[len(cols)-1].(*array.Int64).Int64Values())
+			if len(testCase.expInt64Vals) > 0 {
+				require.Equal(t, testCase.expInt64Vals, cols[len(cols)-1].(*array.Int64).Int64Values())
+			} else if len(testCase.expFloat64Vals) > 0 {
+				require.Equal(t, testCase.expFloat64Vals, cols[len(cols)-1].(*array.Float64).Float64Values())
+			}
 		})
 	}
 }
@@ -185,24 +195,30 @@ func TestAggregateNils(t *testing.T) {
 	)
 
 	for _, testCase := range []struct {
-		fn      func(logicalplan.Expr) *logicalplan.AggregationFunction
-		alias   string
-		expVals []int64
+		fn             func(logicalplan.Expr) *logicalplan.AggregationFunction
+		alias          string
+		expInt64Vals   []int64
+		expFloat64Vals []float64
 	}{
 		{
-			fn:      logicalplan.Sum,
-			alias:   "value_sum",
-			expVals: []int64{1, 5},
+			fn:           logicalplan.Sum,
+			alias:        "value_sum",
+			expInt64Vals: []int64{1, 5},
 		},
 		{
-			fn:      logicalplan.Max,
-			alias:   "value_max",
-			expVals: []int64{1, 3},
+			fn:           logicalplan.Max,
+			alias:        "value_max",
+			expInt64Vals: []int64{1, 3},
 		},
 		{
-			fn:      logicalplan.Count,
-			alias:   "value_count",
-			expVals: []int64{1, 2},
+			fn:           logicalplan.Count,
+			alias:        "value_count",
+			expInt64Vals: []int64{1, 2},
+		},
+		{
+			fn:             logicalplan.Avg,
+			alias:          "value_avg",
+			expFloat64Vals: []float64{1, 2.5},
 		},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
@@ -224,7 +240,11 @@ func TestAggregateNils(t *testing.T) {
 			for i, col := range cols {
 				require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 			}
-			require.Equal(t, testCase.expVals, cols[len(cols)-1].(*array.Int64).Int64Values())
+			if len(testCase.expInt64Vals) > 0 {
+				require.Equal(t, testCase.expInt64Vals, cols[len(cols)-1].(*array.Int64).Int64Values())
+			} else if len(testCase.expFloat64Vals) > 0 {
+				require.Equal(t, testCase.expFloat64Vals, cols[len(cols)-1].(*array.Float64).Float64Values())
+			}
 		})
 	}
 }
@@ -291,24 +311,30 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 	)
 
 	for _, testCase := range []struct {
-		fn      func(logicalplan.Expr) *logicalplan.AggregationFunction
-		alias   string
-		expVals []int64
+		fn             func(logicalplan.Expr) *logicalplan.AggregationFunction
+		alias          string
+		expInt64Vals   []int64
+		expFloat64Vals []float64
 	}{
 		{
-			fn:      logicalplan.Sum,
-			alias:   "value_sum",
-			expVals: []int64{5, 1},
+			fn:           logicalplan.Sum,
+			alias:        "value_sum",
+			expInt64Vals: []int64{5, 1},
 		},
 		{
-			fn:      logicalplan.Max,
-			alias:   "value_max",
-			expVals: []int64{3, 1},
+			fn:           logicalplan.Max,
+			alias:        "value_max",
+			expInt64Vals: []int64{3, 1},
 		},
 		{
-			fn:      logicalplan.Count,
-			alias:   "value_count",
-			expVals: []int64{2, 1},
+			fn:           logicalplan.Count,
+			alias:        "value_count",
+			expInt64Vals: []int64{2, 1},
+		},
+		{
+			fn:             logicalplan.Avg,
+			alias:          "value_avg",
+			expFloat64Vals: []float64{2.5, 1},
 		},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {
@@ -330,7 +356,11 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 			for i, col := range cols {
 				require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 			}
-			require.Equal(t, testCase.expVals, cols[len(cols)-1].(*array.Int64).Int64Values())
+			if len(testCase.expInt64Vals) > 0 {
+				require.Equal(t, testCase.expInt64Vals, cols[len(cols)-1].(*array.Int64).Int64Values())
+			} else if len(testCase.expFloat64Vals) > 0 {
+				require.Equal(t, testCase.expFloat64Vals, cols[len(cols)-1].(*array.Float64).Float64Values())
+			}
 		})
 	}
 }
