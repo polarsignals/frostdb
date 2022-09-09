@@ -57,7 +57,15 @@ func TestDistinct(t *testing.T) {
 		},
 		Timestamp: 2,
 		Value:     2,
-	}, {
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(context.Background(), buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
 		Labels: []dynparquet.Label{
 			{Name: "label1", Value: "value3"},
 			{Name: "label2", Value: "value1"},
@@ -72,7 +80,7 @@ func TestDistinct(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf, err := samples.ToBuffer(table.Schema())
+	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
 	_, err = table.InsertBuffer(context.Background(), buf)
@@ -161,7 +169,7 @@ func TestDistinct(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	t.Parallel()
+	// t.Parallel()
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			seenRows := map[string]struct{}{}
