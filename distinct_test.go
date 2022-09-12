@@ -369,6 +369,9 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 }
 
 func TestDistinctProjectionAllNull(t *testing.T) {
+	// TODO(asubiotto): This test should check the returned results. What should
+	// the semantics here be? We're currently ignoring row groups that don't
+	// include the physical column distinct expressions operate on.
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
 	)
