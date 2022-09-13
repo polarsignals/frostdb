@@ -355,6 +355,13 @@ func writeColumnToArray(
 		globalMinValue := columnIndex.MinValue(0)
 		readPages := false
 		for pageIdx := 0; pageIdx < columnIndex.NumPages(); pageIdx++ {
+			if columnIndex.NullCount(pageIdx) > 0 {
+				// NULLs are not represented in the column index, so fall back
+				// to the non-optimized path.
+				// TODO(asubiotto): This is unexpected, verify upstream.
+				readPages = true
+				break
+			}
 			if columnType.Length() == 0 {
 				// Variable-length datatype. The index can only be trusted if
 				// the size of the values is less than the column index size,
@@ -395,7 +402,11 @@ func writeColumnToArray(
 		dict := p.Dictionary()
 
 		switch {
-		case !repeated && dictionaryOnly && dict != nil:
+		case !repeated && dictionaryOnly && dict != nil && p.NumNulls() == 0:
+			// TODO(asubiotto): This optimized path is only hit when there are
+			// no NULLs in the page since they are not represented in the
+			// dictionary. This is unexpected, verify upstream.
+
 			// If we are only writing the dictionary, we don't need to read
 			// the values.
 			if err := w.WritePage(dict.Page()); err != nil {
