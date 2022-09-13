@@ -14,7 +14,7 @@ require (
 	github.com/oklog/ulid v1.3.1
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/prometheus/client_golang v1.12.2
-	github.com/segmentio/parquet-go v0.0.0-20220802221544-d84ed320251d
+	github.com/segmentio/parquet-go v0.0.0-20220902005228-5bd5f6114638
 	github.com/stretchr/testify v1.7.1
 	github.com/thanos-io/objstore v0.0.0-20220715165016-ce338803bc1e
 	github.com/tidwall/wal v1.1.7
