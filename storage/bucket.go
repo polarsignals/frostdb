@@ -20,17 +20,17 @@ type FileReaderAt struct {
 	ctx  context.Context
 }
 
-// BucketReaderAt implements the Bucket interface
+// BucketReaderAt implements the Bucket interface.
 type BucketReaderAt struct {
 	objstore.Bucket
 }
 
-// NewBucketReaderAt returns a new Bucket
+// NewBucketReaderAt returns a new Bucket.
 func NewBucketReaderAt(bucket objstore.Bucket) *BucketReaderAt {
 	return &BucketReaderAt{Bucket: bucket}
 }
 
-// GetReaderAt returns a io.ReaderAt for the given filename
+// GetReaderAt returns a io.ReaderAt for the given filename.
 func (b *BucketReaderAt) GetReaderAt(ctx context.Context, name string) (io.ReaderAt, error) {
 	return &FileReaderAt{
 		Bucket: b.Bucket,

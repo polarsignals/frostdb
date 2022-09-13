@@ -118,7 +118,7 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, last
 }
 
 func openFile(ctx context.Context, r io.ReaderAt, size int64, tracer trace.Tracer) (*parquet.File, error) {
-	ctx, span := tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/OpenFile")
+	_, span := tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/OpenFile")
 	defer span.End()
 	file, err := parquet.OpenFile(
 		r,
