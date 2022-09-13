@@ -24,6 +24,7 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/storage"
 	"github.com/polarsignals/frostdb/wal"
 )
 
@@ -36,7 +37,7 @@ type ColumnStore struct {
 	granuleSizeBytes     int64
 	activeMemorySize     int64
 	storagePath          string
-	bucket               objstore.Bucket
+	bucket               storage.Bucket
 	ignoreStorageOnQuery bool
 	enableWAL            bool
 
@@ -126,6 +127,13 @@ func WithSplitSize(size int) Option {
 }
 
 func WithBucketStorage(bucket objstore.Bucket) Option {
+	return func(s *ColumnStore) error {
+		s.bucket = storage.NewBucketReaderAt(bucket)
+		return nil
+	}
+}
+
+func WithStorage(bucket storage.Bucket) Option {
 	return func(s *ColumnStore) error {
 		s.bucket = bucket
 		return nil
@@ -225,7 +233,7 @@ type DB struct {
 
 	storagePath          string
 	wal                  WAL
-	bucket               objstore.Bucket
+	bucket               storage.Bucket
 	ignoreStorageOnQuery bool
 	// Databases monotonically increasing transaction id
 	tx *atomic.Uint64
@@ -280,7 +288,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 	}
 
 	if s.bucket != nil {
-		db.bucket = objstore.NewPrefixedBucket(s.bucket, db.name)
+		db.bucket = storage.NewBucketReaderAt(objstore.NewPrefixedBucket(s.bucket, db.name))
 	}
 
 	if s.enableWAL {
