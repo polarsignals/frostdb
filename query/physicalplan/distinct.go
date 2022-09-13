@@ -2,10 +2,8 @@ package physicalplan
 
 import (
 	"context"
-	"fmt"
 	"hash/maphash"
 	"sort"
-	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -17,150 +15,6 @@ import (
 )
 
 type Distinction struct {
-	pool     memory.Allocator
-	tracer   trace.Tracer
-	next     PhysicalPlan
-	columns  []logicalplan.Expr
-	hashSeed maphash.Seed
-	seen     map[uint64]struct{}
-}
-
-func (d *Distinction) Draw() *Diagram {
-	var child *Diagram
-	if d.next != nil {
-		child = d.next.Draw()
-	}
-
-	var columns []string
-	for _, c := range d.columns {
-		columns = append(columns, c.Name())
-	}
-
-	return &Diagram{Details: fmt.Sprintf("Distinction (%s)", strings.Join(columns, ",")), Child: child}
-}
-
-func Distinct(pool memory.Allocator, tracer trace.Tracer, columns []logicalplan.Expr) *Distinction {
-	return &Distinction{
-		pool:     pool,
-		tracer:   tracer,
-		columns:  columns,
-		hashSeed: maphash.MakeSeed(),
-		seen:     make(map[uint64]struct{}),
-	}
-}
-
-func (d *Distinction) SetNext(plan PhysicalPlan) {
-	d.next = plan
-}
-
-func (d *Distinction) Finish(ctx context.Context) error {
-	return d.next.Finish(ctx)
-}
-
-func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
-	// Generates high volume of spans. Comment out if needed during development.
-	// ctx, span := d.tracer.Start(ctx, "Distinction/Callback")
-	// defer span.End()
-
-	distinctFields := make([]arrow.Field, 0, 10)
-	distinctFieldHashes := make([]uint64, 0, 10)
-	distinctArrays := make([]arrow.Array, 0, 10)
-
-	for i, field := range r.Schema().Fields() {
-		for _, col := range d.columns {
-			if col.MatchColumn(field.Name) {
-				distinctFields = append(distinctFields, field)
-				distinctFieldHashes = append(distinctFieldHashes, scalar.Hash(d.hashSeed, scalar.NewStringScalar(field.Name)))
-				distinctArrays = append(distinctArrays, r.Column(i))
-			}
-		}
-	}
-
-	resBuilders := make([]array.Builder, 0, len(distinctArrays))
-	for _, arr := range distinctArrays {
-		resBuilders = append(resBuilders, array.NewBuilder(d.pool, arr.DataType()))
-	}
-	rows := int64(0)
-
-	numRows := int(r.NumRows())
-
-	colHashes := make([][]uint64, len(distinctFields))
-	for i, arr := range distinctArrays {
-		colHashes[i] = hashArray(arr)
-	}
-
-	for i := 0; i < numRows; i++ {
-		hash := uint64(0)
-		for j := range colHashes {
-			if colHashes[j][i] == 0 {
-				continue
-			}
-
-			hash = hashCombine(
-				hash,
-				hashCombine(
-					distinctFieldHashes[j],
-					colHashes[j][i],
-				),
-			)
-		}
-
-		if _, ok := d.seen[hash]; ok {
-			continue
-		}
-
-		for j, arr := range distinctArrays {
-			err := appendValue(resBuilders[j], arr, i)
-			if err != nil {
-				return err
-			}
-		}
-
-		rows++
-		d.seen[hash] = struct{}{}
-	}
-
-	if rows == 0 {
-		// No need to call anything further down the chain, no new values were
-		// seen so we can skip.
-		return nil
-	}
-
-	resArrays := make([]arrow.Array, 0, len(resBuilders))
-	for _, builder := range resBuilders {
-		resArrays = append(resArrays, builder.NewArray())
-	}
-
-	schema := arrow.NewSchema(distinctFields, nil)
-
-	distinctRecord := array.NewRecord(
-		schema,
-		resArrays,
-		rows,
-	)
-
-	err := d.next.Callback(ctx, distinctRecord)
-	distinctRecord.Release()
-	return err
-}
-
-// FinalDistinct is called by the Synchronizer, so it's not concurrency safe.
-// It batches all the callbacks and only with the Finish call releases the final record.
-func FinalDistinct(pool memory.Allocator, tracer trace.Tracer, columns []logicalplan.Expr) *FinalDistinction {
-	return &FinalDistinction{
-		pool:     pool,
-		tracer:   tracer,
-		columns:  columns,
-		hashSeed: maphash.MakeSeed(),
-
-		distinctFields:      make(map[string]arrow.Field),
-		distinctRows:        make(map[string][]int64),
-		distinctArrays:      make(map[string][]arrow.Array),
-		distinctFieldHashes: make(map[string]uint64),
-	}
-}
-
-type FinalDistinction struct {
 	next     PhysicalPlan
 	pool     memory.Allocator
 	tracer   trace.Tracer
@@ -173,25 +27,46 @@ type FinalDistinction struct {
 	distinctFieldHashes map[string]uint64
 }
 
-func (fd *FinalDistinction) Callback(ctx context.Context, r arrow.Record) error {
+// Distinct batches all the callbacks and only with the Finish call releases the final record.
+func Distinct(pool memory.Allocator, tracer trace.Tracer, columns []logicalplan.Expr) *Distinction {
+	return &Distinction{
+		pool:     pool,
+		tracer:   tracer,
+		columns:  columns,
+		hashSeed: maphash.MakeSeed(),
+
+		distinctFields:      make(map[string]arrow.Field),
+		distinctRows:        make(map[string][]int64),
+		distinctArrays:      make(map[string][]arrow.Array),
+		distinctFieldHashes: make(map[string]uint64),
+	}
+}
+
+func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 	for i, field := range r.Schema().Fields() {
-		fd.distinctFields[field.Name] = field
-		fd.distinctRows[field.Name] = append(fd.distinctRows[field.Name], r.NumRows())
-		fd.distinctArrays[field.Name] = append(fd.distinctArrays[field.Name], r.Column(i))
-		fd.distinctFieldHashes[field.Name] = scalar.Hash(fd.hashSeed, scalar.NewStringScalar(field.Name))
+		arr := r.Column(i)
+		arr.Retain()
+
+		d.distinctFields[field.Name] = field
+		d.distinctRows[field.Name] = append(d.distinctRows[field.Name], r.NumRows())
+		d.distinctArrays[field.Name] = append(d.distinctArrays[field.Name], arr)
+		d.distinctFieldHashes[field.Name] = scalar.Hash(d.hashSeed, scalar.NewStringScalar(field.Name))
 	}
 
 	return nil
 }
 
-func (fd *FinalDistinction) Finish(ctx context.Context) error {
-	if len(fd.distinctFields) == 0 {
+func (d *Distinction) Finish(ctx context.Context) error {
+	ctx, span := d.tracer.Start(ctx, "Distinction/Finish")
+	defer span.End()
+
+	if len(d.distinctFields) == 0 {
 		// We have nothing to do here, we can call the next Finish right away.
-		return fd.next.Finish(ctx)
+		return d.next.Finish(ctx)
 	}
 
-	distinctFields := make([]arrow.Field, 0, len(fd.distinctFields))
-	for _, f := range fd.distinctFields {
+	distinctFields := make([]arrow.Field, 0, len(d.distinctFields))
+	for _, f := range d.distinctFields {
 		distinctFields = append(distinctFields, f)
 	}
 	// sort the field names as the map is random and unsorted
@@ -200,11 +75,11 @@ func (fd *FinalDistinction) Finish(ctx context.Context) error {
 	})
 
 	colHashes := make(map[string][][]uint64, len(distinctFields))
-	for name, f := range fd.distinctFields {
+	for name, f := range d.distinctFields {
 		if colHashes[name] == nil {
-			colHashes[name] = make([][]uint64, len(fd.distinctArrays[name]))
+			colHashes[name] = make([][]uint64, len(d.distinctArrays[name]))
 		}
-		for i, arr := range fd.distinctArrays[f.Name] {
+		for i, arr := range d.distinctArrays[f.Name] {
 			colHashes[name][i] = hashArray(arr)
 		}
 	}
@@ -234,7 +109,7 @@ func (fd *FinalDistinction) Finish(ctx context.Context) error {
 				hash = hashCombine(
 					hash,
 					hashCombine(
-						fd.distinctFieldHashes[f.Name],
+						d.distinctFieldHashes[f.Name],
 						colHashes[f.Name][i][j],
 					),
 				)
@@ -244,9 +119,9 @@ func (fd *FinalDistinction) Finish(ctx context.Context) error {
 				continue
 			}
 
-			for fn, arrs := range fd.distinctArrays {
+			for fn, arrs := range d.distinctArrays {
 				if distinctBuilder[fn] == nil {
-					distinctBuilder[fn] = array.NewBuilder(fd.pool, arrs[i].DataType())
+					distinctBuilder[fn] = array.NewBuilder(d.pool, arrs[i].DataType())
 				}
 				err := appendValue(distinctBuilder[fn], arrs[i], j)
 				if err != nil {
@@ -270,19 +145,19 @@ func (fd *FinalDistinction) Finish(ctx context.Context) error {
 		int64(len(seen)),
 	)
 
-	err := fd.next.Callback(ctx, distinctRecord)
+	err := d.next.Callback(ctx, distinctRecord)
 	distinctRecord.Release()
 	if err != nil {
 		return err
 	}
 
-	return fd.next.Finish(ctx)
+	return d.next.Finish(ctx)
 }
 
-func (fd *FinalDistinction) SetNext(next PhysicalPlan) {
-	fd.next = next
+func (d *Distinction) SetNext(next PhysicalPlan) {
+	d.next = next
 }
 
-func (fd *FinalDistinction) Draw() *Diagram {
+func (d *Distinction) Draw() *Diagram {
 	return &Diagram{}
 }

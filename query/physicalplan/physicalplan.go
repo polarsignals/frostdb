@@ -254,14 +254,14 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 
 			phyPlans = make([]PhysicalPlan, 0, concurrency)
 			for i := 0; i < concurrency; i++ {
-				phyPlans = append(phyPlans, FinalDistinct(pool, tracer, plan.Distinct.Exprs))
+				phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
 			}
 
 			// If the prev is 1 then we need a synchronizer to handle the concurrency
 			// writing into a single callback of the previous PhysicalPlan.
 			if len(prev) == 1 {
 				// This Distinct is going to do a final distinct on the previous concurrent Distincts.
-				synchronizeDistinct := FinalDistinct(pool, tracer, plan.Distinct.Exprs)
+				synchronizeDistinct := Distinct(pool, tracer, plan.Distinct.Exprs)
 				synchronizeDistinct.SetNext(prev[0])
 
 				synchronizer := Synchronize(len(phyPlans))

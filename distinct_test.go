@@ -123,7 +123,7 @@ func TestDistinct(t *testing.T) {
 				// label1, label2, label3
 				{"value1", "value1", ""},       // row
 				{"value2", "value2", "value3"}, // row
-				{"value3", "value1", ""},       // row
+				//{"value3", "value1", ""},       // row
 			},
 		},
 		"label1,label2,label4": {
@@ -169,7 +169,7 @@ func TestDistinct(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	// t.Parallel()
+	t.Parallel()
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			seenRows := map[string]struct{}{}
