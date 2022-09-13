@@ -10,8 +10,8 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
-	"github.com/thanos-io/objstore"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 )
@@ -73,13 +73,11 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, last
 
 		span.SetAttributes(attribute.Int64("size", attribs.Size))
 
-		b := &BucketReaderAt{
-			name:   blockName,
-			ctx:    ctx,
-			Bucket: t.db.bucket,
+		r, err := t.db.bucket.GetReaderAt(ctx, blockName)
+		if err != nil {
+			return err
 		}
-
-		file, err := parquet.OpenFile(b, attribs.Size)
+		file, err := openFile(ctx, r, attribs.Size, t.tracer)
 		if err != nil {
 			return err
 		}
@@ -101,8 +99,6 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, last
 
 		n++
 		for i := 0; i < buf.NumRowGroups(); i++ {
-			span.AddEvent("rowgroup")
-
 			rg := buf.DynamicRowGroup(i)
 			var mayContainUsefulData bool
 			mayContainUsefulData, err = filter.Eval(rg)
@@ -121,22 +117,17 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, last
 	return err
 }
 
-// BucketReaderAt is an objstore.Bucket wrapper that supports the io.ReaderAt interface.
-type BucketReaderAt struct {
-	name string
-	ctx  context.Context
-	objstore.Bucket
-}
-
-// ReadAt implements the io.ReaderAt interface.
-func (b *BucketReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
-	rc, err := b.GetRange(b.ctx, b.name, off, int64(len(p)))
+func openFile(ctx context.Context, r io.ReaderAt, size int64, tracer trace.Tracer) (*parquet.File, error) {
+	ctx, span := tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/OpenFile")
+	defer span.End()
+	file, err := parquet.OpenFile(
+		r,
+		size,
+		parquet.ReadBufferSize(5*1024*1024), // 5MB read buffers
+	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer func() {
-		err = rc.Close()
-	}()
 
-	return rc.Read(p)
+	return file, nil
 }
