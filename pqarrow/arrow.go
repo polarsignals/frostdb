@@ -609,22 +609,28 @@ func (c *ParquetConverter) writeColumnToArray(
 				readPages = true
 				break
 			}
+
+			minValue := globalMinValue
+			if pageIdx != 0 {
+				// MinValue/MaxValue are relatively expensive calls, so we avoid
+				// them as much as possible.
+				minValue = columnIndex.MinValue(pageIdx)
+			}
+			maxValue := columnIndex.MaxValue(pageIdx)
 			if columnType.Length() == 0 {
 				// Variable-length datatype. The index can only be trusted if
 				// the size of the values is less than the column index size,
 				// since we cannot otherwise know if the index values are
 				// truncated.
-				if len(columnIndex.MinValue(pageIdx).Bytes()) >= dynparquet.ColumnIndexSize ||
-					len(columnIndex.MaxValue(pageIdx).Bytes()) >= dynparquet.ColumnIndexSize {
+				if len(minValue.Bytes()) >= dynparquet.ColumnIndexSize ||
+					len(maxValue.Bytes()) >= dynparquet.ColumnIndexSize {
 					readPages = true
 					break
 				}
 			}
 
-			minValue := columnIndex.MinValue(pageIdx)
-			maxValue := columnIndex.MaxValue(pageIdx)
 			if columnType.Compare(minValue, maxValue) != 0 ||
-				columnType.Compare(globalMinValue, minValue) != 0 {
+				(pageIdx != 0 && columnType.Compare(globalMinValue, minValue) != 0) {
 				readPages = true
 				break
 			}
