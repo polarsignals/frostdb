@@ -288,7 +288,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 	}
 
 	if s.bucket != nil {
-		db.bucket = storage.NewBucketReaderAt(objstore.NewPrefixedBucket(s.bucket, db.name))
+		db.bucket = storage.NewPrefixedBucket(s.bucket, db.name)
 	}
 
 	if s.enableWAL {
