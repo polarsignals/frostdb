@@ -2,9 +2,11 @@ package frostdb
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -75,35 +77,69 @@ func TestDistinct(t *testing.T) {
 
 	tests := map[string]struct {
 		columns []logicalplan.Expr
-		rows    int64
+		values  [][]string
 	}{
+		// Empty strings are actually NULL in the DB.
 		"label1": {
 			columns: logicalplan.Cols("labels.label1"),
-			rows:    3,
+			values: [][]string{
+				// label1
+				{"value1"}, // row 0
+				{"value2"}, // row 1
+				{"value3"}, // row 2
+			},
 		},
 		"label2": {
 			columns: logicalplan.Cols("labels.label2"),
-			rows:    1,
+			values: [][]string{
+				// label2
+				{"value2"}, // row
+			},
 		},
 		"label1,label2": {
 			columns: logicalplan.Cols("labels.label1", "labels.label2"),
-			rows:    3,
+			values: [][]string{
+				// label1, label2
+				{"value1", "value2"}, // row
+				{"value2", "value2"}, // row
+				{"value3", "value2"}, // row
+			},
 		},
 		"label1,label2,label3": {
 			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label3"),
-			rows:    3,
+			values: [][]string{
+				// label1, label2, label3
+				{"value1", "value2", ""},       // row
+				{"value2", "value2", "value3"}, // row
+				{"value3", "value2", ""},       // row
+			},
 		},
 		"label1,label2,label4": {
 			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label4"),
-			rows:    3,
+			values: [][]string{
+				// label1,label2,label4
+				{"value1", "value2", ""},       // row
+				{"value2", "value2", ""},       // row
+				{"value3", "value2", "value4"}, // row
+			},
 		},
-		"label1,label2,label3, label4": {
+		"label1,label2,label3,label4": {
 			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label3", "labels.label4"),
-			rows:    3,
+			values: [][]string{
+				// label1,label2,label3,label4
+				{"value1", "value2", "", ""},       // row
+				{"value2", "value2", "value3", ""}, // row
+				{"value3", "value2", "", "value4"}, // row
+			},
 		},
 		"labels": {
 			columns: []logicalplan.Expr{logicalplan.DynCol("labels")},
-			rows:    3,
+			values: [][]string{
+				// label1,label2,label3,label4
+				{"value1", "value2", "", ""},       // row
+				{"value2", "value2", "value3", ""}, // row
+				{"value3", "value2", "", "value4"}, // row
+			},
 		},
 	}
 
@@ -115,17 +151,30 @@ func TestDistinct(t *testing.T) {
 	t.Parallel()
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			rows := int64(0)
+			seenRows := map[string]struct{}{}
+			for _, values := range test.values {
+				seenRows[strings.Join(values, ",")] = struct{}{}
+			}
+
 			err := engine.ScanTable("test").
 				Distinct(test.columns...).
 				Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
-					rows += ar.NumRows()
 					defer ar.Release()
+					require.Equal(t, len(test.values), int(ar.NumRows()))
+					require.Equal(t, len(test.values[0]), int(ar.NumCols()))
+
+					for row := 0; row < int(ar.NumRows()); row++ {
+						rowValues := make([]string, 0, ar.NumCols())
+						for col := 0; col < int(ar.NumCols()); col++ {
+							rowValues = append(rowValues, ar.Column(col).(*array.Binary).ValueString(row))
+						}
+						delete(seenRows, strings.Join(rowValues, ","))
+					}
 
 					return nil
 				})
 			require.NoError(t, err)
-			require.Equal(t, test.rows, rows)
+			require.Lenf(t, seenRows, 0, "Not all expected rows were seen")
 		})
 	}
 }
