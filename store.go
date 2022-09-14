@@ -11,7 +11,6 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 )
@@ -73,11 +72,7 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, last
 
 		span.SetAttributes(attribute.Int64("size", attribs.Size))
 
-		r, err := t.db.bucket.GetReaderAt(ctx, blockName)
-		if err != nil {
-			return err
-		}
-		file, err := openFile(ctx, r, attribs.Size, t.tracer)
+		file, err := t.openBlockFile(ctx, blockName, attribs.Size)
 		if err != nil {
 			return err
 		}
@@ -117,9 +112,14 @@ func (t *Table) IterateBucketBlocks(ctx context.Context, logger log.Logger, last
 	return err
 }
 
-func openFile(ctx context.Context, r io.ReaderAt, size int64, tracer trace.Tracer) (*parquet.File, error) {
-	_, span := tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/OpenFile")
+func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64) (*parquet.File, error) {
+	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/OpenFile")
 	defer span.End()
+	r, err := t.db.bucket.GetReaderAt(ctx, blockName)
+	if err != nil {
+		return nil, err
+	}
+
 	file, err := parquet.OpenFile(
 		r,
 		size,
