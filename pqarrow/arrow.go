@@ -158,6 +158,10 @@ type ParquetConverter struct {
 	// Convert call. This avoids performing duplicate work (e.g. finding
 	// distinct column indices).
 	prevSchema *parquet.Schema
+
+	// scratchValues is an array of parquet.Values that is reused during
+	// decoding to avoid allocations.
+	scratchValues []parquet.Value
 }
 
 func NewParquetConverter(
@@ -229,7 +233,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 				field := parquetFields[parquetIndex]
 				name := field.Name()
 				if c.distinctColumns[0].MatchColumn(name) {
-					if err := parquetColumnToArrowArray(
+					if err := c.writeColumnToArray(
 						field,
 						parquetColumns[parquetIndex],
 						true,
@@ -266,7 +270,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			if err := parquetColumnToArrowArray(
+			if err := c.writeColumnToArray(
 				parquetFields[parquetIndex],
 				parquetColumns[parquetIndex],
 				false,
@@ -379,7 +383,7 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 		case <-ctx.Done():
 			return false, ctx.Err()
 		default:
-			optimizationApplied, err := writeDistinctSingleColumn(
+			optimizationApplied, err := c.writeDistinctSingleColumn(
 				parquetFields[info.parquetIndex],
 				parquetColumns[info.parquetIndex],
 				c.distinctColumns[i],
@@ -449,7 +453,7 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 // convenience (TODO(asubiotto): This should be cleaned up by having
 // binaryDistinctExpr write to a writer instead of a builder or extending the
 // writer interface).
-func writeDistinctSingleColumn(
+func (c *ParquetConverter) writeDistinctSingleColumn(
 	node parquet.Node,
 	columnChunk parquet.ColumnChunk,
 	distinctExpr logicalplan.Expr,
@@ -464,7 +468,7 @@ func writeDistinctSingleColumn(
 			info,
 		)
 	case *logicalplan.Column:
-		if err := parquetColumnToArrowArray(
+		if err := c.writeColumnToArray(
 			node,
 			columnChunk,
 			true,
@@ -566,29 +570,6 @@ func rowBasedParquetRowGroupToArrowRecord(
 	return nil
 }
 
-// parquetColumnToArrowArray converts a single parquet column to an arrow array
-// and writes the result to builder. If a column is a repeated type, it
-// automatically boxes it into the appropriate arrow equivalent.
-func parquetColumnToArrowArray(
-	n parquet.Node,
-	c parquet.ColumnChunk,
-	dictionaryOnly bool,
-	w writer.ValueWriter,
-) error {
-	if err := writeColumnToArray(
-		n.Type(),
-		c,
-		n.Optional(),
-		n.Repeated(),
-		w,
-		dictionaryOnly,
-	); err != nil {
-		return fmt.Errorf("writePagesToArray failed: %v", err)
-	}
-
-	return nil
-}
-
 // writeColumnToArray writes the values of a single parquet column to an arrow
 // array. It will attempt to make shortcuts if possible to not read the whole
 // column. Possilibities why it might not read the whole column:
@@ -600,14 +581,14 @@ func parquetColumnToArrowArray(
 //
 // If the type is a repeated type it will also write the starting offsets of
 // lists to the list builder.
-func writeColumnToArray(
-	t parquet.Type,
+func (c *ParquetConverter) writeColumnToArray(
+	n parquet.Node,
 	columnChunk parquet.ColumnChunk,
-	optional bool,
-	repeated bool,
-	w writer.ValueWriter,
 	dictionaryOnly bool,
+	w writer.ValueWriter,
 ) error {
+	optional := n.Optional()
+	repeated := n.Repeated()
 	if !repeated && dictionaryOnly {
 		// Check all the page indexes of the column chunk. If they are
 		// trustworthy and there is only one value contained in the column
@@ -685,15 +666,19 @@ func writeColumnToArray(
 				return fmt.Errorf("write page: %w", err)
 			}
 		default:
-			values := make([]parquet.Value, p.NumValues())
-			reader := p.Values()
+			if n := p.NumValues(); int64(cap(c.scratchValues)) < n {
+				c.scratchValues = make([]parquet.Value, n)
+			} else {
+				c.scratchValues = c.scratchValues[:n]
+			}
 
 			// We're reading all values in the page so we always expect an io.EOF.
-			if _, err := reader.ReadValues(values); err != nil && err != io.EOF {
+			reader := p.Values()
+			if _, err := reader.ReadValues(c.scratchValues); err != nil && err != io.EOF {
 				return fmt.Errorf("read values: %w", err)
 			}
 
-			w.Write(values)
+			w.Write(c.scratchValues)
 		}
 	}
 
