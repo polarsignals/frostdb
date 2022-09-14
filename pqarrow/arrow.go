@@ -122,6 +122,9 @@ type distinctColInfo struct {
 	// expression reads from.
 	parquetIndex int
 
+	// v may be used in cases to store a literal expression value.
+	v *parquet.Value
+
 	// w and b are fields that the output is written to.
 	w writer.ValueWriter
 	b array.Builder
@@ -380,8 +383,7 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 				parquetFields[info.parquetIndex],
 				parquetColumns[info.parquetIndex],
 				c.distinctColumns[i],
-				info.w,
-				info.b,
+				info,
 			)
 			if err != nil || !optimizationApplied {
 				return optimizationApplied, err
@@ -451,8 +453,7 @@ func writeDistinctSingleColumn(
 	node parquet.Node,
 	columnChunk parquet.ColumnChunk,
 	distinctExpr logicalplan.Expr,
-	writer writer.ValueWriter,
-	builder array.Builder,
+	info *distinctColInfo,
 ) (bool, error) {
 	switch expr := distinctExpr.(type) {
 	case *logicalplan.BinaryExpr:
@@ -460,14 +461,14 @@ func writeDistinctSingleColumn(
 			node.Type(),
 			columnChunk,
 			expr,
-			builder,
+			info,
 		)
 	case *logicalplan.Column:
 		if err := parquetColumnToArrowArray(
 			node,
 			columnChunk,
 			true,
-			writer,
+			info.w,
 		); err != nil {
 			return false, err
 		}
@@ -781,26 +782,28 @@ func binaryDistinctExpr(
 	typ parquet.Type,
 	columnChunk parquet.ColumnChunk,
 	expr *logicalplan.BinaryExpr,
-	builder array.Builder,
+	info *distinctColInfo,
 ) (bool, error) {
-	var (
-		value parquet.Value
-		err   error
-	)
-	// TODO(asubiotto): We're re-evaluating the expression value for each row
-	// group.
-	expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
-		switch e := expr.(type) {
-		case *logicalplan.LiteralExpr:
-			value, err = ArrowScalarToParquetValue(e.Value)
-			return false
+	if info.v == nil {
+		var (
+			value parquet.Value
+			err   error
+		)
+		expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+			switch e := expr.(type) {
+			case *logicalplan.LiteralExpr:
+				value, err = ArrowScalarToParquetValue(e.Value)
+				return false
+			}
+			return true
+		}))
+		if err != nil {
+			return false, err
 		}
-		return true
-	}))
-	if err != nil {
-		return false, err
+		info.v = &value
 	}
 
+	value := *info.v
 	switch expr.Op {
 	case logicalplan.OpGt:
 		index := columnChunk.ColumnIndex()
@@ -811,7 +814,7 @@ func binaryDistinctExpr(
 		)
 
 		if allGreater || noneGreater {
-			b := builder.(*array.BooleanBuilder)
+			b := info.b.(*array.BooleanBuilder)
 			if allGreater {
 				b.Append(true)
 			}
