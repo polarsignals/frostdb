@@ -46,7 +46,7 @@ func (b *FileReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, err
 	}
 	defer func() {
-		err = rc.Close()
+		rc.Close()
 	}()
 
 	total := 0
