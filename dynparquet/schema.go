@@ -546,6 +546,7 @@ func (b *Buffer) Clone() (*Buffer, error) {
 	)
 
 	rows := b.buffer.Rows()
+	defer rows.Close()
 	for {
 		rowBuf := make([]parquet.Row, 64)
 		n, err := rows.ReadRows(rowBuf)
@@ -653,6 +654,7 @@ func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
 	//}
 
 	rows := buffer.Rows()
+	defer rows.Close()
 	rowBuf := rowBufPool.Get().([]parquet.Row)
 	defer rowBufPool.Put(rowBuf[:cap(rowBuf)])
 
