@@ -441,18 +441,6 @@ func (t *Table) View(ctx context.Context, fn func(ctx context.Context, tx uint64
 	return fn(ctx, tx)
 }
 
-// recordBuilderExceedsNumRows assumes all the RecordBuilder's fields have equal
-// length and returns whether at least one field is longer than or equal to
-// threshold.
-func recordBuilderExceedsNumRows(builder *array.RecordBuilder, threshold int) bool {
-	for _, f := range builder.Fields() {
-		if f.Len() >= threshold {
-			return true
-		}
-	}
-	return false
-}
-
 // prepareForFlush sets the nullability on a Record column if the type is a
 // ListType.
 // TODO: Is this a bug in arrow? We already set the nullability in
@@ -476,6 +464,17 @@ func (t *Table) Iterator(
 	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
 ) error {
+	if schema == nil {
+		return errors.New("arrow output schema not provided")
+	}
+	if len(schema.Fields()) == 0 {
+		// An empty schema might be surprising, but this can happen in cases
+		// where the table was empty or all row groups were filtered out when
+		// calling ArrowSchema. In any case, the semantics of an empty schema
+		// are to emit zero rows.
+		return nil
+	}
+
 	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
 	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
@@ -496,47 +495,21 @@ func (t *Table) Iterator(
 	// can decide to sort if they need to in order to exploit the
 	// characteristics of sorted data.
 
-	var builder *array.RecordBuilder
-	// builderBufferSize specifies a threshold of records past which the
+	converter := pqarrow.NewParquetConverter(pool, schema, iterOpts.Filter, iterOpts.DistinctColumns)
+	defer converter.Close()
+	// bufferSize specifies a threshold of records past which the
 	// buffered results are flushed to the next operator.
-	const builderBufferSize = 1024
+	const bufferSize = 1024
 	for _, rg := range rowGroups {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			if schema == nil {
-				schema, err = pqarrow.ParquetRowGroupToArrowSchema(
-					ctx,
-					rg,
-					iterOpts.PhysicalProjection,
-					iterOpts.Projection,
-					iterOpts.Filter,
-					iterOpts.DistinctColumns,
-				)
-				if err != nil {
-					return err
-				}
-			}
-
-			if builder == nil {
-				builder = array.NewRecordBuilder(pool, schema)
-				defer builder.Release()
-			}
-
-			if err := pqarrow.ParquetRowGroupToArrowRecord(
-				ctx,
-				pool,
-				rg,
-				schema,
-				iterOpts.Filter,
-				iterOpts.DistinctColumns,
-				builder,
-			); err != nil {
+			if err := converter.Convert(ctx, rg); err != nil {
 				return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 			}
-			if recordBuilderExceedsNumRows(builder, builderBufferSize) {
-				r := builder.NewRecord()
+			if converter.NumRows() >= bufferSize {
+				r := converter.NewRecord()
 				prepareForFlush(r, rg.Schema())
 				if err := callback(ctx, r); err != nil {
 					return err
@@ -546,9 +519,8 @@ func (t *Table) Iterator(
 		}
 	}
 
-	if builder != nil && recordBuilderExceedsNumRows(builder, 0) {
-		// Flush the builder.
-		r := builder.NewRecord()
+	if len(rowGroups) > 0 {
+		r := converter.NewRecord()
 		prepareForFlush(r, rowGroups[0].Schema())
 		if err := callback(ctx, r); err != nil {
 			return err

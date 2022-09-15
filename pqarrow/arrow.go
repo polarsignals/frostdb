@@ -97,6 +97,386 @@ func includedProjection(projections []logicalplan.Expr, name string) bool {
 	return false
 }
 
+type parquetConverterMode int
+
+const (
+	// normal is the ParquetConverter's normal execution mode. No special
+	// optimizations are applied.
+	normal parquetConverterMode = iota
+	// singleDistinctColumn is an execution mode when a single distinct column
+	// is specified with no filter.
+	singleDistinctColumn
+	// multiDistinctColumn is an execution mode where there are multiple
+	// distinct columns specified with no filter. Note that only "simple"
+	// distinct expressions are supported in this mode (i.e. multiple columns
+	// are not specified in the same distinct expression).
+	multiDistinctColumn
+)
+
+// singleDistinctColumn is unused for now, see TODO in execution code.
+var _ = singleDistinctColumn
+
+// distinctColInfo stores metadata for a distinct expression.
+type distinctColInfo struct {
+	// parquetIndex is the index of the physical parquet column the distinct
+	// expression reads from.
+	parquetIndex int
+
+	// w and b are fields that the output is written to.
+	w writer.ValueWriter
+	b array.Builder
+}
+
+// ParquetConverter converts parquet.RowGroups into arrow.Records. The converted
+// results are accumulated in the converter and can be retrieved by calling
+// NewRecord, at which point the converter is reset.
+type ParquetConverter struct {
+	mode parquetConverterMode
+
+	pool       memory.Allocator
+	filterExpr logicalplan.Expr
+	// distinctColumns and distinctColInfos have a 1:1 mapping.
+	distinctColumns  []logicalplan.Expr
+	distinctColInfos []*distinctColInfo
+
+	// Output fields, for each outputSchema.Field(i) there will always be a
+	// corresponding builder.Field(i).
+	outputSchema *arrow.Schema
+	builder      *array.RecordBuilder
+
+	// writers are wrappers over a subset of builder.Fields().
+	writers []writer.ValueWriter
+
+	// parquetIndexMapping is a mapping from an index into writers to a
+	// corresponding index into the parquet fields to be read.
+	parquetIndexMapping []int
+
+	// prevSchema is stored to check for a different parquet schema on each
+	// Convert call. This avoids performing duplicate work (e.g. finding
+	// distinct column indices).
+	prevSchema *parquet.Schema
+}
+
+func NewParquetConverter(
+	pool memory.Allocator,
+	outputSchema *arrow.Schema,
+	filterExpr logicalplan.Expr,
+	distinctColumns []logicalplan.Expr,
+) *ParquetConverter {
+	c := &ParquetConverter{
+		mode:             normal,
+		pool:             pool,
+		outputSchema:     outputSchema,
+		filterExpr:       filterExpr,
+		distinctColumns:  distinctColumns,
+		distinctColInfos: make([]*distinctColInfo, len(distinctColumns)),
+		builder:          array.NewRecordBuilder(pool, outputSchema),
+	}
+
+	if filterExpr == nil && len(distinctColumns) != 0 {
+		simpleDistinctExprs := true
+		for _, distinctColumn := range distinctColumns {
+			if _, ok := distinctColumn.(*logicalplan.DynamicColumn); ok ||
+				len(distinctColumn.ColumnsUsedExprs()) != 1 {
+				simpleDistinctExprs = false
+				break
+			}
+		}
+		if simpleDistinctExprs {
+			// TODO(asubiotto): Note that the singleDistinctColumn mode is not
+			// used yet given a bug in the current optimization (it was never
+			// executed).
+			c.mode = multiDistinctColumn
+		}
+	}
+
+	return c
+}
+
+func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) error {
+	if _, ok := rg.(*dynparquet.MergedRowGroup); ok {
+		return rowBasedParquetRowGroupToArrowRecord(ctx, c.pool, rg, c.outputSchema, c.builder)
+	}
+
+	parquetSchema := rg.Schema()
+	parquetColumns := rg.ColumnChunks()
+	parquetFields := parquetSchema.Fields()
+
+	if !parquetSchemaEqual(c.prevSchema, parquetSchema) {
+		if err := c.schemaChanged(parquetFields); err != nil {
+			return err
+		}
+		c.prevSchema = parquetSchema
+	}
+
+	if c.filterExpr == nil &&
+		len(c.distinctColumns) == 0 &&
+		SingleMatchingColumn(c.distinctColumns, parquetFields) {
+		// TODO(asubiotto): Note that the above if check is always false. This
+		// should be changed to len(c.distinctColumns) == 1, but this currently
+		// results in a panic. To be investigated.
+		// We can use the faster path for a single distinct column by just
+		// writing its dictionary.
+		for i := range c.writers {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				parquetIndex := c.parquetIndexMapping[i]
+				field := parquetFields[parquetIndex]
+				name := field.Name()
+				if c.distinctColumns[0].MatchColumn(name) {
+					if err := parquetColumnToArrowArray(
+						field,
+						parquetColumns[parquetIndex],
+						true,
+						c.writers[i],
+					); err != nil {
+						return fmt.Errorf("convert parquet column to arrow array: %w", err)
+					}
+				}
+			}
+		}
+	}
+	if c.mode == multiDistinctColumn {
+		// Since we're not filtering, we can use a faster path for distinct
+		// columns. If all the distinct columns are dictionary encoded, we can
+		// check their dictionaries and if all of them have a single value, we
+		// can just return a single row with each of their values.
+		appliedOptimization, err := c.writeDistinctAllColumns(
+			ctx,
+			parquetFields,
+			parquetColumns,
+		)
+		if err != nil {
+			return err
+		}
+		if appliedOptimization {
+			return nil
+		}
+		// If we get here, we couldn't use the fast path.
+	}
+
+	for i := range c.writers {
+		parquetIndex := c.parquetIndexMapping[i]
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			if err := parquetColumnToArrowArray(
+				parquetFields[parquetIndex],
+				parquetColumns[parquetIndex],
+				false,
+				c.writers[i],
+			); err != nil {
+				return fmt.Errorf("convert parquet column to arrow array: %w", err)
+			}
+		}
+	}
+
+	maxLen, _, anomaly := recordBuilderLength(c.builder)
+	if !anomaly {
+		return nil
+	}
+
+	for _, field := range c.builder.Fields() {
+		if fieldLen := field.Len(); fieldLen < maxLen {
+			// If the column is not the same length as the maximum length
+			// column, we need to append NULL as often as we have rows
+			// TODO: Is there a faster or better way?
+			for i := 0; i < maxLen-fieldLen; i++ {
+				field.AppendNull()
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *ParquetConverter) NumRows() int {
+	// NumRows assumes all fields have the same length. If not, this is a bug.
+	return c.builder.Field(0).Len()
+}
+
+func (c *ParquetConverter) NewRecord() arrow.Record {
+	return c.builder.NewRecord()
+}
+
+func (c *ParquetConverter) Close() {
+	if c.builder != nil {
+		c.builder.Release()
+	}
+}
+
+// schemaChanged is called when a rowgroup to convert has a different schema
+// than previously seen. This causes a recalculation of helper fields.
+func (c *ParquetConverter) schemaChanged(parquetFields []parquet.Field) error {
+	c.writers = c.writers[:0]
+	c.parquetIndexMapping = c.parquetIndexMapping[:0]
+	parquetIndexToWriterMap := make(map[int]writer.ValueWriter)
+	for i, field := range parquetFields {
+		indices := c.outputSchema.FieldIndices(field.Name())
+		if len(indices) == 0 {
+			// This column can be skipped, it's not needed by the output.
+			continue
+		}
+
+		_, newWriter, err := convert.ParquetNodeToTypeWithWriterFunc(field)
+		if err != nil {
+			return err
+		}
+		writer := newWriter(c.builder.Field(indices[0]), 0)
+		c.writers = append(c.writers, writer)
+		c.parquetIndexMapping = append(c.parquetIndexMapping, i)
+		parquetIndexToWriterMap[i] = writer
+	}
+
+	if c.mode != multiDistinctColumn {
+		return nil
+	}
+
+	// For distinct columns, we need to iterate to find the physical parquet
+	// column to read from. Note that a sanity check has already been completed
+	// in the constructor to ensure that only one column per distinct expression
+	// is read in multiDistinctColumn mode.
+	for i := range c.distinctColumns {
+		c.distinctColInfos[i] = nil
+	}
+
+	for i, expr := range c.distinctColumns {
+		for j, field := range parquetFields {
+			if !expr.ColumnsUsedExprs()[0].MatchColumn(field.Name()) {
+				continue
+			}
+
+			c.distinctColInfos[i] = &distinctColInfo{
+				parquetIndex: j,
+				w:            parquetIndexToWriterMap[j],
+				b:            c.builder.Field(c.outputSchema.FieldIndices(expr.Name())[0]),
+			}
+		}
+	}
+	return nil
+}
+
+func (c *ParquetConverter) writeDistinctAllColumns(
+	ctx context.Context,
+	parquetFields []parquet.Field,
+	parquetColumns []parquet.ColumnChunk,
+) (bool, error) {
+	initialLength := c.NumRows()
+
+	for i, info := range c.distinctColInfos {
+		if info == nil {
+			// The parquet field the distinct expression operates on was not
+			// found in this row group, skip it.
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		default:
+			optimizationApplied, err := writeDistinctSingleColumn(
+				parquetFields[info.parquetIndex],
+				parquetColumns[info.parquetIndex],
+				c.distinctColumns[i],
+				info.w,
+				info.b,
+			)
+			if err != nil || !optimizationApplied {
+				return optimizationApplied, err
+			}
+		}
+	}
+
+	atLeastOneRow := false
+	for _, field := range c.builder.Fields() {
+		if field.Len() > initialLength {
+			atLeastOneRow = true
+			break
+		}
+	}
+	if !atLeastOneRow {
+		// Exit early if no rows were written.
+		return true, nil
+	}
+
+	newLength, maxLengthFields, anomaly := recordBuilderLength(c.builder)
+	if !anomaly {
+		// All columns have the same number of values.
+		return true, nil
+	}
+
+	if newLength > initialLength+1 && maxLengthFields > 1 {
+		// Can't apply the optimization as more than one column has more than
+		// one distinct value. We can't know the combination of distinct values.
+		for _, field := range c.builder.Fields() {
+			if field.Len() == initialLength {
+				continue
+			}
+			resetBuilderToLength(field, initialLength)
+		}
+		return false, nil
+	}
+
+	// At this point we know there is at most one column with more than one
+	// row. Therefore we can repeat the values of the other columns as those
+	// are the only possible combinations within the rowgroup.
+
+	for _, field := range c.builder.Fields() {
+		// Columns that had no values are just backfilled with null values.
+		if fieldLen := field.Len(); fieldLen == initialLength {
+			for j := initialLength; j < newLength; j++ {
+				field.AppendNull()
+			}
+		} else if fieldLen < newLength {
+			arr := field.NewArray()
+			// TODO(asubiotto): NewArray resets the builder, copy all the values
+			// again. There *must* be a better way to do this.
+			copyArrToBuilder(field, arr, fieldLen)
+			repeatLastValue(field, arr, newLength-fieldLen)
+			arr.Release()
+		}
+	}
+	return true, nil
+}
+
+// writeDistinctSingleColumn checks if the distinct expression can be optimized
+// at the scan level and returns whether the optimization was successful or not.
+// Writer and builder point to the same memory and are both passed in for
+// convenience (TODO(asubiotto): This should be cleaned up by having
+// binaryDistinctExpr write to a writer instead of a builder or extending the
+// writer interface).
+func writeDistinctSingleColumn(
+	node parquet.Node,
+	columnChunk parquet.ColumnChunk,
+	distinctExpr logicalplan.Expr,
+	writer writer.ValueWriter,
+	builder array.Builder,
+) (bool, error) {
+	switch expr := distinctExpr.(type) {
+	case *logicalplan.BinaryExpr:
+		return binaryDistinctExpr(
+			node.Type(),
+			columnChunk,
+			expr,
+			builder,
+		)
+	case *logicalplan.Column:
+		if err := parquetColumnToArrowArray(
+			node,
+			columnChunk,
+			true,
+			writer,
+		); err != nil {
+			return false, err
+		}
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
 // ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
 // The result is appended to builder.
 func ParquetRowGroupToArrowRecord(
@@ -108,20 +488,15 @@ func ParquetRowGroupToArrowRecord(
 	distinctColumns []logicalplan.Expr,
 	builder *array.RecordBuilder,
 ) error {
-	switch rg.(type) {
-	case *dynparquet.MergedRowGroup:
-		return rowBasedParquetRowGroupToArrowRecord(ctx, pool, rg, schema, builder)
-	default:
-		return contiguousParquetRowGroupToArrowRecord(
-			ctx,
-			pool,
-			rg,
-			schema,
-			filterExpr,
-			distinctColumns,
-			builder,
-		)
-	}
+	c := NewParquetConverter(pool, schema, filterExpr, distinctColumns)
+	c.builder.Release()
+	c.builder = builder
+	defer func() {
+		c.builder = nil
+		c.Close()
+	}()
+
+	return c.Convert(ctx, rg)
 }
 
 var rowBufPool = &sync.Pool{
@@ -190,131 +565,21 @@ func rowBasedParquetRowGroupToArrowRecord(
 	return nil
 }
 
-// contiguousParquetRowGroupToArrowRecord converts a parquet row group to an
-// arrow record. The result is written to builder.
-func contiguousParquetRowGroupToArrowRecord(
-	ctx context.Context,
-	pool memory.Allocator,
-	rg parquet.RowGroup,
-	schema *arrow.Schema,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
-	builder *array.RecordBuilder,
-) error {
-	s := rg.Schema()
-	parquetColumns := rg.ColumnChunks()
-	parquetFields := s.Fields()
-
-	if filterExpr == nil && len(distinctColumns) == 0 && SingleMatchingColumn(distinctColumns, parquetFields) {
-		// We can use the faster path for a single distinct column by just
-		// writing its dictionary.
-		for i, field := range parquetFields {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				// TODO(asubiotto): builder.Field(i) will panic as soon as the
-				// if statement is modified.
-				name := field.Name()
-				if distinctColumns[0].MatchColumn(name) {
-					if err := parquetColumnToArrowArray(
-						pool,
-						field,
-						parquetColumns[i],
-						true,
-						builder.Field(i),
-					); err != nil {
-						return fmt.Errorf("convert parquet column to arrow array: %w", err)
-					}
-				}
-			}
-		}
-
-		return nil
-	}
-
-	if filterExpr == nil && len(distinctColumns) != 0 {
-		// Since we're not filtering, we can use a faster path for distinct
-		// columns. If all the distinct columns are dictionary encoded, we can
-		// check their dictionaries and if all of them have a single value, we
-		// can just return a single row with each of their values.
-		appliedOptimization, err := distinctColumnsToArrowRecord(
-			ctx,
-			pool,
-			schema,
-			parquetFields,
-			parquetColumns,
-			distinctColumns,
-			builder,
-		)
-		if err != nil {
-			return err
-		}
-		if appliedOptimization {
-			return nil
-		}
-		// If we get here, we couldn't use the fast path.
-	}
-
-	for i, parquetField := range parquetFields {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if indices := schema.FieldIndices(parquetField.Name()); len(indices) > 0 {
-				if err := parquetColumnToArrowArray(
-					pool,
-					parquetField,
-					parquetColumns[i],
-					false,
-					builder.Field(indices[0]),
-				); err != nil {
-					return fmt.Errorf("convert parquet column to arrow array: %w", err)
-				}
-			}
-		}
-	}
-
-	maxLen, _, anomaly := recordBuilderLength(builder)
-	if !anomaly {
-		return nil
-	}
-
-	for _, field := range builder.Fields() {
-		if fieldLen := field.Len(); fieldLen < maxLen {
-			// If the column is not the same length as the maximum length
-			// column, we need to append NULL as often as we have rows
-			// TODO: Is there a faster or better way?
-			for i := 0; i < maxLen-fieldLen; i++ {
-				field.AppendNull()
-			}
-		}
-	}
-
-	return nil
-}
-
 // parquetColumnToArrowArray converts a single parquet column to an arrow array
 // and writes the result to builder. If a column is a repeated type, it
 // automatically boxes it into the appropriate arrow equivalent.
 func parquetColumnToArrowArray(
-	pool memory.Allocator,
 	n parquet.Node,
 	c parquet.ColumnChunk,
 	dictionaryOnly bool,
-	builder array.Builder,
+	w writer.ValueWriter,
 ) error {
-	_, newValueWriter, err := convert.ParquetNodeToTypeWithWriterFunc(n)
-	if err != nil {
-		return fmt.Errorf("convert ParquetNodeToTypeWithWriterFunc failed: %v", err)
-	}
-
 	if err := writeColumnToArray(
 		n.Type(),
 		c,
 		n.Optional(),
 		n.Repeated(),
-		newValueWriter(builder, int(c.NumValues())),
+		w,
 		dictionaryOnly,
 	); err != nil {
 		return fmt.Errorf("writePagesToArray failed: %v", err)
@@ -474,139 +739,29 @@ func recordBuilderLength(rb *array.RecordBuilder) (maxLength, maxLengthFields in
 	return maxLength, maxLengthFields, !(maxLengthFields == len(rb.Fields()))
 }
 
-func distinctColumnsToArrowRecord(
-	ctx context.Context,
-	pool memory.Allocator,
-	schema *arrow.Schema,
-	parquetFields []parquet.Field,
-	parquetColumns []parquet.ColumnChunk,
-	distinctColumns []logicalplan.Expr,
-	builder *array.RecordBuilder,
-) (bool, error) {
-	initialLength, _, anomaly := recordBuilderLength(builder)
-	if anomaly {
-		return false, fmt.Errorf("expected all fields in record builder to have equal length")
+// parquetSchemaEqual returns whether the two input schemas are equal. For now,
+// only the field names are checked. In the future, it might be good to flesh
+// out this check and commit it upstream.
+func parquetSchemaEqual(schema1, schema2 *parquet.Schema) bool {
+	switch {
+	case schema1 == schema2:
+		return true
+	case schema1 == nil || schema2 == nil:
+		return false
+	case len(schema1.Fields()) != len(schema2.Fields()):
+		return false
 	}
-	for i, field := range parquetFields {
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		default:
-			name := field.Name()
-			for _, distinctColumn := range distinctColumns {
-				matchers := distinctColumn.ColumnsUsedExprs()
-				if len(matchers) != 1 {
-					// The expression is more complex than just a single binary
-					// expression, so we can't apply the optimization.
-					return false, nil
-				}
-				if matchers[0].MatchColumn(name) {
-					// Fast path for distinct queries.
-					optimizationApplied, err := writeDistinctColumnToArray(
-						pool,
-						field,
-						parquetColumns[i],
-						distinctColumn,
-						// Note: The builder has to be lazily passed in because
-						// the index evaluation may panic in certain cases when
-						// the optimizations cannot be applied (e.g. in the case
-						// of dynamic columns).
-						func() array.Builder {
-							return builder.Field(schema.FieldIndices(distinctColumn.Name())[0])
-						},
-					)
-					if err != nil || !optimizationApplied {
-						return optimizationApplied, err
-					}
-				}
-			}
+
+	s1Fields := schema1.Fields()
+	s2Fields := schema2.Fields()
+
+	for i := range s1Fields {
+		if s1Fields[i].Name() != s2Fields[i].Name() {
+			return false
 		}
 	}
 
-	atLeastOneRow := false
-	for _, field := range builder.Fields() {
-		if field.Len() > initialLength {
-			atLeastOneRow = true
-			break
-		}
-	}
-	if !atLeastOneRow {
-		// Exit early if no rows were written.
-		return true, nil
-	}
-
-	newLength, maxLengthFields, anomaly := recordBuilderLength(builder)
-	if !anomaly {
-		// All columns have the same number of values.
-		return true, nil
-	}
-
-	if newLength > initialLength+1 && maxLengthFields > 1 {
-		// Can't apply the optimization as more than one column has more than
-		// one distinct value. We can't know the combination of distinct values.
-		for _, field := range builder.Fields() {
-			if field.Len() == initialLength {
-				continue
-			}
-			resetBuilderToLength(field, initialLength)
-		}
-		return false, nil
-	}
-
-	// At this point we know there is at most one column with more than one
-	// row. Therefore we can repeat the values of the other columns as those
-	// are the only possible combinations within the rowgroup.
-
-	for _, field := range builder.Fields() {
-		// Columns that had no values are just backfilled with null values.
-		if fieldLen := field.Len(); fieldLen == initialLength {
-			for j := initialLength; j < newLength; j++ {
-				field.AppendNull()
-			}
-		} else if fieldLen < newLength {
-			arr := field.NewArray()
-			// TODO(asubiotto): NewArray resets the builder, copy all the values
-			// again. There *must* be a better way to do this.
-			copyArrToBuilder(field, arr, fieldLen)
-			repeatLastValue(field, arr, newLength-fieldLen)
-			arr.Release()
-		}
-	}
-	return true, nil
-}
-
-// writeDistinctColumnToArray checks if the distinct expression can be optimized
-// at the scan level and returns whether the optimization was successful or not.
-func writeDistinctColumnToArray(
-	pool memory.Allocator,
-	node parquet.Node,
-	columnChunk parquet.ColumnChunk,
-	distinctExpr logicalplan.Expr,
-	builder func() array.Builder,
-) (bool, error) {
-	switch expr := distinctExpr.(type) {
-	case *logicalplan.BinaryExpr:
-		return binaryDistinctExpr(
-			pool,
-			node.Type(),
-			columnChunk,
-			expr,
-			builder(),
-		)
-	case *logicalplan.Column:
-		if err := parquetColumnToArrowArray(
-			pool,
-			node,
-			columnChunk,
-			true,
-			builder(),
-		); err != nil {
-			return false, err
-		}
-		return true, nil
-	default:
-		return false, nil
-	}
+	return true
 }
 
 type PreExprVisitorFunc func(expr logicalplan.Expr) bool
@@ -623,7 +778,6 @@ func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
 // expression can be evaluated on the index without reading the page values.
 // Returns whether the optimization was successful or not.
 func binaryDistinctExpr(
-	pool memory.Allocator,
 	typ parquet.Type,
 	columnChunk parquet.ColumnChunk,
 	expr *logicalplan.BinaryExpr,
@@ -633,6 +787,8 @@ func binaryDistinctExpr(
 		value parquet.Value
 		err   error
 	)
+	// TODO(asubiotto): We're re-evaluating the expression value for each row
+	// group.
 	expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 		switch e := expr.(type) {
 		case *logicalplan.LiteralExpr:
