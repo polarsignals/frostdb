@@ -53,7 +53,7 @@ func main() {
 	thor := Simple{
 		Names: FirstLast{
 			FirstName: "Thor",
-			Surname:   "",
+			Surname:   "Hansen",
 		},
 		Value: 99,
 	}

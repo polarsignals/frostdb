@@ -1155,6 +1155,7 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 			Labels: []dynparquet.Label{
 				{Name: "label1", Value: "value1"},
 				{Name: "label2", Value: "value2"},
+				{Name: "label3", Value: "value3"},
 			},
 			Stacktrace: []uuid.UUID{
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -1178,10 +1179,8 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 		},
 	}
 
-	for _, s := range samples {
-		_, err = table.Write(ctx, s)
-		require.NoError(t, err)
-	}
+	_, err = table.Write(ctx, samples[0], samples[1], samples[2])
+	require.NoError(t, err)
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
@@ -1190,7 +1189,7 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 
 	err = engine.ScanTable("test").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
 		require.Equal(t, int64(3), ar.NumRows())
-		require.Equal(t, int64(6), ar.NumCols())
+		require.Equal(t, int64(7), ar.NumCols())
 		return nil
 	})
 	require.NoError(t, err)
