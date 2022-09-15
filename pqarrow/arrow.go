@@ -122,6 +122,9 @@ type distinctColInfo struct {
 	// expression reads from.
 	parquetIndex int
 
+	// v may be used in cases to store a literal expression value.
+	v *parquet.Value
+
 	// w and b are fields that the output is written to.
 	w writer.ValueWriter
 	b array.Builder
@@ -155,6 +158,10 @@ type ParquetConverter struct {
 	// Convert call. This avoids performing duplicate work (e.g. finding
 	// distinct column indices).
 	prevSchema *parquet.Schema
+
+	// scratchValues is an array of parquet.Values that is reused during
+	// decoding to avoid allocations.
+	scratchValues []parquet.Value
 }
 
 func NewParquetConverter(
@@ -226,7 +233,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 				field := parquetFields[parquetIndex]
 				name := field.Name()
 				if c.distinctColumns[0].MatchColumn(name) {
-					if err := parquetColumnToArrowArray(
+					if err := c.writeColumnToArray(
 						field,
 						parquetColumns[parquetIndex],
 						true,
@@ -263,7 +270,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			if err := parquetColumnToArrowArray(
+			if err := c.writeColumnToArray(
 				parquetFields[parquetIndex],
 				parquetColumns[parquetIndex],
 				false,
@@ -376,12 +383,11 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 		case <-ctx.Done():
 			return false, ctx.Err()
 		default:
-			optimizationApplied, err := writeDistinctSingleColumn(
+			optimizationApplied, err := c.writeDistinctSingleColumn(
 				parquetFields[info.parquetIndex],
 				parquetColumns[info.parquetIndex],
 				c.distinctColumns[i],
-				info.w,
-				info.b,
+				info,
 			)
 			if err != nil || !optimizationApplied {
 				return optimizationApplied, err
@@ -447,12 +453,11 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 // convenience (TODO(asubiotto): This should be cleaned up by having
 // binaryDistinctExpr write to a writer instead of a builder or extending the
 // writer interface).
-func writeDistinctSingleColumn(
+func (c *ParquetConverter) writeDistinctSingleColumn(
 	node parquet.Node,
 	columnChunk parquet.ColumnChunk,
 	distinctExpr logicalplan.Expr,
-	writer writer.ValueWriter,
-	builder array.Builder,
+	info *distinctColInfo,
 ) (bool, error) {
 	switch expr := distinctExpr.(type) {
 	case *logicalplan.BinaryExpr:
@@ -460,14 +465,14 @@ func writeDistinctSingleColumn(
 			node.Type(),
 			columnChunk,
 			expr,
-			builder,
+			info,
 		)
 	case *logicalplan.Column:
-		if err := parquetColumnToArrowArray(
+		if err := c.writeColumnToArray(
 			node,
 			columnChunk,
 			true,
-			writer,
+			info.w,
 		); err != nil {
 			return false, err
 		}
@@ -565,29 +570,6 @@ func rowBasedParquetRowGroupToArrowRecord(
 	return nil
 }
 
-// parquetColumnToArrowArray converts a single parquet column to an arrow array
-// and writes the result to builder. If a column is a repeated type, it
-// automatically boxes it into the appropriate arrow equivalent.
-func parquetColumnToArrowArray(
-	n parquet.Node,
-	c parquet.ColumnChunk,
-	dictionaryOnly bool,
-	w writer.ValueWriter,
-) error {
-	if err := writeColumnToArray(
-		n.Type(),
-		c,
-		n.Optional(),
-		n.Repeated(),
-		w,
-		dictionaryOnly,
-	); err != nil {
-		return fmt.Errorf("writePagesToArray failed: %v", err)
-	}
-
-	return nil
-}
-
 // writeColumnToArray writes the values of a single parquet column to an arrow
 // array. It will attempt to make shortcuts if possible to not read the whole
 // column. Possilibities why it might not read the whole column:
@@ -599,14 +581,14 @@ func parquetColumnToArrowArray(
 //
 // If the type is a repeated type it will also write the starting offsets of
 // lists to the list builder.
-func writeColumnToArray(
-	t parquet.Type,
+func (c *ParquetConverter) writeColumnToArray(
+	n parquet.Node,
 	columnChunk parquet.ColumnChunk,
-	optional bool,
-	repeated bool,
-	w writer.ValueWriter,
 	dictionaryOnly bool,
+	w writer.ValueWriter,
 ) error {
+	optional := n.Optional()
+	repeated := n.Repeated()
 	if !repeated && dictionaryOnly {
 		// Check all the page indexes of the column chunk. If they are
 		// trustworthy and there is only one value contained in the column
@@ -627,22 +609,28 @@ func writeColumnToArray(
 				readPages = true
 				break
 			}
+
+			minValue := globalMinValue
+			if pageIdx != 0 {
+				// MinValue/MaxValue are relatively expensive calls, so we avoid
+				// them as much as possible.
+				minValue = columnIndex.MinValue(pageIdx)
+			}
+			maxValue := columnIndex.MaxValue(pageIdx)
 			if columnType.Length() == 0 {
 				// Variable-length datatype. The index can only be trusted if
 				// the size of the values is less than the column index size,
 				// since we cannot otherwise know if the index values are
 				// truncated.
-				if len(columnIndex.MinValue(pageIdx).Bytes()) >= dynparquet.ColumnIndexSize ||
-					len(columnIndex.MaxValue(pageIdx).Bytes()) >= dynparquet.ColumnIndexSize {
+				if len(minValue.Bytes()) >= dynparquet.ColumnIndexSize ||
+					len(maxValue.Bytes()) >= dynparquet.ColumnIndexSize {
 					readPages = true
 					break
 				}
 			}
 
-			minValue := columnIndex.MinValue(pageIdx)
-			maxValue := columnIndex.MaxValue(pageIdx)
 			if columnType.Compare(minValue, maxValue) != 0 ||
-				columnType.Compare(globalMinValue, minValue) != 0 {
+				(pageIdx != 0 && columnType.Compare(globalMinValue, minValue) != 0) {
 				readPages = true
 				break
 			}
@@ -684,15 +672,19 @@ func writeColumnToArray(
 				return fmt.Errorf("write page: %w", err)
 			}
 		default:
-			values := make([]parquet.Value, p.NumValues())
-			reader := p.Values()
+			if n := p.NumValues(); int64(cap(c.scratchValues)) < n {
+				c.scratchValues = make([]parquet.Value, n)
+			} else {
+				c.scratchValues = c.scratchValues[:n]
+			}
 
 			// We're reading all values in the page so we always expect an io.EOF.
-			if _, err := reader.ReadValues(values); err != nil && err != io.EOF {
+			reader := p.Values()
+			if _, err := reader.ReadValues(c.scratchValues); err != nil && err != io.EOF {
 				return fmt.Errorf("read values: %w", err)
 			}
 
-			w.Write(values)
+			w.Write(c.scratchValues)
 		}
 	}
 
@@ -781,26 +773,28 @@ func binaryDistinctExpr(
 	typ parquet.Type,
 	columnChunk parquet.ColumnChunk,
 	expr *logicalplan.BinaryExpr,
-	builder array.Builder,
+	info *distinctColInfo,
 ) (bool, error) {
-	var (
-		value parquet.Value
-		err   error
-	)
-	// TODO(asubiotto): We're re-evaluating the expression value for each row
-	// group.
-	expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
-		switch e := expr.(type) {
-		case *logicalplan.LiteralExpr:
-			value, err = ArrowScalarToParquetValue(e.Value)
-			return false
+	if info.v == nil {
+		var (
+			value parquet.Value
+			err   error
+		)
+		expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+			switch e := expr.(type) {
+			case *logicalplan.LiteralExpr:
+				value, err = ArrowScalarToParquetValue(e.Value)
+				return false
+			}
+			return true
+		}))
+		if err != nil {
+			return false, err
 		}
-		return true
-	}))
-	if err != nil {
-		return false, err
+		info.v = &value
 	}
 
+	value := *info.v
 	switch expr.Op {
 	case logicalplan.OpGt:
 		index := columnChunk.ColumnIndex()
@@ -811,7 +805,7 @@ func binaryDistinctExpr(
 		)
 
 		if allGreater || noneGreater {
-			b := builder.(*array.BooleanBuilder)
+			b := info.b.(*array.BooleanBuilder)
 			if allGreater {
 				b.Append(true)
 			}

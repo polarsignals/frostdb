@@ -17,6 +17,11 @@ type binaryValueWriter struct {
 	b          *array.BinaryBuilder
 	numValues  int
 	firstWrite bool
+	// scratch is a helper struct to help with reusing memory.
+	scratch struct {
+		values   [][]byte
+		validity []bool
+	}
 }
 
 type NewWriterFunc func(b array.Builder, numValues int) ValueWriter
@@ -36,35 +41,45 @@ func (w *binaryValueWriter) Write(values []parquet.Value) {
 		// Depending on the nullability of the column this could be optimized
 		// further by reading strings directly and adding all of them at once
 		// to the array builder.
-		vs := make([][]byte, len(values))
-		validity := make([]bool, len(values))
+		w.scratch.values = make([][]byte, len(values))
+		w.scratch.validity = make([]bool, len(values))
 		largest := 0
 		for i, v := range values {
 			if !v.IsNull() {
-				vs[i] = v.ByteArray()
-				if len(vs[i]) > largest {
-					largest = len(vs[i])
+				w.scratch.values[i] = v.ByteArray()
+				if len(w.scratch.values[i]) > largest {
+					largest = len(w.scratch.values[i])
 				}
-				validity[i] = true
+				w.scratch.validity[i] = true
 			}
 		}
 		w.b.ReserveData(w.numValues * largest)
 
-		w.b.AppendValues(vs, validity)
+		w.b.AppendValues(w.scratch.values, w.scratch.validity)
 	} else {
 		// Depending on the nullability of the column this could be optimized
 		// further by reading strings directly and adding all of them at once
 		// to the array builder.
-		vs := make([][]byte, len(values))
-		validity := make([]bool, len(values))
+		n := len(values)
+		if n > cap(w.scratch.values) {
+			w.scratch.values = make([][]byte, n)
+			w.scratch.validity = make([]bool, n)
+		} else {
+			w.scratch.values = w.scratch.values[:n]
+			w.scratch.validity = w.scratch.validity[:n]
+		}
 		for i, v := range values {
 			if !v.IsNull() {
-				vs[i] = v.ByteArray()
-				validity[i] = true
+				w.scratch.values[i] = v.ByteArray()
+				w.scratch.validity[i] = true
+			} else {
+				// Since we're reusing memory, it's safer to zero out the index.
+				w.scratch.values[i] = nil
+				w.scratch.validity[i] = false
 			}
 		}
 
-		w.b.AppendValues(vs, validity)
+		w.b.AppendValues(w.scratch.values, w.scratch.validity)
 	}
 }
 
