@@ -92,14 +92,14 @@ func (s Sample) ToParquetRow(labelNames []string) parquet.Row {
 			i++
 		}
 	}
-	row = append(row, parquet.ValueOf(extractLocationIDs(s.Stacktrace)).Level(0, 0, nameNumber+1))
+	row = append(row, parquet.ValueOf(ExtractLocationIDs(s.Stacktrace)).Level(0, 0, nameNumber+1))
 	row = append(row, parquet.ValueOf(s.Timestamp).Level(0, 0, nameNumber+2))
 	row = append(row, parquet.ValueOf(s.Value).Level(0, 0, nameNumber+3))
 
 	return row
 }
 
-func extractLocationIDs(locs []uuid.UUID) []byte {
+func ExtractLocationIDs(locs []uuid.UUID) []byte {
 	b := make([]byte, len(locs)*16) // UUID are 16 bytes thus multiply by 16
 	index := 0
 	for i := len(locs) - 1; i >= 0; i-- {
