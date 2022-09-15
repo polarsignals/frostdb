@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -150,12 +150,16 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
+	errg, ctx := errgroup.WithContext(ctx)
+
 	for _, plan := range s.plans {
-		if err := plan.Finish(ctx); err != nil {
-			return err
-		}
+		plan := plan
+		errg.Go(func() error {
+			return plan.Finish(ctx)
+		})
 	}
-	return nil
+
+	return errg.Wait()
 }
 
 type SchemaScan struct {
@@ -201,12 +205,16 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
+	errg, ctx := errgroup.WithContext(ctx)
+
 	for _, plan := range s.plans {
-		if err := plan.Finish(ctx); err != nil {
-			return err
-		}
+		plan := plan
+		errg.Go(func() error {
+			return plan.Finish(ctx)
+		})
 	}
-	return nil
+
+	return errg.Wait()
 }
 
 func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
