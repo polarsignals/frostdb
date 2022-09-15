@@ -363,7 +363,7 @@ func (t *Table) Sync() {
 }
 
 // Write objects into the table.
-func (t *Table) Write(ctx context.Context, vals ...interface{}) (uint64, error) {
+func (t *Table) Write(ctx context.Context, vals ...any) (uint64, error) {
 	b, err := ValuesToBuffer(t.Schema(), vals...)
 	if err != nil {
 		return 0, err
@@ -383,11 +383,11 @@ func ToSnakeCase(str string) string {
 	return strings.ToLower(snake)
 }
 
-func ValuesToBuffer(schema *dynparquet.Schema, vals ...interface{}) (*dynparquet.Buffer, error) {
+func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer, error) {
 	dynamicColumns := map[string][]string{}
 	rows := make([]parquet.Row, 0, len(vals))
 
-	findColumn := func(val reflect.Value, col string, v interface{}) interface{} {
+	findColumn := func(val reflect.Value, col string, v any) any {
 		for i := 0; i < val.NumField(); i++ {
 			if ToSnakeCase(val.Type().Field(i).Name) == col {
 				return val.Field(i).Interface()
