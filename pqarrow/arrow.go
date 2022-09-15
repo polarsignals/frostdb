@@ -877,7 +877,9 @@ func copyArrToBuilder(builder array.Builder, arr arrow.Array, toCopy int) {
 		b := builder.(*array.BinaryBuilder)
 		for i := 0; i < toCopy; i++ {
 			if arr.IsNull(i) {
-				b.UnsafeAppendBoolToBitmap(false)
+				// We cannot use unsafe appends with the binary builder
+				// because offsets won't be appended.
+				b.AppendNull()
 			} else {
 				b.Append(arr.Value(i))
 			}
