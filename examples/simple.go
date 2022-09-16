@@ -6,7 +6,6 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
-	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -33,45 +32,61 @@ func main() {
 		frostdb.NewTableConfig(schema),
 	)
 
+	type FirstLast struct {
+		FirstName string
+		Surname   string
+	}
+
+	type Simple struct {
+		Names FirstLast
+		Value int64
+	}
 	// Create values to insert into the database these first rows havel dynamic label names of 'firstname' and 'surname'
-	buf, _ := schema.NewBuffer(map[string][]string{
-		"names": {"firstname", "surname"},
-	})
+	frederic := Simple{
+		Names: FirstLast{
+			FirstName: "Frederic",
+			Surname:   "Brancz",
+		},
+		Value: 100,
+	}
 
-	// firstname:Frederic surname:Brancz 100
-	_, _ = buf.WriteRows([]parquet.Row{{
-		parquet.ValueOf("Frederic").Level(0, 1, 0),
-		parquet.ValueOf("Brancz").Level(0, 1, 1),
-		parquet.ValueOf(100).Level(0, 0, 2),
-	}})
-
-	// firstname:Thor surname:Hansen 10
-	_, _ = buf.WriteRows([]parquet.Row{{
-		parquet.ValueOf("Thor").Level(0, 1, 0),
-		parquet.ValueOf("Hansen").Level(0, 1, 1),
-		parquet.ValueOf(10).Level(0, 0, 2),
-	}})
-	_, _ = table.InsertBuffer(context.Background(), buf)
+	thor := Simple{
+		Names: FirstLast{
+			FirstName: "Thor",
+			Surname:   "Hansen",
+		},
+		Value: 99,
+	}
+	_, _ = table.Write(context.Background(), frederic, thor)
 
 	// Now we can insert rows that have middle names into our dynamic column
-	buf, _ = schema.NewBuffer(map[string][]string{
-		"names": {"firstname", "middlename", "surname"},
-	})
-	// firstname:Matthias middlename:Oliver surname:Loibl 1
-	_, _ = buf.WriteRows([]parquet.Row{{
-		parquet.ValueOf("Matthias").Level(0, 1, 0),
-		parquet.ValueOf("Oliver").Level(0, 1, 1),
-		parquet.ValueOf("Loibl").Level(0, 1, 2),
-		parquet.ValueOf(1).Level(0, 0, 3),
-	}})
-	_, _ = table.InsertBuffer(context.Background(), buf)
+	matthias := struct {
+		Names struct {
+			FirstName  string
+			MiddleName string
+			Surname    string
+		}
+		Value int64
+	}{
+		Names: struct {
+			FirstName  string
+			MiddleName string
+			Surname    string
+		}{
+			FirstName:  "Matthias",
+			MiddleName: "Oliver Rainer",
+			Surname:    "Loibl",
+		},
+		Value: 101,
+	}
+	_, _ = table.Write(context.Background(), matthias)
 
 	// Create a new query engine to retrieve data and print the results
 	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
 	_ = engine.ScanTable("simple_table").
 		Project(logicalplan.DynCol("names")). // We don't know all dynamic columns at query time, but we want all of them to be returned.
 		Filter(
-			logicalplan.Col("names.firstname").Eq(logicalplan.Literal("Frederic")),
+			logicalplan.Col("names.first_name").Eq(logicalplan.Literal("Frederic")),
 		).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 		fmt.Println(r)
 		return nil

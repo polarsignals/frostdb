@@ -1047,3 +1047,150 @@ func Test_DB_Block_Optimization(t *testing.T) {
 		})
 	}
 }
+
+func Test_DB_TableWrite_FlatSchema(t *testing.T) {
+	ctx := context.Background()
+	flatDefinition := &schemapb.Schema{
+		Name: "test",
+		Columns: []*schemapb.Column{{
+			Name: "example_type",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: false,
+		}, {
+			Name: "timestamp",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
+		}, {
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
+		}},
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "example_type",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
+			Name:      "timestamp",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	}
+	schema, err := dynparquet.SchemaFromDefinition(flatDefinition)
+	require.NoError(t, err)
+	config := NewTableConfig(schema)
+
+	c, err := New(WithLogger(newTestLogger(t)))
+	require.NoError(t, err)
+
+	db, err := c.DB(ctx, "flatschema")
+	require.NoError(t, err)
+
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	s := struct {
+		ExampleType string
+		Timestamp   int64
+		Value       int64
+	}{
+		ExampleType: "hello-world",
+		Timestamp:   7,
+		Value:       8,
+	}
+
+	_, err = table.Write(ctx, s)
+	require.NoError(t, err)
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	err = engine.ScanTable("test").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+		require.Equal(t, int64(1), ar.NumRows())
+		require.Equal(t, int64(3), ar.NumCols())
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
+	ctx := context.Background()
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	c, err := New(WithLogger(newTestLogger(t)))
+	require.NoError(t, err)
+
+	db, err := c.DB(ctx, "sampleschema")
+	require.NoError(t, err)
+
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	now := time.Now()
+	ts := now.UnixMilli()
+	samples := dynparquet.Samples{
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: ts,
+			Value:     1,
+		},
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+				{Name: "label3", Value: "value3"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: ts,
+			Value:     2,
+		},
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: ts,
+			Value:     3,
+		},
+	}
+
+	_, err = table.Write(ctx, samples[0], samples[1], samples[2])
+	require.NoError(t, err)
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	err = engine.ScanTable("test").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+		require.Equal(t, int64(3), ar.NumRows())
+		require.Equal(t, int64(7), ar.NumCols())
+		return nil
+	})
+	require.NoError(t, err)
+}
