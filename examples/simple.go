@@ -74,7 +74,7 @@ func main() {
 			Surname    string
 		}{
 			FirstName:  "Matthias",
-			MiddleName: "Oliver",
+			MiddleName: "Oliver Rainer",
 			Surname:    "Loibl",
 		},
 		Value: 101,
