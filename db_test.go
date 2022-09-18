@@ -1194,3 +1194,83 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func Test_DB_MaterializedView(t *testing.T) {
+	ctx := context.Background()
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	c, err := New(WithLogger(newTestLogger(t)))
+	require.NoError(t, err)
+
+	db, err := c.DB(ctx, "sampleschema")
+	require.NoError(t, err)
+
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	viewCfg := NewMaterializedView(engine.ScanTable("test").Distinct(logicalplan.DynCol("labels")))
+
+	_, err = db.Table("labels_view", viewCfg)
+	require.NoError(t, err)
+
+	now := time.Now()
+	ts := now.UnixMilli()
+	samples := dynparquet.Samples{
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: ts,
+			Value:     1,
+		},
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+				{Name: "label3", Value: "value3"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: ts,
+			Value:     2,
+		},
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: ts,
+			Value:     3,
+		},
+	}
+
+	_, err = table.Write(ctx, samples[0], samples[1], samples[2])
+	require.NoError(t, err)
+
+	// Expect the table view to have updated
+	engine.ScanTable("labels_view").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+		fmt.Println(ar)
+		return nil
+	})
+}
