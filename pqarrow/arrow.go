@@ -258,6 +258,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 		if err != nil {
 			return err
 		}
+
 		if appliedOptimization {
 			return nil
 		}
@@ -389,8 +390,20 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 				c.distinctColumns[i],
 				info,
 			)
-			if err != nil || !optimizationApplied {
-				return optimizationApplied, err
+			if err != nil {
+				return false, err
+			}
+
+			if !optimizationApplied {
+				// Builder must be reset to its initial length in case other
+				// columns were processed before this one.
+				for _, field := range c.builder.Fields() {
+					if field.Len() == initialLength {
+						continue
+					}
+					resetBuilderToLength(field, initialLength)
+				}
+				return false, nil
 			}
 		}
 	}
@@ -407,15 +420,25 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 		return true, nil
 	}
 
-	newLength, maxLengthFields, anomaly := recordBuilderLength(c.builder)
-	if !anomaly {
-		// All columns have the same number of values.
-		return true, nil
+	countRowsLargerThanOne := 0
+	maxLen := 0
+	for _, field := range c.builder.Fields() {
+		fieldLen := field.Len()
+		if fieldLen > initialLength+1 {
+			countRowsLargerThanOne++
+			if countRowsLargerThanOne > 1 {
+				break
+			}
+		}
+		if fieldLen > maxLen {
+			maxLen = fieldLen
+		}
 	}
 
-	if newLength > initialLength+1 && maxLengthFields > 1 {
-		// Can't apply the optimization as more than one column has more than
-		// one distinct value. We can't know the combination of distinct values.
+	if countRowsLargerThanOne > 1 {
+		// More than one column had more than one distinct value. This means
+		// that there is no way to know the correct number of distinct values,
+		// so we must fall back to the non-optimized path.
 		for _, field := range c.builder.Fields() {
 			if field.Len() == initialLength {
 				continue
@@ -432,15 +455,15 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 	for _, field := range c.builder.Fields() {
 		// Columns that had no values are just backfilled with null values.
 		if fieldLen := field.Len(); fieldLen == initialLength {
-			for j := initialLength; j < newLength; j++ {
+			for j := initialLength; j < maxLen; j++ {
 				field.AppendNull()
 			}
-		} else if fieldLen < newLength {
+		} else if fieldLen < maxLen {
 			arr := field.NewArray()
 			// TODO(asubiotto): NewArray resets the builder, copy all the values
 			// again. There *must* be a better way to do this.
 			copyArrToBuilder(field, arr, fieldLen)
-			repeatLastValue(field, arr, newLength-fieldLen)
+			repeatLastValue(field, arr, maxLen-fieldLen)
 			arr.Release()
 		}
 	}
