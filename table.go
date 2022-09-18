@@ -34,6 +34,7 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -55,6 +56,9 @@ func (e ErrCreateSchemaWriter) Error() string {
 
 type TableConfig struct {
 	schema *dynparquet.Schema
+
+	// view is a table view of an existing table
+	view query.Builder
 }
 
 func NewTableConfig(
@@ -62,6 +66,13 @@ func NewTableConfig(
 ) *TableConfig {
 	return &TableConfig{
 		schema: schema,
+	}
+}
+
+// TODO NewMaterializedView returns a new table config to create a materialized view of an existing table.
+func NewMaterializedView(view query.Builder) *TableConfig {
+	return &TableConfig{
+		view: view,
 	}
 }
 
@@ -227,7 +238,7 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 				NewTableBlock: &walpb.Entry_NewTableBlock{
 					TableName: t.name,
 					BlockId:   b,
-					Schema:    t.config.schema.Definition(),
+					Schema:    t.config.schema.Definition(), // TODO how do we handle schema for a view....
 				},
 			},
 		},
