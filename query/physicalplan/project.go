@@ -47,17 +47,26 @@ func (b binaryExprProjection) Name() string {
 }
 
 func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	var partiallyComputedExprRes arrow.Array
 	if ar.Schema().HasField(b.boolExpr.String()) {
 		arr := ar.Column(ar.Schema().FieldIndices(b.boolExpr.String())[0])
-		if arr.Len() != arr.NullN() {
-			// This means we have pre-computed the result of the expression in
-			// the table scan already.
+		if arr.NullN() == 0 {
+			// This means we have fully pre-computed the result of the
+			// expression in the table scan already.
 			return []arrow.Field{
 				{
 					Name: b.boolExpr.String(),
 					Type: &arrow.BooleanType{},
 				},
 			}, []arrow.Array{arr}, nil
+		} else if arr.NullN() < arr.Len() {
+			// If we got here, expression results were partially computed at
+			// the table scan layer. We fall back to evaluating the expression
+			// and overwriting with any results found in this array (i.e.
+			// non-null entries). Note that if zero results were pre-computed
+			// (arr.NullN == arr.Len()), we'll just fully fall back to
+			// expression evaluation.
+			partiallyComputedExprRes = arr
 		}
 	}
 
@@ -73,6 +82,16 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 	// NumRows()-1
 	for _, pos := range bitmap.ToArray() {
 		vals[int(pos)] = true
+	}
+
+	if partiallyComputedExprRes != nil {
+		boolArr := partiallyComputedExprRes.(*array.Boolean)
+		for i := 0; i < boolArr.Len(); i++ {
+			if !boolArr.IsNull(i) {
+				// Non-null result, this is the precomputed expression result.
+				vals[i] = boolArr.Value(i)
+			}
+		}
 	}
 
 	builder.AppendValues(vals, nil)

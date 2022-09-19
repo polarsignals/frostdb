@@ -35,7 +35,8 @@ func TestDistinct(t *testing.T) {
 	samples := dynparquet.Samples{{
 		Labels: []dynparquet.Label{
 			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+			{Name: "label2", Value: "value1"},
+			{Name: "label5", Value: "value1"},
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -48,6 +49,7 @@ func TestDistinct(t *testing.T) {
 			{Name: "label1", Value: "value2"},
 			{Name: "label2", Value: "value2"},
 			{Name: "label3", Value: "value3"},
+			{Name: "label5", Value: "value1"},
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -58,8 +60,9 @@ func TestDistinct(t *testing.T) {
 	}, {
 		Labels: []dynparquet.Label{
 			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
+			{Name: "label2", Value: "value1"},
 			{Name: "label4", Value: "value4"},
+			{Name: "label5", Value: "value1"},
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -93,52 +96,62 @@ func TestDistinct(t *testing.T) {
 			columns: logicalplan.Cols("labels.label2"),
 			values: [][]string{
 				// label2
-				{"value2"}, // row
+				{"value1"}, // row 0
+				{"value2"}, // row 1
 			},
 		},
 		"label1,label2": {
 			columns: logicalplan.Cols("labels.label1", "labels.label2"),
 			values: [][]string{
 				// label1, label2
-				{"value1", "value2"}, // row
+				{"value1", "value1"}, // row
 				{"value2", "value2"}, // row
-				{"value3", "value2"}, // row
+				{"value3", "value1"}, // row
 			},
 		},
 		"label1,label2,label3": {
 			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label3"),
 			values: [][]string{
 				// label1, label2, label3
-				{"value1", "value2", ""},       // row
+				{"value1", "value1", ""},       // row
 				{"value2", "value2", "value3"}, // row
-				{"value3", "value2", ""},       // row
+				{"value3", "value1", ""},       // row
 			},
 		},
 		"label1,label2,label4": {
 			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label4"),
 			values: [][]string{
 				// label1,label2,label4
-				{"value1", "value2", ""},       // row
+				{"value1", "value1", ""},       // row
 				{"value2", "value2", ""},       // row
-				{"value3", "value2", "value4"}, // row
+				{"value3", "value1", "value4"}, // row
+			},
+		},
+		"label1,label2,label5": {
+			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label5"),
+			values: [][]string{
+				// label1,label2,label5
+				{"value1", "value1", "value1"}, // row
+				{"value2", "value2", "value1"}, // row
+				{"value3", "value1", "value1"}, // row
 			},
 		},
 		"label1,label2,label3,label4": {
 			columns: logicalplan.Cols("labels.label1", "labels.label2", "labels.label3", "labels.label4"),
 			values: [][]string{
 				// label1,label2,label3,label4
-				{"value1", "value2", "", ""},       // row
+				{"value1", "value1", "", ""},       // row
 				{"value2", "value2", "value3", ""}, // row
-				{"value3", "value2", "", "value4"}, // row
+				{"value3", "value1", "", "value4"}, // row
 			},
 		},
 		"labels": {
 			columns: []logicalplan.Expr{logicalplan.DynCol("labels")},
 			values: [][]string{
-				// label1,label2,label3,label4
-				{"value1", "value2", "", ""},       // row
-				{"value2", "value2", "value3", ""}, // row
-				{"value3", "value2", "", "value4"}, // row
+				// label1,label2,label3,label4,label5
+				{"value1", "value1", "", "", "value1"},       // row
+				{"value2", "value2", "value3", "", "value1"}, // row
+				{"value3", "value1", "", "value4", "value1"}, // row
 			},
 		},
 	}
@@ -177,6 +190,83 @@ func TestDistinct(t *testing.T) {
 			require.Lenf(t, seenRows, 0, "Not all expected rows were seen")
 		})
 	}
+}
+
+// TestDistinctProjectionScanOptimization verifies that the scan layer and a
+// projection operator play nicely together in case the scan layer only
+// partially optimizes a binary expression.
+func TestDistinctPartialScanOptimization(t *testing.T) {
+	var (
+		ctx    = context.Background()
+		config = NewTableConfig(
+			dynparquet.NewSampleSchema(),
+		)
+		logger = newTestLogger(t)
+	)
+
+	c, err := New(
+		WithLogger(logger),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	for _, samples := range []dynparquet.Samples{
+		// First set of samples (first row group). This should not be optimized
+		// at the scan level because there are two fields with more than one
+		// distinct value.
+		{
+			{
+				ExampleType: "value1",
+				Timestamp:   0,
+				Value:       1,
+			},
+			{
+				ExampleType: "value2",
+				Timestamp:   1,
+				Value:       1,
+			},
+		},
+		// Second set of samples (second row group). This should be optimized.
+		{
+			{
+				ExampleType: "value2",
+				Timestamp:   1,
+				Value:       1,
+			},
+			{
+				ExampleType: "value2",
+				Timestamp:   1,
+				Value:       1,
+			},
+		},
+	} {
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(t, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	require.NoError(t, engine.ScanTable("test").
+		Distinct(
+			logicalplan.Col("example_type"),
+			logicalplan.Col("timestamp"),
+			logicalplan.Col("value").Gt(logicalplan.Literal(int64(0))),
+		).
+		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+			t.Log(ar)
+			require.Equal(t, int64(2), ar.NumRows())
+
+			return nil
+		}),
+	)
 }
 
 func TestDistinctProjectionAlwaysTrue(t *testing.T) {
