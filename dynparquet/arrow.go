@@ -4,16 +4,15 @@ import (
 	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/segmentio/parquet-go"
 )
 
 // ArrowRecordToBuffer takes a schema an a record and returns a Buffer
 func ArrowRecordToBuffer(schema *Schema, r arrow.Record) (*Buffer, error) {
-	rows := []parquet.Row{}
 	dynamicColumns := map[string][]string{}
 
-	rschema := r.Schema()
-	for _, f := range rschema.Fields() {
+	for _, f := range r.Schema().Fields() {
 		names := strings.Split(f.Name, ".")
 		if len(names) > 1 { // this may be a dynamic column
 			def, ok := schema.ColumnByName(names[0])
@@ -29,7 +28,18 @@ func ArrowRecordToBuffer(schema *Schema, r arrow.Record) (*Buffer, error) {
 	}
 
 	// Create rows
-	for i := int64(0); i < r.NumCols(); i++ {
+	rows := []parquet.Row{}
+	for i := 0; int64(i) < r.NumRows(); i++ {
+		row := []parquet.Value{}
+		for j := 0; int64(j) < r.NumCols(); j++ {
+			col := r.Column(j)
+			switch col.DataType().ID() {
+			case arrow.STRING:
+				str := col.(*array.String)
+				row = append(row, parquet.ValueOf(str.Value(i)).Level(0, 0, j))
+			}
+		}
+		rows = append(rows, row)
 	}
 
 	_, err = pb.WriteRows(rows)
