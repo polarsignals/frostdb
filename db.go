@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/arrow/go/v7/parquet"
 	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/parquet"
 	"github.com/apache/arrow/go/v8/parquet/pqarrow"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -621,12 +621,17 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 				return nil, fmt.Errorf("failed to create parquet schema from record: %w", err)
 			}
 
-			// TODO...
+			// TODO create a table schema from a bunch of arrow records
 			table.config.schema = schema
 		}
 
 		for _, r := range records {
-			_, err := table.InsertBuffer(ctx, r)
+			buf, err := dynparquet.ArrowRecordToBuffer(table.config.schema, r)
+			if err != nil {
+				fmt.Errorf("failed converting arrow record to buffer: %w", err)
+			}
+
+			_, err = table.InsertBuffer(ctx, buf)
 			if err != nil {
 				fmt.Errorf("failed populating view: %w", err)
 			}
