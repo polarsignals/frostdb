@@ -1210,16 +1210,6 @@ func Test_DB_MaterializedView(t *testing.T) {
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
 
-	engine := query.NewEngine(
-		memory.NewGoAllocator(),
-		db.TableProvider(),
-	)
-
-	viewCfg := NewMaterializedView(engine.ScanTable("test").Distinct(logicalplan.DynCol("labels")))
-
-	_, err = db.Table("labels_view", viewCfg)
-	require.NoError(t, err)
-
 	now := time.Now()
 	ts := now.UnixMilli()
 	samples := dynparquet.Samples{
@@ -1266,6 +1256,16 @@ func Test_DB_MaterializedView(t *testing.T) {
 	}
 
 	_, err = table.Write(ctx, samples[0], samples[1], samples[2])
+	require.NoError(t, err)
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	viewCfg := NewMaterializedView(engine.ScanTable("test").Distinct(logicalplan.DynCol("labels")))
+
+	_, err = db.Table("labels_view", viewCfg)
 	require.NoError(t, err)
 
 	engine.ScanTable("labels_view").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
