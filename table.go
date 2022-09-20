@@ -395,27 +395,6 @@ func ToSnakeCase(str string) string {
 	return strings.ToLower(snake)
 }
 
-func dedupe(s map[string][]string) map[string][]string {
-	final := map[string][]string{}
-	set := map[string]map[string]struct{}{}
-	for k, v := range s {
-		if set[k] == nil {
-			set[k] = map[string]struct{}{}
-		}
-		for _, i := range v {
-			if _, ok := set[k][i]; !ok {
-				set[k][i] = struct{}{}
-				final[k] = append(final[k], i)
-			}
-		}
-	}
-
-	for _, s := range final {
-		sort.Strings(s)
-	}
-	return final
-}
-
 func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer, error) {
 	dynamicColumns := map[string][]string{}
 	rows := make([]parquet.Row, 0, len(vals))
@@ -455,7 +434,7 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 		}
 	}
 
-	dynamicColumns = dedupe(dynamicColumns)
+	dynamicColumns = dynparquet.Dedupe(dynamicColumns)
 
 	// Create all rows
 	for _, v := range vals {
