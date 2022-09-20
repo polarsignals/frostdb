@@ -123,7 +123,7 @@ func TestDistinct(t *testing.T) {
 				// label1, label2, label3
 				{"value1", "value1", ""},       // row
 				{"value2", "value2", "value3"}, // row
-				//{"value3", "value1", ""},       // row
+				{"value3", "value1", ""},       // row
 			},
 		},
 		"label1,label2,label4": {
@@ -181,7 +181,6 @@ func TestDistinct(t *testing.T) {
 				Distinct(test.columns...).
 				Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 					defer ar.Release()
-					require.Equal(t, len(test.values), int(ar.NumRows()))
 					require.Equal(t, len(test.values[0]), int(ar.NumCols()))
 
 					for row := 0; row < int(ar.NumRows()); row++ {
