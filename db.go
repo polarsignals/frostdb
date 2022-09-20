@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/arrow/go/v7/parquet"
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/parquet/pqarrow"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
@@ -592,6 +595,42 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 	id := generateULID()
 	if err := table.newTableBlock(0, tx, id); err != nil {
 		return nil, err
+	}
+
+	// Generate the materialized view for this table
+	if config.view != nil {
+		records := []arrow.Record{}
+		defer func() {
+			for _, r := range records {
+				r.Release()
+			}
+		}()
+		ctx := context.TODO()
+		if err := config.view.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+			r.Retain()
+			records = append(records, r)
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("failed to create table: %w", err)
+		}
+
+		// TODO convert arrow schema into table schema
+		for _, r := range records {
+			schema, err := pqarrow.ToParquet(r.Schema(), parquet.NewWriterProperties(), pqarrow.DefaultWriterProps())
+			if err != nil {
+				return nil, fmt.Errorf("failed to create parquet schema from record: %w", err)
+			}
+
+			// TODO...
+			table.config.schema = schema
+		}
+
+		for _, r := range records {
+			_, err := table.InsertBuffer(ctx, r)
+			if err != nil {
+				fmt.Errorf("failed populating view: %w", err)
+			}
+		}
 	}
 
 	db.tables[name] = table

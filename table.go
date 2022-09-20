@@ -58,7 +58,8 @@ type TableConfig struct {
 	schema *dynparquet.Schema
 
 	// view is a table view of an existing table
-	view query.Builder
+	view   query.Builder
+	target string
 }
 
 func NewTableConfig(

@@ -1268,7 +1268,6 @@ func Test_DB_MaterializedView(t *testing.T) {
 	_, err = table.Write(ctx, samples[0], samples[1], samples[2])
 	require.NoError(t, err)
 
-	// Expect the table view to have updated
 	engine.ScanTable("labels_view").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
 		fmt.Println(ar)
 		return nil
