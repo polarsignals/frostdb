@@ -588,17 +588,9 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 		}
 	}
 
-	tx, _, commit := db.begin()
-	defer commit()
-
-	id := generateULID()
-	if err := table.newTableBlock(0, tx, id); err != nil {
-		return nil, err
-	}
-
-	// Generate the materialized view for this table
+	records := []arrow.Record{}
 	if config.view != nil {
-		records := []arrow.Record{}
+
 		defer func() {
 			for _, r := range records {
 				r.Release()
@@ -651,14 +643,25 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create schema from definition: %w", err)
 		}
+	}
 
+	tx, _, commit := db.begin()
+	defer commit()
+
+	id := generateULID()
+	if err := table.newTableBlock(0, tx, id); err != nil {
+		return nil, err
+	}
+
+	// Generate the materialized view for this table
+	if config.view != nil {
 		for _, r := range records {
 			buf, err := dynparquet.ArrowRecordToBuffer(table.config.schema, r)
 			if err != nil {
 				return nil, fmt.Errorf("failed converting arrow record to buffer: %w", err)
 			}
 
-			_, err = table.InsertBuffer(ctx, buf)
+			_, err = table.InsertBuffer(context.TODO(), buf)
 			if err != nil {
 				return nil, fmt.Errorf("failed populating view: %w", err)
 			}
