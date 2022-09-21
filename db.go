@@ -561,8 +561,6 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 	records := []arrow.Record{}
 	if config.view != nil {
 
-		fmt.Println("creating schema for view ", name)
-
 		defer func() {
 			for _, r := range records {
 				r.Release()
@@ -570,7 +568,6 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 		}()
 		ctx := context.TODO()
 		if err := config.view.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
-			fmt.Println("Record: ", r)
 			r.Retain()
 			records = append(records, r)
 			return nil
@@ -578,26 +575,16 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 			return nil, fmt.Errorf("failed to create table: %w", err)
 		}
 
-		fmt.Printf("found %v records\n", len(records))
 		targetTable, ok := db.tables[config.target] // TODO also check the read only tables
 		if !ok {
 			return nil, fmt.Errorf("target table does not exist")
 		}
 		targetSchema := targetTable.Schema()
 
-		fmt.Println("starting to build schema")
-
 		// Build up a definition for this table
 		viewDef := &schemapb.Schema{}
 		found := map[string]struct{}{}
 		for _, r := range records {
-			/*
-				schema, err := pqarrow.ToParquet(r.Schema(), parquet.NewWriterProperties(), pqarrow.DefaultWriterProps())
-				if err != nil {
-					return nil, fmt.Errorf("failed to create parquet schema from record: %w", err)
-				}
-			*/
-
 			viewDef.Name = name
 			for _, f := range r.Schema().Fields() {
 				search := f.Name
@@ -610,9 +597,8 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 				}
 				def := targetSchema.Definition()
 				for _, c := range def.Columns {
-					if c.Name == search { // TODO: probably not handling dynamic columns correctly
+					if c.Name == search {
 						if _, ok := found[search]; !ok {
-							fmt.Println("adding column definition ", search)
 							viewDef.Columns = append(viewDef.Columns, c)
 							found[search] = struct{}{}
 						}
@@ -622,7 +608,6 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 				for _, c := range def.SortingColumns {
 					if c.Name == search {
 						if _, ok := found[search]; !ok {
-							fmt.Println("adding sorting definition ", search)
 							viewDef.SortingColumns = append(viewDef.SortingColumns, c)
 							found[search] = struct{}{}
 						}
