@@ -589,6 +589,7 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 
 		// Build up a definition for this table
 		viewDef := &schemapb.Schema{}
+		found := map[string]struct{}{}
 		for _, r := range records {
 			/*
 				schema, err := pqarrow.ToParquet(r.Schema(), parquet.NewWriterProperties(), pqarrow.DefaultWriterProps())
@@ -599,18 +600,32 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 
 			viewDef.Name = name
 			for _, f := range r.Schema().Fields() {
+				search := f.Name
+				names := strings.Split(f.Name, ".")
+				if len(names) > 1 { // this may be a dynamic column
+					def, ok := targetSchema.ColumnByName(names[0])
+					if ok && def.Dynamic {
+						search = names[0]
+					}
+				}
 				def := targetSchema.Definition()
 				for _, c := range def.Columns {
-					if c.Name == f.Name { // TODO: probably not handling dynamic columns correctly
-						fmt.Println("adding column definition ", f.Name)
-						viewDef.Columns = append(viewDef.Columns, c)
+					if c.Name == search { // TODO: probably not handling dynamic columns correctly
+						if _, ok := found[search]; !ok {
+							fmt.Println("adding column definition ", search)
+							viewDef.Columns = append(viewDef.Columns, c)
+							found[search] = struct{}{}
+						}
 					}
 				}
 
 				for _, c := range def.SortingColumns {
-					if c.Name == f.Name {
-						fmt.Println("adding sorting definition ", f.Name)
-						viewDef.SortingColumns = append(viewDef.SortingColumns, c)
+					if c.Name == search {
+						if _, ok := found[search]; !ok {
+							fmt.Println("adding sorting definition ", search)
+							viewDef.SortingColumns = append(viewDef.SortingColumns, c)
+							found[search] = struct{}{}
+						}
 					}
 				}
 			}
