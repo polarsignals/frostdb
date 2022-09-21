@@ -35,8 +35,19 @@ func ArrowRecordToBuffer(schema *Schema, r arrow.Record) (*Buffer, error) {
 			col := r.Column(j)
 			switch col.DataType().ID() {
 			case arrow.STRING:
-				str := col.(*array.String)
-				row = append(row, parquet.ValueOf(str.Value(i)).Level(0, 0, j))
+				a := col.(*array.String)
+				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, 0, j))
+			case arrow.INT64:
+				a := col.(*array.Int64)
+				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, 0, j))
+			case arrow.UINT64:
+				a := col.(*array.Uint64)
+				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, 0, j))
+			case arrow.FLOAT64:
+				a := col.(*array.Float64)
+				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, 0, j))
+			default:
+				panic("at the disco")
 			}
 		}
 		rows = append(rows, row)

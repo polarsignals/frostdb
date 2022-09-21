@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/parquet"
-	"github.com/apache/arrow/go/v8/parquet/pqarrow"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
@@ -25,6 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/storage"
@@ -614,26 +613,51 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 			return nil, fmt.Errorf("failed to create table: %w", err)
 		}
 
-		// TODO convert arrow schema into table schema
-		for _, r := range records {
-			schema, err := pqarrow.ToParquet(r.Schema(), parquet.NewWriterProperties(), pqarrow.DefaultWriterProps())
-			if err != nil {
-				return nil, fmt.Errorf("failed to create parquet schema from record: %w", err)
-			}
+		// TODO get this from target table
+		var targetSchema *dynparquet.Schema
 
-			// TODO create a table schema from a bunch of arrow records
-			table.config.schema = schema
+		// Build up a definition for this table
+		viewDef := &schemapb.Schema{}
+		for _, r := range records {
+			/*
+				schema, err := pqarrow.ToParquet(r.Schema(), parquet.NewWriterProperties(), pqarrow.DefaultWriterProps())
+				if err != nil {
+					return nil, fmt.Errorf("failed to create parquet schema from record: %w", err)
+				}
+			*/
+
+			viewDef.Name = targetSchema.Definition().Name + "_materialized_view"
+			for _, f := range r.Schema().Fields() {
+				def := targetSchema.Definition()
+				for _, c := range def.Columns {
+					if c.Name == f.Name {
+						viewDef.Columns = append(viewDef.Columns, c)
+					}
+				}
+
+				for _, c := range def.SortingColumns {
+					if c.Name == f.Name {
+						viewDef.SortingColumns = append(viewDef.SortingColumns, c)
+					}
+				}
+			}
+		}
+
+		var err error
+		table.config.schema, err = dynparquet.SchemaFromDefinition(viewDef)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create schema from definition: %w", err)
 		}
 
 		for _, r := range records {
 			buf, err := dynparquet.ArrowRecordToBuffer(table.config.schema, r)
 			if err != nil {
-				fmt.Errorf("failed converting arrow record to buffer: %w", err)
+				return nil, fmt.Errorf("failed converting arrow record to buffer: %w", err)
 			}
 
 			_, err = table.InsertBuffer(ctx, buf)
 			if err != nil {
-				fmt.Errorf("failed populating view: %w", err)
+				return nil, fmt.Errorf("failed populating view: %w", err)
 			}
 		}
 	}
