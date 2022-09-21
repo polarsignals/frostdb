@@ -557,6 +557,73 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 		return table, nil
 	}
 
+	records := []arrow.Record{}
+	if config.view != nil {
+
+		fmt.Println("creating schema for view ", name)
+
+		defer func() {
+			for _, r := range records {
+				r.Release()
+			}
+		}()
+		ctx := context.TODO()
+		if err := config.view.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+			fmt.Println("Record: ", r)
+			r.Retain()
+			records = append(records, r)
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("failed to create table: %w", err)
+		}
+
+		fmt.Printf("found %v records\n", len(records))
+		targetTable, ok := db.tables[config.target] // TODO also check the read only tables
+		if !ok {
+			return nil, fmt.Errorf("target table does not exist")
+		}
+		targetSchema := targetTable.Schema()
+
+		fmt.Println("starting to build schema")
+
+		// Build up a definition for this table
+		viewDef := &schemapb.Schema{}
+		for _, r := range records {
+			/*
+				schema, err := pqarrow.ToParquet(r.Schema(), parquet.NewWriterProperties(), pqarrow.DefaultWriterProps())
+				if err != nil {
+					return nil, fmt.Errorf("failed to create parquet schema from record: %w", err)
+				}
+			*/
+
+			viewDef.Name = targetSchema.Definition().Name + "_materialized_view"
+			for _, f := range r.Schema().Fields() {
+				def := targetSchema.Definition()
+				for _, c := range def.Columns {
+					if c.Name == f.Name { // TODO: probably not handling dynamic columns correctly
+						fmt.Println("adding column definition ", f.Name)
+						viewDef.Columns = append(viewDef.Columns, c)
+					}
+				}
+
+				for _, c := range def.SortingColumns {
+					if c.Name == f.Name {
+						fmt.Println("adding sorting definition ", f.Name)
+						viewDef.SortingColumns = append(viewDef.SortingColumns, c)
+					}
+				}
+			}
+		}
+
+		fmt.Println("Final Definition: ", viewDef)
+
+		var err error
+		table.config.schema, err = dynparquet.SchemaFromDefinition(viewDef)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create schema from definition: %w", err)
+		}
+	}
+
 	db.mtx.Lock()
 	defer db.mtx.Unlock()
 
@@ -585,63 +652,6 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create table: %w", err)
-		}
-	}
-
-	records := []arrow.Record{}
-	if config.view != nil {
-
-		defer func() {
-			for _, r := range records {
-				r.Release()
-			}
-		}()
-		ctx := context.TODO()
-		if err := config.view.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
-			r.Retain()
-			records = append(records, r)
-			return nil
-		}); err != nil {
-			return nil, fmt.Errorf("failed to create table: %w", err)
-		}
-
-		targetTable, ok := db.tables[config.target] // TODO also check the read only tables
-		if !ok {
-			return nil, fmt.Errorf("target table does not exist")
-		}
-		targetSchema := targetTable.Schema()
-
-		// Build up a definition for this table
-		viewDef := &schemapb.Schema{}
-		for _, r := range records {
-			/*
-				schema, err := pqarrow.ToParquet(r.Schema(), parquet.NewWriterProperties(), pqarrow.DefaultWriterProps())
-				if err != nil {
-					return nil, fmt.Errorf("failed to create parquet schema from record: %w", err)
-				}
-			*/
-
-			viewDef.Name = targetSchema.Definition().Name + "_materialized_view"
-			for _, f := range r.Schema().Fields() {
-				def := targetSchema.Definition()
-				for _, c := range def.Columns {
-					if c.Name == f.Name {
-						viewDef.Columns = append(viewDef.Columns, c)
-					}
-				}
-
-				for _, c := range def.SortingColumns {
-					if c.Name == f.Name {
-						viewDef.SortingColumns = append(viewDef.SortingColumns, c)
-					}
-				}
-			}
-		}
-
-		var err error
-		table.config.schema, err = dynparquet.SchemaFromDefinition(viewDef)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create schema from definition: %w", err)
 		}
 	}
 
