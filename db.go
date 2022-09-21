@@ -556,6 +556,7 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 	if ok {
 		return table, nil
 	}
+	tableConfig := config
 
 	records := []arrow.Record{}
 	if config.view != nil {
@@ -596,7 +597,7 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 				}
 			*/
 
-			viewDef.Name = targetSchema.Definition().Name + "_materialized_view"
+			viewDef.Name = name
 			for _, f := range r.Schema().Fields() {
 				def := targetSchema.Definition()
 				for _, c := range def.Columns {
@@ -617,11 +618,11 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 
 		fmt.Println("Final Definition: ", viewDef)
 
-		var err error
-		table.config.schema, err = dynparquet.SchemaFromDefinition(viewDef)
+		viewSchema, err := dynparquet.SchemaFromDefinition(viewDef)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create schema from definition: %w", err)
 		}
+		tableConfig = NewTableConfig(viewSchema)
 	}
 
 	db.mtx.Lock()
@@ -637,14 +638,14 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 	// Check if this table exists as a read only table
 	table, ok = db.roTables[name]
 	if ok {
-		table.config = config
+		table.config = tableConfig
 		delete(db.roTables, name)
 	} else {
 		var err error
 		table, err = newTable(
 			db,
 			name,
-			config,
+			tableConfig,
 			db.reg,
 			db.logger,
 			db.tracer,
