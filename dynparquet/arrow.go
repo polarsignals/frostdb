@@ -1,6 +1,7 @@
 package dynparquet
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -34,6 +35,9 @@ func ArrowRecordToBuffer(schema *Schema, r arrow.Record) (*Buffer, error) {
 		for j := 0; int64(j) < r.NumCols(); j++ {
 			col := r.Column(j)
 			switch col.DataType().ID() {
+			case arrow.BINARY:
+				a := col.(*array.Binary)
+				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, 0, j))
 			case arrow.STRING:
 				a := col.(*array.String)
 				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, 0, j))
@@ -47,7 +51,7 @@ func ArrowRecordToBuffer(schema *Schema, r arrow.Record) (*Buffer, error) {
 				a := col.(*array.Float64)
 				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, 0, j))
 			default:
-				panic("at the disco")
+				panic(fmt.Sprintf("at the disco %v", col.DataType().ID()))
 			}
 		}
 		rows = append(rows, row)
