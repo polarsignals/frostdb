@@ -1268,6 +1268,8 @@ func Test_DB_MaterializedView(t *testing.T) {
 	_, err = db.Table("labels_view", viewCfg)
 	require.NoError(t, err)
 
+	db.Wait(4)
+
 	cols := int64(0)
 	rows := int64(0)
 	engine.ScanTable("labels_view").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
