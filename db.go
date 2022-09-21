@@ -613,8 +613,11 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 			return nil, fmt.Errorf("failed to create table: %w", err)
 		}
 
-		// TODO get this from target table
-		var targetSchema *dynparquet.Schema
+		targetTable, ok := db.tables[config.target] // TODO also check the read only tables
+		if !ok {
+			return nil, fmt.Errorf("target table does not exist")
+		}
+		targetSchema := targetTable.Schema()
 
 		// Build up a definition for this table
 		viewDef := &schemapb.Schema{}

@@ -71,9 +71,10 @@ func NewTableConfig(
 }
 
 // TODO NewMaterializedView returns a new table config to create a materialized view of an existing table.
-func NewMaterializedView(view query.Builder) *TableConfig {
+func NewMaterializedView(target string, view query.Builder) *TableConfig {
 	return &TableConfig{
-		view: view,
+		view:   view,
+		target: target,
 	}
 }
 
