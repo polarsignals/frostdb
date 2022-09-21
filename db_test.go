@@ -1263,7 +1263,7 @@ func Test_DB_MaterializedView(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	viewCfg := NewMaterializedView(engine.ScanTable("test").Distinct(logicalplan.DynCol("labels")))
+	viewCfg := NewMaterializedView("test", engine.ScanTable("test").Distinct(logicalplan.DynCol("labels")))
 
 	_, err = db.Table("labels_view", viewCfg)
 	require.NoError(t, err)
