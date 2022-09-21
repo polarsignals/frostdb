@@ -33,6 +33,15 @@ func ArrowRecordToBuffer(schema *Schema, r arrow.Record) (*Buffer, error) {
 		return nil, err
 	}
 
+	isNull := func(v interface{}) bool {
+		switch v.(type) {
+		case nil:
+			return true
+		default:
+			return false
+		}
+	}
+
 	// Create rows
 	rows := []parquet.Row{}
 	for i := 0; int64(i) < r.NumRows(); i++ {
@@ -46,18 +55,33 @@ func ArrowRecordToBuffer(schema *Schema, r arrow.Record) (*Buffer, error) {
 			switch col.DataType().ID() {
 			case arrow.BINARY:
 				a := col.(*array.Binary)
+				if len(a.Value(i)) == 0 || isNull(a.Value(i)) {
+					definitionLevel = 0
+				}
 				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, definitionLevel, j))
 			case arrow.STRING:
 				a := col.(*array.String)
+				if len(a.Value(i)) == 0 || isNull(a.Value(i)) {
+					definitionLevel = 0
+				}
 				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, definitionLevel, j))
 			case arrow.INT64:
 				a := col.(*array.Int64)
+				if isNull(a.Value(i)) {
+					definitionLevel = 0
+				}
 				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, definitionLevel, j))
 			case arrow.UINT64:
 				a := col.(*array.Uint64)
+				if isNull(a.Value(i)) {
+					definitionLevel = 0
+				}
 				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, definitionLevel, j))
 			case arrow.FLOAT64:
 				a := col.(*array.Float64)
+				if isNull(a.Value(i)) {
+					definitionLevel = 0
+				}
 				row = append(row, parquet.ValueOf(a.Value(i)).Level(0, definitionLevel, j))
 			default:
 				panic(fmt.Sprintf("at the disco %v", col.DataType().ID()))
