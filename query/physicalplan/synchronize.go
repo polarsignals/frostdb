@@ -2,6 +2,7 @@ package physicalplan
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -36,7 +37,11 @@ func (m *Synchronizer) Callback(ctx context.Context, r arrow.Record) error {
 }
 
 func (m *Synchronizer) Finish(ctx context.Context) error {
-	if m.running.Dec() > 0 {
+	running := m.running.Dec()
+	if running < 0 {
+		return errors.New("too many Synchronizer Finish calls")
+	}
+	if running > 0 {
 		return nil
 	}
 	return m.next.Finish(ctx)
