@@ -656,29 +656,37 @@ func (t *Table) Iterator(
 	// buffered results are flushed to the next operator.
 	const bufferSize = 1024
 
-	converter := pqarrow.NewParquetConverter(pool, schema, iterOpts.Filter, iterOpts.DistinctColumns)
-	defer converter.Close()
-
 	errg, ctx := errgroup.WithContext(ctx)
 
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(func() error {
+			converter := pqarrow.NewParquetConverter(pool, schema, iterOpts.Filter, iterOpts.DistinctColumns)
+			defer converter.Close()
+
+			var rgSchema *parquet.Schema
+
 			for {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
 				case rg, ok := <-rowGroups:
+					if !ok {
+						r := converter.NewRecord()
+						prepareForFlush(r, rgSchema)
+						if err := callback(ctx, r); err != nil {
+							return err
+						}
+						r.Release()
+						return nil
+					}
+					rgSchema = rg.Schema()
 					if err := converter.Convert(ctx, rg); err != nil {
 						return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 					}
-					if !ok {
-						r := converter.NewRecord()
-						prepareForFlush(r, rg.Schema())
-					}
 					if converter.NumRows() >= bufferSize {
 						r := converter.NewRecord()
-						prepareForFlush(r, rg.Schema())
+						prepareForFlush(r, rgSchema)
 						if err := callback(ctx, r); err != nil {
 							return err
 						}
@@ -687,6 +695,10 @@ func (t *Table) Iterator(
 				}
 			}
 		})
+	}
+
+	if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
+		return err
 	}
 
 	close(rowGroups)
