@@ -6,12 +6,11 @@ import (
 	"io"
 	"sort"
 	"sync"
-	satomic "sync/atomic"
+	"sync/atomic"
 
 	"github.com/google/btree"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/parquet-go"
-	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 )
@@ -32,7 +31,7 @@ type Granule struct {
 type GranuleMetadata struct {
 	// least is the row that exists within the Granule that is the least.
 	// This is used for quick insertion into the btree, without requiring an iterator
-	least satomic.Pointer[dynparquet.DynamicRow]
+	least atomic.Pointer[dynparquet.DynamicRow]
 
 	// min contains the minimum value found for each column in the granule. It is used during iteration to validate if the granule contains interesting data
 	minlock sync.RWMutex
@@ -51,21 +50,21 @@ type GranuleMetadata struct {
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
 	g := &Granule{
 		granulesCreated: granulesCreated,
-		parts:           NewPartList(&satomic.Pointer[Node]{}, 0, None),
+		parts:           NewPartList(&atomic.Pointer[Node]{}, 0, None),
 		tableConfig:     tableConfig,
 
 		metadata: GranuleMetadata{
 			min:    map[string]*parquet.Value{},
 			max:    map[string]*parquet.Value{},
-			least:  satomic.Pointer[dynparquet.DynamicRow]{},
-			size:   atomic.NewUint64(0),
-			pruned: atomic.NewUint64(0),
+			least:  atomic.Pointer[dynparquet.DynamicRow]{},
+			size:   &atomic.Uint64{},
+			pruned: &atomic.Uint64{},
 		},
 	}
 
 	// Find the "smallest" row
 	if firstPart != nil {
-		g.metadata.size = atomic.NewUint64(uint64(firstPart.Buf.ParquetFile().Size()))
+		g.metadata.size.Store(uint64(firstPart.Buf.ParquetFile().Size()))
 		g.parts.Prepend(firstPart)
 		least, err := firstPart.Least()
 		if err != nil {
