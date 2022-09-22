@@ -6,7 +6,7 @@ import (
 	"io"
 	"sort"
 	"sync"
-	"unsafe"
+	satomic "sync/atomic"
 
 	"github.com/google/btree"
 	"github.com/prometheus/client_golang/prometheus"
@@ -32,7 +32,7 @@ type Granule struct {
 type GranuleMetadata struct {
 	// least is the row that exists within the Granule that is the least.
 	// This is used for quick insertion into the btree, without requiring an iterator
-	least *atomic.UnsafePointer
+	least satomic.Pointer[dynparquet.DynamicRow]
 
 	// min contains the minimum value found for each column in the granule. It is used during iteration to validate if the granule contains interesting data
 	minlock sync.RWMutex
@@ -51,13 +51,13 @@ type GranuleMetadata struct {
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
 	g := &Granule{
 		granulesCreated: granulesCreated,
-		parts:           NewPartList(nil, 0, None),
+		parts:           NewPartList(&satomic.Pointer[Node]{}, 0, None),
 		tableConfig:     tableConfig,
 
 		metadata: GranuleMetadata{
 			min:    map[string]*parquet.Value{},
 			max:    map[string]*parquet.Value{},
-			least:  atomic.NewUnsafePointer(nil),
+			least:  satomic.Pointer[dynparquet.DynamicRow]{},
 			size:   atomic.NewUint64(0),
 			pruned: atomic.NewUint64(0),
 		},
@@ -71,7 +71,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		if err != nil {
 			return nil, err
 		}
-		g.metadata.least.Store(unsafe.Pointer(least))
+		g.metadata.least.Store(least)
 
 		// Set the minmaxes on the new granule
 		if err := g.minmaxes(firstPart); err != nil {
@@ -95,7 +95,7 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 	for {
 		least := g.metadata.least.Load()
 		if least == nil || g.tableConfig.schema.RowLessThan(r, (*dynparquet.DynamicRow)(least)) {
-			if g.metadata.least.CAS(least, unsafe.Pointer(r)) {
+			if g.metadata.least.CompareAndSwap(least, r) {
 				break
 			}
 		} else {

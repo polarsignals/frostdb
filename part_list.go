@@ -1,7 +1,7 @@
 package frostdb
 
 import (
-	"unsafe"
+	satomic "sync/atomic"
 
 	"go.uber.org/atomic"
 )
@@ -16,14 +16,14 @@ const (
 
 // Node is a Part that is a part of a linked-list.
 type Node struct {
-	next *atomic.UnsafePointer
+	next satomic.Pointer[Node]
 	part *Part
 
 	sentinel SentinelType // sentinel nodes contain no parts, and are to indicate the start of a new sub list
 }
 
 type PartList struct {
-	next  *atomic.UnsafePointer
+	next  *satomic.Pointer[Node]
 	total *atomic.Uint64
 
 	// listType indicates the type of list this list is
@@ -31,9 +31,9 @@ type PartList struct {
 }
 
 // NewPartList creates a new PartList using atomic constructs.
-func NewPartList(next unsafe.Pointer, total uint64, s SentinelType) *PartList {
+func NewPartList(next *satomic.Pointer[Node], total uint64, s SentinelType) *PartList {
 	return &PartList{
-		next:     atomic.NewUnsafePointer(next),
+		next:     next,
 		total:    atomic.NewUint64(total),
 		listType: s,
 	}
@@ -46,10 +46,10 @@ func (l *PartList) Sentinel(s SentinelType) *PartList {
 	}
 	for { // continue until a successful compare and swap occurs
 		next := l.next.Load()
-		node.next = atomic.NewUnsafePointer(next)
-		if l.next.CAS(next, unsafe.Pointer(node)) {
+		node.next.Store(next)
+		if l.next.CompareAndSwap(next, node) {
 			// TODO should we add sentinels to the total?
-			return NewPartList(next, l.total.Inc(), s)
+			return NewPartList(l.next, l.total.Inc(), s)
 		}
 	}
 }
@@ -61,11 +61,11 @@ func (l *PartList) Prepend(part *Part) *Node {
 	}
 	for { // continue until a successful compare and swap occurs
 		next := l.next.Load()
-		node.next = atomic.NewUnsafePointer(next)
-		if next != nil && (*Node)(next).sentinel == Compacted { // This list is apart of a compacted granule, propogate the compacted value so each subsequent Prepend can return the correct value
+		node.next.Store(next)
+		if next != nil && next.sentinel == Compacted { // This list is apart of a compacted granule, propogate the compacted value so each subsequent Prepend can return the correct value
 			node.sentinel = Compacted
 		}
-		if l.next.CAS(next, unsafe.Pointer(node)) {
+		if l.next.CompareAndSwap(next, node) {
 			l.total.Inc()
 			return node
 		}
