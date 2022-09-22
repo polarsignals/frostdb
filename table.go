@@ -604,18 +604,6 @@ func (t *Table) View(ctx context.Context, fn func(ctx context.Context, tx uint64
 	return fn(ctx, tx)
 }
 
-// recordBuilderExceedsNumRows assumes all the RecordBuilder's fields have equal
-// length and returns whether at least one field is longer than or equal to
-// threshold.
-func recordBuilderExceedsNumRows(builder *array.RecordBuilder, threshold int) bool {
-	for _, f := range builder.Fields() {
-		if f.Len() >= threshold {
-			return true
-		}
-	}
-	return false
-}
-
 // prepareForFlush sets the nullability on a Record column if the type is a
 // ListType.
 // TODO: Is this a bug in arrow? We already set the nullability in
@@ -664,68 +652,32 @@ func (t *Table) Iterator(
 	// can decide to sort if they need to in order to exploit the
 	// characteristics of sorted data.
 
+	// bufferSize specifies a threshold of records past which the
+	// buffered results are flushed to the next operator.
+	const bufferSize = 1024
+
+	converter := pqarrow.NewParquetConverter(pool, schema, iterOpts.Filter, iterOpts.DistinctColumns)
+	defer converter.Close()
+
 	errg, ctx := errgroup.WithContext(ctx)
 
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(func() error {
-			var builder *array.RecordBuilder
-			// builderBufferSize specifies a threshold of records past which the
-			// buffered results are flushed to the next operator.
-			const builderBufferSize = 1024
-
 			for {
 				select {
 				case <-ctx.Done():
-					return nil
+					return ctx.Err()
 				case rg, ok := <-rowGroups:
-					if !ok {
-						if builder != nil && recordBuilderExceedsNumRows(builder, 0) {
-							// Flush the builder.
-							r := builder.NewRecord()
-							if err := callback(ctx, r); err != nil {
-								continue
-								// return err
-							}
-							r.Release()
-						}
-					}
-					if rg == nil {
-						return nil // shouldn't happen, but anyway
-					}
-					if schema == nil {
-						var err error
-						schema, err = pqarrow.ParquetRowGroupToArrowSchema(
-							ctx,
-							rg,
-							iterOpts.PhysicalProjection,
-							iterOpts.Projection,
-							iterOpts.Filter,
-							iterOpts.DistinctColumns,
-						)
-						if err != nil {
-							return err
-						}
-					}
-
-					if builder == nil {
-						builder = array.NewRecordBuilder(pool, schema)
-						defer builder.Release() // TODO
-					}
-
-					if err := pqarrow.ParquetRowGroupToArrowRecord(
-						ctx,
-						pool,
-						rg,
-						schema,
-						iterOpts.Filter,
-						iterOpts.DistinctColumns,
-						builder,
-					); err != nil {
+					if err := converter.Convert(ctx, rg); err != nil {
 						return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 					}
-					if recordBuilderExceedsNumRows(builder, builderBufferSize) {
-						r := builder.NewRecord()
+					if !ok {
+						r := converter.NewRecord()
+						prepareForFlush(r, rg.Schema())
+					}
+					if converter.NumRows() >= bufferSize {
+						r := converter.NewRecord()
 						prepareForFlush(r, rg.Schema())
 						if err := callback(ctx, r); err != nil {
 							return err
@@ -735,10 +687,6 @@ func (t *Table) Iterator(
 				}
 			}
 		})
-	}
-
-	if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
-		return err
 	}
 
 	close(rowGroups)
