@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -1123,121 +1122,6 @@ func Test_Table_Bloomfilter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, iterations)
-}
-
-func Test_Table_InsertCancellation(t *testing.T) {
-	tests := map[string]struct {
-		granuleSize int
-	}{
-		"1024": {1024},
-	}
-
-	for name := range tests {
-		t.Run(name, func(t *testing.T) {
-			table := basicTable(t)
-			ctx := context.Background()
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Millisecond)
-			defer cancel()
-
-			generateRows := func(n int) *dynparquet.Buffer {
-				rows := make(dynparquet.Samples, 0, n)
-				for i := 0; i < n; i++ {
-					rows = append(rows, dynparquet.Sample{
-						Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
-							{Name: "label1", Value: "value1"},
-							{Name: "label2", Value: "value2"},
-						},
-						Stacktrace: []uuid.UUID{
-							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-						},
-						Timestamp: rand.Int63(),
-						Value:     rand.Int63(),
-					})
-				}
-				buf, err := rows.ToBuffer(table.Schema())
-				require.NoError(t, err)
-
-				buf.Sort()
-
-				// This is necessary because sorting a buffer makes concurrent reading not
-				// safe as the internal pages are cyclically sorted at read time. Cloning
-				// executes the cyclic sort once and makes the resulting buffer safe for
-				// concurrent reading as it no longer has to perform the cyclic sorting at
-				// read time. This should probably be improved in the parquet library.
-				buf, err = buf.Clone()
-				require.NoError(t, err)
-
-				return buf
-			}
-
-			// Spawn n workers that will insert values into the table
-			n := 4
-			inserts := 10
-			rows := 10
-			wg := &sync.WaitGroup{}
-			for i := 0; i < n; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					for i := 0; i < inserts; i++ {
-						if _, err := table.InsertBuffer(ctx, generateRows(rows)); err != nil {
-							if !errors.Is(err, context.DeadlineExceeded) {
-								fmt.Println("Received error on insert: ", err)
-							}
-						}
-					}
-				}()
-			}
-
-			wg.Wait()
-			table.Sync()
-
-			// Wait for the transaction pool to drain before iterating
-			pending := 0
-			table.db.txPool.Iterate(func(tx uint64) bool {
-				pending++
-				return false
-			})
-			for pending > 1 {
-				time.Sleep(30 * time.Millisecond) // sleep wait for pool to drain
-				pending = 0
-				table.db.txPool.Iterate(func(tx uint64) bool {
-					pending++
-					return false
-				})
-			}
-
-			pool := memory.NewGoAllocator()
-
-			err := table.View(ctx, func(ctx context.Context, tx uint64) error {
-				totalrows := int64(0)
-
-				as, err := table.ArrowSchema(context.Background(), tx, pool, logicalplan.IterOptions{})
-				if err != nil {
-					return err
-				}
-
-				err = table.Iterator(
-					context.Background(),
-					tx,
-					pool,
-					as,
-					logicalplan.IterOptions{},
-					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-						totalrows += ar.NumRows()
-						defer ar.Release()
-
-						return nil
-					}},
-				)
-				require.NoError(t, err)
-				require.Less(t, totalrows, int64(n*inserts*rows)) // We expect to cancel some subset of our writes
-				return nil
-			})
-			require.NoError(t, err)
-		})
-	}
 }
 
 func Test_Table_CancelBasic(t *testing.T) {
