@@ -1106,12 +1106,6 @@ func (t *TableBlock) RowGroupIterator(
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
-		// Check if the entire granule can be skipped due to the filter
-		mayContainUsefulData, err := filter.Eval(g)
-		if err != nil || !mayContainUsefulData {
-			return true
-		}
-
 		g.PartBuffersForTx(tx, func(buf *dynparquet.SerializedBuffer) bool {
 			f := buf.ParquetFile()
 			for i := range f.RowGroups() {
