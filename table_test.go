@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,7 +22,6 @@ import (
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
-	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
@@ -380,7 +380,7 @@ func Test_Table_Concurrency(t *testing.T) {
 			}
 
 			// Spawn n workers that will insert values into the table
-			maxTxID := atomic.NewUint64(0)
+			maxTxID := &atomic.Uint64{}
 			n := 8
 			inserts := 100
 			rows := 10
@@ -398,7 +398,7 @@ func Test_Table_Concurrency(t *testing.T) {
 
 						//	 Set the max tx id that we've seen
 						if maxTX := maxTxID.Load(); tx > maxTX {
-							maxTxID.CAS(maxTX, tx)
+							maxTxID.CompareAndSwap(maxTX, tx)
 						}
 					}
 				}()
@@ -478,7 +478,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(b, err)
-	ts := atomic.NewInt64(0)
+	ts := &atomic.Int64{}
 	generateRows := func(id string, n int) *dynparquet.Buffer {
 		rows := make(dynparquet.Samples, 0, n)
 		for i := 0; i < n; i++ {
@@ -491,7 +491,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
 				},
-				Timestamp: ts.Inc(),
+				Timestamp: ts.Add(1),
 				Value:     int64(i),
 			})
 		}

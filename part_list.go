@@ -1,9 +1,7 @@
 package frostdb
 
 import (
-	satomic "sync/atomic"
-
-	"go.uber.org/atomic"
+	"sync/atomic"
 )
 
 type SentinelType uint8
@@ -16,14 +14,14 @@ const (
 
 // Node is a Part that is a part of a linked-list.
 type Node struct {
-	next satomic.Pointer[Node]
+	next atomic.Pointer[Node]
 	part *Part
 
 	sentinel SentinelType // sentinel nodes contain no parts, and are to indicate the start of a new sub list
 }
 
 type PartList struct {
-	next  *satomic.Pointer[Node]
+	next  *atomic.Pointer[Node]
 	total *atomic.Uint64
 
 	// listType indicates the type of list this list is
@@ -31,12 +29,14 @@ type PartList struct {
 }
 
 // NewPartList creates a new PartList using atomic constructs.
-func NewPartList(next *satomic.Pointer[Node], total uint64, s SentinelType) *PartList {
-	return &PartList{
+func NewPartList(next *atomic.Pointer[Node], total uint64, s SentinelType) *PartList {
+	p := &PartList{
 		next:     next,
-		total:    atomic.NewUint64(total),
+		total:    &atomic.Uint64{},
 		listType: s,
 	}
+	p.total.Store(total)
+	return p
 }
 
 // Sentinel adds a new sentinel node to the list, and returns the sub list starting from that sentinel.
@@ -49,7 +49,7 @@ func (l *PartList) Sentinel(s SentinelType) *PartList {
 		node.next.Store(next)
 		if l.next.CompareAndSwap(next, node) {
 			// TODO should we add sentinels to the total?
-			return NewPartList(l.next, l.total.Inc(), s)
+			return NewPartList(l.next, l.total.Add(1), s)
 		}
 	}
 }
@@ -66,7 +66,7 @@ func (l *PartList) Prepend(part *Part) *Node {
 			node.sentinel = Compacted
 		}
 		if l.next.CompareAndSwap(next, node) {
-			l.total.Inc()
+			l.total.Add(1)
 			return node
 		}
 	}

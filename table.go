@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	satomic "sync/atomic"
+	"sync/atomic"
 	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -29,7 +29,6 @@ import (
 	"github.com/segmentio/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/atomic"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
@@ -106,7 +105,7 @@ type TableBlock struct {
 	prevTx uint64
 
 	size  *atomic.Int64
-	index *satomic.Pointer[btree.BTree] // *btree.BTree
+	index *atomic.Pointer[btree.BTree] // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
 
@@ -817,7 +816,7 @@ func generateULID() ulid.ULID {
 }
 
 func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, error) {
-	index := satomic.Pointer[btree.BTree]{}
+	index := atomic.Pointer[btree.BTree]{}
 	index.Store(btree.New(table.db.columnStore.indexDegree))
 
 	tb := &TableBlock{
@@ -826,7 +825,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		wg:     &sync.WaitGroup{},
 		mtx:    &sync.RWMutex{},
 		ulid:   id,
-		size:   atomic.NewInt64(0),
+		size:   &atomic.Int64{},
 		logger: table.logger,
 		minTx:  tx,
 		prevTx: prevTx,
@@ -930,7 +929,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 
 func (t *TableBlock) compactGranule(granule *Granule) error {
 	// Recheck to ensure the granule still needs to be split
-	if !granule.metadata.pruned.CAS(0, 1) {
+	if !granule.metadata.pruned.CompareAndSwap(0, 1) {
 		return nil
 	}
 
@@ -1286,7 +1285,7 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 func (t *TableBlock) abort(granule *Granule) {
 	t.table.metrics.granulesCompactionAborted.Inc()
 	for {
-		if granule.metadata.pruned.CAS(1, 0) { // unmark pruned, so that we can compact it in the future
+		if granule.metadata.pruned.CompareAndSwap(1, 0) { // unmark pruned, so that we can compact it in the future
 			return
 		}
 	}

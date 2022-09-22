@@ -27,6 +27,7 @@ linters-settings:
     list-type: blacklist
     include-go-root: true
     packages-with-error-message:
+      - go.uber.org/atomic: "Use sync/atomic instead of go.uber.org/atomic"
       - debug/elf: "Use github.com/parca-dev/parca/internal/go/debug/elf instead of debug/elf"
       - github.com/stretchr/testify/assert: "Use github.com/stretchr/testify/require instead of github.com/stretchr/testify/assert"
       - github.com/go-kit/kit/log: "Use github.com/go-kit/log instead of github.com/go-kit/kit/log"

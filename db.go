@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-kit/log"
@@ -17,7 +18,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/thanos-io/objstore"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 
@@ -268,7 +268,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		return db, nil
 	}
 
-	highWatermark := atomic.NewUint64(0)
 	reg := prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg)
 	logger := log.WithPrefix(s.logger, "db", name)
 	db = &DB{
@@ -280,8 +279,8 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		reg:                  reg,
 		logger:               logger,
 		tracer:               s.tracer,
-		tx:                   atomic.NewUint64(0),
-		highWatermark:        highWatermark,
+		tx:                   &atomic.Uint64{},
+		highWatermark:        &atomic.Uint64{},
 		storagePath:          filepath.Join(s.DatabasesDir(), name),
 		wal:                  &wal.NopWAL{},
 		ignoreStorageOnQuery: s.ignoreStorageOnQuery,
@@ -321,7 +320,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 			Name: "tx_high_watermark",
 			Help: "The highest transaction number that has been released to be read",
 		}, func() float64 {
-			return float64(highWatermark.Load())
+			return float64(db.highWatermark.Load())
 		}),
 	}
 	s.dbs[name] = db
@@ -653,11 +652,11 @@ func (db *DB) beginRead() uint64 {
 //	The current high watermark
 //	A function to complete the transaction
 func (db *DB) begin() (uint64, uint64, func()) {
-	tx := db.tx.Inc()
+	tx := db.tx.Add(1)
 	watermark := db.highWatermark.Load()
 	return tx, watermark, func() {
 		if mark := db.highWatermark.Load(); mark+1 == tx { // This is the next consecutive transaction; increate the watermark
-			db.highWatermark.Inc()
+			db.highWatermark.Add(1)
 		}
 
 		// place completed transaction in the waiting pool

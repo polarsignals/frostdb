@@ -1,26 +1,24 @@
 package frostdb
 
 import (
-	satomic "sync/atomic"
+	"sync/atomic"
 	"time"
-
-	"go.uber.org/atomic"
 )
 
 type TxNode struct {
-	next satomic.Pointer[TxNode]
+	next atomic.Pointer[TxNode]
 	tx   uint64
 }
 
 type TxPool struct {
-	next  satomic.Pointer[TxNode]
+	next  atomic.Pointer[TxNode]
 	drain chan interface{}
 }
 
 // NewTxPool returns a new TxPool and starts the pool cleaner routine.
 func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	txpool := &TxPool{
-		next:  satomic.Pointer[TxNode]{},
+		next:  atomic.Pointer[TxNode]{},
 		drain: make(chan interface{}, 1),
 	}
 	go txpool.cleaner(watermark)
@@ -49,7 +47,7 @@ func (l *TxPool) Prepend(tx uint64) *TxNode {
 // Iterate accesses every node in the list.
 func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
 	next := l.next.Load()
-	prev := satomic.Pointer[TxNode]{}
+	prev := atomic.Pointer[TxNode]{}
 	for {
 		node := (*TxNode)(next)
 		if node == nil {
@@ -90,7 +88,7 @@ func (l *TxPool) sweep(watermark *atomic.Uint64) {
 		mark := watermark.Load()
 		switch {
 		case mark+1 == tx:
-			watermark.Inc()
+			watermark.Add(1)
 			return true // return true to indicate that this node should be removed from the tx list.
 		case mark >= tx:
 			return true
