@@ -236,26 +236,3 @@ func (g *Granule) Less(than btree.Item) bool {
 func (g *Granule) Least() *dynparquet.DynamicRow {
 	return (*dynparquet.DynamicRow)(g.metadata.least.Load())
 }
-
-func find(minmax int, t parquet.Type, values []parquet.Value) *parquet.Value {
-	if len(values) == 0 {
-		return nil
-	}
-
-	val := values[0]
-	for i := 1; i < len(values); i++ {
-		if t.Compare(val, values[i]) != minmax {
-			val = values[i]
-		}
-	}
-
-	return &val
-}
-
-func findMax(t parquet.Type, values []parquet.Value) *parquet.Value {
-	return find(1, t, values)
-}
-
-func findMin(t parquet.Type, values []parquet.Value) *parquet.Value {
-	return find(-1, t, values)
-}
