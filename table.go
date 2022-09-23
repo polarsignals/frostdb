@@ -1342,10 +1342,14 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	rowGroups := []dynparquet.DynamicRowGroup{}
 
 	rowGroupsChan := make(chan dynparquet.DynamicRowGroup)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
 		for rg := range rowGroupsChan {
 			rowGroups = append(rowGroups, rg)
 		}
+		wg.Done()
 	}()
 
 	// Collect all the row groups just to determine the dynamic cols
