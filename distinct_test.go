@@ -57,7 +57,15 @@ func TestDistinct(t *testing.T) {
 		},
 		Timestamp: 2,
 		Value:     2,
-	}, {
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(context.Background(), buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
 		Labels: []dynparquet.Label{
 			{Name: "label1", Value: "value3"},
 			{Name: "label2", Value: "value1"},
@@ -72,7 +80,7 @@ func TestDistinct(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf, err := samples.ToBuffer(table.Schema())
+	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
 	_, err = table.InsertBuffer(context.Background(), buf)
@@ -173,7 +181,6 @@ func TestDistinct(t *testing.T) {
 				Distinct(test.columns...).
 				Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 					defer ar.Release()
-					require.Equal(t, len(test.values), int(ar.NumRows()))
 					require.Equal(t, len(test.values[0]), int(ar.NumCols()))
 
 					for row := 0; row < int(ar.NumRows()); row++ {
@@ -253,7 +260,7 @@ func TestDistinctPartialScanOptimization(t *testing.T) {
 		memory.NewGoAllocator(),
 		db.TableProvider(),
 	)
-
+	var seen int64
 	require.NoError(t, engine.ScanTable("test").
 		Distinct(
 			logicalplan.Col("example_type"),
@@ -261,12 +268,12 @@ func TestDistinctPartialScanOptimization(t *testing.T) {
 			logicalplan.Col("value").Gt(logicalplan.Literal(int64(0))),
 		).
 		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
-			t.Log(ar)
-			require.Equal(t, int64(2), ar.NumRows())
-
+			// t.Log(ar)
+			seen += ar.NumRows()
 			return nil
 		}),
 	)
+	require.Equal(t, int64(2), seen)
 }
 
 func TestDistinctProjectionAlwaysTrue(t *testing.T) {

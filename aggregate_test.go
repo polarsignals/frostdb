@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -52,7 +53,15 @@ func TestAggregate(t *testing.T) {
 		},
 		Timestamp: 2,
 		Value:     2,
-	}, {
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(context.Background(), buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
 		Labels: []dynparquet.Label{
 			{Name: "label1", Value: "value3"},
 			{Name: "label2", Value: "value2"},
@@ -66,7 +75,7 @@ func TestAggregate(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf, err := samples.ToBuffer(table.Schema())
+	buf, err = samples.ToBuffer(table.Schema())
 	require.NoError(t, err)
 
 	_, err = table.InsertBuffer(context.Background(), buf)
@@ -113,6 +122,7 @@ func TestAggregate(t *testing.T) {
 				return nil
 			})
 			require.NoError(t, err)
+			require.NotNil(t, res)
 			defer res.Release()
 
 			cols := res.Columns()
@@ -217,6 +227,7 @@ func TestAggregateNils(t *testing.T) {
 				return nil
 			})
 			require.NoError(t, err)
+			require.NotNil(t, res)
 			defer res.Release()
 
 			cols := res.Columns()
@@ -323,6 +334,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 				return nil
 			})
 			require.NoError(t, err)
+			require.NotNil(t, res)
 			defer res.Release()
 
 			cols := res.Columns()
@@ -330,7 +342,12 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 			for i, col := range cols {
 				require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 			}
-			require.Equal(t, testCase.expVals, cols[len(cols)-1].(*array.Int64).Int64Values())
+			actual := cols[len(cols)-1].(*array.Int64).Int64Values()
+			// sort actual returned values to not have flaky tests with concurrency.
+			sort.Slice(actual, func(i, j int) bool {
+				return actual[i] > actual[j]
+			})
+			require.Equal(t, testCase.expVals, actual)
 		})
 	}
 }

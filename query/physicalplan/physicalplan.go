@@ -4,15 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
+
+// TODO: Make this smarter.
+var concurrencyHardcoded = runtime.NumCPU()
 
 type PhysicalPlan interface {
 	Callback(ctx context.Context, r arrow.Record) error
@@ -146,12 +151,16 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
+	errg, ctx := errgroup.WithContext(ctx)
+
 	for _, plan := range s.plans {
-		if err := plan.Finish(ctx); err != nil {
-			return err
-		}
+		plan := plan
+		errg.Go(func() error {
+			return plan.Finish(ctx)
+		})
 	}
-	return nil
+
+	return errg.Wait()
 }
 
 type SchemaScan struct {
@@ -197,12 +206,16 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
+	errg, ctx := errgroup.WithContext(ctx)
+
 	for _, plan := range s.plans {
-		if err := plan.Finish(ctx); err != nil {
-			return err
-		}
+		plan := plan
+		errg.Go(func() error {
+			return plan.Finish(ctx)
+		})
 	}
-	return nil
+
+	return errg.Wait()
 }
 
 func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
@@ -233,25 +246,85 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			}
 			return false
 		case plan.Projection != nil:
-			p, err := Project(pool, tracer, plan.Projection.Exprs)
-			if err != nil {
-				return false
+			// For each previous physical plan create one Projection
+			for i := 0; i < len(prev); i++ {
+				p, err := Project(pool, tracer, plan.Projection.Exprs)
+				if err != nil {
+					return false
+				}
+				phyPlans = append(phyPlans, p)
 			}
-			phyPlans = append(phyPlans, p)
 		case plan.Distinct != nil:
-			phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
+			concurrency := concurrencyHardcoded
+			if len(prev) > 1 {
+				// Just in case the previous plan's concurrency differs from the hardcoded concurrency
+				concurrency = len(prev)
+			}
+
+			phyPlans = make([]PhysicalPlan, 0, concurrency)
+			for i := 0; i < concurrency; i++ {
+				phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
+			}
+
+			// If the prev is 1 then we need a synchronizer to handle the concurrency
+			// writing into a single callback of the previous PhysicalPlan.
+			if len(prev) == 1 {
+				// This Distinct is going to do a final distinct on the previous concurrent Distincts.
+				synchronizeDistinct := Distinct(pool, tracer, plan.Distinct.Exprs)
+				synchronizeDistinct.SetNext(prev[0])
+
+				synchronizer := Synchronize(len(phyPlans))
+				synchronizer.SetNext(synchronizeDistinct)
+
+				for _, p := range phyPlans {
+					p.SetNext(synchronizer)
+				}
+			}
 		case plan.Filter != nil:
-			p, err := Filter(pool, tracer, plan.Filter.Expr)
-			if err != nil {
-				return false
+			// Create a filter for each previous plan.
+			// Can be multiple filters or just a single
+			// filter depending on the previous concurrency.
+			for range prev {
+				p, err := Filter(pool, tracer, plan.Filter.Expr)
+				if err != nil {
+					return false
+				}
+				phyPlans = append(phyPlans, p)
 			}
-			phyPlans = append(phyPlans, p)
 		case plan.Aggregation != nil:
-			p, err := Aggregate(pool, tracer, s.ParquetSchema(), plan.Aggregation)
-			if err != nil {
-				return false
+			concurrency := concurrencyHardcoded
+			if len(prev) > 1 {
+				// Just in case the previous plan's concurrency differs from the hardcoded concurrency
+				concurrency = len(prev)
 			}
-			phyPlans = append(phyPlans, p)
+
+			schema := s.ParquetSchema()
+
+			phyPlans = make([]PhysicalPlan, 0, concurrency)
+			for i := 0; i < concurrency; i++ {
+				p, err := Aggregate(pool, tracer, schema, plan.Aggregation, false)
+				if err != nil {
+					return false
+				}
+				phyPlans = append(phyPlans, p)
+			}
+
+			// If the previous plan is not concurrent we need to add a synchronizer to
+			// fan-in/synchronize the concurrent callbacks before passing the data on to single previous plan.
+			if len(prev) == 1 {
+				synchronizeAggregate, err := Aggregate(pool, tracer, schema, plan.Aggregation, true)
+				if err != nil {
+					return false
+				}
+				synchronizeAggregate.SetNext(prev[0])
+
+				synchronizer := Synchronize(len(phyPlans))
+				synchronizer.SetNext(synchronizeAggregate)
+
+				for _, p := range phyPlans {
+					p.SetNext(synchronizer)
+				}
+			}
 		default:
 			panic("Unsupported plan")
 		}
@@ -260,9 +333,13 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			return false
 		}
 
-		for i := 0; i < len(phyPlans); i++ {
-			phyPlans[i].SetNext(prev[i])
+		// If these aren't the same the operator should handle how to synchronize
+		if len(phyPlans) == len(prev) {
+			for i := 0; i < len(phyPlans); i++ {
+				phyPlans[i].SetNext(prev[i])
+			}
 		}
+
 		prev = phyPlans
 		return true
 	}))
@@ -270,7 +347,7 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 	if len(prev) == 1 {
 		outputPlan.SetNextCallback(prev[0].Callback)
 	} else {
-		// TODO: Update to use sychronizer's single callback if we have concurrency.
+		// This case should be handled in the concurrent operator above.
 	}
 
 	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
