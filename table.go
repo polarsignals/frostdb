@@ -1357,7 +1357,9 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	if err != nil {
 		return err
 	}
+
 	close(rowGroupsChan)
+	wg.Wait()
 
 	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
 	if err != nil {
