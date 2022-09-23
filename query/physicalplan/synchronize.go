@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/apache/arrow/go/v8/arrow"
-	"go.uber.org/atomic"
 )
 
 // Synchronizer is used to combine the results of multiple parallel streams
@@ -16,11 +16,13 @@ import (
 type Synchronizer struct {
 	next    PhysicalPlan
 	nextMtx sync.Mutex
-	running *atomic.Uint64
+	running *atomic.Int64
 }
 
 func Synchronize(concurrency int) *Synchronizer {
-	return &Synchronizer{running: atomic.NewUint64(uint64(concurrency))}
+	running := &atomic.Int64{}
+	running.Add(int64(concurrency))
+	return &Synchronizer{running: running}
 }
 
 func (m *Synchronizer) Callback(ctx context.Context, r arrow.Record) error {
@@ -37,7 +39,7 @@ func (m *Synchronizer) Callback(ctx context.Context, r arrow.Record) error {
 }
 
 func (m *Synchronizer) Finish(ctx context.Context) error {
-	running := m.running.Dec()
+	running := m.running.Add(-1)
 	if running < 0 {
 		return errors.New("too many Synchronizer Finish calls")
 	}
