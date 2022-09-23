@@ -260,7 +260,7 @@ func TestDistinctPartialScanOptimization(t *testing.T) {
 		memory.NewGoAllocator(),
 		db.TableProvider(),
 	)
-
+	var seen int64
 	require.NoError(t, engine.ScanTable("test").
 		Distinct(
 			logicalplan.Col("example_type"),
@@ -268,12 +268,12 @@ func TestDistinctPartialScanOptimization(t *testing.T) {
 			logicalplan.Col("value").Gt(logicalplan.Literal(int64(0))),
 		).
 		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
-			t.Log(ar)
-			require.Equal(t, int64(2), ar.NumRows())
-
+			// t.Log(ar)
+			seen += ar.NumRows()
 			return nil
 		}),
 	)
+	require.Equal(t, int64(2), seen)
 }
 
 func TestDistinctProjectionAlwaysTrue(t *testing.T) {
