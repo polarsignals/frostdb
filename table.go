@@ -674,6 +674,9 @@ func (t *Table) Iterator(
 					if !ok {
 						r := converter.NewRecord()
 						prepareForFlush(r, rgSchema)
+						if r.NumRows() == 0 {
+							return nil
+						}
 						if err := callback(ctx, r); err != nil {
 							return err
 						}
