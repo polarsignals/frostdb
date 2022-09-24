@@ -1,0 +1,21 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, labels.label5)
+value1  value1  null    null    value1
+value2  value2  value3  null    value1
+value3  value1  null    value4  value1
+----
+
+exec
+select distinct(labels.label1, labels.label2)
+----
+value1	value1
+value2	value2
+value3	value1
+
+# Distinct with filter.
+exec
+select distinct(labels.label1) where labels.label2 = 'value1' and labels.label4 = 'value4'
+----
+value3

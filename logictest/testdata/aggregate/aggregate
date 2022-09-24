@@ -1,0 +1,13 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, stacktrace, timestamp, value)
+value1  value2  null    null    stack1  1   1
+value2  value2  value3  null    stack1  2   2
+value3  value2  null    value4  stack1  3   3
+----
+
+exec
+select sum(value) as value_sum group by labels.label2
+----
+value2	6
