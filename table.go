@@ -867,6 +867,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	if err != nil {
 		return fmt.Errorf("failed to get writer: %w", err)
 	}
+	defer t.table.config.schema.PutWriter(w)
 
 	parts := []*Part{}
 	for granule, indicies := range rowsToInsertPerGranule {
