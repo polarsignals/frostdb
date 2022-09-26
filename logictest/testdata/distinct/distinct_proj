@@ -1,0 +1,13 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, labels.label2, timestamp, value)
+value1  value2  1   1
+value1  value2  2   2
+----
+
+# Always true projection.
+exec
+select distinct(labels.label1, labels.label2, timestamp > 0)
+----
+value1	value2	true
