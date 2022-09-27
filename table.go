@@ -58,8 +58,18 @@ type TableConfig struct {
 	rowGroupSize int
 }
 
+type TableOption func(*TableConfig) error
+
+func WithRowGroupSize(numRows int) TableOption {
+	return func(config *TableConfig) error {
+		config.rowGroupSize = numRows
+		return nil
+	}
+}
+
 func NewTableConfig(
 	schema *dynparquet.Schema,
+	options ...TableOption,
 ) *TableConfig {
 	return &TableConfig{
 		schema: schema,
