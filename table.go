@@ -1385,7 +1385,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	defer w.Close()
 
 	// Iterate over all the row groups, and write them to storage
-	maxRows := 8192 // TODO expose this setting
+	maxRows := 2 // TODO expose this setting
 	return t.writeRows(w, maxRows, rowGroups)
 }
 
@@ -1398,6 +1398,7 @@ func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups 
 
 	rows := merged.Rows()
 	defer rows.Close()
+	total := 0
 	for {
 		rowsBuf := make([]parquet.Row, 1)
 		n, err := rows.ReadRows(rowsBuf)
@@ -1411,14 +1412,12 @@ func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups 
 		if _, err = w.WriteRows(rowsBuf); err != nil {
 			return err
 		}
-		if count > 0 {
+		total++
+		if count > 0 && total >= count {
 			if err := w.Flush(); err != nil {
 				return err
 			}
-		}
-
-		if err == io.EOF {
-			break
+			total = 0
 		}
 	}
 
