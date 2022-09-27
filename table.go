@@ -128,6 +128,7 @@ type TableBlock struct {
 type tableMetrics struct {
 	blockRotated              prometheus.Counter
 	granulesCreated           prometheus.Counter
+	compactions               prometheus.Counter
 	granulesSplits            prometheus.Counter
 	rowsInserted              prometheus.Counter
 	zeroRowsInserted          prometheus.Counter
@@ -178,6 +179,10 @@ func newTable(
 			granulesCreated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "granules_created_total",
 				Help: "Number of granules created.",
+			}),
+			compactions: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "granules_compactions_total",
+				Help: "Number of granule compactions.",
 			}),
 			granulesSplits: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "granules_splits_total",
@@ -1057,6 +1062,7 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 		if err != nil {
 			return fmt.Errorf("splitting granule: %w", err)
 		}
+		t.table.metrics.granulesSplits.Inc()
 	}
 
 	// add remaining parts onto new granules
@@ -1281,6 +1287,7 @@ func (t *TableBlock) compact(g *Granule) {
 		t.abort(g)
 		level.Error(t.logger).Log("msg", "failed to compact granule", "err", err)
 	}
+	t.table.metrics.compactions.Inc()
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
