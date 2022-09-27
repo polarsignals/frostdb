@@ -1385,30 +1385,8 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	defer w.Close()
 
 	// Iterate over all the row groups, and write them to storage
-	count := 0
-	maxRows := 8192
-	j := 0
-	for i, rg := range rowGroups {
-		count += int(rg.NumRows())
-		if count < maxRows { // count can exceed maxRows
-			continue
-		}
-
-		err := t.writeRows(w, count, rowGroups[j:i])
-		if err != nil {
-			return err
-		}
-		j = i
-		count = 0
-	}
-	if count != 0 {
-		err := t.writeRows(w, count, rowGroups[j:])
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	maxRows := 8192 // TODO expose this setting
+	return t.writeRows(w, maxRows, rowGroups)
 }
 
 // writeRows writes a set of dynamic row groups to a writer.
@@ -1421,7 +1399,7 @@ func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups 
 	rows := merged.Rows()
 	defer rows.Close()
 	for {
-		rowsBuf := make([]parquet.Row, count)
+		rowsBuf := make([]parquet.Row, 1)
 		n, err := rows.ReadRows(rowsBuf)
 		if err != nil && err != io.EOF {
 			return err
@@ -1432,6 +1410,11 @@ func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups 
 
 		if _, err = w.WriteRows(rowsBuf); err != nil {
 			return err
+		}
+		if count > 0 {
+			if err := w.Flush(); err != nil {
+				return err
+			}
 		}
 
 		if err == io.EOF {
