@@ -4,97 +4,9 @@ import (
 	"errors"
 
 	"github.com/segmentio/parquet-go"
-	"github.com/segmentio/parquet-go/format"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
-
-// ParquetFileParticulate extends parquet.File with Particulate functions.
-type ParquetFileParticulate struct {
-	*parquet.File
-}
-
-// Schema implements the Particulate interafce.
-func (p *ParquetFileParticulate) Schema() *parquet.Schema {
-	return p.File.Schema()
-}
-
-// VirtualSparseColumnChunk is a virtualization of a sparse ColumnChunk.
-type VirtualSparseColumnChunk struct {
-	i parquet.ColumnIndex
-}
-
-// Type implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
-func (v VirtualSparseColumnChunk) Type() parquet.Type { return nil }
-
-// Column implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
-func (v VirtualSparseColumnChunk) Column() int { return -1 }
-
-// Pages implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
-func (v VirtualSparseColumnChunk) Pages() parquet.Pages { return nil }
-
-// OffsetIndex implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
-func (v VirtualSparseColumnChunk) OffsetIndex() parquet.OffsetIndex { return nil }
-
-// BloomFilter implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
-func (v VirtualSparseColumnChunk) BloomFilter() parquet.BloomFilter { return nil }
-
-// NumValues implements the parquet.ColumnChunk interface; It is intentionally unimplemented.
-func (v VirtualSparseColumnChunk) NumValues() int64 { return -1 }
-
-// ColumnIndex returns a column index for the VirtualSparseColumnChunk.
-func (v VirtualSparseColumnChunk) ColumnIndex() parquet.ColumnIndex { return v.i }
-
-type VirtualSparseColumnIndex struct {
-	Min parquet.Value
-	Max parquet.Value
-}
-
-// NumPages implements the parquet.ColumnIndex interface.
-func (v VirtualSparseColumnIndex) NumPages() int { return 1 }
-
-// NullCount implements the parquet.ColumnIndex interface.
-func (v VirtualSparseColumnIndex) NullCount(int) int64 { return 0 }
-
-// NullPage implements the parquet.ColumnIndex interface.
-func (v VirtualSparseColumnIndex) NullPage(int) bool { return false }
-
-// MinValue implements the parquet.ColumnIndex interface.
-func (v VirtualSparseColumnIndex) MinValue(int) parquet.Value { return v.Min }
-
-// MaxValue implements the parquet.ColumnIndex interface.
-func (v VirtualSparseColumnIndex) MaxValue(int) parquet.Value { return v.Max }
-
-// IsAscending implements the parquet.ColumnIndex interface.
-func (v VirtualSparseColumnIndex) IsAscending() bool { return true }
-
-// IsDescending implements the parquet.ColumnIndex interface.
-func (v VirtualSparseColumnIndex) IsDescending() bool { return false }
-
-// ColumnChunks implements the Particulate interafce.
-func (p *ParquetFileParticulate) ColumnChunks() []parquet.ColumnChunk {
-	var chunks []parquet.ColumnChunk
-	for i := range p.ColumnIndexes() {
-		switch *p.Metadata().Schema[i+1].Type {
-		case format.Int32:
-			chunks = append(chunks, VirtualSparseColumnChunk{parquet.NewColumnIndex(parquet.Int32, &p.ColumnIndexes()[i])})
-		case format.Int64:
-			chunks = append(chunks, VirtualSparseColumnChunk{parquet.NewColumnIndex(parquet.Int64, &p.ColumnIndexes()[i])})
-		case format.Float:
-			chunks = append(chunks, VirtualSparseColumnChunk{parquet.NewColumnIndex(parquet.Float, &p.ColumnIndexes()[i])})
-		case format.Double:
-			chunks = append(chunks, VirtualSparseColumnChunk{parquet.NewColumnIndex(parquet.Double, &p.ColumnIndexes()[i])})
-		case format.ByteArray:
-			chunks = append(chunks, VirtualSparseColumnChunk{parquet.NewColumnIndex(parquet.ByteArray, &p.ColumnIndexes()[i])})
-		case format.FixedLenByteArray:
-			chunks = append(chunks, VirtualSparseColumnChunk{parquet.NewColumnIndex(parquet.FixedLenByteArray, &p.ColumnIndexes()[i])})
-		default:
-			panic("unimplemented format type")
-		}
-	}
-
-	return chunks
-}
 
 type ColumnRef struct {
 	ColumnName string

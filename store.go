@@ -83,15 +83,6 @@ func (t *Table) IterateBucketBlocks(
 			return err
 		}
 
-		// Check if the block can be filtered out
-		mayContainUsefulData, err := filter.Eval(&ParquetFileParticulate{File: file})
-		if err != nil {
-			return err
-		}
-		if !mayContainUsefulData { // skip the block entirely
-			return nil
-		}
-
 		// Get a reader from the file bytes
 		buf, err := dynparquet.NewSerializedBuffer(file)
 		if err != nil {
