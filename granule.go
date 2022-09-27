@@ -73,7 +73,7 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 	}
 	node := g.parts.Prepend(p)
 
-	newSize := g.metadata.size.Add(uint64(p.Buf.ParquetFile().NumRows()))
+	newSize := g.metadata.size.Add(uint64(p.Buf.ParquetFile().Size()))
 
 	for {
 		least := g.metadata.least.Load()
