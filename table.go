@@ -627,6 +627,15 @@ func (t *Table) Iterator(
 	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
 ) error {
+	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
+	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
+	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
+	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
+	defer span.End()
+
+	if len(callbacks) == 0 {
+		return errors.New("no callbacks provided")
+	}
 	if schema == nil {
 		return errors.New("arrow output schema not provided")
 	}
@@ -637,12 +646,6 @@ func (t *Table) Iterator(
 		// are to emit zero rows.
 		return nil
 	}
-
-	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
-	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
-	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
-	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
-	defer span.End()
 
 	rowGroups := make(chan dynparquet.DynamicRowGroup, len(callbacks)*4) // buffer up to 4 row groups per callback
 
@@ -657,7 +660,6 @@ func (t *Table) Iterator(
 	const bufferSize = 1024
 
 	errg, ctx := errgroup.WithContext(ctx)
-
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(func() error {
@@ -700,11 +702,14 @@ func (t *Table) Iterator(
 		})
 	}
 
-	if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
-		return err
-	}
+	errg.Go(func() error {
+		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
+			return err
+		}
+		close(rowGroups)
+		return nil
+	})
 
-	close(rowGroups)
 	return errg.Wait()
 }
 
@@ -723,6 +728,10 @@ func (t *Table) SchemaIterator(
 	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
 	defer span.End()
 
+	if len(callbacks) == 0 {
+		return errors.New("no callbacks provided")
+	}
+
 	rowGroups := make(chan dynparquet.DynamicRowGroup, len(callbacks)*4) // buffer up to 4 row groups per callback
 
 	schema := arrow.NewSchema(
@@ -736,46 +745,47 @@ func (t *Table) SchemaIterator(
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(func() error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case rg, ok := <-rowGroups:
-				if !ok {
-					return nil // we're done
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case rg, ok := <-rowGroups:
+					if !ok {
+						return nil // we're done
+					}
+					if rg == nil {
+						return errors.New("received nil rowGroup") // shouldn't happen, but anyway
+					}
+					b := array.NewRecordBuilder(pool, schema)
+
+					parquetFields := rg.Schema().Fields()
+					fieldNames := make([]string, 0, len(parquetFields))
+					for _, f := range parquetFields {
+						fieldNames = append(fieldNames, f.Name())
+					}
+
+					b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
+
+					record := b.NewRecord()
+					if err := callback(ctx, record); err != nil {
+						return err
+					}
+					record.Release()
+					b.Release()
 				}
-				if rg == nil {
-					return nil // shouldn't happen, but anyway
-				}
-				b := array.NewRecordBuilder(pool, schema)
-
-				parquetFields := rg.Schema().Fields()
-				fieldNames := make([]string, 0, len(parquetFields))
-				for _, f := range parquetFields {
-					fieldNames = append(fieldNames, f.Name())
-				}
-
-				b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
-
-				record := b.NewRecord()
-				err := callback(ctx, record)
-				record.Release()
-				b.Release()
-
-				return err
 			}
 		})
 	}
 
-	if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
-		return err
-	}
+	errg.Go(func() error {
+		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
+			return err
+		}
+		close(rowGroups)
+		return nil
+	})
 
-	if err := errg.Wait(); err != nil {
-		return err
-	}
-	close(rowGroups)
-
-	return nil
+	return errg.Wait()
 }
 
 func (t *Table) ArrowSchema(
@@ -1163,7 +1173,12 @@ func (t *TableBlock) RowGroupIterator(
 					return false
 				}
 				if mayContainUsefulData {
-					rowGroups <- rg
+					select {
+					case <-ctx.Done():
+						err = ctx.Err()
+						return false
+					case rowGroups <- rg:
+					}
 				}
 			}
 			return true
