@@ -1393,7 +1393,7 @@ func (t *TableBlock) writeRows(writer io.Writer, rowGroups []dynparquet.DynamicR
 			break
 		}
 
-		if _, err = w.WriteRows(rowsBuf); err != nil {
+		if _, err = w.WriteRows(rowsBuf[:n]); err != nil {
 			return err
 		}
 		total += n
