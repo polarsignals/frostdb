@@ -54,11 +54,22 @@ func (e ErrCreateSchemaWriter) Error() string {
 }
 
 type TableConfig struct {
-	schema *dynparquet.Schema
+	schema       *dynparquet.Schema
+	rowGroupSize int
+}
+
+type TableOption func(*TableConfig) error
+
+func WithRowGroupSize(numRows int) TableOption {
+	return func(config *TableConfig) error {
+		config.rowGroupSize = numRows
+		return nil
+	}
 }
 
 func NewTableConfig(
 	schema *dynparquet.Schema,
+	options ...TableOption,
 ) *TableConfig {
 	return &TableConfig{
 		schema: schema,
@@ -117,6 +128,7 @@ type TableBlock struct {
 type tableMetrics struct {
 	blockRotated              prometheus.Counter
 	granulesCreated           prometheus.Counter
+	compactions               prometheus.Counter
 	granulesSplits            prometheus.Counter
 	rowsInserted              prometheus.Counter
 	zeroRowsInserted          prometheus.Counter
@@ -167,6 +179,10 @@ func newTable(
 			granulesCreated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "granules_created_total",
 				Help: "Number of granules created.",
+			}),
+			compactions: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "granules_compactions_total",
+				Help: "Number of granule compactions.",
 			}),
 			granulesSplits: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "granules_splits_total",
@@ -1022,43 +1038,10 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 		return nil
 	}
 
-	merge, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
-	if err != nil {
-		return fmt.Errorf("failed to merge dynamic row groups: %w", err)
-	}
-
 	b := bytes.NewBuffer(nil)
-	cols := merge.DynamicColumns()
-	w, err := t.table.config.schema.GetWriter(b, cols)
-	if err != nil {
-		return fmt.Errorf("failed to create new schema writer: %w", err)
-	}
-	defer t.table.config.schema.PutWriter(w)
 
-	rowBuf := make([]parquet.Row, 1)
-	rows := merge.Rows()
-	n := 0
-	for {
-		_, err := rows.ReadRows(rowBuf)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("reading rows: %w", err)
-		}
-		_, err = w.WriteRows(rowBuf)
-		if err != nil {
-			return fmt.Errorf("writing rows: %w", err)
-		}
-		n++
-	}
-
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("closing schema reader: %w", err)
-	}
-
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("closing schema writer: %w", err)
+	if err := t.writeRows(b, bufs); err != nil {
+		return fmt.Errorf("failed to write rows: %w", err)
 	}
 
 	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
@@ -1079,6 +1062,7 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 		if err != nil {
 			return fmt.Errorf("splitting granule: %w", err)
 		}
+		t.table.metrics.granulesSplits.Inc()
 	}
 
 	// add remaining parts onto new granules
@@ -1303,6 +1287,7 @@ func (t *TableBlock) compact(g *Granule) {
 		t.abort(g)
 		level.Error(t.logger).Log("msg", "failed to compact granule", "err", err)
 	}
+	t.table.metrics.compactions.Inc()
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
@@ -1371,6 +1356,12 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	close(rowGroupsChan)
 	wg.Wait()
 
+	// Iterate over all the row groups, and write them to storage
+	return t.writeRows(writer, rowGroups)
+}
+
+// writeRows writes a set of dynamic row groups to a writer.
+func (t *TableBlock) writeRows(writer io.Writer, rowGroups []dynparquet.DynamicRowGroup) error {
 	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
 	if err != nil {
 		return err
@@ -1384,44 +1375,11 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	defer t.table.config.schema.PutWriter(w)
 	defer w.Close()
 
-	// Iterate over all the row groups, and write them to storage
-	count := 0
-	maxRows := 8192
-	j := 0
-	for i, rg := range rowGroups {
-		count += int(rg.NumRows())
-		if count < maxRows { // count can exceed maxRows
-			continue
-		}
-
-		err := t.writeRows(w, count, rowGroups[j:i])
-		if err != nil {
-			return err
-		}
-		j = i
-		count = 0
-	}
-	if count != 0 {
-		err := t.writeRows(w, count, rowGroups[j:])
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// writeRows writes a set of dynamic row groups to a writer.
-func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups []dynparquet.DynamicRowGroup) error {
-	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
-	if err != nil {
-		return err
-	}
-
 	rows := merged.Rows()
 	defer rows.Close()
+	total := 0
 	for {
-		rowsBuf := make([]parquet.Row, count)
+		rowsBuf := make([]parquet.Row, 1)
 		n, err := rows.ReadRows(rowsBuf)
 		if err != nil && err != io.EOF {
 			return err
@@ -1433,9 +1391,12 @@ func (t *TableBlock) writeRows(w *dynparquet.PooledWriter, count int, rowGroups 
 		if _, err = w.WriteRows(rowsBuf); err != nil {
 			return err
 		}
-
-		if err == io.EOF {
-			break
+		total++
+		if t.table.config.rowGroupSize > 0 && total >= t.table.config.rowGroupSize {
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			total = 0
 		}
 	}
 
