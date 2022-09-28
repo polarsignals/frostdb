@@ -1375,11 +1375,16 @@ func (t *TableBlock) writeRows(writer io.Writer, rowGroups []dynparquet.DynamicR
 	defer t.table.config.schema.PutWriter(w)
 	defer w.Close()
 
+	buffSize := 256
+	if t.table.config.rowGroupSize > 0 {
+		buffSize = t.table.config.rowGroupSize
+	}
+
 	rows := merged.Rows()
 	defer rows.Close()
 	total := 0
 	for {
-		rowsBuf := make([]parquet.Row, 1)
+		rowsBuf := make([]parquet.Row, buffSize)
 		n, err := rows.ReadRows(rowsBuf)
 		if err != nil && err != io.EOF {
 			return err
@@ -1388,10 +1393,10 @@ func (t *TableBlock) writeRows(writer io.Writer, rowGroups []dynparquet.DynamicR
 			break
 		}
 
-		if _, err = w.WriteRows(rowsBuf); err != nil {
+		if _, err = w.WriteRows(rowsBuf[:n]); err != nil {
 			return err
 		}
-		total++
+		total += n
 		if t.table.config.rowGroupSize > 0 && total >= t.table.config.rowGroupSize {
 			if err := w.Flush(); err != nil {
 				return err
