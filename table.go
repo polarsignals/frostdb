@@ -1375,7 +1375,7 @@ func (t *TableBlock) writeRows(writer io.Writer, rowGroups []dynparquet.DynamicR
 	defer t.table.config.schema.PutWriter(w)
 	defer w.Close()
 
-	buffSize := 1
+	buffSize := 256
 	if t.table.config.rowGroupSize > 0 {
 		buffSize = t.table.config.rowGroupSize
 	}
