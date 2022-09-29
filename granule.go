@@ -119,7 +119,7 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 // split a granule into n granules. With the last granule containing the remainder.
 // Returns the granules in order.
 // This assumes the Granule has had its parts merged into a single part.
-func (g *Granule) split(tx uint64, count int) ([]*Granule, error) {
+func (g *Granule) split(tx uint64, count int) ([]*Granule, int64, error) {
 	// Get the first part in the granule's part list.
 	var p *Part
 	g.parts.Iterate(func(part *Part) bool {
@@ -141,10 +141,11 @@ func (g *Granule) split(tx uint64, count int) ([]*Granule, error) {
 	b = bytes.NewBuffer(nil)
 	w, err := g.tableConfig.schema.GetWriter(b, p.Buf.DynamicColumns())
 	if err != nil {
-		return nil, ErrCreateSchemaWriter{err}
+		return nil, 0, ErrCreateSchemaWriter{err}
 	}
 
 	rowsWritten := 0
+	totalSize := int64(0)
 	n := int(p.Buf.NumRows()) / count
 
 	f := p.Buf.ParquetFile()
@@ -156,40 +157,41 @@ func (g *Granule) split(tx uint64, count int) ([]*Granule, error) {
 				break
 			}
 			if err != nil {
-				return nil, ErrReadRow{err}
+				return nil, 0, ErrReadRow{err}
 			}
 
 			_, err = w.WriteRows(rowBuf)
 			if err != nil {
-				return nil, ErrWriteRow{err}
+				return nil, 0, ErrWriteRow{err}
 			}
 			rowsWritten++
 
 			if rowsWritten == n && len(granules) != count-1 { // If we have n rows, and aren't on the last granule create a new granule
 				err = w.Close()
 				if err != nil {
-					return nil, fmt.Errorf("close writer: %w", err)
+					return nil, 0, fmt.Errorf("close writer: %w", err)
 				}
 				r, err := dynparquet.ReaderFromBytes(b.Bytes())
 				if err != nil {
-					return nil, fmt.Errorf("create reader: %w", err)
+					return nil, 0, fmt.Errorf("create reader: %w", err)
 				}
+				totalSize += r.ParquetFile().Size()
 				gran, err := NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r))
 				if err != nil {
-					return nil, fmt.Errorf("new granule failed: %w", err)
+					return nil, 0, fmt.Errorf("new granule failed: %w", err)
 				}
 				granules = append(granules, gran)
 				b = bytes.NewBuffer(nil)
 				g.tableConfig.schema.PutWriter(w)
 				w, err = g.tableConfig.schema.GetWriter(b, p.Buf.DynamicColumns())
 				if err != nil {
-					return nil, ErrCreateSchemaWriter{err}
+					return nil, 0, ErrCreateSchemaWriter{err}
 				}
 				rowsWritten = 0
 			}
 		}
 		if err := rows.Close(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
@@ -197,22 +199,23 @@ func (g *Granule) split(tx uint64, count int) ([]*Granule, error) {
 		// Save the remaining Granule
 		err = w.Close()
 		if err != nil {
-			return nil, fmt.Errorf("close last writer: %w", err)
+			return nil, 0, fmt.Errorf("close last writer: %w", err)
 		}
 		g.tableConfig.schema.PutWriter(w)
 
 		r, err := dynparquet.ReaderFromBytes(b.Bytes())
 		if err != nil {
-			return nil, fmt.Errorf("create last reader: %w", err)
+			return nil, 0, fmt.Errorf("create last reader: %w", err)
 		}
+		totalSize += r.ParquetFile().Size()
 		gran, err := NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r))
 		if err != nil {
-			return nil, fmt.Errorf("new granule failed: %w", err)
+			return nil, 0, fmt.Errorf("new granule failed: %w", err)
 		}
 		granules = append(granules, gran)
 	}
 
-	return granules, nil
+	return granules, totalSize, nil
 }
 
 // PartBuffersForTx returns the PartBuffers for the given transaction constraints.

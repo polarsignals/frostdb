@@ -1055,10 +1055,11 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 	}
 
 	granules := []*Granule{g}
+	newsize := serBuf.ParquetFile().Size()
 
 	// only split the granule if it still exceeds the size
 	if serBuf.ParquetFile().Size() > t.table.db.columnStore.granuleSizeBytes {
-		granules, err = g.split(tx, 2)
+		granules, newsize, err = g.split(tx, 2)
 		if err != nil {
 			return fmt.Errorf("splitting granule: %w", err)
 		}
@@ -1123,7 +1124,7 @@ func (t *TableBlock) compactGranule(granule *Granule) error {
 
 		// Point to the new index
 		if t.index.CompareAndSwap(curIndex, index) {
-			sizeDiff := serBuf.ParquetFile().Size() - sizeBefore
+			sizeDiff := newsize - sizeBefore
 			t.size.Add(sizeDiff)
 
 			change := len(bufs) - len(granules) - len(remain)
