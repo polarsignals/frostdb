@@ -12,6 +12,7 @@ import (
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/polarsignals/frostdb/pqarrow/convert"
 	"github.com/polarsignals/frostdb/pqarrow/writer"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -145,7 +146,7 @@ type ParquetConverter struct {
 	// Output fields, for each outputSchema.Field(i) there will always be a
 	// corresponding builder.Field(i).
 	outputSchema *arrow.Schema
-	builder      *array.RecordBuilder
+	builder      *builder.RecordBuilder
 
 	// writers are wrappers over a subset of builder.Fields().
 	writers []writer.ValueWriter
@@ -177,7 +178,7 @@ func NewParquetConverter(
 		filterExpr:       filterExpr,
 		distinctColumns:  distinctColumns,
 		distinctColInfos: make([]*distinctColInfo, len(distinctColumns)),
-		builder:          array.NewRecordBuilder(pool, outputSchema),
+		builder:          builder.NewRecordBuilder(pool, outputSchema),
 	}
 
 	if filterExpr == nil && len(distinctColumns) != 0 {
@@ -505,28 +506,6 @@ func (c *ParquetConverter) writeDistinctSingleColumn(
 	}
 }
 
-// ParquetRowGroupToArrowRecord converts a parquet row group to an arrow record.
-// The result is appended to builder.
-func ParquetRowGroupToArrowRecord(
-	ctx context.Context,
-	pool memory.Allocator,
-	rg parquet.RowGroup,
-	schema *arrow.Schema,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
-	builder *array.RecordBuilder,
-) error {
-	c := NewParquetConverter(pool, schema, filterExpr, distinctColumns)
-	c.builder.Release()
-	c.builder = builder
-	defer func() {
-		c.builder = nil
-		c.Close()
-	}()
-
-	return c.Convert(ctx, rg)
-}
-
 var rowBufPool = &sync.Pool{
 	New: func() interface{} {
 		return make([]parquet.Row, 64) // Random guess.
@@ -540,7 +519,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 	pool memory.Allocator,
 	rg parquet.RowGroup,
 	schema *arrow.Schema,
-	builder *array.RecordBuilder,
+	builder *builder.RecordBuilder,
 ) error {
 	parquetFields := rg.Schema().Fields()
 
@@ -737,7 +716,7 @@ func SingleMatchingColumn(distinctColumns []logicalplan.Expr, fields []parquet.F
 // length, and a boolean for convenience to indicate if this last number is
 // equal to the number of fields in the RecordBuilder (i.e. there is no anomaly
 // in the length of each field).
-func recordBuilderLength(rb *array.RecordBuilder) (maxLength, maxLengthFields int, anomaly bool) {
+func recordBuilderLength(rb *builder.RecordBuilder) (maxLength, maxLengthFields int, anomaly bool) {
 	fields := rb.Fields()
 	maxLength = fields[0].Len()
 	maxLengthFields = 0
