@@ -128,7 +128,7 @@ type distinctColInfo struct {
 
 	// w and b are fields that the output is written to.
 	w writer.ValueWriter
-	b array.Builder
+	b builder.ColumnBuilder
 }
 
 // ParquetConverter converts parquet.RowGroups into arrow.Records. The converted
@@ -290,6 +290,10 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 
 	for _, field := range c.builder.Fields() {
 		if fieldLen := field.Len(); fieldLen < maxLen {
+			if ob, ok := field.(builder.OptimizedBuilder); ok {
+				ob.AppendNulls(maxLen - fieldLen)
+				continue
+			}
 			// If the column is not the same length as the maximum length
 			// column, we need to append NULL as often as we have rows
 			// TODO: Is there a faster or better way?
@@ -456,15 +460,24 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 	for _, field := range c.builder.Fields() {
 		// Columns that had no values are just backfilled with null values.
 		if fieldLen := field.Len(); fieldLen == initialLength {
+			if ob, ok := field.(builder.OptimizedBuilder); ok {
+				ob.AppendNulls(maxLen - initialLength)
+				continue
+			}
 			for j := initialLength; j < maxLen; j++ {
 				field.AppendNull()
 			}
 		} else if fieldLen < maxLen {
+			repeatTimes := maxLen - fieldLen
+			if ob, ok := field.(builder.OptimizedBuilder); ok {
+				ob.RepeatLastValue(repeatTimes)
+				continue
+			}
 			arr := field.NewArray()
 			// TODO(asubiotto): NewArray resets the builder, copy all the values
 			// again. There *must* be a better way to do this.
 			copyArrToBuilder(field, arr, fieldLen)
-			repeatLastValue(field, arr, maxLen-fieldLen)
+			repeatLastValue(field, arr, repeatTimes)
 			arr.Release()
 		}
 	}
@@ -668,6 +681,10 @@ func (c *ParquetConverter) writeColumnToArray(
 				return fmt.Errorf("write dictionary page: %w", err)
 			}
 		case !repeated && !optional && dict == nil:
+			// TODO(asubiotto): I think we can remove the !optional to call
+			// WritePage in more cases. The underlying writers seem to handle
+			// nulls correctly. Revisit this.
+
 			// If the column is not optional, we can read all values at once
 			// consecutively without worrying about null values.
 			if err := w.WritePage(p); err != nil {
@@ -850,13 +867,17 @@ func allOrNoneGreaterThan(
 // resetBuilderToLength resets the builder to the given length, it is logically
 // equivalent to b = b[0:l]. It is unfortunately pretty expensive, since there
 // is currently no way to recreate a builder from a sliced array.
-func resetBuilderToLength(builder array.Builder, l int) {
-	arr := builder.NewArray()
-	copyArrToBuilder(builder, arr, l)
+func resetBuilderToLength(b builder.ColumnBuilder, l int) {
+	if ob, ok := b.(builder.OptimizedBuilder); ok {
+		ob.ResetToLength(l)
+		return
+	}
+	arr := b.NewArray()
+	copyArrToBuilder(b, arr, l)
 	arr.Release()
 }
 
-func copyArrToBuilder(builder array.Builder, arr arrow.Array, toCopy int) {
+func copyArrToBuilder(builder builder.ColumnBuilder, arr arrow.Array, toCopy int) {
 	// TODO(asubiotto): Is there a better way to do this in the arrow
 	// library? Maybe by copying buffers over, but I'm not sure if it's
 	// cheaper to convert the byte slices to valid slices/offsets.
@@ -921,7 +942,7 @@ func copyArrToBuilder(builder array.Builder, arr arrow.Array, toCopy int) {
 // repeatLastValue repeat's arr's last value count times and writes it to
 // builder.
 func repeatLastValue(
-	builder array.Builder,
+	builder builder.ColumnBuilder,
 	arr arrow.Array,
 	count int,
 ) {

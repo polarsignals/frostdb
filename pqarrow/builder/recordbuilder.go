@@ -19,7 +19,7 @@ type RecordBuilder struct {
 	refCount int64
 	mem      memory.Allocator
 	schema   *arrow.Schema
-	fields   []array.Builder
+	fields   []ColumnBuilder
 }
 
 // NewRecordBuilder returns a builder, using the provided memory allocator and a schema.
@@ -28,11 +28,16 @@ func NewRecordBuilder(mem memory.Allocator, schema *arrow.Schema) *RecordBuilder
 		refCount: 1,
 		mem:      mem,
 		schema:   schema,
-		fields:   make([]array.Builder, len(schema.Fields())),
+		fields:   make([]ColumnBuilder, len(schema.Fields())),
 	}
 
 	for i, f := range schema.Fields() {
-		b.fields[i] = array.NewBuilder(b.mem, f.Type)
+		switch f.Type.(type) {
+		case *arrow.BinaryType:
+			b.fields[i] = NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
+		default:
+			b.fields[i] = array.NewBuilder(b.mem, f.Type)
+		}
 	}
 
 	return b
@@ -55,8 +60,8 @@ func (b *RecordBuilder) Release() {
 }
 
 func (b *RecordBuilder) Schema() *arrow.Schema     { return b.schema }
-func (b *RecordBuilder) Fields() []array.Builder   { return b.fields }
-func (b *RecordBuilder) Field(i int) array.Builder { return b.fields[i] }
+func (b *RecordBuilder) Fields() []ColumnBuilder   { return b.fields }
+func (b *RecordBuilder) Field(i int) ColumnBuilder { return b.fields[i] }
 
 func (b *RecordBuilder) Reserve(size int) {
 	for _, f := range b.fields {
