@@ -602,7 +602,6 @@ func (c *ParquetConverter) writeColumnToArray(
 	dictionaryOnly bool,
 	w writer.ValueWriter,
 ) error {
-	optional := n.Optional()
 	repeated := n.Repeated()
 	if !repeated && dictionaryOnly {
 		// Check all the page indexes of the column chunk. If they are
@@ -671,21 +670,13 @@ func (c *ParquetConverter) writeColumnToArray(
 
 		switch {
 		case !repeated && dictionaryOnly && dict != nil && p.NumNulls() == 0:
-			// TODO(asubiotto): This optimized path is only hit when there are
-			// no NULLs in the page since they are not represented in the
-			// dictionary. This is unexpected, verify upstream.
-
 			// If we are only writing the dictionary, we don't need to read
 			// the values.
 			if err := w.WritePage(dict.Page()); err != nil {
 				return fmt.Errorf("write dictionary page: %w", err)
 			}
-		case !repeated && !optional && dict == nil:
-			// TODO(asubiotto): I think we can remove the !optional to call
-			// WritePage in more cases. The underlying writers seem to handle
-			// nulls correctly. Revisit this.
-
-			// If the column is not optional, we can read all values at once
+		case !repeated && p.NumNulls() == 0 && dict == nil:
+			// If the column has no nulls, we can read all values at once
 			// consecutively without worrying about null values.
 			if err := w.WritePage(p); err != nil {
 				return fmt.Errorf("write page: %w", err)
