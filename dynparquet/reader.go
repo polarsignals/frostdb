@@ -56,7 +56,9 @@ func (b *SerializedBuffer) ParquetFile() *parquet.File {
 }
 
 func (b *SerializedBuffer) NumRows() int64 {
-	return b.Reader().NumRows()
+	r := b.Reader()
+	defer r.Close()
+	return r.NumRows()
 }
 
 func (b *SerializedBuffer) NumRowGroups() int {
