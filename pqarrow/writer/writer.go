@@ -57,64 +57,42 @@ func (w *binaryValueWriter) WritePage(p parquet.Page) error {
 }
 
 type int64ValueWriter struct {
-	b   *array.Int64Builder
-	buf []int64
+	b       *builder.OptInt64Builder
+	scratch struct {
+		values []parquet.Value
+	}
 }
 
-func NewInt64ValueWriter(b builder.ColumnBuilder, numValues int) ValueWriter {
+func NewInt64ValueWriter(b builder.ColumnBuilder, _ int) ValueWriter {
 	res := &int64ValueWriter{
-		b: b.(*array.Int64Builder),
+		b: b.(*builder.OptInt64Builder),
 	}
-	res.b.Reserve(numValues)
 	return res
 }
 
 func (w *int64ValueWriter) Write(values []parquet.Value) {
-	// Depending on the nullability of the column this could be optimized
-	// further by reading int64s directly and adding all of them at once to
-	// the array builder.
-	for _, v := range values {
-		if v.IsNull() {
-			w.b.AppendNull()
-		} else {
-			w.b.Append(v.Int64())
-		}
-	}
+	w.b.AppendParquetValues(values)
 }
 
 func (w *int64ValueWriter) WritePage(p parquet.Page) error {
-	reader := p.Values()
-
-	ireader, ok := reader.(parquet.Int64Reader)
-	if ok {
-		// fast path
-		if w.buf == nil {
-			w.buf = make([]int64, p.NumValues())
+	if p.NumNulls() != 0 {
+		reader := p.Values()
+		if cap(w.scratch.values) < int(p.NumValues()) {
+			w.scratch.values = make([]parquet.Value, p.NumValues())
 		}
-		values := w.buf
-		for {
-			n, err := ireader.ReadInt64s(values)
-			if err != nil && err != io.EOF {
-				return fmt.Errorf("read values: %w", err)
-			}
-
-			w.b.AppendValues(values[:n], nil)
-			if err == io.EOF {
-				break
-			}
+		w.scratch.values = w.scratch.values[:p.NumValues()]
+		_, err := reader.ReadValues(w.scratch.values)
+		// We're reading all values in the page so we always expect an io.EOF.
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("read values: %w", err)
 		}
+		w.Write(w.scratch.values)
 		return nil
 	}
 
-	values := make([]parquet.Value, p.NumValues())
-	_, err := reader.ReadValues(values)
-	// We're reading all values in the page so we always expect an io.EOF.
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("read values: %w", err)
-	}
-
-	w.Write(values)
-
+	// No nulls in page.
+	values := p.Data()
+	w.b.AppendData(values.Int64())
 	return nil
 }
 
@@ -160,13 +138,13 @@ func (w *uint64ValueWriter) WritePage(p parquet.Page) error {
 }
 
 type repeatedValueWriter struct {
-	b      *array.ListBuilder
+	b      *builder.ListBuilder
 	values ValueWriter
 }
 
 func NewListValueWriter(newValueWriter func(b builder.ColumnBuilder, numValues int) ValueWriter) func(b builder.ColumnBuilder, numValues int) ValueWriter {
 	return func(b builder.ColumnBuilder, numValues int) ValueWriter {
-		builder := b.(*array.ListBuilder)
+		builder := b.(*builder.ListBuilder)
 
 		return &repeatedValueWriter{
 			b:      builder,
