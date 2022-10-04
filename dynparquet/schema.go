@@ -778,7 +778,7 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowG
 
 	adapters := make([]parquet.RowGroup, 0, len(rowGroups))
 	for _, rowGroup := range rowGroups {
-		adapters = append(adapters, newDynamicRowGroupMergeAdapter(
+		adapters = append(adapters, NewDynamicRowGroupMergeAdapter(
 			ps,
 			cols,
 			dynamicColumns,
@@ -854,20 +854,20 @@ func mergeStrings(str [][]string) []string {
 	return result
 }
 
-// newDynamicRowGroupMergeAdapter returns a *dynamicRowGroupMergeAdapter, which
+// NewDynamicRowGroupMergeAdapter returns a *DynamicRowGroupMergeAdapter, which
 // maps the columns of the original row group to the columns in the super-set
 // schema provided. This allows row groups that have non-conflicting dynamic
 // schemas to be merged into a single row group with a superset parquet schema.
 // The provided schema must not conflict with the original row group's schema
 // it must be strictly a superset, this property is not checked, it is assumed
 // to be true for performance reasons.
-func newDynamicRowGroupMergeAdapter(
+func NewDynamicRowGroupMergeAdapter(
 	schema *parquet.Schema,
 	sortingColumns []parquet.SortingColumn,
 	mergedDynamicColumns map[string][]string,
-	originalRowGroup DynamicRowGroup,
-) *dynamicRowGroupMergeAdapter {
-	return &dynamicRowGroupMergeAdapter{
+	originalRowGroup parquet.RowGroup,
+) *DynamicRowGroupMergeAdapter {
+	return &DynamicRowGroupMergeAdapter{
 		schema:               schema,
 		sortingColumns:       sortingColumns,
 		mergedDynamicColumns: mergedDynamicColumns,
@@ -905,19 +905,19 @@ func mapMergedColumnNameIndexes(merged, original []string) []int {
 	return indexMapping
 }
 
-// dynamicRowGroupMergeAdapter maps a RowBatch with a Schema with a subset of dynamic
+// DynamicRowGroupMergeAdapter maps a RowBatch with a Schema with a subset of dynamic
 // columns to a Schema with a superset of dynamic columns. It implements the
 // parquet.RowGroup interface.
-type dynamicRowGroupMergeAdapter struct {
+type DynamicRowGroupMergeAdapter struct {
 	schema               *parquet.Schema
 	sortingColumns       []parquet.SortingColumn
 	mergedDynamicColumns map[string][]string
-	originalRowGroup     DynamicRowGroup
+	originalRowGroup     parquet.RowGroup
 	indexMapping         []int
 }
 
 // Returns the number of rows in the group.
-func (a *dynamicRowGroupMergeAdapter) NumRows() int64 {
+func (a *DynamicRowGroupMergeAdapter) NumRows() int64 {
 	return a.originalRowGroup.NumRows()
 }
 
@@ -933,7 +933,7 @@ func FieldByName(fields []parquet.Field, name string) parquet.Field {
 // Returns the leaf column at the given index in the group. Searches for the
 // same column in the original batch. If not found returns a column chunk
 // filled with nulls.
-func (a *dynamicRowGroupMergeAdapter) ColumnChunks() []parquet.ColumnChunk {
+func (a *DynamicRowGroupMergeAdapter) ColumnChunks() []parquet.ColumnChunk {
 	// This only works because we currently only support flat schemas.
 	fields := a.schema.Fields()
 	columnChunks := a.originalRowGroup.ColumnChunks()
@@ -955,7 +955,7 @@ func (a *dynamicRowGroupMergeAdapter) ColumnChunks() []parquet.ColumnChunk {
 
 // Returns the schema of rows in the group. The schema is the configured
 // merged, superset schema.
-func (a *dynamicRowGroupMergeAdapter) Schema() *parquet.Schema {
+func (a *DynamicRowGroupMergeAdapter) Schema() *parquet.Schema {
 	return a.schema
 }
 
@@ -963,12 +963,12 @@ func (a *dynamicRowGroupMergeAdapter) Schema() *parquet.Schema {
 // group.
 //
 // The method will return an empty slice if the rows are not sorted.
-func (a *dynamicRowGroupMergeAdapter) SortingColumns() []parquet.SortingColumn {
+func (a *DynamicRowGroupMergeAdapter) SortingColumns() []parquet.SortingColumn {
 	return a.sortingColumns
 }
 
 // Returns a reader exposing the rows of the row group.
-func (a *dynamicRowGroupMergeAdapter) Rows() parquet.Rows {
+func (a *DynamicRowGroupMergeAdapter) Rows() parquet.Rows {
 	return parquet.NewRowGroupRowReader(a)
 }
 
