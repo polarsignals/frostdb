@@ -33,6 +33,7 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 
 // ParquetNodeToTypeWithWriterFunc converts a parquet node to an arrow type and a function to
 // create a value writer.
+// TODO(asubiotto): The dependency on the writer package needs to be untangled.
 func ParquetNodeToTypeWithWriterFunc(n parquet.Node) (arrow.DataType, writer.NewWriterFunc, error) {
 	t := n.Type()
 	lt := t.LogicalType()
