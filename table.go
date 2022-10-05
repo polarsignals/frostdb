@@ -951,6 +951,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 
 			rowBuf := make([]parquet.Row, 1)
 			rows := buf.Reader()
+			defer rows.Close()
 			for index := 0; ; index++ {
 				_, err := rows.ReadRows(rowBuf)
 				if err == io.EOF {
