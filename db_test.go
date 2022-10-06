@@ -49,7 +49,6 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		WithBucketStorage(bucket),
 		WithActiveMemorySize(100*1024),
 	)
-
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -66,7 +65,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		require.NoError(t, err)
 	}
 	table.Sync()
-	require.NoError(t, db.wal.Close())
+	require.NoError(t, c.Close())
 
 	c, err = New(
 		WithLogger(logger),
@@ -76,6 +75,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		WithActiveMemorySize(100*1024),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	require.NoError(t, c.ReplayWALs(context.Background()))
 }
 
@@ -98,6 +98,7 @@ func TestDBWithWAL(t *testing.T) {
 		WithStoragePath(dir),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -200,6 +201,7 @@ func TestDBWithWAL(t *testing.T) {
 		WithStoragePath(dir),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 
 	require.NoError(t, c.ReplayWALs(context.Background()))
 
@@ -455,6 +457,7 @@ func Test_DB_ColdStart(t *testing.T) {
 				WithBucketStorage(bucket),
 			)
 			require.NoError(t, err)
+			defer c.Close()
 
 			// connect to our test db
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
@@ -579,6 +582,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 
 	// connect to our test db
 	db, err = c.DB(context.Background(), t.Name())
@@ -737,6 +741,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 				WithBucketStorage(bucket),
 			)
 			require.NoError(t, err)
+			defer c.Close()
 
 			// connect to our test db
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
@@ -875,6 +880,7 @@ func Test_DB_OpenError(t *testing.T) {
 		WithBucketStorage(e),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 
 	// First time returns temporary error and triggers the chicken switch
 	db, err := c.DB(context.Background(), "test")
@@ -1014,6 +1020,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 				WithBucketStorage(bucket),
 			)
 			require.NoError(t, err)
+			defer c.Close()
 
 			// connect to our test db
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
@@ -1086,6 +1093,7 @@ func Test_DB_TableWrite_FlatSchema(t *testing.T) {
 
 	c, err := New(WithLogger(newTestLogger(t)))
 	require.NoError(t, err)
+	defer c.Close()
 
 	db, err := c.DB(ctx, "flatschema")
 	require.NoError(t, err)
@@ -1127,6 +1135,7 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 
 	c, err := New(WithLogger(newTestLogger(t)))
 	require.NoError(t, err)
+	defer c.Close()
 
 	db, err := c.DB(ctx, "sampleschema")
 	require.NoError(t, err)

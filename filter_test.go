@@ -25,6 +25,7 @@ func TestFilter(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -232,6 +233,7 @@ func Test_Projection(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)

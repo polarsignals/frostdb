@@ -25,6 +25,7 @@ func TestAggregate(t *testing.T) {
 
 	c, err := New(WithLogger(logger))
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -146,6 +147,7 @@ func TestAggregateNils(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -251,6 +253,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)

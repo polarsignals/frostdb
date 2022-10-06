@@ -16,13 +16,12 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
 	github.com/prometheus/client_golang v1.12.2
-	github.com/segmentio/parquet-go v0.0.0-20220914222423-67dbe8d21ca5
+	github.com/segmentio/parquet-go v0.0.0-20221005185849-771b3e358a03
 	github.com/stretchr/testify v1.7.1
 	github.com/thanos-io/objstore v0.0.0-20220715165016-ce338803bc1e
 	github.com/tidwall/wal v1.1.7
 	go.opentelemetry.io/otel v0.20.0
 	go.opentelemetry.io/otel/trace v0.20.0
-	go.uber.org/atomic v1.9.0
 	golang.org/x/sync v0.0.0-20220601150217-0de741cfad7f
 	google.golang.org/protobuf v1.28.0
 )
@@ -56,6 +55,7 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/tinylru v1.1.0 // indirect
+	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/goleak v1.1.12 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.18.1 // indirect

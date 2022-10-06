@@ -75,7 +75,11 @@ func (l *TxPool) cleaner(watermark *atomic.Uint64) {
 
 	for {
 		select { // sweep whenever notified or when ticker
-		case <-l.drain:
+		case _, ok := <-l.drain:
+			if !ok {
+				// Channel closed.
+				return
+			}
 			l.sweep(watermark)
 		case <-ticker.C:
 			l.sweep(watermark)
@@ -96,4 +100,9 @@ func (l *TxPool) sweep(watermark *atomic.Uint64) {
 			return false
 		}
 	})
+}
+
+// Stop stops the TxPool's cleaner goroutine.
+func (l *TxPool) Stop() {
+	close(l.drain)
 }
