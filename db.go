@@ -497,6 +497,8 @@ func (db *DB) Close() error {
 		}
 	}
 
+	db.txPool.Stop()
+
 	return nil
 }
 
