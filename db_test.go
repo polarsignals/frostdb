@@ -49,9 +49,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		WithBucketStorage(bucket),
 		WithActiveMemorySize(100*1024),
 	)
-
 	require.NoError(t, err)
-	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -67,7 +65,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		require.NoError(t, err)
 	}
 	table.Sync()
-	require.NoError(t, db.wal.Close())
+	require.NoError(t, c.Close())
 
 	c, err = New(
 		WithLogger(logger),

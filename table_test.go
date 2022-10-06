@@ -753,6 +753,7 @@ func Test_Table_NewTableValidIndexDegree(t *testing.T) {
 		WithIndexDegree(-1),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 
@@ -770,6 +771,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 
 	c, err := New(WithLogger(logger), WithSplitSize(1))
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	_, err = db.Table("test", config)
@@ -778,6 +780,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 
 	c, err = New(WithLogger(logger), WithSplitSize(-1))
 	require.NoError(t, err)
+	defer c.Close()
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
@@ -786,6 +789,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 
 	c, err = New(WithLogger(logger), WithSplitSize(2))
 	require.NoError(t, err)
+	defer c.Close()
 	db, err = c.DB(context.Background(), "test")
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
 	require.NoError(t, err)
@@ -1265,6 +1269,7 @@ func Test_DoubleTable(t *testing.T) {
 		WithBucketStorage(bucket),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)

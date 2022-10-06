@@ -298,31 +298,38 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		}
 	}
 
-	db.txPool = NewTxPool(db.highWatermark)
+	if dbSetupErr := func() error {
+		db.txPool = NewTxPool(db.highWatermark)
+		// If bucket storage is configured; scan for existing tables in the database
+		if db.bucket != nil {
+			if err := db.bucket.Iter(ctx, "", func(tableName string) error {
+				_, err := db.readOnlyTable(strings.TrimSuffix(tableName, "/"))
+				if err != nil {
+					return err
+				}
 
-	// If bucket storage is configured; scan for existing tables in the database
-	if db.bucket != nil {
-		if err := db.bucket.Iter(ctx, "", func(tableName string) error {
-			_, err := db.readOnlyTable(strings.TrimSuffix(tableName, "/"))
-			if err != nil {
-				return err
+				return nil
+			}); err != nil {
+				return fmt.Errorf("bucket iter on database open: %w", err)
 			}
-
-			return nil
-		}); err != nil {
-			return nil, fmt.Errorf("bucket iter on database open: %w", err)
 		}
+
+		// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
+		db.metrics = &dbMetrics{
+			txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
+				Name: "tx_high_watermark",
+				Help: "The highest transaction number that has been released to be read",
+			}, func() float64 {
+				return float64(db.highWatermark.Load())
+			}),
+		}
+		return nil
+	}(); dbSetupErr != nil {
+		// Close handles closing partially set fields in the db.
+		db.Close()
+		return nil, dbSetupErr
 	}
 
-	// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
-	db.metrics = &dbMetrics{
-		txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-			Name: "tx_high_watermark",
-			Help: "The highest transaction number that has been released to be read",
-		}, func() float64 {
-			return float64(db.highWatermark.Load())
-		}),
-	}
 	s.dbs[name] = db
 	return db, nil
 }
@@ -479,8 +486,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 }
 
 func (db *DB) Close() error {
-	switch {
-	case db.bucket != nil:
+	if db.bucket != nil {
 		// Persist blocks to storage
 		for _, table := range db.tables {
 			table.writeBlock(table.ActiveBlock())
@@ -490,14 +496,16 @@ func (db *DB) Close() error {
 		if err := os.RemoveAll(db.walDir()); err != nil {
 			return err
 		}
+	}
 
-	case db.columnStore.enableWAL:
+	if db.columnStore.enableWAL {
 		if err := db.wal.Close(); err != nil {
 			return err
 		}
 	}
-
-	db.txPool.Stop()
+	if db.txPool != nil {
+		db.txPool.Stop()
+	}
 
 	return nil
 }
