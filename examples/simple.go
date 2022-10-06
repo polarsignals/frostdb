@@ -19,6 +19,7 @@ func main() {
 
 	// Create a new column store
 	columnstore, _ := frostdb.New()
+	defer columnstore.Close()
 
 	// Open up a database in the column store
 	database, _ := columnstore.DB(context.Background(), "simple_db")

@@ -28,6 +28,7 @@ func TestLogic(t *testing.T) {
 	datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
 		columnStore, err := frostdb.New()
 		require.NoError(t, err)
+		defer columnStore.Close()
 		db, err := columnStore.DB(ctx, "test")
 		require.NoError(t, err)
 		r := NewRunner(db)

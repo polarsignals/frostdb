@@ -48,7 +48,7 @@ func newTestLogger(t TestLogHelper) log.Logger {
 	return logger
 }
 
-func basicTable(t *testing.T, options ...Option) *Table {
+func basicTable(t *testing.T, options ...Option) (*ColumnStore, *Table) {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
 	)
@@ -65,11 +65,12 @@ func basicTable(t *testing.T, options ...Option) *Table {
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
 
-	return table
+	return c, table
 }
 
 func TestTable(t *testing.T) {
-	table := basicTable(t)
+	c, table := basicTable(t)
+	defer c.Close()
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
@@ -214,7 +215,8 @@ func Test_Table_Concurrency(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			table := basicTable(t, WithGranuleSizeBytes(test.granuleSize))
+			c, table := basicTable(t, WithGranuleSizeBytes(test.granuleSize))
+			defer c.Close()
 			defer os.RemoveAll("test")
 
 			generateRows := func(n int) *dynparquet.Buffer {
@@ -444,7 +446,8 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 }
 
 func Test_Table_ReadIsolation(t *testing.T) {
-	table := basicTable(t)
+	c, table := basicTable(t)
+	defer c.Close()
 
 	samples := dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -789,7 +792,8 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 }
 
 func Test_Table_Filter(t *testing.T) {
-	table := basicTable(t)
+	c, table := basicTable(t)
+	defer c.Close()
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
@@ -917,7 +921,8 @@ func Test_Table_Filter(t *testing.T) {
 }
 
 func Test_Table_Bloomfilter(t *testing.T) {
-	table := basicTable(t)
+	c, table := basicTable(t)
+	defer c.Close()
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
@@ -996,7 +1001,8 @@ func Test_Table_Bloomfilter(t *testing.T) {
 }
 
 func Test_Table_CancelBasic(t *testing.T) {
-	table := basicTable(t)
+	c, table := basicTable(t)
+	defer c.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -1077,7 +1083,8 @@ func Test_Table_CancelBasic(t *testing.T) {
 }
 
 func Test_Table_ArrowSchema(t *testing.T) {
-	table := basicTable(t)
+	c, table := basicTable(t)
+	defer c.Close()
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
@@ -1311,7 +1318,8 @@ func Test_DoubleTable(t *testing.T) {
 }
 
 func Test_Table_GranuleCompaction(t *testing.T) {
-	table := basicTable(t)
+	c, table := basicTable(t)
+	defer c.Close()
 	table.config.rowGroupSize = 2 // override row group size setting
 
 	samples := dynparquet.Samples{{

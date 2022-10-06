@@ -27,7 +27,7 @@ const (
 // these benchmarks, unskip the benchmarks and create a data directory in
 // testdata/data.
 
-func newDBForBenchmarks(ctx context.Context, b testing.TB) (*DB, error) {
+func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, error) {
 	b.Helper()
 
 	b.Logf("initializing %s", b.Name())
@@ -37,26 +37,26 @@ func newDBForBenchmarks(ctx context.Context, b testing.TB) (*DB, error) {
 		WithStoragePath(storagePath),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := col.ReplayWALs(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	colDB, err := col.DB(ctx, dbName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	table, err := colDB.GetTable(tableName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	table.Sync()
 
 	b.Logf("db initialized and WAL replayed, starting benchmark %s", b.Name())
-	return colDB, nil
+	return col, colDB, nil
 }
 
 func getLatest15MinInterval(ctx context.Context, b testing.TB, engine *query.LocalEngine) (start, end int64) {
@@ -110,8 +110,9 @@ func BenchmarkQueryTypes(b *testing.B) {
 	b.Skip(skipReason)
 
 	ctx := context.Background()
-	db, err := newDBForBenchmarks(ctx, b)
+	c, db, err := newDBForBenchmarks(ctx, b)
 	require.NoError(b, err)
+	defer c.Close()
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
@@ -146,8 +147,9 @@ func BenchmarkQueryMerge(b *testing.B) {
 	b.Skip(skipReason)
 
 	ctx := context.Background()
-	db, err := newDBForBenchmarks(ctx, b)
+	c, db, err := newDBForBenchmarks(ctx, b)
 	require.NoError(b, err)
+	defer c.Close()
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),
@@ -182,8 +184,9 @@ func BenchmarkQueryRange(b *testing.B) {
 	b.Skip(skipReason)
 
 	ctx := context.Background()
-	db, err := newDBForBenchmarks(ctx, b)
+	c, db, err := newDBForBenchmarks(ctx, b)
 	require.NoError(b, err)
+	defer c.Close()
 
 	engine := query.NewEngine(
 		memory.NewGoAllocator(),

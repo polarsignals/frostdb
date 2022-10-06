@@ -27,6 +27,7 @@ func TestDistinct(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -215,6 +216,7 @@ func TestDistinctPartialScanOptimization(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -287,6 +289,7 @@ func TestDistinctProjectionAlwaysTrue(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -359,6 +362,7 @@ func TestDistinctProjectionAlwaysFalse(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -431,6 +435,7 @@ func TestDistinctProjectionMixedBinaryProjection(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
@@ -528,6 +533,7 @@ func TestDistinctProjectionAllNull(t *testing.T) {
 		WithLogger(logger),
 	)
 	require.NoError(t, err)
+	defer c.Close()
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
