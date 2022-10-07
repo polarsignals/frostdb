@@ -48,10 +48,11 @@ const (
 )
 
 type Runner struct {
-	db              *frostdb.DB
-	activeTable     *frostdb.Table
-	activeTableName string
-	sqlParser       *sqlparse.Parser
+	db                        *frostdb.DB
+	activeTable               *frostdb.Table
+	activeTableName           string
+	activeTableDynamicColumns []string
+	sqlParser                 *sqlparse.Parser
 }
 
 func NewRunner(db *frostdb.DB) *Runner {
@@ -105,6 +106,11 @@ func (r *Runner) handleCreateTable(ctx context.Context, c *datadriven.TestData) 
 	}
 	r.activeTable = table
 	r.activeTableName = name
+	for _, c := range schema.Columns() {
+		if c.Dynamic {
+			r.activeTableDynamicColumns = append(r.activeTableDynamicColumns, c.Name)
+		}
+	}
 	return c.Expected, nil
 }
 
@@ -246,7 +252,7 @@ func stringToValue(t parquet.Type, stringValue string) (any, error) {
 }
 
 func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string, error) {
-	plan, err := r.parseSQL(c.Input)
+	plan, err := r.parseSQL(r.activeTableDynamicColumns, c.Input)
 	if err != nil {
 		return "", fmt.Errorf("exec: %w", err)
 	}
@@ -287,13 +293,15 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 	return b.String(), nil
 }
 
-func (r *Runner) parseSQL(sql string) (query.Builder, error) {
+func (r *Runner) parseSQL(dynColNames []string, sql string) (query.Builder, error) {
 	queryEngine := query.NewEngine(
 		memory.NewGoAllocator(),
 		r.db.TableProvider(),
 	)
 
-	query, err := r.sqlParser.ExperimentalParse(queryEngine.ScanTable(r.activeTableName), sql)
+	query, err := r.sqlParser.ExperimentalParse(
+		queryEngine.ScanTable(r.activeTableName), dynColNames, sql,
+	)
 	if err != nil {
 		return nil, err
 	}

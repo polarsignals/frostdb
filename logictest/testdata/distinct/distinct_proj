@@ -2,8 +2,8 @@ createtable schema=default
 ----
 
 insert cols=(labels.label1, labels.label2, timestamp, value)
-value1  value2  1   1
-value1  value2  2   2
+value1  value2  1   0
+value1  value2  2   0
 ----
 
 # Always true projection.
@@ -11,3 +11,21 @@ exec
 select distinct(labels.label1, labels.label2, timestamp > 0)
 ----
 value1  value2  true
+
+# Always false projection.
+exec
+select distinct(labels.label1, labels.label2, value > 0)
+----
+value1  value2  false
+
+insert cols=(labels.label1, labels.label2, timestamp, value)
+value2  value2  1   1
+value2  value2  2   2
+----
+
+# Mixed binary projection.
+exec
+select distinct(labels.label1, labels.label2, value > 0)
+----
+value2  value2  true
+value1  value2  false
