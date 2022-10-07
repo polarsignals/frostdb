@@ -10,9 +10,9 @@ value3  value1  null    value4  value1
 exec
 select distinct(labels.label1, labels.label2)
 ----
-value1	value1
-value2	value2
-value3	value1
+value1  value1
+value2  value2
+value3  value1
 
 # Distinct with filter.
 exec

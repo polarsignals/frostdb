@@ -10,4 +10,4 @@ value1  value2  2   2
 exec
 select distinct(labels.label1, labels.label2, timestamp > 0)
 ----
-value1	value2	true
+value1  value2  true

@@ -1,10 +1,12 @@
 package logictest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -249,7 +251,16 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 		return "", fmt.Errorf("exec: %w", err)
 	}
 
-	var results []string
+	var b bytes.Buffer
+	const (
+		minWidth = 8
+		tabWidth = 8
+		padding  = 2
+		padChar  = ' '
+		noFlags  = 0
+	)
+	w := tabwriter.NewWriter(&b, minWidth, tabWidth, padding, padChar, noFlags)
+
 	if err := plan.Execute(ctx, func(_ context.Context, ar arrow.Record) error {
 		colStrings := make([][]string, ar.NumCols())
 		for i, col := range ar.Columns() {
@@ -265,14 +276,15 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 			for _, col := range colStrings {
 				rowStrings = append(rowStrings, col[i])
 			}
-			results = append(results, strings.Join(rowStrings, "\t"))
+			w.Write([]byte(strings.Join(rowStrings, "\t") + "\n"))
 		}
 		return nil
 	}); err != nil {
 		return "", err
 	}
 
-	return strings.Join(results, "\n"), nil
+	w.Flush()
+	return b.String(), nil
 }
 
 func (r *Runner) parseSQL(sql string) (query.Builder, error) {
