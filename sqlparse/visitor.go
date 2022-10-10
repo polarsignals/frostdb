@@ -13,17 +13,23 @@ import (
 )
 
 type astVisitor struct {
-	builder query.Builder
-	err     error
+	builder     query.Builder
+	dynColNames map[string]struct{}
+	err         error
 
 	exprStack []logicalplan.Expr
 }
 
 var _ ast.Visitor = &astVisitor{}
 
-func newASTVisitor(builder query.Builder) *astVisitor {
+func newASTVisitor(builder query.Builder, dynColNames []string) *astVisitor {
+	dynMap := make(map[string]struct{})
+	for _, n := range dynColNames {
+		dynMap[n] = struct{}{}
+	}
 	return &astVisitor{
-		builder: builder,
+		builder:     builder,
+		dynColNames: dynMap,
 	}
 }
 
@@ -97,7 +103,14 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			Right: rightExpr,
 		})
 	case *ast.ColumnName:
-		v.exprStack = append(v.exprStack, logicalplan.Col(columnNameToString(expr)))
+		colName := columnNameToString(expr)
+		var col logicalplan.Expr
+		if _, ok := v.dynColNames[colName]; ok {
+			col = logicalplan.DynCol(colName)
+		} else {
+			col = logicalplan.Col(colName)
+		}
+		v.exprStack = append(v.exprStack, col)
 	case *test_driver.ValueExpr:
 		v.exprStack = append(v.exprStack, logicalplan.Literal(expr.GetValue()))
 	case *ast.SelectField:

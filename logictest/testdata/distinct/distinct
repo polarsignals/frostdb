@@ -8,11 +8,62 @@ value3  value1  null    value4  value1
 ----
 
 exec
+select distinct(labels.label1)
+----
+value1
+value2
+value3
+
+exec
+select distinct(labels.label2)
+----
+value1
+value2
+
+exec
 select distinct(labels.label1, labels.label2)
 ----
-value1	value1
-value2	value2
-value3	value1
+value1  value1
+value2  value2
+value3  value1
+
+# TODO(asubiotto): labels.label3 values should be NULL. Our previous test
+# accepted empty strings, but this should be fixed.
+exec
+select distinct(labels.label1, labels.label2, labels.label3)
+----
+value1  value1  
+value2  value2  value3
+value3  value1  
+
+exec
+select distinct(labels.label1, labels.label2, labels.label4)
+----
+value1  value1  
+value2  value2  
+value3  value1  value4
+
+exec
+select distinct(labels.label1, labels.label2, labels.label5)
+----
+value1  value1  value1
+value2  value2  value1
+value3  value1  value1
+
+exec
+select distinct(labels.label1, labels.label2, labels.label3, labels.label4)
+----
+value1  value1          
+value2  value2  value3  
+value3  value1          value4
+
+# Distinct on a dynamic column.
+exec
+select distinct(labels)
+----
+value1  value1                  value1
+value2  value2  value3          value1
+value3  value1          value4  value1
 
 # Distinct with filter.
 exec

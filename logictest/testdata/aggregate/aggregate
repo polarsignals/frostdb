@@ -10,4 +10,4 @@ value3  value2  null    value4  stack1  3   3
 exec
 select sum(value) as value_sum group by labels.label2
 ----
-value2	6
+value2  6

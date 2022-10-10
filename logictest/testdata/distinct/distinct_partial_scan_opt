@@ -1,0 +1,25 @@
+# This test verifies that the scan layer and a projection operator play nicely
+# together in case the scan layer only partially optimizes a binary expression.
+createtable schema=default
+----
+
+# First set of samples/row group. This should not be optimized at the scan level
+# because there are two fields with more than one distinct value.
+insert cols=(labels.label1, timestamp, value)
+value1  0   1
+value2  1   1
+----
+
+# Seconds set of samples/row group. This should be optimized.
+insert cols=(labels.label1, timestamp, value)
+value2  1   1
+value2  1   1
+----
+
+# Use unordered since multiple row groups implies concurrency and
+# undeterministic output ordering.
+exec unordered
+select distinct(labels.label1, timestamp, value > 0)
+----
+value1  0       true
+value2  1       true

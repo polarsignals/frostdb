@@ -1,10 +1,13 @@
 package logictest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -40,16 +43,22 @@ const (
 	// the columns to insert data into must be specified. Columns that are not
 	// specified will have a NULL value for each row inserted.
 	insertCmd = "insert"
-	// exec has no arguments and executes a SQL statement specified in the
-	// input against the active table.
+	// exec executes a SQL statement specified in the input against the active
+	// table.
+	// Example usage: exec [unordered]
+	// Arguments:
+	// - unordered
+	// The unordered flag is optional and specifies that the expected output
+	// should not be compared in ordered fashion with the actual output.
 	execCmd = "exec"
 )
 
 type Runner struct {
-	db              *frostdb.DB
-	activeTable     *frostdb.Table
-	activeTableName string
-	sqlParser       *sqlparse.Parser
+	db                        *frostdb.DB
+	activeTable               *frostdb.Table
+	activeTableName           string
+	activeTableDynamicColumns []string
+	sqlParser                 *sqlparse.Parser
 }
 
 func NewRunner(db *frostdb.DB) *Runner {
@@ -103,6 +112,11 @@ func (r *Runner) handleCreateTable(ctx context.Context, c *datadriven.TestData) 
 	}
 	r.activeTable = table
 	r.activeTableName = name
+	for _, c := range schema.Columns() {
+		if c.Dynamic {
+			r.activeTableDynamicColumns = append(r.activeTableDynamicColumns, c.Name)
+		}
+	}
 	return c.Expected, nil
 }
 
@@ -244,10 +258,27 @@ func stringToValue(t parquet.Type, stringValue string) (any, error) {
 }
 
 func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string, error) {
-	plan, err := r.parseSQL(c.Input)
+	unordered := false
+	for _, arg := range c.CmdArgs {
+		if arg.Key == "unordered" {
+			unordered = true
+			break
+		}
+	}
+	plan, err := r.parseSQL(r.activeTableDynamicColumns, c.Input)
 	if err != nil {
 		return "", fmt.Errorf("exec: %w", err)
 	}
+
+	var b bytes.Buffer
+	const (
+		minWidth = 8
+		tabWidth = 8
+		padding  = 2
+		padChar  = ' '
+		noFlags  = 0
+	)
+	w := tabwriter.NewWriter(&b, minWidth, tabWidth, padding, padChar, noFlags)
 
 	var results []string
 	if err := plan.Execute(ctx, func(_ context.Context, ar arrow.Record) error {
@@ -265,23 +296,40 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 			for _, col := range colStrings {
 				rowStrings = append(rowStrings, col[i])
 			}
-			results = append(results, strings.Join(rowStrings, "\t"))
+			results = append(results, strings.Join(rowStrings, "\t")+"\n")
 		}
 		return nil
 	}); err != nil {
 		return "", err
 	}
 
-	return strings.Join(results, "\n"), nil
+	if unordered {
+		// The test doesn't want to verify the ordering of the output. Sort the
+		// output so that the results are deterministically ordered
+		// independently of the execution engine.
+		sort.Strings(results)
+	}
+
+	for _, result := range results {
+		if _, err := w.Write([]byte(result)); err != nil {
+			return "", err
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
-func (r *Runner) parseSQL(sql string) (query.Builder, error) {
+func (r *Runner) parseSQL(dynColNames []string, sql string) (query.Builder, error) {
 	queryEngine := query.NewEngine(
 		memory.NewGoAllocator(),
 		r.db.TableProvider(),
 	)
 
-	query, err := r.sqlParser.ExperimentalParse(queryEngine.ScanTable(r.activeTableName), sql)
+	query, err := r.sqlParser.ExperimentalParse(
+		queryEngine.ScanTable(r.activeTableName), dynColNames, sql,
+	)
 	if err != nil {
 		return nil, err
 	}
