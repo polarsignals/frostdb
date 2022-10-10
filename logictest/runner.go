@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -42,8 +43,13 @@ const (
 	// the columns to insert data into must be specified. Columns that are not
 	// specified will have a NULL value for each row inserted.
 	insertCmd = "insert"
-	// exec has no arguments and executes a SQL statement specified in the
-	// input against the active table.
+	// exec executes a SQL statement specified in the input against the active
+	// table.
+	// Example usage: exec [unordered]
+	// Arguments:
+	// - unordered
+	// The unordered flag is optional and specifies that the expected output
+	// should not be compared in ordered fashion with the actual output.
 	execCmd = "exec"
 )
 
@@ -252,6 +258,13 @@ func stringToValue(t parquet.Type, stringValue string) (any, error) {
 }
 
 func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string, error) {
+	unordered := false
+	for _, arg := range c.CmdArgs {
+		if arg.Key == "unordered" {
+			unordered = true
+			break
+		}
+	}
 	plan, err := r.parseSQL(r.activeTableDynamicColumns, c.Input)
 	if err != nil {
 		return "", fmt.Errorf("exec: %w", err)
@@ -267,6 +280,7 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 	)
 	w := tabwriter.NewWriter(&b, minWidth, tabWidth, padding, padChar, noFlags)
 
+	var results []string
 	if err := plan.Execute(ctx, func(_ context.Context, ar arrow.Record) error {
 		colStrings := make([][]string, ar.NumCols())
 		for i, col := range ar.Columns() {
@@ -282,14 +296,28 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 			for _, col := range colStrings {
 				rowStrings = append(rowStrings, col[i])
 			}
-			w.Write([]byte(strings.Join(rowStrings, "\t") + "\n"))
+			results = append(results, strings.Join(rowStrings, "\t")+"\n")
 		}
 		return nil
 	}); err != nil {
 		return "", err
 	}
 
-	w.Flush()
+	if unordered {
+		// The test doesn't want to verify the ordering of the output. Sort the
+		// output so that the results are deterministically ordered
+		// independently of the execution engine.
+		sort.Strings(results)
+	}
+
+	for _, result := range results {
+		if _, err := w.Write([]byte(result)); err != nil {
+			return "", err
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return "", err
+	}
 	return b.String(), nil
 }
 

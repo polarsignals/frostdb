@@ -16,7 +16,9 @@ value2  1   1
 value2  1   1
 ----
 
-exec
+# Use unordered since multiple row groups implies concurrency and
+# undeterministic output ordering.
+exec unordered
 select distinct(labels.label1, timestamp, value > 0)
 ----
 value1  0       true

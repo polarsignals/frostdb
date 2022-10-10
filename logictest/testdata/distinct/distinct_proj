@@ -24,8 +24,8 @@ value2  value2  2   2
 ----
 
 # Mixed binary projection.
-exec
+exec unordered
 select distinct(labels.label1, labels.label2, value > 0)
 ----
-value2  value2  true
 value1  value2  false
+value2  value2  true
