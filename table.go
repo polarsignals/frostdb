@@ -55,7 +55,8 @@ func (e ErrCreateSchemaWriter) Error() string {
 }
 
 type TableConfig struct {
-	schema           *dynparquet.Schema
+	schema *dynparquet.Schema
+	// rowGroupSize is the desired number of rows in each row group.
 	rowGroupSize     int
 	blockReaderLimit int
 }
@@ -1011,135 +1012,6 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	return nil
 }
 
-func (t *TableBlock) compactGranule(granule *Granule) error {
-	// Use the latest watermark as the tx id
-	tx := t.table.db.tx.Load()
-
-	// Start compaction by adding sentinel node to parts list
-	parts := granule.parts.Sentinel(Compacting)
-
-	bufs := []dynparquet.DynamicRowGroup{}
-	remain := []*Part{}
-
-	sizeBefore := int64(0)
-	// Convert all the parts into a set of rows
-	parts.Iterate(func(p *Part) bool {
-		// Don't merge uncompleted transactions
-		if p.tx > tx {
-			if p.tx < math.MaxUint64 { // drop tombstoned parts
-				remain = append(remain, p)
-			}
-			return true
-		}
-
-		for i, n := 0, p.Buf.NumRowGroups(); i < n; i++ {
-			bufs = append(bufs, p.Buf.DynamicRowGroup(i))
-		}
-
-		sizeBefore += p.Buf.ParquetFile().Size()
-		return true
-	})
-
-	if len(bufs) == 0 { // aborting; nothing to do
-		return nil
-	}
-
-	b := bytes.NewBuffer(nil)
-
-	if err := t.writeRows(b, bufs); err != nil {
-		return fmt.Errorf("failed to write rows: %w", err)
-	}
-
-	serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
-	if err != nil {
-		return fmt.Errorf("reader from bytes: %w", err)
-	}
-
-	g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, NewPart(tx, serBuf))
-	if err != nil {
-		return fmt.Errorf("new granule: %w", err)
-	}
-
-	granules := []*Granule{g}
-	newsize := serBuf.ParquetFile().Size()
-
-	// only split the granule if it still exceeds the size
-	if serBuf.ParquetFile().Size() > t.table.db.columnStore.granuleSizeBytes {
-		granules, newsize, err = g.split(tx, 2)
-		if err != nil {
-			return fmt.Errorf("splitting granule: %w", err)
-		}
-		t.table.metrics.granulesSplits.Inc()
-	}
-
-	// add remaining parts onto new granules
-	for _, p := range remain {
-		err := addPartToGranule(granules, p)
-		if err != nil {
-			return fmt.Errorf("add parts to granules: %w", err)
-		}
-	}
-
-	// we disable compaction for new granules before allowing new insert to be propagated to them
-	for _, childGranule := range granules {
-		childGranule.metadata.pruned.Store(1)
-	}
-
-	// we restore the possibility to trigger compaction after we exited the function
-	defer func() {
-		for _, childGranule := range granules {
-			childGranule.metadata.pruned.Store(0)
-		}
-	}()
-
-	// set the newGranules pointer, so new writes will propogate into these new granules
-	granule.newGranules = granules
-
-	// Mark compaction complete in the granule; this will cause new writes to start using the newGranules pointer
-	parts = granule.parts.Sentinel(Compacted)
-
-	// Now we need to copy any new parts that happened while we were compacting
-	parts.Iterate(func(p *Part) bool {
-		err = addPartToGranule(granules, p)
-		if err != nil {
-			return false
-		}
-		return true
-	})
-	if err != nil {
-		return fmt.Errorf("add part to granules: %w", err)
-	}
-
-	for {
-		curIndex := t.Index()
-		t.mtx.Lock()
-		index := curIndex.Clone() // TODO(THOR): we can't clone concurrently
-		t.mtx.Unlock()
-
-		deleted := index.Delete(granule)
-		if deleted == nil {
-			level.Error(t.logger).Log("msg", "failed to delete granule during split")
-			continue
-		}
-
-		for _, g := range granules {
-			if dupe := index.ReplaceOrInsert(g); dupe != nil {
-				level.Error(t.logger).Log("duplicate insert performed")
-			}
-		}
-
-		// Point to the new index
-		if t.index.CompareAndSwap(curIndex, index) {
-			sizeDiff := newsize - sizeBefore
-			t.size.Add(sizeDiff)
-
-			change := len(bufs) - len(granules) - len(remain)
-			t.table.metrics.numParts.Sub(float64(change))
-			return nil
-		}
-	}
-}
-
 // RowGroupIterator iterates in order over all granules in the table.
 // It stops iterating when the iterator function returns false.
 func (t *TableBlock) RowGroupIterator(
@@ -1317,11 +1189,13 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 	return nil
 }
 
-// abort a compaction transaction.
-func (t *TableBlock) abort(granule *Granule) {
+// abortCompaction resets state set on compaction so that a granule may be
+// compacted again.
+func (t *TableBlock) abortCompaction(granule *Granule) {
 	t.table.metrics.granulesCompactionAborted.Inc()
 	for {
-		if granule.metadata.pruned.CompareAndSwap(1, 0) { // unmark pruned, so that we can compact it in the future
+		// Unmark pruned, so that we can compact the granule in the future.
+		if granule.metadata.pruned.CompareAndSwap(1, 0) {
 			return
 		}
 	}
@@ -1354,20 +1228,33 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	wg.Wait()
 
 	// Iterate over all the row groups, and write them to storage
-	return t.writeRows(writer, rowGroups)
+	return t.writeRowGroups(writer, rowGroups)
 }
 
-// writeRows writes a set of dynamic row groups to a writer.
-func (t *TableBlock) writeRows(writer io.Writer, rowGroups []dynparquet.DynamicRowGroup) error {
+// writeRowGroups writes a set of dynamic row groups to a writer.
+func (t *TableBlock) writeRowGroups(writer io.Writer, rowGroups []dynparquet.DynamicRowGroup) error {
 	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
 	if err != nil {
 		return err
 	}
 
 	cols := merged.DynamicColumns()
-	w, err := t.table.config.schema.GetWriter(writer, cols)
+	rows := merged.Rows()
+	defer rows.Close()
+
+	_, err = t.writeRows(writer, rows, cols, 0)
+	return err
+}
+
+// writeRows writes the given rows to a writer. Up to maxNumRows will be
+// written. If 0, all rows will be written. The number of rows written is
+// returned.
+func (t *TableBlock) writeRows(
+	writer io.Writer, rows parquet.Rows, dynCols map[string][]string, maxNumRows int,
+) (int, error) {
+	w, err := t.table.config.schema.GetWriter(writer, dynCols)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer t.table.config.schema.PutWriter(w)
 	defer w.Close()
@@ -1377,40 +1264,37 @@ func (t *TableBlock) writeRows(writer io.Writer, rowGroups []dynparquet.DynamicR
 		buffSize = t.table.config.rowGroupSize
 	}
 
-	rows := merged.Rows()
-	defer rows.Close()
-	total := 0
-	for {
+	rowGroupRowsWritten := 0
+	totalRowsWritten := 0
+	for maxNumRows == 0 || totalRowsWritten < maxNumRows {
 		rowsBuf := make([]parquet.Row, buffSize)
+		if maxNumRows != 0 && totalRowsWritten+len(rowsBuf) > maxNumRows {
+			// Read only as many rows as we need to write if they would bring
+			// us over the limit.
+			rowsBuf = rowsBuf[:maxNumRows-totalRowsWritten]
+		}
 		n, err := rows.ReadRows(rowsBuf)
 		if err != nil && err != io.EOF {
-			return err
+			return 0, err
 		}
 		if n == 0 {
 			break
 		}
 
 		if _, err = w.WriteRows(rowsBuf[:n]); err != nil {
-			return err
+			return 0, err
 		}
-		total += n
-		if t.table.config.rowGroupSize > 0 && total >= t.table.config.rowGroupSize {
+		rowGroupRowsWritten += n
+		totalRowsWritten += n
+		if t.table.config.rowGroupSize > 0 && rowGroupRowsWritten >= t.table.config.rowGroupSize {
 			if err := w.Flush(); err != nil {
-				return err
+				return 0, err
 			}
-			total = 0
+			rowGroupRowsWritten = 0
 		}
 	}
 
-	return nil
-}
-
-// tombstone marks all the parts with the max tx id to ensure they aren't included in reads.
-// Tombstoned parts will be eventually dropped from the database during compaction.
-func tombstone(parts []*Part) {
-	for _, part := range parts {
-		part.tx = math.MaxUint64
-	}
+	return totalRowsWritten, nil
 }
 
 func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {

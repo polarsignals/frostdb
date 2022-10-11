@@ -440,7 +440,9 @@ func (db *DB) replayWAL(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
+				db.mtx.Lock()
 				db.tables[tableName] = table
+				db.mtx.Unlock()
 				return nil
 			}
 			if err != nil {
