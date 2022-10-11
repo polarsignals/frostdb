@@ -71,9 +71,15 @@ func NewTableConfig(
 	schema *dynparquet.Schema,
 	options ...TableOption,
 ) *TableConfig {
-	return &TableConfig{
+	t := &TableConfig{
 		schema: schema,
 	}
+
+	for _, opt := range options {
+		opt(t)
+	}
+
+	return t
 }
 
 type completedBlock struct {
