@@ -121,7 +121,6 @@ type TableBlock struct {
 
 	pendingWritersWg sync.WaitGroup
 
-	wg  *sync.WaitGroup
 	mtx *sync.RWMutex
 }
 
@@ -262,7 +261,6 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 func (t *Table) writeBlock(block *TableBlock) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 	block.pendingWritersWg.Wait()
-	block.wg.Wait()
 
 	// from now on, the block will no longer be modified, we can persist it to disk
 
@@ -374,8 +372,8 @@ func (t *Table) Schema() *dynparquet.Schema {
 	return t.config.schema
 }
 
-func (t *Table) Sync() {
-	t.ActiveBlock().Sync()
+func (t *Table) EnsureCompaction() error {
+	return t.ActiveBlock().EnsureCompaction()
 }
 
 // Write objects into the table.
@@ -894,7 +892,6 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 	tb := &TableBlock{
 		table:  table,
 		index:  &index,
-		wg:     &sync.WaitGroup{},
 		mtx:    &sync.RWMutex{},
 		ulid:   id,
 		size:   &atomic.Int64{},
@@ -912,10 +909,9 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 	return tb, nil
 }
 
-// Sync the table block. This will return once all writes have completed and
-// all potentially started split operations have completed.
-func (t *TableBlock) Sync() {
-	t.wg.Wait()
+// EnsureCompaction forces a TableBlock compaction.
+func (t *TableBlock) EnsureCompaction() error {
+	return t.compact()
 }
 
 func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.SerializedBuffer) error {
@@ -981,15 +977,10 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 			}
 
 			part := NewPart(tx, serBuf)
-			size, err := granule.AddPart(part)
-			if err != nil {
+			if _, err := granule.AddPart(part); err != nil {
 				return fmt.Errorf("failed to add part to granule: %w", err)
 			}
 			parts = append(parts, part)
-			if size >= uint64(t.table.db.columnStore.granuleSizeBytes) {
-				t.wg.Add(1)
-				go t.compact(granule)
-			}
 			t.size.Add(serBuf.ParquetFile().Size())
 
 			b = bytes.NewBuffer(nil)
@@ -1280,16 +1271,6 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 	}
 
 	return rowsByGranule, nil
-}
-
-// compact will compact a Granule; should be performed as a background go routine.
-func (t *TableBlock) compact(g *Granule) {
-	defer t.wg.Done()
-	if err := t.compactGranule(g); err != nil {
-		t.abort(g)
-		level.Error(t.logger).Log("msg", "failed to compact granule", "err", err)
-	}
-	t.table.metrics.compactions.Inc()
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
