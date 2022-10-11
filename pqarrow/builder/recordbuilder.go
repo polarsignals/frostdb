@@ -83,7 +83,7 @@ func (b *RecordBuilder) Reserve(size int) {
 // The returned Record must be Release()'d after use.
 //
 // NewRecord panics if the fields' builder do not have the same length.
-func (b *RecordBuilder) NewRecord() array.Record {
+func (b *RecordBuilder) NewRecord() arrow.Record {
 	cols := make([]arrow.Array, len(b.fields))
 	rows := int64(0)
 
