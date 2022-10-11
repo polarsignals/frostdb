@@ -76,7 +76,7 @@ func NewTableConfig(
 	}
 
 	for _, opt := range options {
-		opt(t)
+		_ = opt(t)
 	}
 
 	return t
