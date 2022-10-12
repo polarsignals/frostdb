@@ -111,6 +111,7 @@ type HashAggregate struct {
 	tracer                trace.Tracer
 	resultColumnName      string
 	groupByCols           map[string]array.Builder
+	colOrdering           []string
 	arraysToAggregate     []array.Builder
 	hashToAggregate       map[uint64]int
 	groupByColumnMatchers []logicalplan.Expr
@@ -142,6 +143,7 @@ func NewHashAggregate(
 		tracer:            tracer,
 		resultColumnName:  resultColumnName,
 		groupByCols:       map[string]array.Builder{},
+		colOrdering:       []string{},
 		arraysToAggregate: make([]array.Builder, 0),
 		hashToAggregate:   map[uint64]int{},
 		columnToAggregate: columnToAggregate,
@@ -318,6 +320,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 				if !found {
 					groupByCol = array.NewBuilder(a.pool, groupByFields[j].Type)
 					a.groupByCols[fieldName] = groupByCol
+					a.colOrdering = append(a.colOrdering, fieldName)
 				}
 
 				// We already appended to the arrays to aggregate, so we have
@@ -398,7 +401,11 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 
 	groupByFields := make([]arrow.Field, 0, numCols)
 	groupByArrays := make([]arrow.Array, 0, numCols)
-	for fieldName, groupByCol := range a.groupByCols {
+	for _, fieldName := range a.colOrdering {
+		groupByCol, ok := a.groupByCols[fieldName]
+		if !ok {
+			return fmt.Errorf("unknown field name: %s", fieldName)
+		}
 		for groupByCol.Len() < numRows {
 			// It's possible that columns that are grouped by haven't occurred
 			// in all aggregated rows which causes them to not be of equal size
