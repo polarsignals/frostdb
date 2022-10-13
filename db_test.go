@@ -256,10 +256,6 @@ func Test_DB_WithStorage(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	// TODO(asubiotto): These buckets are not deleted from disk, resulting in
-	// test failures if run multiple times. There seems to be an attempt below
-	// to delete them, but it doesn't have an effect. What's the magic
-	// incantation?
 	bucket, err := filesystem.NewBucket(".")
 	require.NoError(t, err)
 
@@ -271,7 +267,7 @@ func Test_DB_WithStorage(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	db, err := c.DB(context.Background(), "test")
+	db, err := c.DB(context.Background(), t.Name())
 	require.NoError(t, err)
 	defer os.RemoveAll(t.Name())
 	table, err := db.Table(t.Name(), config)
