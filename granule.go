@@ -32,12 +32,11 @@ type GranuleMetadata struct {
 	// iterator.
 	least atomic.Pointer[dynparquet.DynamicRow]
 
-	// size is the raw committed, and uncommitted size of the granule. It is
-	// used as a suggestion for potential compaction.
-	size *atomic.Uint64
+	// size is the raw commited, and uncommited size of the granule. It is used as a suggestion for potential compaction
+	size atomic.Uint64
 
-	// pruned indicates if this Granule is longer found in the index.
-	pruned *atomic.Uint64
+	// pruned indicates if this Granule is longer found in the index
+	pruned atomic.Uint64
 }
 
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
@@ -47,9 +46,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		tableConfig:     tableConfig,
 
 		metadata: GranuleMetadata{
-			least:  atomic.Pointer[dynparquet.DynamicRow]{},
-			size:   &atomic.Uint64{},
-			pruned: &atomic.Uint64{},
+			least: atomic.Pointer[dynparquet.DynamicRow]{},
 		},
 	}
 
