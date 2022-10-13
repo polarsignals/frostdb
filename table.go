@@ -54,15 +54,25 @@ func (e ErrCreateSchemaWriter) Error() string {
 }
 
 type TableConfig struct {
-	schema       *dynparquet.Schema
-	rowGroupSize int
+	schema           *dynparquet.Schema
+	rowGroupSize     int
+	blockReaderLimit int
 }
 
 type TableOption func(*TableConfig) error
 
+// WithRowGroupSize sets the size in number of rows for each row group for parquet files. A <= 0 value indicates no limit.
 func WithRowGroupSize(numRows int) TableOption {
 	return func(config *TableConfig) error {
 		config.rowGroupSize = numRows
+		return nil
+	}
+}
+
+// WithBlockReaderLimit sets the limit of go routines that will be used to read persisted block files. A negative number indicates no limit.
+func WithBlockReaderLimit(n int) TableOption {
+	return func(config *TableConfig) error {
+		config.blockReaderLimit = n
 		return nil
 	}
 }
@@ -72,7 +82,8 @@ func NewTableConfig(
 	options ...TableOption,
 ) *TableConfig {
 	t := &TableConfig{
-		schema: schema,
+		schema:           schema,
+		blockReaderLimit: -1,
 	}
 
 	for _, opt := range options {

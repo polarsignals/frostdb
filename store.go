@@ -11,6 +11,7 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 )
@@ -55,62 +56,25 @@ func (t *Table) IterateBucketBlocks(
 	defer span.End()
 
 	n := 0
+	errg := &errgroup.Group{}
+	errg.SetLimit(t.config.blockReaderLimit)
 	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
-		ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter")
-		defer span.End()
-
-		blockUlid, err := ulid.Parse(filepath.Base(blockDir))
-		if err != nil {
-			return err
-		}
-
-		span.SetAttributes(attribute.String("ulid", blockUlid.String()))
-
-		if lastBlockTimestamp != 0 && blockUlid.Time() >= lastBlockTimestamp {
-			return nil
-		}
-
-		blockName := filepath.Join(blockDir, "data.parquet")
-		attribs, err := t.db.bucket.Attributes(ctx, blockName)
-		if err != nil {
-			return err
-		}
-
-		span.SetAttributes(attribute.Int64("size", attribs.Size))
-
-		file, err := t.openBlockFile(ctx, blockName, attribs.Size)
-		if err != nil {
-			return err
-		}
-
-		// Get a reader from the file bytes
-		buf, err := dynparquet.NewSerializedBuffer(file)
-		if err != nil {
-			return err
-		}
-
 		n++
-		for i := 0; i < buf.NumRowGroups(); i++ {
-			rg := buf.DynamicRowGroup(i)
-			var mayContainUsefulData bool
-			mayContainUsefulData, err = filter.Eval(rg)
-			if err != nil {
-				return err
-			}
-			if mayContainUsefulData {
-				rowGroups <- rg
-			}
-		}
+		errg.Go(func() error { return t.ProcessFile(ctx, blockDir, lastBlockTimestamp, filter, rowGroups) })
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
 	level.Debug(logger).Log("msg", "read blocks", "n", n)
-	return err
+	return errg.Wait()
 }
 
 func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64) (*parquet.File, error) {
 	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/OpenFile")
 	defer span.End()
-	r, err := t.db.bucket.GetReaderAt(ctx, blockName)
+	r, err := t.db.bucket.GetReaderAt(ctx, blockName) // TODO this is the problem
 	if err != nil {
 		return nil, err
 	}
@@ -119,10 +83,61 @@ func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64)
 		r,
 		size,
 		parquet.ReadBufferSize(5*1024*1024), // 5MB read buffers
+		parquet.SkipBloomFilters(true),
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	return file, nil
+}
+
+// ProcessFile will process a bucket block parquet file.
+func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, rowGroups chan<- dynparquet.DynamicRowGroup) error {
+	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter")
+	defer span.End()
+
+	blockUlid, err := ulid.Parse(filepath.Base(blockDir))
+	if err != nil {
+		return err
+	}
+
+	span.SetAttributes(attribute.String("ulid", blockUlid.String()))
+
+	if lastBlockTimestamp != 0 && blockUlid.Time() >= lastBlockTimestamp {
+		return nil
+	}
+
+	blockName := filepath.Join(blockDir, "data.parquet")
+	attribs, err := t.db.bucket.Attributes(ctx, blockName)
+	if err != nil {
+		return err
+	}
+
+	span.SetAttributes(attribute.Int64("size", attribs.Size))
+
+	file, err := t.openBlockFile(ctx, blockName, attribs.Size)
+	if err != nil {
+		return err
+	}
+
+	// Get a reader from the file bytes
+	buf, err := dynparquet.NewSerializedBuffer(file)
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < buf.NumRowGroups(); i++ {
+		rg := buf.DynamicRowGroup(i)
+		var mayContainUsefulData bool
+		mayContainUsefulData, err = filter.Eval(rg)
+		if err != nil {
+			return err
+		}
+		if mayContainUsefulData {
+			rowGroups <- rg
+		}
+	}
+
+	return nil
 }
