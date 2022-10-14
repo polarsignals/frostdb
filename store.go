@@ -74,7 +74,7 @@ func (t *Table) IterateBucketBlocks(
 func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64) (*parquet.File, error) {
 	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/OpenFile")
 	defer span.End()
-	r, err := t.db.bucket.GetReaderAt(ctx, blockName) // TODO this is the problem
+	r, err := t.db.bucket.GetReaderAt(ctx, blockName)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64)
 
 // ProcessFile will process a bucket block parquet file.
 func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, rowGroups chan<- dynparquet.DynamicRowGroup) error {
-	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter")
+	ctx, span := t.tracer.Start(ctx, "Table/ProcessFile")
 	defer span.End()
 
 	blockUlid, err := ulid.Parse(filepath.Base(blockDir))

@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -83,7 +84,7 @@ func NewTableConfig(
 ) *TableConfig {
 	t := &TableConfig{
 		schema:           schema,
-		blockReaderLimit: -1,
+		blockReaderLimit: runtime.GOMAXPROCS(0),
 	}
 
 	for _, opt := range options {
