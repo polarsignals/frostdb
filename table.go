@@ -84,7 +84,7 @@ func NewTableConfig(
 ) *TableConfig {
 	t := &TableConfig{
 		schema:           schema,
-		blockReaderLimit: runtime.GOMAXPROCS(0),
+		blockReaderLimit: runtime.NumCPU(),
 	}
 
 	for _, opt := range options {
