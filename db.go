@@ -539,7 +539,7 @@ func (db *DB) readOnlyTable(name string) (*Table, error) {
 	table, err := newTable(
 		db,
 		name,
-		nil,
+		NewTableConfig(nil),
 		db.reg,
 		db.logger,
 		db.tracer,
