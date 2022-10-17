@@ -28,13 +28,15 @@ type Granule struct {
 // GranuleMetadata is the metadata for a granule.
 type GranuleMetadata struct {
 	// least is the row that exists within the Granule that is the least.
-	// This is used for quick insertion into the btree, without requiring an iterator
+	// This is used for quick insertion into the btree, without requiring an
+	// iterator.
 	least atomic.Pointer[dynparquet.DynamicRow]
 
-	// size is the raw commited, and uncommited size of the granule. It is used as a suggestion for potential compaction
+	// size is the raw committed, and uncommitted size of the granule. It is
+	// used as a suggestion for potential compaction.
 	size *atomic.Uint64
 
-	// pruned indicates if this Granule is longer found in the index
+	// pruned indicates if this Granule is longer found in the index.
 	pruned *atomic.Uint64
 }
 

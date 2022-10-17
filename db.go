@@ -40,6 +40,10 @@ type ColumnStore struct {
 	bucket               storage.Bucket
 	ignoreStorageOnQuery bool
 	enableWAL            bool
+	compactionOptions    struct {
+		concurrency   int
+		sweepInterval time.Duration
+	}
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
@@ -162,6 +166,22 @@ func WithIgnoreStorageOnQuery() Option {
 	}
 }
 
+// WithCompactionConcurrency specfies the number of concurrent goroutines
+// compacting data for each database.
+func WithCompactionConcurrency(c int) Option {
+	return func(s *ColumnStore) error {
+		s.compactionOptions.concurrency = c
+		return nil
+	}
+}
+
+func WithCompactionSweepInterval(interval time.Duration) Option {
+	return func(s *ColumnStore) error {
+		s.compactionOptions.sweepInterval = interval
+		return nil
+	}
+}
+
 // Close persists all data from the columnstore to storage.
 // It is no longer valid to use the coumnstore for reads or writes, and the object should not longer be reused.
 func (s *ColumnStore) Close() error {
@@ -241,6 +261,8 @@ type DB struct {
 	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
 	txPool *TxPool
 
+	compactorPool *compactorPool
+
 	// highWatermark maintains the highest consecutively completed tx number
 	highWatermark *atomic.Uint64
 
@@ -300,6 +322,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 	if dbSetupErr := func() error {
 		db.txPool = NewTxPool(db.highWatermark)
+		db.compactorPool = newCompactorPool(db)
 		// If bucket storage is configured; scan for existing tables in the database
 		if db.bucket != nil {
 			if err := db.bucket.Iter(ctx, "", func(tableName string) error {
@@ -330,6 +353,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		return nil, dbSetupErr
 	}
 
+	db.compactorPool.start()
 	s.dbs[name] = db
 	return db, nil
 }
@@ -412,12 +436,11 @@ func (db *DB) replayWAL(ctx context.Context) error {
 					return fmt.Errorf("instantiate table: %w", err)
 				}
 
-				db.tables[tableName] = table
-
 				table.active, err = newTableBlock(table, 0, tx, id)
 				if err != nil {
 					return err
 				}
+				db.tables[tableName] = table
 				return nil
 			}
 			if err != nil {
@@ -505,6 +528,10 @@ func (db *DB) Close() error {
 	}
 	if db.txPool != nil {
 		db.txPool.Stop()
+	}
+
+	if db.compactorPool != nil {
+		db.compactorPool.stop()
 	}
 
 	return nil

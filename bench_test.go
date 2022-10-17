@@ -53,7 +53,9 @@ func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, e
 	if err != nil {
 		return nil, nil, err
 	}
-	table.Sync()
+	if err := table.EnsureCompaction(); err != nil {
+		return nil, nil, err
+	}
 
 	b.Logf("db initialized and WAL replayed, starting benchmark %s", b.Name())
 	return col, colDB, nil

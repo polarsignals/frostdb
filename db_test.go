@@ -64,7 +64,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		_, err = table.InsertBuffer(ctx, buf)
 		require.NoError(t, err)
 	}
-	table.Sync()
+	require.NoError(t, table.EnsureCompaction())
 	require.NoError(t, c.Close())
 
 	c, err = New(
