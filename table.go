@@ -1011,11 +1011,6 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 }
 
 func (t *TableBlock) compactGranule(granule *Granule) error {
-	// Recheck to ensure the granule still needs to be split
-	if !granule.metadata.pruned.CompareAndSwap(0, 1) {
-		return nil
-	}
-
 	// Use the latest watermark as the tx id
 	tx := t.table.db.tx.Load()
 
