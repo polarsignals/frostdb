@@ -274,10 +274,10 @@ func Test_SchemaFromParquetFile(t *testing.T) {
 	dbuf, err := samples.ToBuffer(schema)
 	require.NoError(t, err)
 
-	b, err := schema.SerializeBuffer(dbuf)
-	require.NoError(t, err)
+	b := bytes.NewBuffer(nil)
+	require.NoError(t, schema.SerializeBuffer(b, dbuf))
 
-	file, err := parquet.OpenFile(bytes.NewReader(b), int64(len(b)))
+	file, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(len(b.Bytes())))
 	require.NoError(t, err)
 
 	def, err := DefinitionFromParquetFile(file)

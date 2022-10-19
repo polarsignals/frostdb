@@ -99,6 +99,7 @@ type Schema struct {
 	dynamicColumns []int
 
 	writers *sync.Map
+	buffers *sync.Map
 }
 
 func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
@@ -363,6 +364,7 @@ func newSchema(
 		sortingColumns: sortingColumns,
 		columnIndexes:  columnIndexes,
 		writers:        &sync.Map{},
+		buffers:        &sync.Map{},
 	}
 
 	for i, col := range columns {
@@ -458,6 +460,10 @@ type Buffer struct {
 	buffer         *parquet.Buffer
 	dynamicColumns map[string][]string
 	fields         []parquet.Field
+}
+
+func (b *Buffer) Reset() {
+	b.buffer.Reset()
 }
 
 // DynamicRowGroup is a parquet.RowGroup that can describe the concrete dynamic
@@ -638,13 +644,12 @@ var rowBufPool = &sync.Pool{
 	},
 }
 
-func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
-	b := bytes.NewBuffer(nil)
-	w, err := s.GetWriter(b, buffer.DynamicColumns())
+func (s *Schema) SerializeBuffer(w io.Writer, buffer *Buffer) error {
+	pw, err := s.GetWriter(w, buffer.DynamicColumns())
 	if err != nil {
-		return nil, fmt.Errorf("create writer: %w", err)
+		return fmt.Errorf("create writer: %w", err)
 	}
-	defer s.PutWriter(w)
+	defer s.PutWriter(pw)
 
 	// TODO: This copying should be possible, but it's not at the time of
 	// writing this. This is likely a bug in the parquet-go library.
@@ -665,23 +670,23 @@ func (s *Schema) SerializeBuffer(buffer *Buffer) ([]byte, error) {
 			break
 		}
 		if err != nil && err != io.EOF {
-			return nil, fmt.Errorf("read row: %w", err)
+			return fmt.Errorf("read row: %w", err)
 		}
 		rowBuf = rowBuf[:n]
-		_, err = w.WriteRows(rowBuf)
+		_, err = pw.WriteRows(rowBuf)
 		if err != nil {
-			return nil, fmt.Errorf("write row: %w", err)
+			return fmt.Errorf("write row: %w", err)
 		}
 		if err == io.EOF {
 			break
 		}
 	}
 
-	if err := w.Close(); err != nil {
-		return nil, fmt.Errorf("close writer: %w", err)
+	if err := pw.Close(); err != nil {
+		return fmt.Errorf("close writer: %w", err)
 	}
 
-	return b.Bytes(), nil
+	return nil
 }
 
 // NewWriter returns a new parquet writer with a concrete parquet schema
@@ -734,7 +739,35 @@ func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*Po
 }
 
 func (s *Schema) PutWriter(w *PooledWriter) {
+	w.Writer.Reset(bytes.NewBuffer(nil))
 	w.pool.Put(w)
+}
+
+type PooledBuffer struct {
+	pool *sync.Pool
+	*Buffer
+}
+
+func (s *Schema) GetBuffer(dynamicColumns map[string][]string) (*PooledBuffer, error) {
+	key := serializeDynamicColumns(dynamicColumns)
+	pool, _ := s.buffers.LoadOrStore(key, &sync.Pool{})
+	pooled := pool.(*sync.Pool).Get()
+	if pooled == nil {
+		new, err := s.NewBuffer(dynamicColumns)
+		if err != nil {
+			return nil, err
+		}
+		return &PooledBuffer{
+			pool:   pool.(*sync.Pool),
+			Buffer: new,
+		}, nil
+	}
+	return pooled.(*PooledBuffer), nil
+}
+
+func (s *Schema) PutBuffer(b *PooledBuffer) {
+	b.Buffer.Reset()
+	b.pool.Put(b)
 }
 
 // MergedRowGroup allows wrapping any parquet.RowGroup to implement the

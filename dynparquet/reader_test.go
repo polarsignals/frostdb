@@ -36,10 +36,10 @@ func TestSerializedReader(t *testing.T) {
 	buf, err := samples.ToBuffer(schema)
 	require.NoError(t, err)
 
-	b, err := schema.SerializeBuffer(buf)
-	require.NoError(t, err)
+	b := bytes.NewBuffer(nil)
+	require.NoError(t, schema.SerializeBuffer(b, buf))
 
-	serBuf, err := ReaderFromBytes(b)
+	serBuf, err := ReaderFromBytes(b.Bytes())
 	require.NoError(t, err)
 	require.Equal(t, int64(3), serBuf.NumRows())
 }

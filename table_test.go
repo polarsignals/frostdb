@@ -1,11 +1,13 @@
 package frostdb
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -329,10 +331,9 @@ func Benchmark_Table_Insert_100Rows_100Iters_100Writers(b *testing.B) {
 
 func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	var (
+		schema = dynparquet.NewSampleSchema()
 		ctx    = context.Background()
-		config = NewTableConfig(
-			dynparquet.NewSampleSchema(),
-		)
+		config = NewTableConfig(schema)
 	)
 
 	dir, err := os.MkdirTemp("", "frostdb-benchmark")
@@ -351,7 +352,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(b, err)
 	ts := &atomic.Int64{}
-	generateRows := func(id string, n int) *dynparquet.Buffer {
+	generateRows := func(id string, n int) []byte {
 		rows := make(dynparquet.Samples, 0, n)
 		for i := 0; i < n; i++ {
 			rows = append(rows, dynparquet.Sample{
@@ -372,19 +373,23 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		require.NoError(b, err)
 
 		buf.Sort()
-		return buf
+		bytes := bytes.NewBuffer(nil)
+		require.NoError(b, schema.SerializeBuffer(bytes, buf))
+		return bytes.Bytes()
 	}
 
 	// Pre-generate all rows we're inserting
-	inserts := make(map[string][]*dynparquet.Buffer, writers)
+	inserts := make(map[string][][]byte, writers)
 	for i := 0; i < writers; i++ {
 		id := uuid.New().String()
-		inserts[id] = make([]*dynparquet.Buffer, iterations)
+		inserts[id] = make([][]byte, iterations)
 		for j := 0; j < iterations; j++ {
 			inserts[id][j] = generateRows(id, rows)
 		}
 	}
 
+	// Run GC now so it doesn't interfere with our benchmark.
+	runtime.GC()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -402,7 +407,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 					err   error
 				)
 				for i := 0; i < iterations; i++ {
-					if maxTx, err = tbl.InsertBuffer(ctx, inserts[id][i]); err != nil {
+					if maxTx, err = tbl.Insert(ctx, inserts[id][i]); err != nil {
 						fmt.Println("Received error on insert: ", err)
 					}
 				}
