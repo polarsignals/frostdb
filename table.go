@@ -554,12 +554,13 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 }
 
 func (t *Table) InsertBuffer(ctx context.Context, buf *dynparquet.Buffer) (uint64, error) {
-	b, err := t.config.schema.SerializeBuffer(buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
+	b := bytes.NewBuffer(nil)
+	err := t.config.schema.SerializeBuffer(b, buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
 	if err != nil {
 		return 0, fmt.Errorf("serialize buffer: %w", err)
 	}
 
-	return t.Insert(ctx, b)
+	return t.Insert(ctx, b.Bytes())
 }
 
 func (t *Table) Insert(ctx context.Context, buf []byte) (uint64, error) {
