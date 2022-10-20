@@ -30,8 +30,6 @@ const (
 func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, error) {
 	b.Helper()
 
-	b.Logf("initializing %s", b.Name())
-
 	col, err := New(
 		WithWAL(),
 		WithStoragePath(storagePath),
@@ -40,9 +38,12 @@ func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, e
 		return nil, nil, err
 	}
 
+	b.Logf("replaying WAL")
+	start := time.Now()
 	if err := col.ReplayWALs(ctx); err != nil {
 		return nil, nil, err
 	}
+	b.Logf("replayed WAL in %s", time.Since(start))
 
 	colDB, err := col.DB(ctx, dbName)
 	if err != nil {
@@ -53,9 +54,12 @@ func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, e
 	if err != nil {
 		return nil, nil, err
 	}
+	b.Logf("ensuring compaction")
+	start = time.Now()
 	if err := table.EnsureCompaction(); err != nil {
 		return nil, nil, err
 	}
+	b.Logf("ensured compaction in %s", time.Since(start))
 
 	b.Logf("db initialized and WAL replayed, starting benchmark %s", b.Name())
 	return col, colDB, nil
@@ -108,44 +112,7 @@ var (
 	_ = filterExprs
 )
 
-func BenchmarkQueryTypes(b *testing.B) {
-	b.Skip(skipReason)
-
-	ctx := context.Background()
-	c, db, err := newDBForBenchmarks(ctx, b)
-	require.NoError(b, err)
-	defer c.Close()
-
-	engine := query.NewEngine(
-		memory.NewGoAllocator(),
-		db.TableProvider(),
-	)
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		if err := engine.ScanTable(tableName).
-			Distinct(
-				logicalplan.Col("name"),
-				logicalplan.Col("sample_type"),
-				logicalplan.Col("sample_unit"),
-				logicalplan.Col("period_type"),
-				logicalplan.Col("period_unit"),
-				logicalplan.Col("duration").Gt(logicalplan.Literal(0)),
-			).
-			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
-				if r.NumRows() == 0 {
-					b.Fatal("expected at least one row")
-				}
-				return nil
-			}); err != nil {
-			b.Fatalf("query returned error: %v", err)
-		}
-	}
-}
-
-// BenchmarkMerge executes a merge of profiles over a 15-minute time window.
-func BenchmarkQueryMerge(b *testing.B) {
+func BenchmarkQuery(b *testing.B) {
 	b.Skip(skipReason)
 
 	ctx := context.Background()
@@ -159,62 +126,70 @@ func BenchmarkQueryMerge(b *testing.B) {
 	)
 	start, end := getLatest15MinInterval(ctx, b, engine)
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		if err := engine.ScanTable(tableName).
-			Filter(
-				logicalplan.And(filterExprs(start, end)...),
-			).
-			Aggregate(
-				logicalplan.Sum(logicalplan.Col("value")),
-				logicalplan.Col("stacktrace"),
-			).
-			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
-				if r.NumRows() == 0 {
-					b.Fatal("expected at least one row")
-				}
-				return nil
-			}); err != nil {
-			b.Fatalf("query returned error: %v", err)
+	b.Run("Types", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if err := engine.ScanTable(tableName).
+				Distinct(
+					logicalplan.Col("name"),
+					logicalplan.Col("sample_type"),
+					logicalplan.Col("sample_unit"),
+					logicalplan.Col("period_type"),
+					logicalplan.Col("period_unit"),
+					logicalplan.Col("duration").Gt(logicalplan.Literal(0)),
+				).
+				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					if r.NumRows() == 0 {
+						b.Fatal("expected at least one row")
+					}
+					return nil
+				}); err != nil {
+				b.Fatalf("query returned error: %v", err)
+			}
 		}
-	}
-}
+	})
 
-// BenchmarkRange gets a series of profiles over a 15-minute time window.
-func BenchmarkQueryRange(b *testing.B) {
-	b.Skip(skipReason)
-
-	ctx := context.Background()
-	c, db, err := newDBForBenchmarks(ctx, b)
-	require.NoError(b, err)
-	defer c.Close()
-
-	engine := query.NewEngine(
-		memory.NewGoAllocator(),
-		db.TableProvider(),
-	)
-	start, end := getLatest15MinInterval(ctx, b, engine)
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		if err := engine.ScanTable(tableName).
-			Filter(
-				logicalplan.And(filterExprs(start, end)...),
-			).
-			Aggregate(
-				logicalplan.Sum(logicalplan.Col("value")),
-				logicalplan.DynCol("labels"),
-				logicalplan.Col("timestamp"),
-			).
-			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
-				if r.NumRows() == 0 {
-					b.Fatal("expected at least one row")
-				}
-				return nil
-			}); err != nil {
-			b.Fatalf("query returned error: %v", err)
+	// Merge executes a merge of profiles over a 15-minute time window.
+	b.Run("Merge", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if err := engine.ScanTable(tableName).
+				Filter(
+					logicalplan.And(filterExprs(start, end)...),
+				).
+				Aggregate(
+					logicalplan.Sum(logicalplan.Col("value")),
+					logicalplan.Col("stacktrace"),
+				).
+				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					if r.NumRows() == 0 {
+						b.Fatal("expected at least one row")
+					}
+					return nil
+				}); err != nil {
+				b.Fatalf("query returned error: %v", err)
+			}
 		}
-	}
+	})
+
+	// Range gets a series of profiles over a 15-minute time window.
+	b.Run("Range", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if err := engine.ScanTable(tableName).
+				Filter(
+					logicalplan.And(filterExprs(start, end)...),
+				).
+				Aggregate(
+					logicalplan.Sum(logicalplan.Col("value")),
+					logicalplan.DynCol("labels"),
+					logicalplan.Col("timestamp"),
+				).
+				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					if r.NumRows() == 0 {
+						b.Fatal("expected at least one row")
+					}
+					return nil
+				}); err != nil {
+				b.Fatalf("query returned error: %v", err)
+			}
+		}
+	})
 }
