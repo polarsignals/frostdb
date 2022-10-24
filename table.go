@@ -154,6 +154,7 @@ type tableMetrics struct {
 	rowInsertSize             prometheus.Histogram
 	lastCompletedBlockTx      prometheus.Gauge
 	numParts                  prometheus.Gauge
+	compactionMetrics         *compactionMetrics
 }
 
 func newTable(
@@ -227,6 +228,7 @@ func newTable(
 				Name: "last_completed_block_tx",
 				Help: "Last completed block transaction.",
 			}),
+			compactionMetrics: newCompactionMetrics(reg, float64(db.columnStore.granuleSizeBytes)),
 		},
 	}
 
@@ -931,7 +933,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 
 // EnsureCompaction forces a TableBlock compaction.
 func (t *TableBlock) EnsureCompaction() error {
-	return t.compact()
+	return t.compact(t.table.db.columnStore.compactionConfig)
 }
 
 func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.SerializedBuffer) error {

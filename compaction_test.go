@@ -258,7 +258,10 @@ func TestCompaction(t *testing.T) {
 						table.active.Index().Len(),
 						"tests assume only a single granule as input",
 					)
-					success, err := table.active.compactGranule((table.active.Index().Min()).(*Granule))
+					success, err := table.active.compactGranule(
+						(table.active.Index().Min()).(*Granule),
+						table.db.columnStore.compactionConfig,
+					)
 					require.True(t, success)
 					require.NoError(t, err)
 				case recordGranuleSizeCommand:

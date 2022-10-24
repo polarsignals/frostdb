@@ -10,48 +10,88 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dustin/go-humanize"
+	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/thanos-io/objstore/errutil"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 )
 
+type CompactionOption func(*CompactionConfig) error
+
+type CompactionConfig struct {
+	concurrency          int
+	interval             time.Duration
+	l1ToGranuleSizeRatio float64
+}
+
+// NewCompactionConfig creates a new compaction config with the given options.
+// If none are specified, a default compaction config is created.
+func NewCompactionConfig(options ...CompactionOption) *CompactionConfig {
+	c := &CompactionConfig{
+		concurrency: runtime.GOMAXPROCS(0),
+		interval:    100 * time.Millisecond,
+		// 0.5 was chosen so that a level1 part takes up around half the space
+		// in a full granule, allowing for level0 parts to grow up to the
+		// remaining space before compaction. The higher this ratio, the less
+		// new data is compacted and the more compactions occur. However, a
+		// lower ratio implies leaving some parquet compression size savings on
+		// the table.
+		l1ToGranuleSizeRatio: 0.5,
+	}
+	return c
+}
+
+// WithConcurrency specifies the number of concurrent goroutines compacting data
+// for each database.
+func WithConcurrency(concurrency int) CompactionOption {
+	return func(c *CompactionConfig) error {
+		c.concurrency = concurrency
+		return nil
+	}
+}
+
+// WithInterval specifies the compaction sweep interval.
+func WithInterval(i time.Duration) CompactionOption {
+	return func(c *CompactionConfig) error {
+		c.interval = i
+		return nil
+	}
+}
+
+// WithL1ToGranuleSizeRatio sets the target level1 part size relative to the
+// granule size. The closer this value is to 1, the more compacted data becomes
+// with an expected rise in memory and CPU usage.
+func WithL1ToGranuleSizeRatio(r float64) CompactionOption {
+	return func(c *CompactionConfig) error {
+		c.l1ToGranuleSizeRatio = r
+		return nil
+	}
+}
+
 type compactorPool struct {
 	db *DB
 
-	concurrency int
-	interval    time.Duration
-	wg          sync.WaitGroup
-	cancel      context.CancelFunc
+	cfg    *CompactionConfig
+	wg     sync.WaitGroup
+	cancel context.CancelFunc
 }
 
-var (
-	defaultConcurrency   = runtime.GOMAXPROCS(0)
-	defaultSweepInterval = 100 * time.Millisecond
-)
-
-func newCompactorPool(db *DB) *compactorPool {
-	concurrency := defaultConcurrency
-	if override := db.columnStore.compactionOptions.concurrency; override != 0 {
-		concurrency = override
-	}
-
-	sweepInterval := defaultSweepInterval
-	if override := db.columnStore.compactionOptions.sweepInterval; override != 0 {
-		sweepInterval = override
-	}
+func newCompactorPool(db *DB, cfg *CompactionConfig) *compactorPool {
 	return &compactorPool{
-		db:          db,
-		concurrency: concurrency,
-		interval:    sweepInterval,
+		db:  db,
+		cfg: cfg,
 	}
 }
 
 func (c *compactorPool) start() {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	c.cancel = cancelFn
-	for i := 0; i < c.concurrency; i++ {
+	for i := 0; i < c.cfg.concurrency; i++ {
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
@@ -74,7 +114,7 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(c.interval):
+		case <-time.After(c.cfg.interval):
 			c.db.mtx.RLock()
 			tablesToCompact := make([]*Table, 0, len(c.db.tables))
 			for _, table := range c.db.tables {
@@ -83,7 +123,7 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 			c.db.mtx.RUnlock()
 
 			for _, table := range tablesToCompact {
-				if err := table.ActiveBlock().compact(); err != nil {
+				if err := table.ActiveBlock().compact(c.cfg); err != nil {
 					level.Warn(c.db.logger).Log("msg", "compaction failed", "err", err)
 				}
 			}
@@ -91,7 +131,7 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 	}
 }
 
-func (t *TableBlock) compact() error {
+func (t *TableBlock) compact(cfg *CompactionConfig) error {
 	var compactionErrors errutil.MultiError
 	t.Index().Ascend(func(i btree.Item) bool {
 		granuleToCompact := i.(*Granule)
@@ -105,7 +145,7 @@ func (t *TableBlock) compact() error {
 		}
 
 		defer t.table.metrics.compactions.Inc()
-		if successful, err := t.compactGranule(granuleToCompact); !successful || err != nil {
+		if successful, err := t.compactGranule(granuleToCompact, cfg); !successful || err != nil {
 			t.abortCompaction(granuleToCompact)
 			if err != nil {
 				compactionErrors.Add(err)
@@ -114,6 +154,129 @@ func (t *TableBlock) compact() error {
 		return true
 	})
 	return compactionErrors.Err()
+}
+
+// compactionStats is a helper struct to collect metrics during compaction.
+type compactionStats struct {
+	level0SizeBefore        int64
+	level0CountBefore       int
+	level0NumRowsBefore     int64
+	level1SizeBefore        int64
+	level1CountBefore       int
+	level1NumRowsBefore     int64
+	numPartsOverlap         int
+	uncompletedTxnPartCount int64
+	level1SizeAfter         uint64
+	level1CountAfter        int
+	splits                  int
+	totalDuration           time.Duration
+}
+
+func (s compactionStats) recordAndLog(m *compactionMetrics, l log.Logger) {
+	m.level0SizeBefore.Observe(float64(s.level0SizeBefore))
+	m.level0CountBefore.Observe(float64(s.level0CountBefore))
+	m.level1SizeBefore.Observe(float64(s.level1SizeBefore))
+	m.level1CountBefore.Observe(float64(s.level1CountBefore))
+	m.numPartsOverlap.Observe(float64(s.numPartsOverlap))
+	m.uncompletedTxnPartCount.Observe(float64(s.uncompletedTxnPartCount))
+	m.level1SizeAfter.Observe(float64(s.level1SizeAfter))
+	m.level1CountAfter.Observe(float64(s.level1CountAfter))
+	m.splits.Observe(float64(s.splits))
+	m.totalDuration.Observe(float64(s.totalDuration.Seconds()))
+
+	level.Debug(l).Log(
+		"msg", "compaction complete",
+		"duration", s.totalDuration,
+		"l0Before", fmt.Sprintf(
+			"[sz=%s,cnt=%d]", humanize.IBytes(uint64(s.level0SizeBefore)), s.level0CountBefore,
+		),
+		"l1Before", fmt.Sprintf(
+			"[sz=%s,cnt=%d]", humanize.IBytes(uint64(s.level1SizeBefore)), s.level1CountBefore,
+		),
+		"l1After", fmt.Sprintf(
+			"[sz=%s,cnt=%d]", humanize.IBytes(uint64(s.level1SizeAfter)), s.level1CountAfter,
+		),
+		"overlaps", s.numPartsOverlap,
+		"splits", s.splits,
+	)
+}
+
+// compactionMetrics are metrics recorded on each successful compaction.
+type compactionMetrics struct {
+	level0SizeBefore        prometheus.Histogram
+	level0CountBefore       prometheus.Histogram
+	level1SizeBefore        prometheus.Histogram
+	level1CountBefore       prometheus.Histogram
+	numPartsOverlap         prometheus.Histogram
+	uncompletedTxnPartCount prometheus.Histogram
+	level1SizeAfter         prometheus.Histogram
+	level1CountAfter        prometheus.Histogram
+	splits                  prometheus.Histogram
+	totalDuration           prometheus.Histogram
+}
+
+func newCompactionMetrics(reg prometheus.Registerer, granuleSize float64) *compactionMetrics {
+	const (
+		twoKiB = 2 << 10
+		// metricResolution is the number of buckets in a histogram for sizes
+		// and times.
+		metricResolution = 25
+	)
+	sizeBuckets := prometheus.ExponentialBucketsRange(twoKiB, granuleSize, metricResolution)
+	timeBuckets := prometheus.ExponentialBuckets(0.5, 2, metricResolution)
+	countBuckets := prometheus.ExponentialBuckets(1, 2, 10)
+	return &compactionMetrics{
+		level0SizeBefore: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_level_0_size_before",
+			Help:    "Total level 0 size when beginning compaction",
+			Buckets: sizeBuckets,
+		}),
+		level0CountBefore: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_level_0_count_before",
+			Help:    "Number of level 0 parts when beginning compaction",
+			Buckets: countBuckets,
+		}),
+		level1SizeBefore: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_level_1_size_before",
+			Help:    "Total level 1 size when beginning compaction",
+			Buckets: sizeBuckets,
+		}),
+		level1CountBefore: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_level_1_count_before",
+			Help:    "Number of level 0 parts when beginning compaction",
+			Buckets: countBuckets,
+		}),
+		numPartsOverlap: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_num_parts_overlap",
+			Help:    "Number of level 1 parts that overlapped with level 0 parts",
+			Buckets: countBuckets,
+		}),
+		uncompletedTxnPartCount: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_uncompleted_txn_part_count",
+			Help:    "Number of parts with uncompleted txns that could not be compacted",
+			Buckets: countBuckets,
+		}),
+		level1SizeAfter: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_level_1_size_after",
+			Help:    "Total level 1 size after compaction",
+			Buckets: sizeBuckets,
+		}),
+		level1CountAfter: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_level_1_count_after",
+			Help:    "Number of level 1 parts after compaction",
+			Buckets: countBuckets,
+		}),
+		splits: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_splits",
+			Help:    "Number of granule splits",
+			Buckets: countBuckets,
+		}),
+		totalDuration: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "compaction_total_duration_seconds",
+			Help:    "Total compaction duration",
+			Buckets: timeBuckets,
+		}),
+	}
 }
 
 // compactGranule is the "meat" of granule compaction. It returns whether the
@@ -139,8 +302,8 @@ func (t *TableBlock) compact() error {
 //     to rewrite the row groups into multiple parts that contain optimally
 //     sized row groups (set by the user using the WithRowGroupSize table
 //     option). The new part sizes aim to be
-//     level1ToGranuleSizeRatio*granuleSize bytes large. The resulting parts are
-//     marked as compacted using compactionLevel1.
+//     l1ToGranuleSizeRatio*granuleSize bytes large (specified in the config).
+//     The resulting parts are marked as compacted using compactionLevel1.
 //
 //  2. As more data is added to a granule compacted in point 1, the new data
 //     will again be stored in a suboptimal multi-part format with multiple
@@ -169,11 +332,12 @@ func (t *TableBlock) compact() error {
 // append in order. The current compaction strategy ensures that ordering
 // guarantees between granules are upheld. Additionally, level1 parts will never
 // overlap.
-func (t *TableBlock) compactGranule(granule *Granule) (bool, error) {
+func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bool, error) {
 	// Use the latest watermark as the tx id.
 	tx := t.table.db.tx.Load()
 
-	level0Parts, level1Parts, partsWithUncompletedTxns, sizeBefore, err := collectPartsForCompaction(
+	start := time.Now()
+	level0Parts, level1Parts, partsWithUncompletedTxns, stats, err := collectPartsForCompaction(
 		// Start compaction by adding a sentinel node to its parts list.
 		tx, granule.parts.Sentinel(Compacting),
 	)
@@ -192,10 +356,13 @@ func (t *TableBlock) compactGranule(granule *Granule) (bool, error) {
 	partsBefore := len(level0Parts) + len(level1Parts)
 	if len(level0Parts) > 0 {
 		var err error
-		level1Parts, err = compactLevel0IntoLevel1(t, tx, level0Parts, level1Parts)
+		level1Parts, err = compactLevel0IntoLevel1(
+			t, tx, level0Parts, level1Parts, cfg.l1ToGranuleSizeRatio, &stats,
+		)
 		if err != nil {
 			return false, err
 		}
+		stats.level1CountAfter += len(level1Parts)
 	}
 
 	// This sort is done to simplify the splitting of non-overlapping parts
@@ -220,11 +387,12 @@ func (t *TableBlock) compactGranule(granule *Granule) (bool, error) {
 		// level0 parts. Otherwise, compactions will be initiated more often
 		// and work on less data. This ends up creating granules half filled
 		// up with a level1 part.
-		int64(float64(t.table.db.columnStore.granuleSizeBytes)*level1ToGranuleTargetSizeRatio),
+		int64(float64(t.table.db.columnStore.granuleSizeBytes)*cfg.l1ToGranuleSizeRatio),
 	)
 	if err != nil {
 		return false, err
 	}
+	stats.splits = len(newParts) - 1
 
 	newGranules := make([]*Granule, 0, len(newParts))
 	partsAfter := 0
@@ -248,9 +416,8 @@ func (t *TableBlock) compactGranule(granule *Granule) (bool, error) {
 
 	// Size calculation is done before adding the ignored parts to the new
 	// granules.
-	var sizeAfter uint64
 	for _, g := range newGranules {
-		sizeAfter += g.metadata.size.Load()
+		stats.level1SizeAfter += g.metadata.size.Load()
 	}
 
 	// Add remaining parts onto new granules.
@@ -312,24 +479,17 @@ func (t *TableBlock) compactGranule(granule *Granule) (bool, error) {
 
 		// Point to the new index.
 		if t.index.CompareAndSwap(curIndex, index) {
-			sizeDiff := int64(sizeAfter) - sizeBefore
+			sizeDiff := int64(stats.level1SizeAfter) - (stats.level0SizeBefore + stats.level1SizeBefore)
 			t.size.Add(sizeDiff)
 
-			t.table.metrics.numParts.Add(float64(partsAfter - partsBefore))
+			t.table.metrics.numParts.Add(float64(int(stats.level1CountAfter) - partsBefore))
 			break
 		}
 	}
+	stats.totalDuration = time.Since(start)
+	stats.recordAndLog(t.table.metrics.compactionMetrics, t.logger)
 	return true, nil
 }
-
-// level1ToGranuleTargetSizeRatio*granuleSize is the target size for new level1
-// parts.
-// 0.5 was chosen so that a level1 part takes up around half the space in a full
-// granule, allowing for level0 parts to grow up to the remaining space before
-// compaction. The higher this ratio, the less data is compacted and the more
-// compactions occur. However, a lower ratio implies leaving some parquet
-// compression size savings on the table.
-const level1ToGranuleTargetSizeRatio = 0.5
 
 // compactLevel0IntoLevel1 compacts the given level0Parts into level1Parts by
 // merging them with overlapping level1 parts and producing parts that are up
@@ -338,7 +498,12 @@ const level1ToGranuleTargetSizeRatio = 0.5
 // The size limit is a best effort as there is currently no easy way to
 // determine the size of a parquet file while writing row groups to it.
 func compactLevel0IntoLevel1(
-	t *TableBlock, tx uint64, level0Parts, level1Parts []*Part,
+	t *TableBlock,
+	tx uint64,
+	level0Parts,
+	level1Parts []*Part,
+	l1ToGranuleSizeRatio float64,
+	stats *compactionStats,
 ) ([]*Part, error) {
 	// Verify whether the level0 parts overlap with level1 parts. If they do,
 	// we need to merge the overlapping parts. Not merging these parts could
@@ -349,23 +514,21 @@ func compactLevel0IntoLevel1(
 	// size and numRows are used to estimate the number of bytes per row so that
 	// we can provide a maximum number of rows to write in writeRowGroups which
 	// will more or less keep the compacted part under the maximum granule size.
-	var size, numRows int64
+	size := stats.level1SizeBefore
+	numRows := stats.level1NumRowsBefore
 	if len(level1Parts) == 0 {
-		for _, p0 := range level0Parts {
-			// If no level1 parts exist, then we estimate the parquet rows to
-			// write based on level0.
-			size += p0.Buf.ParquetFile().Size()
-			numRows += p0.Buf.ParquetFile().NumRows()
-		}
+		// If no level1 parts exist, then we estimate the parquet rows to
+		// write based on level0.
+		size = stats.level0SizeBefore
+		numRows = stats.level0NumRowsBefore
 	}
 	for _, p1 := range level1Parts {
-		size += p1.Buf.ParquetFile().Size()
-		numRows += p1.Buf.ParquetFile().NumRows()
 		overlapped := false
 		for _, p0 := range level0Parts {
 			if overlaps, err := p0.overlapsWith(t.table.config.schema, p1); err != nil {
 				return nil, err
 			} else if overlaps {
+				stats.numPartsOverlap++
 				partsToCompact = append(partsToCompact, p1)
 				overlapped = true
 				break
@@ -393,7 +556,7 @@ func compactLevel0IntoLevel1(
 	estimatedBytesPerRow := float64(size) / float64(numRows)
 	estimatedRowsPerPart := int(
 		math.Ceil(
-			(float64(t.table.db.columnStore.granuleSizeBytes) * level1ToGranuleTargetSizeRatio) /
+			(float64(t.table.db.columnStore.granuleSizeBytes) * l1ToGranuleSizeRatio) /
 				estimatedBytesPerRow,
 		),
 	)
@@ -432,29 +595,36 @@ func compactLevel0IntoLevel1(
 
 func collectPartsForCompaction(tx uint64, parts *PartList) (
 	level0Parts, level1Parts, partsWithUncompletedTxns []*Part,
-	size int64, err error,
+	stats compactionStats, err error,
 ) {
 	parts.Iterate(func(p *Part) bool {
 		if p.tx > tx {
 			if !p.hasTombstone() {
 				partsWithUncompletedTxns = append(partsWithUncompletedTxns, p)
+				stats.uncompletedTxnPartCount++
 			}
 			// Parts with a tombstone are dropped.
 			return true
 		}
 
+		f := p.Buf.ParquetFile()
 		switch p.compactionLevel {
 		case compactionLevel0:
 			level0Parts = append(level0Parts, p)
+			stats.level0CountBefore++
+			stats.level0SizeBefore += f.Size()
+			stats.level0NumRowsBefore += f.NumRows()
 		case compactionLevel1:
 			level1Parts = append(level1Parts, p)
+			stats.level1CountBefore++
+			stats.level1SizeBefore += f.Size()
+			stats.level1NumRowsBefore += f.NumRows()
 		default:
 			err = fmt.Errorf(
 				"unexpected part compaction level %d", p.compactionLevel,
 			)
 			return false
 		}
-		size += p.Buf.ParquetFile().Size()
 		return true
 	})
 	return
