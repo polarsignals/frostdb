@@ -40,10 +40,7 @@ type ColumnStore struct {
 	bucket               storage.Bucket
 	ignoreStorageOnQuery bool
 	enableWAL            bool
-	compactionOptions    struct {
-		concurrency   int
-		sweepInterval time.Duration
-	}
+	compactionConfig     *CompactionConfig
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
@@ -66,6 +63,7 @@ func New(
 		splitSize:        2,
 		granuleSizeBytes: 1 * 1024 * 1024,   // 1MB granule size before splitting
 		activeMemorySize: 512 * 1024 * 1024, // 512MB
+		compactionConfig: NewCompactionConfig(),
 	}
 
 	for _, option := range options {
@@ -166,18 +164,9 @@ func WithIgnoreStorageOnQuery() Option {
 	}
 }
 
-// WithCompactionConcurrency specfies the number of concurrent goroutines
-// compacting data for each database.
-func WithCompactionConcurrency(c int) Option {
+func WithCompactionConfig(c *CompactionConfig) Option {
 	return func(s *ColumnStore) error {
-		s.compactionOptions.concurrency = c
-		return nil
-	}
-}
-
-func WithCompactionSweepInterval(interval time.Duration) Option {
-	return func(s *ColumnStore) error {
-		s.compactionOptions.sweepInterval = interval
+		s.compactionConfig = c
 		return nil
 	}
 }
@@ -322,7 +311,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 	if dbSetupErr := func() error {
 		db.txPool = NewTxPool(db.highWatermark)
-		db.compactorPool = newCompactorPool(db)
+		db.compactorPool = newCompactorPool(db, s.compactionConfig)
 		// If bucket storage is configured; scan for existing tables in the database
 		if db.bucket != nil {
 			if err := db.bucket.Iter(ctx, "", func(tableName string) error {
@@ -440,7 +429,9 @@ func (db *DB) replayWAL(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
+				db.mtx.Lock()
 				db.tables[tableName] = table
+				db.mtx.Unlock()
 				return nil
 			}
 			if err != nil {

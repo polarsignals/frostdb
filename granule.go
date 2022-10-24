@@ -1,9 +1,7 @@
 package frostdb
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"sync/atomic"
 
 	"github.com/google/btree"
@@ -32,12 +30,11 @@ type GranuleMetadata struct {
 	// iterator.
 	least atomic.Pointer[dynparquet.DynamicRow]
 
-	// size is the raw committed, and uncommitted size of the granule. It is
-	// used as a suggestion for potential compaction.
-	size *atomic.Uint64
+	// size is the raw commited, and uncommited size of the granule. It is used as a suggestion for potential compaction
+	size atomic.Uint64
 
-	// pruned indicates if this Granule is longer found in the index.
-	pruned *atomic.Uint64
+	// pruned indicates if this Granule is longer found in the index
+	pruned atomic.Uint64
 }
 
 func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
@@ -47,9 +44,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 		tableConfig:     tableConfig,
 
 		metadata: GranuleMetadata{
-			least:  atomic.Pointer[dynparquet.DynamicRow]{},
-			size:   &atomic.Uint64{},
-			pruned: &atomic.Uint64{},
+			least: atomic.Pointer[dynparquet.DynamicRow]{},
 		},
 	}
 
@@ -88,7 +83,8 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 		}
 	}
 
-	// If the prepend returned that we're adding to the compacted list; then we need to propogate the Part to the new granules
+	// If the prepend returned that we're adding to the compacted list; then we
+	// need to propagate the Part to the new granules.
 	if node.sentinel == Compacted {
 		err := addPartToGranule(g.newGranules, p)
 		if err != nil {
@@ -116,108 +112,6 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 	}
 
 	return g.addPart(p, r)
-}
-
-// split a granule into n granules. With the last granule containing the remainder.
-// Returns the granules in order.
-// This assumes the Granule has had its parts merged into a single part.
-func (g *Granule) split(tx uint64, count int) ([]*Granule, int64, error) {
-	// Get the first part in the granule's part list.
-	var p *Part
-	g.parts.Iterate(func(part *Part) bool {
-		// Since all parts are already merged into one, this iterator will only
-		// iterate over the one and only part.
-		p = part
-		return false
-	})
-
-	// Build all the new granules
-	granules := make([]*Granule, 0, count)
-
-	// TODO: Buffers should be able to efficiently slice themselves.
-	var (
-		rowBuf = make([]parquet.Row, 1)
-		b      *bytes.Buffer
-		w      *dynparquet.PooledWriter
-	)
-	b = bytes.NewBuffer(nil)
-	w, err := g.tableConfig.schema.GetWriter(b, p.Buf.DynamicColumns())
-	if err != nil {
-		return nil, 0, ErrCreateSchemaWriter{err}
-	}
-
-	rowsWritten := 0
-	totalSize := int64(0)
-	n := int(p.Buf.NumRows()) / count
-
-	f := p.Buf.ParquetFile()
-	for _, rowGroup := range f.RowGroups() {
-		rows := rowGroup.Rows()
-		for {
-			_, err = rows.ReadRows(rowBuf)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return nil, 0, ErrReadRow{err}
-			}
-
-			_, err = w.WriteRows(rowBuf)
-			if err != nil {
-				return nil, 0, ErrWriteRow{err}
-			}
-			rowsWritten++
-
-			if rowsWritten == n && len(granules) != count-1 { // If we have n rows, and aren't on the last granule create a new granule
-				err = w.Close()
-				if err != nil {
-					return nil, 0, fmt.Errorf("close writer: %w", err)
-				}
-				r, err := dynparquet.ReaderFromBytes(b.Bytes())
-				if err != nil {
-					return nil, 0, fmt.Errorf("create reader: %w", err)
-				}
-				totalSize += r.ParquetFile().Size()
-				gran, err := NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r))
-				if err != nil {
-					return nil, 0, fmt.Errorf("new granule failed: %w", err)
-				}
-				granules = append(granules, gran)
-				b = bytes.NewBuffer(nil)
-				g.tableConfig.schema.PutWriter(w)
-				w, err = g.tableConfig.schema.GetWriter(b, p.Buf.DynamicColumns())
-				if err != nil {
-					return nil, 0, ErrCreateSchemaWriter{err}
-				}
-				rowsWritten = 0
-			}
-		}
-		if err := rows.Close(); err != nil {
-			return nil, 0, err
-		}
-	}
-
-	if rowsWritten > 0 {
-		// Save the remaining Granule
-		err = w.Close()
-		if err != nil {
-			return nil, 0, fmt.Errorf("close last writer: %w", err)
-		}
-		g.tableConfig.schema.PutWriter(w)
-
-		r, err := dynparquet.ReaderFromBytes(b.Bytes())
-		if err != nil {
-			return nil, 0, fmt.Errorf("create last reader: %w", err)
-		}
-		totalSize += r.ParquetFile().Size()
-		gran, err := NewGranule(g.granulesCreated, g.tableConfig, NewPart(tx, r))
-		if err != nil {
-			return nil, 0, fmt.Errorf("new granule failed: %w", err)
-		}
-		granules = append(granules, gran)
-	}
-
-	return granules, totalSize, nil
 }
 
 // PartBuffersForTx returns the PartBuffers for the given transaction constraints.

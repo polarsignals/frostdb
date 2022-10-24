@@ -479,6 +479,7 @@ type DynamicRowGroup interface {
 
 // DynamicRowReaders is an iterator over the rows in a DynamicRowGroup.
 type DynamicRowReader interface {
+	parquet.RowSeeker
 	ReadRows(*DynamicRows) (int, error)
 	Close() error
 }
@@ -497,6 +498,10 @@ func newDynamicRowGroupReader(rg DynamicRowGroup, fields []parquet.Field) *dynam
 		rows:           rg.Rows(),
 		fields:         fields,
 	}
+}
+
+func (r *dynamicRowGroupReader) SeekToRow(i int64) error {
+	return r.rows.SeekToRow(i)
 }
 
 // Implements the DynamicRows interface.
