@@ -11,12 +11,10 @@ import (
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/cockroachdb/datadriven"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/sqlparse"
@@ -53,18 +51,31 @@ const (
 	execCmd = "exec"
 )
 
+type DB interface {
+	CreateTable(name string, schema *dynparquet.Schema) (Table, error)
+	// ScanTable returns a query.Builder prepared to scan the given table.
+	ScanTable(name string) query.Builder
+}
+
+type Table interface {
+	Schema() *dynparquet.Schema
+	InsertBuffer(context.Context, *dynparquet.Buffer) (uint64, error)
+}
+
 type Runner struct {
-	db                        *frostdb.DB
-	activeTable               *frostdb.Table
+	db                        DB
+	defaultSchema             *dynparquet.Schema
+	activeTable               Table
 	activeTableName           string
 	activeTableDynamicColumns []string
 	sqlParser                 *sqlparse.Parser
 }
 
-func NewRunner(db *frostdb.DB) *Runner {
+func NewRunner(db DB, defaultSchema *dynparquet.Schema) *Runner {
 	return &Runner{
-		db:        db,
-		sqlParser: sqlparse.NewParser(),
+		db:            db,
+		defaultSchema: defaultSchema,
+		sqlParser:     sqlparse.NewParser(),
 	}
 }
 
@@ -97,7 +108,7 @@ func (r *Runner) handleCreateTable(ctx context.Context, c *datadriven.TestData) 
 			if len(arg.Vals) != 1 && arg.Vals[0] != "default" {
 				return "", fmt.Errorf("createtable: unexpected schema values %v", arg.Vals)
 			}
-			schema = dynparquet.NewSampleSchema()
+			schema = r.defaultSchema
 		}
 	}
 
@@ -106,7 +117,7 @@ func (r *Runner) handleCreateTable(ctx context.Context, c *datadriven.TestData) 
 	}
 
 	name := uuid.NewString()
-	table, err := r.db.Table(name, frostdb.NewTableConfig(schema))
+	table, err := r.db.CreateTable(name, schema)
 	if err != nil {
 		return "", nil
 	}
@@ -322,13 +333,8 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 }
 
 func (r *Runner) parseSQL(dynColNames []string, sql string) (query.Builder, error) {
-	queryEngine := query.NewEngine(
-		memory.NewGoAllocator(),
-		r.db.TableProvider(),
-	)
-
 	query, err := r.sqlParser.ExperimentalParse(
-		queryEngine.ScanTable(r.activeTableName), dynColNames, sql,
+		r.db.ScanTable(r.activeTableName), dynColNames, sql,
 	)
 	if err != nil {
 		return nil, err

@@ -4,13 +4,32 @@ import (
 	"context"
 	"testing"
 
+	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/cockroachdb/datadriven"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query"
 )
 
 const testdataDirectory = "testdata"
+
+type frostDB struct {
+	*frostdb.DB
+}
+
+func (db frostDB) CreateTable(name string, schema *dynparquet.Schema) (Table, error) {
+	return db.DB.Table(name, frostdb.NewTableConfig(schema))
+}
+
+func (db frostDB) ScanTable(name string) query.Builder {
+	queryEngine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.DB.TableProvider(),
+	)
+	return queryEngine.ScanTable(name)
+}
 
 // TestLogic runs all the datadriven tests in the testdata directory. Refer to
 // the RunCmd method of the Runner struct for more information on the expected
@@ -31,7 +50,7 @@ func TestLogic(t *testing.T) {
 		defer columnStore.Close()
 		db, err := columnStore.DB(ctx, "test")
 		require.NoError(t, err)
-		r := NewRunner(db)
+		r := NewRunner(frostDB{DB: db}, dynparquet.NewSampleSchema())
 		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
 			return r.RunCmd(ctx, c)
 		})
