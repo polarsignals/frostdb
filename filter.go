@@ -89,12 +89,12 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error)
 			Right: rightValue,
 		}, nil
 	case logicalplan.OpAnd:
-		left, err := booleanExpr(expr.Left)
+		left, err := BooleanExpr(expr.Left)
 		if err != nil {
 			return nil, err
 		}
 
-		right, err := booleanExpr(expr.Right)
+		right, err := BooleanExpr(expr.Right)
 		if err != nil {
 			return nil, err
 		}
@@ -104,12 +104,12 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error)
 			Right: right,
 		}, nil
 	case logicalplan.OpOr:
-		left, err := booleanExpr(expr.Left)
+		left, err := BooleanExpr(expr.Left)
 		if err != nil {
 			return nil, err
 		}
 
-		right, err := booleanExpr(expr.Right)
+		right, err := BooleanExpr(expr.Right)
 		if err != nil {
 			return nil, err
 		}
@@ -168,7 +168,7 @@ func (a *OrExpr) Eval(p Particulate) (bool, error) {
 	return right, nil
 }
 
-func booleanExpr(expr logicalplan.Expr) (TrueNegativeFilter, error) {
+func BooleanExpr(expr logicalplan.Expr) (TrueNegativeFilter, error) {
 	if expr == nil {
 		return &AlwaysTrueFilter{}, nil
 	}

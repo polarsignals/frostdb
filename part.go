@@ -40,6 +40,9 @@ func NewPart(tx uint64, buf *dynparquet.SerializedBuffer) *Part {
 	}
 }
 
+// TX returns the transaction id for the part
+func (p *Part) TX() uint64 { return p.tx }
+
 // Least returns the least row  in the part.
 func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	if p.minRow != nil {
