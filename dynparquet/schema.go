@@ -102,6 +102,11 @@ type Schema struct {
 	buffers *sync.Map
 }
 
+// IsDynamicColumn returns true if the passed in column is a dynamic column.
+func (s *Schema) IsDynamicColumn(col string) bool {
+	return s.columns[s.columnIndexes[col]].Dynamic
+}
+
 func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 	columns := make([]ColumnDefinition, 0, len(def.Columns))
 	for _, col := range def.Columns {

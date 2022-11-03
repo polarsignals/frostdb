@@ -1330,7 +1330,7 @@ func (t *Table) collectRowGroups(
 	ctx, span := t.tracer.Start(ctx, "Table/collectRowGroups")
 	defer span.End()
 
-	filter, err := booleanExpr(filterExpr)
+	filter, err := BooleanExpr(filterExpr)
 	if err != nil {
 		return err
 	}
