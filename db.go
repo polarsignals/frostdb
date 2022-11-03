@@ -226,7 +226,8 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 }
 
 type dbMetrics struct {
-	txHighWatermark prometheus.GaugeFunc
+	txHighWatermark  prometheus.GaugeFunc
+	shutdownDuration prometheus.Histogram
 }
 
 type DB struct {
@@ -328,6 +329,10 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 		// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
 		db.metrics = &dbMetrics{
+			shutdownDuration: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+				Name: "db_shutdown_duration",
+				Help: "time it takes for the database to complete a full shutdown.",
+			}),
 			txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
 				Name: "tx_high_watermark",
 				Help: "The highest transaction number that has been released to be read",
@@ -500,6 +505,12 @@ func (db *DB) replayWAL(ctx context.Context) error {
 }
 
 func (db *DB) Close() error {
+	defer func(ts time.Time) {
+		if db.metrics != nil {
+			db.metrics.shutdownDuration.Observe(float64(time.Since(ts)))
+		}
+	}(time.Now())
+
 	for _, table := range db.tables {
 		table.close()
 		if db.bucket != nil {
