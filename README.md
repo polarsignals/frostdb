@@ -60,7 +60,7 @@ table, _ := database.Table(
     frostdb.NewTableConfig(schema),
 )
 
-// Create values to insert into the database these first rows havel dynamic label names of 'firstname' and 'surname'
+// Create values to insert into the database these first rows have dynamic label names of 'firstname' and 'surname'
 buf, _ := schema.NewBuffer(map[string][]string{
     "names": {"firstname", "surname"},
 })
