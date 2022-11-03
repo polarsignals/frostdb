@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -177,13 +178,13 @@ func (s *ColumnStore) Close() error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
+	errg := &errgroup.Group{}
+	errg.SetLimit(runtime.GOMAXPROCS(0))
 	for _, db := range s.dbs {
-		if err := db.Close(); err != nil {
-			return err
-		}
+		errg.Go(db.Close)
 	}
 
-	return nil
+	return errg.Wait()
 }
 
 func (s *ColumnStore) DatabasesDir() string {
