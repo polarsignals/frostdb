@@ -38,7 +38,10 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-var ErrNoSchema = fmt.Errorf("no schema")
+var (
+	ErrNoSchema     = fmt.Errorf("no schema")
+	ErrTableClosing = fmt.Errorf("table closing")
+)
 
 type ErrWriteRow struct{ err error }
 
@@ -116,7 +119,8 @@ type Table struct {
 	mtx    *sync.RWMutex
 	active *TableBlock
 
-	wal WAL
+	wal     WAL
+	closing bool
 }
 
 type WAL interface {
@@ -378,12 +382,16 @@ func (t *Table) ActiveBlock() *TableBlock {
 	return t.active
 }
 
-func (t *Table) ActiveWriteBlock() (*TableBlock, func()) {
+func (t *Table) ActiveWriteBlock() (*TableBlock, func(), error) {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
 
+	if t.closing {
+		return nil, nil, ErrTableClosing
+	}
+
 	t.active.pendingWritersWg.Add(1)
-	return t.active, t.active.pendingWritersWg.Done
+	return t.active, t.active.pendingWritersWg.Done, nil
 }
 
 func (t *Table) Schema() *dynparquet.Schema {
@@ -590,7 +598,11 @@ func (t *Table) appender() (*TableBlock, func(), error) {
 	for {
 		// Using active write block is important because it ensures that we don't
 		// miss pending writers when synchronizing the block.
-		block, close := t.ActiveWriteBlock()
+		block, close, err := t.ActiveWriteBlock()
+		if err != nil {
+			return nil, nil, err
+		}
+
 		if block.Size() < t.db.columnStore.activeMemorySize {
 			return block, close, nil
 		}
@@ -598,7 +610,7 @@ func (t *Table) appender() (*TableBlock, func(), error) {
 		// We need to rotate the block and the writer won't actually be used.
 		close()
 
-		err := t.RotateBlock(block)
+		err = t.RotateBlock(block)
 		if err != nil {
 			return nil, nil, fmt.Errorf("rotate block: %w", err)
 		}
@@ -1352,4 +1364,13 @@ func (t *Table) collectRowGroups(
 	}
 
 	return nil
+}
+
+// close notifies a table to stop accepting writes.
+func (t *Table) close() {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
+	t.active.pendingWritersWg.Wait()
+	t.closing = true
 }

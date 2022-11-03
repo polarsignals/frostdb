@@ -500,12 +500,14 @@ func (db *DB) replayWAL(ctx context.Context) error {
 }
 
 func (db *DB) Close() error {
-	if db.bucket != nil {
-		// Persist blocks to storage
-		for _, table := range db.tables {
+	for _, table := range db.tables {
+		table.close()
+		if db.bucket != nil {
 			table.writeBlock(table.ActiveBlock())
 		}
+	}
 
+	if db.bucket != nil {
 		// If we've successfully persisted all the table blocks we can remove the wal
 		if err := os.RemoveAll(db.walDir()); err != nil {
 			return err
