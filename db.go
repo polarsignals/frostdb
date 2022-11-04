@@ -42,11 +42,18 @@ type ColumnStore struct {
 	ignoreStorageOnQuery bool
 	enableWAL            bool
 	compactionConfig     *CompactionConfig
+	metrics              metrics
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
 	// splitSize is the number of new granules that are created when granules are split (default =2)
 	splitSize int
+}
+
+type metrics struct {
+	shutdownDuration  prometheus.Histogram
+	shutdownStarted   prometheus.Counter
+	shutdownCompleted prometheus.Counter
 }
 
 type Option func(*ColumnStore) error
@@ -71,6 +78,21 @@ func New(
 		if err := option(s); err != nil {
 			return nil, err
 		}
+	}
+
+	s.metrics = metrics{
+		shutdownDuration: promauto.With(s.reg).NewHistogram(prometheus.HistogramOpts{
+			Name: "shutdown_duration",
+			Help: "time it takes for the columnarstore to complete a full shutdown.",
+		}),
+		shutdownStarted: promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+			Name: "shutdown_started",
+			Help: "Indicates a shutdown of the columnarstore has started.",
+		}),
+		shutdownCompleted: promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+			Name: "shutdown_completed",
+			Help: "Indicates a shutdown of the columnarstore has completed.",
+		}),
 	}
 
 	if s.enableWAL && s.storagePath == "" {
@@ -177,6 +199,11 @@ func WithCompactionConfig(c *CompactionConfig) Option {
 func (s *ColumnStore) Close() error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
+	s.metrics.shutdownStarted.Inc()
+	defer s.metrics.shutdownCompleted.Inc()
+	defer func(ts time.Time) {
+		s.metrics.shutdownDuration.Observe(float64(time.Since(ts)))
+	}(time.Now())
 
 	errg := &errgroup.Group{}
 	errg.SetLimit(runtime.GOMAXPROCS(0))
@@ -227,8 +254,7 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 }
 
 type dbMetrics struct {
-	txHighWatermark  prometheus.GaugeFunc
-	shutdownDuration prometheus.Histogram
+	txHighWatermark prometheus.GaugeFunc
 }
 
 type DB struct {
@@ -330,10 +356,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 
 		// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
 		db.metrics = &dbMetrics{
-			shutdownDuration: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-				Name: "db_shutdown_duration",
-				Help: "time it takes for the database to complete a full shutdown.",
-			}),
 			txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
 				Name: "tx_high_watermark",
 				Help: "The highest transaction number that has been released to be read",
@@ -506,12 +528,6 @@ func (db *DB) replayWAL(ctx context.Context) error {
 }
 
 func (db *DB) Close() error {
-	defer func(ts time.Time) {
-		if db.metrics != nil {
-			db.metrics.shutdownDuration.Observe(float64(time.Since(ts)))
-		}
-	}(time.Now())
-
 	for _, table := range db.tables {
 		table.close()
 		if db.bucket != nil {
