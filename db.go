@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,11 +42,18 @@ type ColumnStore struct {
 	ignoreStorageOnQuery bool
 	enableWAL            bool
 	compactionConfig     *CompactionConfig
+	metrics              metrics
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
 	// splitSize is the number of new granules that are created when granules are split (default =2)
 	splitSize int
+}
+
+type metrics struct {
+	shutdownDuration  prometheus.Histogram
+	shutdownStarted   prometheus.Counter
+	shutdownCompleted prometheus.Counter
 }
 
 type Option func(*ColumnStore) error
@@ -70,6 +78,21 @@ func New(
 		if err := option(s); err != nil {
 			return nil, err
 		}
+	}
+
+	s.metrics = metrics{
+		shutdownDuration: promauto.With(s.reg).NewHistogram(prometheus.HistogramOpts{
+			Name: "shutdown_duration",
+			Help: "time it takes for the columnarstore to complete a full shutdown.",
+		}),
+		shutdownStarted: promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+			Name: "shutdown_started",
+			Help: "Indicates a shutdown of the columnarstore has started.",
+		}),
+		shutdownCompleted: promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
+			Name: "shutdown_completed",
+			Help: "Indicates a shutdown of the columnarstore has completed.",
+		}),
 	}
 
 	if s.enableWAL && s.storagePath == "" {
@@ -176,14 +199,19 @@ func WithCompactionConfig(c *CompactionConfig) Option {
 func (s *ColumnStore) Close() error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
+	s.metrics.shutdownStarted.Inc()
+	defer s.metrics.shutdownCompleted.Inc()
+	defer func(ts time.Time) {
+		s.metrics.shutdownDuration.Observe(float64(time.Since(ts)))
+	}(time.Now())
 
+	errg := &errgroup.Group{}
+	errg.SetLimit(runtime.GOMAXPROCS(0))
 	for _, db := range s.dbs {
-		if err := db.Close(); err != nil {
-			return err
-		}
+		errg.Go(db.Close)
 	}
 
-	return nil
+	return errg.Wait()
 }
 
 func (s *ColumnStore) DatabasesDir() string {
@@ -500,12 +528,14 @@ func (db *DB) replayWAL(ctx context.Context) error {
 }
 
 func (db *DB) Close() error {
-	if db.bucket != nil {
-		// Persist blocks to storage
-		for _, table := range db.tables {
+	for _, table := range db.tables {
+		table.close()
+		if db.bucket != nil {
 			table.writeBlock(table.ActiveBlock())
 		}
+	}
 
+	if db.bucket != nil {
 		// If we've successfully persisted all the table blocks we can remove the wal
 		if err := os.RemoveAll(db.walDir()); err != nil {
 			return err
