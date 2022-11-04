@@ -43,13 +43,10 @@ You can explore the [examples](https://github.com/polarsignals/frostdb/tree/main
 
 ```go
 // Create a new column store
-columnstore, _ := frostdb.New(
-    log.NewNopLogger(),
-    prometheus.NewRegistry(),
-)
+columnstore, _ := frostdb.New()
 
 // Open up a database in the column store
-database, _ := columnstore.DB("simple_db")
+database, _ := columnstore.DB(context.Background(), "simple_db")
 
 // Define our simple schema of labels and values
 schema, _ := simpleSchema()
@@ -60,7 +57,7 @@ table, _ := database.Table(
     frostdb.NewTableConfig(schema),
 )
 
-// Create values to insert into the database these first rows havel dynamic label names of 'firstname' and 'surname'
+// Create values to insert into the database these first rows have dynamic label names of 'firstname' and 'surname'
 buf, _ := schema.NewBuffer(map[string][]string{
     "names": {"firstname", "surname"},
 })
@@ -98,7 +95,7 @@ engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
 engine.ScanTable("simple_table").
     Filter(
         logicalplan.Col("names.firstname").Eq(logicalplan.Literal("Frederic")),
-    ).Execute(context.Background(), func(r arrow.Record) error {
+    ).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
     fmt.Println(r)
     return nil
 })
