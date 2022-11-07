@@ -69,7 +69,7 @@ func (plan *LogicalPlan) string(indent int) string {
 }
 
 // TableReader returns the table reader.
-func (plan *LogicalPlan) TableReader() TableReader {
+func (plan *LogicalPlan) TableReader() (TableReader, error) {
 	if plan.TableScan != nil {
 		return plan.TableScan.TableProvider.GetTable(plan.TableScan.TableName)
 	}
@@ -79,16 +79,17 @@ func (plan *LogicalPlan) TableReader() TableReader {
 	if plan.Input != nil {
 		return plan.Input.TableReader()
 	}
-	return nil
+	return nil, fmt.Errorf("no table reader provided")
 }
 
 // InputSchema returns the schema that the query will execute against.
 func (plan *LogicalPlan) InputSchema() *dynparquet.Schema {
-	tableReader := plan.TableReader()
-	if tableReader != nil {
-		return tableReader.Schema()
+	tableReader, err := plan.TableReader()
+	if err != nil {
+		return nil
 	}
-	return nil
+
+	return tableReader.Schema()
 }
 
 type PlanVisitor interface {
@@ -138,7 +139,7 @@ type TableReader interface {
 	Schema() *dynparquet.Schema
 }
 type TableProvider interface {
-	GetTable(name string) TableReader
+	GetTable(name string) (TableReader, error)
 }
 
 type TableScan struct {

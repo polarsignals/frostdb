@@ -2,7 +2,6 @@ package physicalplan
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"runtime"
 
@@ -107,9 +106,9 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	ctx, span := s.tracer.Start(ctx, "TableScan/Execute")
 	defer span.End()
 
-	table := s.options.TableProvider.GetTable(s.options.TableName)
-	if table == nil {
-		return errors.New("table not found")
+	table, err := s.options.TableProvider.GetTable(s.options.TableName)
+	if table == nil || err != nil {
+		return fmt.Errorf("table not found: %w", err)
 	}
 
 	callbacks := make([]logicalplan.Callback, 0, len(s.plans))
@@ -117,7 +116,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		callbacks = append(callbacks, plan.Callback)
 	}
 
-	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		schema, err := table.ArrowSchema(
 			ctx,
 			tx,
@@ -178,9 +177,9 @@ func (s *SchemaScan) Draw() *Diagram {
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
-	table := s.options.TableProvider.GetTable(s.options.TableName)
-	if table == nil {
-		return errors.New("table not found")
+	table, err := s.options.TableProvider.GetTable(s.options.TableName)
+	if table == nil || err != nil {
+		return fmt.Errorf("table not found: %w", err)
 	}
 
 	callbacks := make([]logicalplan.Callback, 0, len(s.plans))
@@ -188,7 +187,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		callbacks = append(callbacks, plan.Callback)
 	}
 
-	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		return table.SchemaIterator(
 			ctx,
 			tx,
