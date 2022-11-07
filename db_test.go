@@ -1199,3 +1199,24 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func Test_DB_TableNotExist(t *testing.T) {
+	ctx := context.Background()
+
+	c, err := New(WithLogger(newTestLogger(t)))
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(ctx, "test")
+	require.NoError(t, err)
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	err = engine.ScanTable("does-not-exist").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+		return nil
+	})
+	require.Error(t, err)
+}

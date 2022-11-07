@@ -57,10 +57,10 @@ type mockTableProvider struct {
 	schema *dynparquet.Schema
 }
 
-func (m *mockTableProvider) GetTable(name string) TableReader {
+func (m *mockTableProvider) GetTable(name string) (TableReader, error) {
 	return &mockTableReader{
 		schema: m.schema,
-	}
+	}, nil
 }
 
 func TestInputSchemaGetter(t *testing.T) {
