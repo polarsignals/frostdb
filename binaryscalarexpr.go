@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/segmentio/parquet-go"
 
@@ -138,6 +139,6 @@ func compare(v1, v2 parquet.Value) int {
 	case parquet.ByteArray, parquet.FixedLenByteArray:
 		return parquet.ByteArrayType.Compare(v1, v2)
 	default:
-		panic("unsupported value comparison")
+		panic(fmt.Sprintf("unsupported value comparison: %v", v1.Kind()))
 	}
 }
