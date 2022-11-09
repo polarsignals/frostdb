@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -137,15 +138,14 @@ type distinctColInfo struct {
 type ParquetConverter struct {
 	mode parquetConverterMode
 
-	pool       memory.Allocator
-	filterExpr logicalplan.Expr
+	pool memory.Allocator
 	// distinctColumns and distinctColInfos have a 1:1 mapping.
-	distinctColumns  []logicalplan.Expr
 	distinctColInfos []*distinctColInfo
 
 	// Output fields, for each outputSchema.Field(i) there will always be a
 	// corresponding builder.Field(i).
 	outputSchema *arrow.Schema
+	iterOpts     logicalplan.IterOptions
 	builder      *builder.RecordBuilder
 
 	// writers are wrappers over a subset of builder.Fields().
@@ -167,23 +167,18 @@ type ParquetConverter struct {
 
 func NewParquetConverter(
 	pool memory.Allocator,
-	outputSchema *arrow.Schema,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
+	iterOpts logicalplan.IterOptions,
 ) *ParquetConverter {
 	c := &ParquetConverter{
 		mode:             normal,
 		pool:             pool,
-		outputSchema:     outputSchema,
-		filterExpr:       filterExpr,
-		distinctColumns:  distinctColumns,
-		distinctColInfos: make([]*distinctColInfo, len(distinctColumns)),
-		builder:          builder.NewRecordBuilder(pool, outputSchema),
+		iterOpts:         iterOpts,
+		distinctColInfos: make([]*distinctColInfo, len(iterOpts.DistinctColumns)),
 	}
 
-	if filterExpr == nil && len(distinctColumns) != 0 {
+	if iterOpts.Filter == nil && len(iterOpts.DistinctColumns) != 0 {
 		simpleDistinctExprs := true
-		for _, distinctColumn := range distinctColumns {
+		for _, distinctColumn := range iterOpts.DistinctColumns {
 			if _, ok := distinctColumn.(*logicalplan.DynamicColumn); ok ||
 				len(distinctColumn.ColumnsUsedExprs()) != 1 {
 				simpleDistinctExprs = false
@@ -202,6 +197,18 @@ func NewParquetConverter(
 }
 
 func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) error {
+	schema, err := ParquetRowGroupToArrowSchema(ctx, rg, c.iterOpts.PhysicalProjection, c.iterOpts.Projection, c.iterOpts.Filter, c.iterOpts.DistinctColumns)
+	if err != nil {
+		return err
+	}
+	if c.outputSchema == nil {
+		c.outputSchema = schema
+		c.builder = builder.NewRecordBuilder(c.pool, c.outputSchema)
+	} else if !schema.Equal(c.outputSchema) { // new output schema; append new fields onto record builder
+		c.outputSchema = mergeArrowSchemas([]*arrow.Schema{c.outputSchema, schema})
+		c.builder.ExpandSchema(c.outputSchema)
+	}
+
 	if _, ok := rg.(*dynparquet.MergedRowGroup); ok {
 		return rowBasedParquetRowGroupToArrowRecord(ctx, c.pool, rg, c.outputSchema, c.builder)
 	}
@@ -217,9 +224,9 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 		c.prevSchema = parquetSchema
 	}
 
-	if c.filterExpr == nil &&
-		len(c.distinctColumns) == 0 &&
-		SingleMatchingColumn(c.distinctColumns, parquetFields) {
+	if c.iterOpts.Filter == nil &&
+		len(c.iterOpts.DistinctColumns) == 0 &&
+		SingleMatchingColumn(c.iterOpts.DistinctColumns, parquetFields) {
 		// TODO(asubiotto): Note that the above if check is always false. This
 		// should be changed to len(c.distinctColumns) == 1, but this currently
 		// results in a panic. To be investigated.
@@ -233,7 +240,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 				parquetIndex := c.parquetIndexMapping[i]
 				field := parquetFields[parquetIndex]
 				name := field.Name()
-				if c.distinctColumns[0].MatchColumn(name) {
+				if c.iterOpts.DistinctColumns[0].MatchColumn(name) {
 					if err := c.writeColumnToArray(
 						field,
 						parquetColumns[parquetIndex],
@@ -312,7 +319,11 @@ func (c *ParquetConverter) NumRows() int {
 }
 
 func (c *ParquetConverter) NewRecord() arrow.Record {
-	return c.builder.NewRecord()
+	if c.builder != nil {
+		return c.builder.NewRecord()
+	}
+
+	return nil
 }
 
 func (c *ParquetConverter) Close() {
@@ -352,11 +363,11 @@ func (c *ParquetConverter) schemaChanged(parquetFields []parquet.Field) error {
 	// column to read from. Note that a sanity check has already been completed
 	// in the constructor to ensure that only one column per distinct expression
 	// is read in multiDistinctColumn mode.
-	for i := range c.distinctColumns {
+	for i := range c.iterOpts.DistinctColumns {
 		c.distinctColInfos[i] = nil
 	}
 
-	for i, expr := range c.distinctColumns {
+	for i, expr := range c.iterOpts.DistinctColumns {
 		for j, field := range parquetFields {
 			if !expr.ColumnsUsedExprs()[0].MatchColumn(field.Name()) {
 				continue
@@ -392,7 +403,7 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 			optimizationApplied, err := c.writeDistinctSingleColumn(
 				parquetFields[info.parquetIndex],
 				parquetColumns[info.parquetIndex],
-				c.distinctColumns[i],
+				c.iterOpts.DistinctColumns[i],
 				info,
 			)
 			if err != nil {
@@ -1017,4 +1028,27 @@ func repeatFloat64Array(
 		vals[i] = val
 	}
 	b.AppendValues(vals, nil)
+}
+
+func mergeArrowSchemas(schemas []*arrow.Schema) *arrow.Schema {
+	fieldNames := make([]string, 0, 16)
+	fieldsMap := make(map[string]arrow.Field)
+
+	for _, schema := range schemas {
+		for _, f := range schema.Fields() {
+			if _, ok := fieldsMap[f.Name]; !ok {
+				fieldNames = append(fieldNames, f.Name)
+				fieldsMap[f.Name] = f
+			}
+		}
+	}
+
+	sort.Strings(fieldNames)
+
+	fields := make([]arrow.Field, 0, len(fieldNames))
+	for _, name := range fieldNames {
+		fields = append(fields, fieldsMap[name])
+	}
+
+	return arrow.NewSchema(fields, nil)
 }

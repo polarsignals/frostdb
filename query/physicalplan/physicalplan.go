@@ -117,26 +117,11 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	}
 
 	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		schema, err := table.ArrowSchema(
-			ctx,
-			tx,
-			pool,
-			logicalplan.IterOptions{
-				PhysicalProjection: s.options.PhysicalProjection,
-				Projection:         s.options.Projection,
-				Filter:             s.options.Filter,
-				DistinctColumns:    s.options.Distinct,
-			},
-		)
-		if err != nil {
-			return err
-		}
-
 		return table.Iterator(
 			ctx,
 			tx,
 			pool,
-			schema,
+			nil,
 			logicalplan.IterOptions{
 				PhysicalProjection: s.options.PhysicalProjection,
 				Projection:         s.options.Projection,

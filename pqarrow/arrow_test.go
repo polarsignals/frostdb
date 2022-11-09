@@ -109,7 +109,7 @@ func TestMergeToArrow(t *testing.T) {
 	require.Equal(t, as.Field(6), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(7), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
 
-	c := NewParquetConverter(memory.DefaultAllocator, as, nil, nil)
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, merge))
 	ar := c.NewRecord()
@@ -142,10 +142,7 @@ func BenchmarkParquetToArrow(b *testing.B) {
 
 	ctx := context.Background()
 
-	schema, err := ParquetRowGroupToArrowSchema(ctx, buf, nil, nil, nil, nil)
-	require.NoError(b, err)
-
-	c := NewParquetConverter(memory.NewGoAllocator(), schema, nil, nil)
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 
 	b.ResetTimer()
@@ -277,13 +274,22 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 		nil,
 		distinctColumns,
 	)
+
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 3)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
 	require.Equal(t, as.Field(1), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(2), arrow.Field{Name: "timestamp > 0", Type: &arrow.BooleanType{}, Nullable: true})
 
-	c := NewParquetConverter(memory.DefaultAllocator, as, nil, distinctColumns)
+	c := NewParquetConverter(
+		memory.DefaultAllocator,
+		logicalplan.IterOptions{
+			PhysicalProjection: []logicalplan.Expr{
+				logicalplan.Col("example_type"),
+				logicalplan.Col("timestamp"),
+			},
+			DistinctColumns: distinctColumns,
+		})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, buf))
 	ar := c.NewRecord()
@@ -367,11 +373,16 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	require.Equal(t, as.Field(1), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(2), arrow.Field{Name: "value > 0", Type: &arrow.BooleanType{}, Nullable: true})
 
-	c := NewParquetConverter(memory.DefaultAllocator, as, nil, distinctColumns)
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{
+		PhysicalProjection: []logicalplan.Expr{
+			logicalplan.Col("example_type"),
+			logicalplan.Col("value"),
+		},
+		DistinctColumns: distinctColumns,
+	})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, buf))
 	ar := c.NewRecord()
-	t.Log(ar)
 	require.Equal(t, int64(2), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 3)
@@ -387,10 +398,8 @@ func TestList(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	as, err := ParquetRowGroupToArrowSchema(ctx, buf, nil, nil, nil, nil)
-	require.NoError(t, err)
 
-	c := NewParquetConverter(memory.DefaultAllocator, as, nil, nil)
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, buf))
 

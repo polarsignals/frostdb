@@ -671,7 +671,7 @@ func (t *Table) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	schema *arrow.Schema,
+	_ *arrow.Schema,
 	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
 ) error {
@@ -684,17 +684,6 @@ func (t *Table) Iterator(
 	if len(callbacks) == 0 {
 		return errors.New("no callbacks provided")
 	}
-	if schema == nil {
-		return errors.New("arrow output schema not provided")
-	}
-	if len(schema.Fields()) == 0 {
-		// An empty schema might be surprising, but this can happen in cases
-		// where the table was empty or all row groups were filtered out when
-		// calling ArrowSchema. In any case, the semantics of an empty schema
-		// are to emit zero rows.
-		return nil
-	}
-
 	rowGroups := make(chan dynparquet.DynamicRowGroup, len(callbacks)*4) // buffer up to 4 row groups per callback
 
 	// Previously we sorted all row groups into a single row group here,
@@ -711,7 +700,7 @@ func (t *Table) Iterator(
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(func() error {
-			converter := pqarrow.NewParquetConverter(pool, schema, iterOpts.Filter, iterOpts.DistinctColumns)
+			converter := pqarrow.NewParquetConverter(pool, iterOpts)
 			defer converter.Close()
 
 			var rgSchema *parquet.Schema
@@ -723,10 +712,10 @@ func (t *Table) Iterator(
 				case rg, ok := <-rowGroups:
 					if !ok {
 						r := converter.NewRecord()
-						prepareForFlush(r, rgSchema)
-						if r.NumRows() == 0 {
+						if r == nil || r.NumRows() == 0 {
 							return nil
 						}
+						prepareForFlush(r, rgSchema)
 						if err := callback(ctx, r); err != nil {
 							return err
 						}
