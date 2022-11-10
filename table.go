@@ -671,7 +671,6 @@ func (t *Table) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	_ *arrow.Schema,
 	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
 ) error {
@@ -823,83 +822,6 @@ func (t *Table) SchemaIterator(
 	})
 
 	return errg.Wait()
-}
-
-func (t *Table) ArrowSchema(
-	ctx context.Context,
-	tx uint64,
-	pool memory.Allocator,
-	iterOpts logicalplan.IterOptions,
-) (*arrow.Schema, error) {
-	ctx, span := t.tracer.Start(ctx, "Table/ArrowSchema")
-	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
-	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
-	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
-	defer span.End()
-
-	rowGroups := make(chan dynparquet.DynamicRowGroup)
-
-	// TODO: We should be able to figure out if dynamic columns are even queried.
-	// If not, then we can simply return the first schema.
-
-	fieldNames := make([]string, 0, 16)
-	fieldsMap := make(map[string]arrow.Field)
-
-	// Since we only ever create one goroutine here there is no concurrency issue with the above maps.
-	errg, ctx := errgroup.WithContext(ctx)
-	errg.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case rg, ok := <-rowGroups:
-				if !ok {
-					return nil // we're done
-				}
-				if rg == nil {
-					return nil // shouldn't happen, but anyway
-				}
-
-				schema, err := pqarrow.ParquetRowGroupToArrowSchema(
-					ctx,
-					rg,
-					iterOpts.PhysicalProjection,
-					iterOpts.Projection,
-					iterOpts.Filter,
-					iterOpts.DistinctColumns,
-				)
-				if err != nil {
-					return err
-				}
-
-				for _, f := range schema.Fields() {
-					if _, ok := fieldsMap[f.Name]; !ok {
-						fieldNames = append(fieldNames, f.Name)
-						fieldsMap[f.Name] = f
-					}
-				}
-			}
-		}
-	})
-
-	err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups)
-	if err != nil {
-		return nil, err
-	}
-
-	close(rowGroups)
-	if err := errg.Wait(); err != nil {
-		return nil, err
-	}
-
-	sort.Strings(fieldNames)
-
-	fields := make([]arrow.Field, 0, len(fieldNames))
-	for _, name := range fieldNames {
-		fields = append(fields, fieldsMap[name])
-	}
-
-	return arrow.NewSchema(fields, nil), nil
 }
 
 func generateULID() ulid.ULID {

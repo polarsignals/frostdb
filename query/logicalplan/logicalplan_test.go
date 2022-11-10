@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/stretchr/testify/require"
 
@@ -27,7 +26,6 @@ func (m *mockTableReader) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	schema *arrow.Schema,
 	iterOpts IterOptions,
 	callbacks []Callback,
 ) error {
@@ -42,15 +40,6 @@ func (m *mockTableReader) SchemaIterator(
 	callbacks []Callback,
 ) error {
 	return nil
-}
-
-func (m *mockTableReader) ArrowSchema(
-	ctx context.Context,
-	tx uint64,
-	pool memory.Allocator,
-	iterOpts IterOptions,
-) (*arrow.Schema, error) {
-	return nil, nil
 }
 
 type mockTableProvider struct {

@@ -164,16 +164,10 @@ func TestTable(t *testing.T) {
 	pool := memory.NewGoAllocator()
 
 	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		if err != nil {
-			return err
-		}
-
 		return table.Iterator(
 			ctx,
 			tx,
 			pool,
-			as,
 			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				t.Log(ar)
@@ -287,17 +281,10 @@ func Test_Table_Concurrency(t *testing.T) {
 
 			err := table.View(ctx, func(ctx context.Context, tx uint64) error {
 				totalrows := int64(0)
-
-				as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-				if err != nil {
-					return err
-				}
-
-				err = table.Iterator(
+				err := table.Iterator(
 					ctx,
 					tx,
 					pool,
-					as,
 					logicalplan.IterOptions{},
 					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 						totalrows += ar.NumRows()
@@ -422,15 +409,10 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		// Calculate the number of entries in database
 		totalrows := int64(0)
 		err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-			as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-			if err != nil {
-				return err
-			}
 			return table.Iterator(
 				ctx,
 				tx,
 				pool,
-				as,
 				logicalplan.IterOptions{},
 				[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 					defer ar.Release()
@@ -526,15 +508,11 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	pool := memory.NewGoAllocator()
 
 	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		require.NoError(t, err)
-
 		rows := int64(0)
 		err = table.Iterator(
 			ctx,
 			tx,
 			pool,
-			as,
 			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
@@ -554,15 +532,11 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.highWatermark.Store(3)
 
 	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		require.NoError(t, err)
-
 		rows := int64(0)
 		err = table.Iterator(
 			ctx,
 			table.db.highWatermark.Load(),
 			pool,
-			as,
 			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
@@ -577,177 +551,6 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
-
-// func Test_Table_Sorting(t *testing.T) {
-//	granuleSize := 2 << 12
-//	schema1 := NewSchema(
-//		[]ColumnDefinition{{
-//			Name:     "labels",
-//			Type:     StringType,
-//			Encoding: PlainEncoding,
-//			Dynamic:  true,
-//		}, {
-//			Name:     "stacktrace",
-//			Type:     List(UUIDType),
-//			Encoding: PlainEncoding,
-//		}, {
-//			Name:     "timestamp",
-//			Type:     Int64Type,
-//			Encoding: PlainEncoding,
-//		}, {
-//			Name:     "value",
-//			Type:     Int64Type,
-//			Encoding: PlainEncoding,
-//		}},
-//		granuleSize,
-//		"labels",
-//		"timestamp",
-//	)
-//
-//	schema2 := NewSchema(
-//		[]ColumnDefinition{{
-//			Name:     "labels",
-//			Type:     StringType,
-//			Encoding: PlainEncoding,
-//			Dynamic:  true,
-//		}, {
-//			Name:     "stacktrace",
-//			Type:     List(UUIDType),
-//			Encoding: PlainEncoding,
-//		}, {
-//			Name:     "timestamp",
-//			Type:     Int64Type,
-//			Encoding: PlainEncoding,
-//		}, {
-//			Name:     "value",
-//			Type:     Int64Type,
-//			Encoding: PlainEncoding,
-//		}},
-//		granuleSize,
-//		"timestamp",
-//		"labels",
-//	)
-//
-//	c := New(nil)
-//	db := c.DB("test")
-//	table1 := db.Table("test1", schema1, log.NewNopLogger())
-//	table2 := db.Table("test2", schema2, log.NewNopLogger())
-//
-//	tables := []*Table{
-//		table1,
-//		table2,
-//	}
-//
-//	for _, table := range tables {
-//
-//		err := table.Insert(
-//			[]Row{{
-//				Values: []interface{}{
-//					[]DynamicColumnValue{
-//						{Name: "label1", Value: "value1"},
-//						{Name: "label2", Value: "value2"},
-//					},
-//					[]UUID{
-//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-//					},
-//					int64(3),
-//					int64(3),
-//				},
-//			}},
-//		)
-//		require.NoError(t, err)
-//
-//		err = table.Insert(
-//			[]Row{{
-//				Values: []interface{}{
-//					[]DynamicColumnValue{
-//						{Name: "label1", Value: "value1"},
-//						{Name: "label2", Value: "value2"},
-//						{Name: "label3", Value: "value3"},
-//					},
-//					[]UUID{
-//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-//					},
-//					int64(2),
-//					int64(2),
-//				},
-//			}},
-//		)
-//		require.NoError(t, err)
-//
-//		err = table.Insert(
-//			[]Row{{
-//				Values: []interface{}{
-//					[]DynamicColumnValue{
-//						{Name: "label1", Value: "value1"},
-//						{Name: "label2", Value: "value2"},
-//						{Name: "label4", Value: "value4"},
-//					},
-//					[]UUID{
-//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-//						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-//					},
-//					int64(1),
-//					int64(1),
-//				},
-//			}},
-//		)
-//		require.NoError(t, err)
-//	}
-//
-//	for i, table := range tables {
-//		err := table.Iterator(memory.NewGoAllocator(), func(ctx context.Context,ar arrow.Record) error {
-//			switch i {
-//			case 0:
-//				require.Equal(t, "[3 2 1]", fmt.Sprintf("%v", ar.Column(6)))
-//			case 1:
-//				require.Equal(t, "[1 2 3]", fmt.Sprintf("%v", ar.Column(6)))
-//			}
-//			defer ar.Release()
-//
-//			return nil
-//		})
-//		require.NoError(t, err)
-//	}
-// }
-
-// func Test_Granule_Less(t *testing.T) {
-//	config := NewTableConfig(
-//		dynparquet.NewSampleSchema(),
-//		2<<13,
-//	)
-//
-//	g := &Granule{
-//		tableConfig: config,
-//		least: &Row{
-//			Values: []interface{}{
-//				[]DynamicColumnValue{
-//					{Name: "label1", Value: "06e32507-cda3-49db-8093-53a8a4c8da76"},
-//					{Name: "label2", Value: "value2"},
-//				},
-//				int64(6375179957311426905),
-//				int64(0),
-//			},
-//		},
-//	}
-//	g1 := &Granule{
-//		tableConfig: config,
-//		least: &Row{
-//			Values: []interface{}{
-//				[]DynamicColumnValue{
-//					{Name: "label1", Value: "06e32507-cda3-49db-8093-53a8a4c8da76"},
-//					{Name: "label2", Value: "value2"},
-//				},
-//				int64(8825936717838690748),
-//				int64(0),
-//			},
-//		},
-//	}
-//
-//	require.NotEqual(t, g.Less(g1), g1.Less(g))
-// }
 
 func Test_Table_NewTableValidIndexDegree(t *testing.T) {
 	config := NewTableConfig(dynparquet.NewSampleSchema())
@@ -901,16 +704,10 @@ func Test_Table_Filter(t *testing.T) {
 	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		iterated := false
 
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		if err != nil {
-			return err
-		}
-
 		err = table.Iterator(
 			ctx,
 			tx,
 			pool,
-			as,
 			logicalplan.IterOptions{Filter: filterExpr},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				defer ar.Release()
@@ -984,16 +781,11 @@ func Test_Table_Bloomfilter(t *testing.T) {
 	iterations := 0
 	err := table.View(context.Background(), func(ctx context.Context, tx uint64) error {
 		pool := memory.NewGoAllocator()
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		if err != nil {
-			return err
-		}
 
 		require.NoError(t, table.Iterator(
 			context.Background(),
 			tx,
 			pool,
-			as,
 			logicalplan.IterOptions{Filter: logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				defer ar.Release()
@@ -1005,160 +797,6 @@ func Test_Table_Bloomfilter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, iterations)
-}
-
-func Test_Table_ArrowSchema(t *testing.T) {
-	c, table := basicTable(t)
-	defer c.Close()
-
-	samples := dynparquet.Samples{{
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 1,
-		Value:     1,
-	}}
-
-	buf, err := samples.ToBuffer(table.Schema())
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	_, err = table.InsertBuffer(ctx, buf)
-	require.NoError(t, err)
-
-	samples = dynparquet.Samples{{
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3},
-		},
-		Timestamp: 1,
-		Value:     2,
-	}}
-
-	buf, err = samples.ToBuffer(table.Schema())
-	require.NoError(t, err)
-
-	_, err = table.InsertBuffer(ctx, buf)
-	require.NoError(t, err)
-
-	pool := memory.NewGoAllocator()
-
-	// Read the schema from a previous transaction. Reading transaction 2 here
-	// because transaction 1 is just the new block creation, therefore there
-	// would be no schema to read (schemas only materialize when data is
-	// inserted).
-	schema, err := table.ArrowSchema(ctx, 2, pool, logicalplan.IterOptions{})
-	require.NoError(t, err)
-
-	require.Len(t, schema.Fields(), 6)
-	require.Equal(t,
-		arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
-		schema.Field(0),
-	)
-	require.Equal(t,
-		arrow.Field{Name: "labels.label1", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
-		schema.Field(1),
-	)
-	require.Equal(t,
-		arrow.Field{Name: "labels.label2", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
-		schema.Field(2),
-	)
-	require.Equal(t,
-		arrow.Field{Name: "stacktrace", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
-		schema.Field(3),
-	)
-	require.Equal(t,
-		arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
-		schema.Field(4),
-	)
-	require.Equal(t,
-		arrow.Field{Name: "value", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
-		schema.Field(5),
-	)
-
-	// Read two schemas for two different queries within the same transaction.
-
-	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		schema, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		require.NoError(t, err)
-
-		require.Len(t, schema.Fields(), 7)
-		require.Equal(t,
-			arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
-			schema.Field(0),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "labels.label1", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
-			schema.Field(1),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "labels.label2", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
-			schema.Field(2),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "labels.label3", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
-			schema.Field(3),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "stacktrace", Type: &arrow.BinaryType{}, Nullable: false, Metadata: arrow.Metadata{}},
-			schema.Field(4),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
-			schema.Field(5),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "value", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
-			schema.Field(6),
-		)
-
-		schema, err = table.ArrowSchema(
-			ctx,
-			tx,
-			pool,
-			logicalplan.IterOptions{
-				PhysicalProjection: []logicalplan.Expr{
-					&logicalplan.DynamicColumn{ColumnName: "labels"},
-					&logicalplan.Column{ColumnName: "value"},
-				},
-			},
-		)
-		require.NoError(t, err)
-
-		require.Len(t, schema.Fields(), 4)
-		require.Equal(t,
-			arrow.Field{Name: "labels.label1", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
-			schema.Field(0),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "labels.label2", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
-			schema.Field(1),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "labels.label3", Type: &arrow.BinaryType{}, Nullable: true, Metadata: arrow.Metadata{}},
-			schema.Field(2),
-		)
-		require.Equal(t,
-			arrow.Field{Name: "value", Type: &arrow.Int64Type{}, Nullable: false, Metadata: arrow.Metadata{}},
-			schema.Field(3),
-		)
-
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func Test_DoubleTable(t *testing.T) {
@@ -1222,16 +860,10 @@ func Test_DoubleTable(t *testing.T) {
 	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		pool := memory.NewGoAllocator()
 
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		if err != nil {
-			return err
-		}
-
 		return table.Iterator(
 			ctx,
 			tx,
 			pool,
-			as,
 			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				defer ar.Release()

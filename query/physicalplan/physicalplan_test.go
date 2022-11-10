@@ -29,7 +29,6 @@ func (m *mockTableReader) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	schema *arrow.Schema,
 	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
 ) error {
@@ -44,15 +43,6 @@ func (m *mockTableReader) SchemaIterator(
 	callbacks []logicalplan.Callback,
 ) error {
 	return nil
-}
-
-func (m *mockTableReader) ArrowSchema(
-	ctx context.Context,
-	tx uint64,
-	pool memory.Allocator,
-	iterOpts logicalplan.IterOptions,
-) (*arrow.Schema, error) {
-	return nil, nil
 }
 
 type mockTableProvider struct {

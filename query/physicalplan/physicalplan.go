@@ -121,7 +121,6 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 			ctx,
 			tx,
 			pool,
-			nil,
 			logicalplan.IterOptions{
 				PhysicalProjection: s.options.PhysicalProjection,
 				Projection:         s.options.Projection,
