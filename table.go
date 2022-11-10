@@ -671,7 +671,6 @@ func (t *Table) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	schema *arrow.Schema,
 	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
 ) error {
@@ -684,17 +683,6 @@ func (t *Table) Iterator(
 	if len(callbacks) == 0 {
 		return errors.New("no callbacks provided")
 	}
-	if schema == nil {
-		return errors.New("arrow output schema not provided")
-	}
-	if len(schema.Fields()) == 0 {
-		// An empty schema might be surprising, but this can happen in cases
-		// where the table was empty or all row groups were filtered out when
-		// calling ArrowSchema. In any case, the semantics of an empty schema
-		// are to emit zero rows.
-		return nil
-	}
-
 	rowGroups := make(chan dynparquet.DynamicRowGroup, len(callbacks)*4) // buffer up to 4 row groups per callback
 
 	// Previously we sorted all row groups into a single row group here,
@@ -711,7 +699,7 @@ func (t *Table) Iterator(
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(func() error {
-			converter := pqarrow.NewParquetConverter(pool, schema, iterOpts.Filter, iterOpts.DistinctColumns)
+			converter := pqarrow.NewParquetConverter(pool, iterOpts)
 			defer converter.Close()
 
 			var rgSchema *parquet.Schema
@@ -723,10 +711,10 @@ func (t *Table) Iterator(
 				case rg, ok := <-rowGroups:
 					if !ok {
 						r := converter.NewRecord()
-						prepareForFlush(r, rgSchema)
-						if r.NumRows() == 0 {
+						if r == nil || r.NumRows() == 0 {
 							return nil
 						}
+						prepareForFlush(r, rgSchema)
 						if err := callback(ctx, r); err != nil {
 							return err
 						}
@@ -834,83 +822,6 @@ func (t *Table) SchemaIterator(
 	})
 
 	return errg.Wait()
-}
-
-func (t *Table) ArrowSchema(
-	ctx context.Context,
-	tx uint64,
-	pool memory.Allocator,
-	iterOpts logicalplan.IterOptions,
-) (*arrow.Schema, error) {
-	ctx, span := t.tracer.Start(ctx, "Table/ArrowSchema")
-	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
-	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
-	span.SetAttributes(attribute.Int("distinct", len(iterOpts.DistinctColumns)))
-	defer span.End()
-
-	rowGroups := make(chan dynparquet.DynamicRowGroup)
-
-	// TODO: We should be able to figure out if dynamic columns are even queried.
-	// If not, then we can simply return the first schema.
-
-	fieldNames := make([]string, 0, 16)
-	fieldsMap := make(map[string]arrow.Field)
-
-	// Since we only ever create one goroutine here there is no concurrency issue with the above maps.
-	errg, ctx := errgroup.WithContext(ctx)
-	errg.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case rg, ok := <-rowGroups:
-				if !ok {
-					return nil // we're done
-				}
-				if rg == nil {
-					return nil // shouldn't happen, but anyway
-				}
-
-				schema, err := pqarrow.ParquetRowGroupToArrowSchema(
-					ctx,
-					rg,
-					iterOpts.PhysicalProjection,
-					iterOpts.Projection,
-					iterOpts.Filter,
-					iterOpts.DistinctColumns,
-				)
-				if err != nil {
-					return err
-				}
-
-				for _, f := range schema.Fields() {
-					if _, ok := fieldsMap[f.Name]; !ok {
-						fieldNames = append(fieldNames, f.Name)
-						fieldsMap[f.Name] = f
-					}
-				}
-			}
-		}
-	})
-
-	err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups)
-	if err != nil {
-		return nil, err
-	}
-
-	close(rowGroups)
-	if err := errg.Wait(); err != nil {
-		return nil, err
-	}
-
-	sort.Strings(fieldNames)
-
-	fields := make([]arrow.Field, 0, len(fieldNames))
-	for _, name := range fieldNames {
-		fields = append(fields, fieldsMap[name])
-	}
-
-	return arrow.NewSchema(fields, nil), nil
 }
 
 func generateULID() ulid.ULID {

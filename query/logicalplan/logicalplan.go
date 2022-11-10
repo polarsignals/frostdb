@@ -119,7 +119,6 @@ type TableReader interface {
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		schema *arrow.Schema,
 		options IterOptions,
 		callbacks []Callback,
 	) error
@@ -130,12 +129,6 @@ type TableReader interface {
 		options IterOptions,
 		callbacks []Callback,
 	) error
-	ArrowSchema(
-		ctx context.Context,
-		tx uint64,
-		pool memory.Allocator,
-		options IterOptions,
-	) (*arrow.Schema, error)
 	Schema() *dynparquet.Schema
 }
 type TableProvider interface {

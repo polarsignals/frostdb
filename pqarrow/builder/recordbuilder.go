@@ -107,3 +107,24 @@ func (b *RecordBuilder) NewRecord() arrow.Record {
 
 	return array.NewRecord(b.schema, cols, rows)
 }
+
+// ExpandSchema expands the record builder schema by adding new fields.
+func (b *RecordBuilder) ExpandSchema(schema *arrow.Schema) {
+	for i, f := range schema.Fields() {
+		found := false
+		for _, old := range b.schema.Fields() {
+			if f.Equal(old) {
+				found = true
+				break
+			}
+		}
+		if found { // field already exists
+			continue
+		}
+
+		// Add the new field
+		b.fields = append(b.fields[:i], append([]ColumnBuilder{NewBuilder(b.mem, f.Type)}, b.fields[i:]...)...)
+	}
+
+	b.schema = schema
+}

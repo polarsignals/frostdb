@@ -212,16 +212,10 @@ func TestDBWithWAL(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		if err != nil {
-			return err
-		}
-
 		return table.Iterator(
 			ctx,
 			tx,
 			pool,
-			as,
 			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				t.Log(ar)

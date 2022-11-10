@@ -16,6 +16,126 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
+func TestDifferentSchemasToArrow(t *testing.T) {
+	dynSchema := dynparquet.NewSampleSchema()
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}}
+
+	buf0, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf1, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf2, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf3, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf4, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	defer c.Close()
+
+	require.NoError(t, c.Convert(ctx, buf0))
+	require.NoError(t, c.Convert(ctx, buf1))
+	require.NoError(t, c.Convert(ctx, buf2))
+	require.NoError(t, c.Convert(ctx, buf3))
+	require.NoError(t, c.Convert(ctx, buf4))
+
+	ar := c.NewRecord()
+	require.Equal(t, int64(8), ar.NumCols())
+	require.Equal(t, int64(5), ar.NumRows())
+	for j := 0; j < int(ar.NumCols()); j++ {
+		switch j {
+		case 0:
+			require.Equal(t, `["" "" "" "" ""]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 1:
+			require.Equal(t, `["value1" "value2" "value3" "value1" "value1"]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 2:
+			require.Equal(t, `["value2" "value2" "value2" "value2" "value2"]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 3:
+			require.Equal(t, `[(null) "value3" (null) (null) "value3"]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 4:
+			require.Equal(t, `[(null) (null) "value4" (null) (null)]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 6:
+			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 7:
+			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", ar.Column(j)))
+		}
+	}
+}
+
 func TestMergeToArrow(t *testing.T) {
 	dynSchema := dynparquet.NewSampleSchema()
 
@@ -109,7 +229,7 @@ func TestMergeToArrow(t *testing.T) {
 	require.Equal(t, as.Field(6), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(7), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
 
-	c := NewParquetConverter(memory.DefaultAllocator, as, nil, nil)
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, merge))
 	ar := c.NewRecord()
@@ -142,10 +262,7 @@ func BenchmarkParquetToArrow(b *testing.B) {
 
 	ctx := context.Background()
 
-	schema, err := ParquetRowGroupToArrowSchema(ctx, buf, nil, nil, nil, nil)
-	require.NoError(b, err)
-
-	c := NewParquetConverter(memory.NewGoAllocator(), schema, nil, nil)
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 
 	b.ResetTimer()
@@ -277,13 +394,22 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 		nil,
 		distinctColumns,
 	)
+
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 3)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
 	require.Equal(t, as.Field(1), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(2), arrow.Field{Name: "timestamp > 0", Type: &arrow.BooleanType{}, Nullable: true})
 
-	c := NewParquetConverter(memory.DefaultAllocator, as, nil, distinctColumns)
+	c := NewParquetConverter(
+		memory.DefaultAllocator,
+		logicalplan.IterOptions{
+			PhysicalProjection: []logicalplan.Expr{
+				logicalplan.Col("example_type"),
+				logicalplan.Col("timestamp"),
+			},
+			DistinctColumns: distinctColumns,
+		})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, buf))
 	ar := c.NewRecord()
@@ -367,11 +493,16 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	require.Equal(t, as.Field(1), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(2), arrow.Field{Name: "value > 0", Type: &arrow.BooleanType{}, Nullable: true})
 
-	c := NewParquetConverter(memory.DefaultAllocator, as, nil, distinctColumns)
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{
+		PhysicalProjection: []logicalplan.Expr{
+			logicalplan.Col("example_type"),
+			logicalplan.Col("value"),
+		},
+		DistinctColumns: distinctColumns,
+	})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, buf))
 	ar := c.NewRecord()
-	t.Log(ar)
 	require.Equal(t, int64(2), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 3)
@@ -387,10 +518,8 @@ func TestList(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	as, err := ParquetRowGroupToArrowSchema(ctx, buf, nil, nil, nil, nil)
-	require.NoError(t, err)
 
-	c := NewParquetConverter(memory.DefaultAllocator, as, nil, nil)
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, buf))
 
