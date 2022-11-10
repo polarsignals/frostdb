@@ -3,7 +3,6 @@ package frostdb
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -1006,88 +1005,6 @@ func Test_Table_Bloomfilter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, iterations)
-}
-
-func Test_Table_CancelBasic(t *testing.T) {
-	c, table := basicTable(t)
-	defer c.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	samples := dynparquet.Samples{{
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 1,
-		Value:     1,
-	}, {
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}, {
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 3,
-		Value:     3,
-	}}
-
-	buf, err := samples.ToBuffer(table.Schema())
-	require.NoError(t, err)
-
-	_, err = table.InsertBuffer(ctx, buf)
-	require.True(t, errors.Is(err, context.Canceled))
-
-	pool := memory.NewGoAllocator()
-
-	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		totalrows := int64(0)
-
-		as, err := table.ArrowSchema(ctx, tx, pool, logicalplan.IterOptions{})
-		if err != nil {
-			return err
-		}
-
-		err = table.Iterator(
-			ctx,
-			tx,
-			pool,
-			as,
-			logicalplan.IterOptions{},
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-				totalrows += ar.NumRows()
-				defer ar.Release()
-
-				return nil
-			}},
-		)
-		require.NoError(t, err)
-		require.Equal(t, int64(0), totalrows)
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func Test_Table_ArrowSchema(t *testing.T) {
