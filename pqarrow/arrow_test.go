@@ -16,6 +16,126 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
+func TestDifferentSchemasToArrow(t *testing.T) {
+	dynSchema := dynparquet.NewSampleSchema()
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}}
+
+	buf0, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf1, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf2, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf3, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf4, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	defer c.Close()
+
+	require.NoError(t, c.Convert(ctx, buf0))
+	require.NoError(t, c.Convert(ctx, buf1))
+	require.NoError(t, c.Convert(ctx, buf2))
+	require.NoError(t, c.Convert(ctx, buf3))
+	require.NoError(t, c.Convert(ctx, buf4))
+
+	ar := c.NewRecord()
+	require.Equal(t, int64(8), ar.NumCols())
+	require.Equal(t, int64(5), ar.NumRows())
+	for j := 0; j < int(ar.NumCols()); j++ {
+		switch j {
+		case 0:
+			require.Equal(t, `["" "" "" "" ""]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 1:
+			require.Equal(t, `["value1" "value2" "value3" "value1" "value1"]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 2:
+			require.Equal(t, `["value2" "value2" "value2" "value2" "value2"]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 3:
+			require.Equal(t, `[(null) "value3" (null) (null) "value3"]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 4:
+			require.Equal(t, `[(null) (null) "value4" (null) (null)]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 6:
+			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 7:
+			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", ar.Column(j)))
+		}
+	}
+}
+
 func TestMergeToArrow(t *testing.T) {
 	dynSchema := dynparquet.NewSampleSchema()
 
