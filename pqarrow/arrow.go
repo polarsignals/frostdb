@@ -207,6 +207,23 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 	} else if !schema.Equal(c.outputSchema) { // new output schema; append new fields onto record builder
 		c.outputSchema = mergeArrowSchemas([]*arrow.Schema{c.outputSchema, schema})
 		c.builder.ExpandSchema(c.outputSchema)
+		// Since we expanded the field we need to append nulls to the new field to match the max column length
+		if maxLen, _, anomaly := recordBuilderLength(c.builder); anomaly {
+			for _, field := range c.builder.Fields() {
+				if fieldLen := field.Len(); fieldLen < maxLen {
+					if ob, ok := field.(builder.OptimizedBuilder); ok {
+						ob.AppendNulls(maxLen - fieldLen)
+						continue
+					}
+					// If the column is not the same length as the maximum length
+					// column, we need to append NULL as often as we have rows
+					// TODO: Is there a faster or better way?
+					for i := 0; i < maxLen-fieldLen; i++ {
+						field.AppendNull()
+					}
+				}
+			}
+		}
 	}
 
 	if _, ok := rg.(*dynparquet.MergedRowGroup); ok {
