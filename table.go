@@ -725,6 +725,10 @@ func (t *Table) Iterator(
 					if err := converter.Convert(ctx, rg); err != nil {
 						return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 					}
+					// This RowGroup had no relevant data. Ignore it.
+					if len(converter.Fields()) == 0 {
+						continue
+					}
 					if converter.NumRows() >= bufferSize {
 						r := converter.NewRecord()
 						prepareForFlush(r, rgSchema)

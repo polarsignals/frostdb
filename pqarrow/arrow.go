@@ -201,6 +201,11 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 	if err != nil {
 		return err
 	}
+	// If the schema has no fields we simply ignore this RowGroup that has no data.
+	if len(schema.Fields()) == 0 {
+		return nil
+	}
+
 	if c.outputSchema == nil {
 		c.outputSchema = schema
 		c.builder = builder.NewRecordBuilder(c.pool, c.outputSchema)
@@ -328,6 +333,13 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 	}
 
 	return nil
+}
+
+func (c *ParquetConverter) Fields() []builder.ColumnBuilder {
+	if c.builder == nil {
+		return nil
+	}
+	return c.builder.Fields()
 }
 
 func (c *ParquetConverter) NumRows() int {
