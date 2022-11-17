@@ -242,20 +242,20 @@ func newTable(
 		Name: "index_size",
 		Help: "Number of granules in the table index currently.",
 	}, func() float64 {
-		if t.ActiveBlock() == nil {
-			return 0
+		if active := t.ActiveBlock(); active != nil {
+			return float64(active.Index().Len())
 		}
-		return float64(t.ActiveBlock().Index().Len())
+		return 0
 	})
 
 	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "active_table_block_size",
 		Help: "Size of the active table block in bytes.",
 	}, func() float64 {
-		if t.ActiveBlock() == nil {
-			return 0
+		if active := t.ActiveBlock(); active != nil {
+			return float64(active.Size())
 		}
-		return float64(t.ActiveBlock().Size())
+		return 0
 	})
 
 	return t, nil
