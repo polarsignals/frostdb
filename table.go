@@ -242,6 +242,9 @@ func newTable(
 		Name: "index_size",
 		Help: "Number of granules in the table index currently.",
 	}, func() float64 {
+		if t.ActiveBlock() == nil {
+			return 0
+		}
 		return float64(t.ActiveBlock().Index().Len())
 	})
 
@@ -249,6 +252,9 @@ func newTable(
 		Name: "active_table_block_size",
 		Help: "Size of the active table block in bytes.",
 	}, func() float64 {
+		if t.ActiveBlock() == nil {
+			return 0
+		}
 		return float64(t.ActiveBlock().Size())
 	})
 
