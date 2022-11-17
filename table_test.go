@@ -874,3 +874,102 @@ func Test_DoubleTable(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func Test_Table_EmptyRowGroup(t *testing.T) {
+	c, table := basicTable(t)
+	defer c.Close()
+
+	ctx := context.Background()
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	// Insert new samples / buffer / rowGroup that doesn't have label1
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "foo", Value: "bar"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	tx, err := table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	// Wait until data has been written.
+	table.db.Wait(tx)
+
+	pool := memory.NewGoAllocator()
+
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+		rows := int64(0)
+		err = table.Iterator(
+			ctx,
+			tx,
+			pool,
+			// Select all distinct values for the label1 column.
+			logicalplan.IterOptions{
+				Projection:      []logicalplan.Expr{&logicalplan.DynamicColumn{ColumnName: "label1"}},
+				DistinctColumns: []logicalplan.Expr{&logicalplan.DynamicColumn{ColumnName: "label1"}},
+			},
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				rows += ar.NumRows()
+				defer ar.Release()
+
+				return nil
+			}},
+		)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), rows)
+		return nil
+	})
+	require.NoError(t, err)
+}
