@@ -134,6 +134,7 @@ type WAL interface {
 type TableBlock struct {
 	table  *Table
 	logger log.Logger
+	tracer trace.Tracer
 
 	ulid   ulid.ULID
 	minTx  uint64
@@ -851,6 +852,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		ulid:   id,
 		size:   &atomic.Int64{},
 		logger: table.logger,
+		tracer: table.tracer,
 		minTx:  tx,
 		prevTx: prevTx,
 	}
@@ -859,7 +861,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 	if err != nil {
 		return nil, fmt.Errorf("new granule failed: %w", err)
 	}
-	(*btree.BTree)(tb.index.Load()).ReplaceOrInsert(g)
+	tb.index.Load().ReplaceOrInsert(g)
 
 	return tb, nil
 }
@@ -955,6 +957,10 @@ func (t *TableBlock) RowGroupIterator(
 	filter TrueNegativeFilter,
 	rowGroups chan<- dynparquet.DynamicRowGroup,
 ) error {
+	ctx, span := t.tracer.Start(ctx, "TableBlock/RowGroupIterator")
+	span.SetAttributes(attribute.Int64("tx", int64(tx))) // Attributes don't support uint64...
+	defer span.End()
+
 	index := t.Index()
 
 	var err error
@@ -976,6 +982,7 @@ func (t *TableBlock) RowGroupIterator(
 						err = ctx.Err()
 						return false
 					case rowGroups <- rg:
+						span.AddEvent("row group")
 					}
 				}
 			}
