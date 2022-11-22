@@ -548,7 +548,7 @@ func compactLevel0IntoLevel1(
 	}
 
 	cursor := 0
-	merged, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
+	merged, err := t.recursiveMergeDynamicRowGroups(bufs)
 	if err != nil {
 		return nil, err
 	}
@@ -671,4 +671,22 @@ func divideLevel1PartsForGranule(t *TableBlock, tx uint64, parts []*Part, maxSiz
 		}
 	}
 	return newParts, nil
+}
+
+func (t *TableBlock) recursiveMergeDynamicRowGroups(bufs []dynparquet.DynamicRowGroup) (dynparquet.DynamicRowGroup, error) {
+	if len(bufs) == 1 {
+		return bufs[0], nil
+	}
+
+	i := len(bufs) / 2
+	left, err := t.recursiveMergeDynamicRowGroups(bufs[:i])
+	if err != nil {
+		return nil, err
+	}
+	right, err := t.recursiveMergeDynamicRowGroups(bufs[i:])
+	if err != nil {
+		return nil, err
+	}
+
+	return t.table.config.schema.MergeDynamicRowGroups([]dynparquet.DynamicRowGroup{left, right})
 }
