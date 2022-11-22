@@ -60,15 +60,21 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsedExpr
 type ProjectionPushDown struct{}
 
 func (p *ProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
-	// Don't perform the optimization if filters contain a column that projections do not.
-	// Otherwise we'll removed the columns we're filtering on before we filter.
+	// Don't perform the optimization if filters or aggregations contain a column that projections do not.
+	// Otherwise we'll removed the columns we're filtering/aggregating.
 	projectColumns := projectionColumns(plan)
 	projectMap := map[string]bool{}
 	filterColumns := filterColumns(plan)
+	aggColumns := aggregationColumns(plan)
 	for _, m := range projectColumns {
 		projectMap[m.Name()] = true
 	}
 	for _, m := range filterColumns {
+		if !projectMap[m.Name()] {
+			return plan
+		}
+	}
+	for _, m := range aggColumns {
 		if !projectMap[m.Name()] {
 			return plan
 		}
@@ -117,6 +123,23 @@ func filterColumns(plan *LogicalPlan) []Expr {
 	}
 
 	return append(columnsUsedExprs, filterColumns(plan.Input)...)
+}
+
+func aggregationColumns(plan *LogicalPlan) []Expr {
+	if plan == nil {
+		return nil
+	}
+
+	columnsUsedExprs := []Expr{}
+	switch {
+	case plan.Aggregation != nil:
+		for _, expr := range plan.Aggregation.GroupExprs {
+			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
+		}
+		columnsUsedExprs = append(columnsUsedExprs, plan.Aggregation.AggExpr.ColumnsUsedExprs()...)
+	}
+
+	return append(columnsUsedExprs, aggregationColumns(plan.Input)...)
 }
 
 // projectionColumns returns all the column matchers for projections in a given plan.

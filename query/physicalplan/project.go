@@ -28,10 +28,28 @@ func (a aliasProjection) Name() string {
 }
 
 func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
-	for i, field := range ar.Schema().Fields() {
-		if a.expr.MatchColumn(field.Name) {
-			field.Name = a.name
-			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
+	switch e := a.expr.Expr.(type) {
+	case *logicalplan.BinaryExpr:
+		boolExpr, err := binaryBooleanExpr(e)
+		if err != nil {
+			return nil, nil, err
+		}
+		fields, array, err := binaryExprProjection{boolExpr: boolExpr}.Project(mem, ar)
+		if err != nil {
+			return nil, nil, err
+		}
+		for i, field := range fields {
+			if a.expr.Expr.MatchColumn(field.Name) {
+				fields[i].Name = a.name
+			}
+		}
+		return fields, array, nil
+	case *logicalplan.Column:
+		for i, field := range ar.Schema().Fields() {
+			if a.expr.MatchColumn(field.Name) {
+				field.Name = a.name
+				return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
+			}
 		}
 	}
 
