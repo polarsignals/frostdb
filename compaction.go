@@ -541,10 +541,10 @@ func compactLevel0IntoLevel1(
 
 	bufs := make([]dynparquet.DynamicRowGroup, 0, len(level0Parts))
 	for _, p := range partsToCompact {
-		numRowGroups := p.Buf.NumRowGroups()
-		for i := 0; i < numRowGroups; i++ {
-			bufs = append(bufs, p.Buf.DynamicRowGroup(i))
-		}
+		// All the row groups in a part are wrapped in a single row group given
+		// that all rows are sorted within a part. This reduces the number of
+		// cursors open when merging the row groups.
+		bufs = append(bufs, p.Buf.MultiDynamicRowGroup())
 	}
 
 	cursor := 0

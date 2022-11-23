@@ -84,6 +84,12 @@ func (b *SerializedBuffer) DynamicRowGroup(i int) DynamicRowGroup {
 	return b.newDynamicRowGroup(b.f.RowGroups()[i])
 }
 
+// MultiDynamicRowGroup returns all the row groups wrapped in a single multi
+// row group.
+func (b *SerializedBuffer) MultiDynamicRowGroup() DynamicRowGroup {
+	return b.newDynamicRowGroup(parquet.MultiRowGroup(b.f.RowGroups()...))
+}
+
 func (b *SerializedBuffer) newDynamicRowGroup(rowGroup parquet.RowGroup) DynamicRowGroup {
 	return &serializedRowGroup{
 		RowGroup: rowGroup,
