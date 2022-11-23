@@ -99,8 +99,8 @@ func (e *BinaryExpr) Computed() bool {
 	return true
 }
 
-func (e *BinaryExpr) Alias(alias string) AliasExpr {
-	return AliasExpr{Expr: e, Alias: alias}
+func (e *BinaryExpr) Alias(alias string) *AliasExpr {
+	return &AliasExpr{Expr: e, Alias: alias}
 }
 
 type Column struct {
@@ -134,8 +134,8 @@ func (c *Column) DataType(s *parquet.Schema) (arrow.DataType, error) {
 	return nil, errors.New("column not found")
 }
 
-func (c *Column) Alias(alias string) AliasExpr {
-	return AliasExpr{Expr: c, Alias: alias}
+func (c *Column) Alias(alias string) *AliasExpr {
+	return &AliasExpr{Expr: c, Alias: alias}
 }
 
 func (c *Column) ColumnsUsedExprs() []Expr {

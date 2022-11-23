@@ -351,3 +351,101 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		})
 	}
 }
+
+func Test_Aggregation_Projection(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	logger := newTestLogger(t)
+
+	c, err := New(
+		WithLogger(logger),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	for i := 0; i < len(samples); i++ {
+		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		require.NoError(t, err)
+
+		_, err = table.InsertBuffer(context.Background(), buf)
+		require.NoError(t, err)
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	records := []arrow.Record{}
+	err = engine.ScanTable("test").
+		Aggregate(
+			logicalplan.Sum(logicalplan.Col("value")),
+			logicalplan.DynCol("labels"),
+			logicalplan.Col("timestamp"),
+		).
+		Project(
+			logicalplan.Col(logicalplan.Sum(logicalplan.Col("value")).Name()),
+			logicalplan.DynCol("labels"),
+			logicalplan.Col("timestamp").Gt(logicalplan.Literal(1)).Alias("timestamp"),
+		).
+		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+			records = append(records, ar)
+			ar.Retain()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(records))
+	record := records[0]
+	require.Equal(t, int64(6), record.NumCols())
+	require.Equal(t, int64(3), record.NumRows())
+
+	require.True(t, record.Schema().HasField("timestamp"))
+	require.True(t, record.Schema().HasField("labels.label1"))
+	require.True(t, record.Schema().HasField("labels.label2"))
+	require.True(t, record.Schema().HasField("labels.label3"))
+	require.True(t, record.Schema().HasField("labels.label4"))
+	require.True(t, record.Schema().HasField("sum(value)"))
+}
