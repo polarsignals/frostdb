@@ -52,7 +52,8 @@ var schemas = map[string]*dynparquet.Schema{
 		SortingColumns: []*schemapb.SortingColumn{{
 			Name:      "found",
 			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}}}),
+		}},
+	}),
 }
 
 // TestLogic runs all the datadriven tests in the testdata directory. Refer to
