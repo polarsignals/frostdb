@@ -64,18 +64,18 @@ type Table interface {
 
 type Runner struct {
 	db                        DB
-	defaultSchema             *dynparquet.Schema
+	schemas                   map[string]*dynparquet.Schema
 	activeTable               Table
 	activeTableName           string
 	activeTableDynamicColumns []string
 	sqlParser                 *sqlparse.Parser
 }
 
-func NewRunner(db DB, defaultSchema *dynparquet.Schema) *Runner {
+func NewRunner(db DB, schemas map[string]*dynparquet.Schema) *Runner {
 	return &Runner{
-		db:            db,
-		defaultSchema: defaultSchema,
-		sqlParser:     sqlparse.NewParser(),
+		db:        db,
+		schemas:   schemas,
+		sqlParser: sqlparse.NewParser(),
 	}
 }
 
@@ -105,10 +105,10 @@ func (r *Runner) handleCreateTable(ctx context.Context, c *datadriven.TestData) 
 	var schema *dynparquet.Schema
 	for _, arg := range c.CmdArgs {
 		if arg.Key == "schema" {
-			if len(arg.Vals) != 1 && arg.Vals[0] != "default" {
+			if len(arg.Vals) != 1 {
 				return "", fmt.Errorf("createtable: unexpected schema values %v", arg.Vals)
 			}
-			schema = r.defaultSchema
+			schema = r.schemas[arg.Vals[0]]
 		}
 	}
 

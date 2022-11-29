@@ -2,6 +2,11 @@ package logictest
 
 import (
 	"context"
+	"encoding/json"
+	"io/fs"
+	"io/ioutil"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -10,10 +15,14 @@ import (
 
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 )
 
-const testdataDirectory = "testdata"
+const (
+	testdataDirectory = "testdata"
+	schemasDirectory  = "schemas"
+)
 
 type frostDB struct {
 	*frostdb.DB
@@ -43,6 +52,26 @@ func (db frostDB) ScanTable(name string) query.Builder {
 func TestLogic(t *testing.T) {
 	ctx := context.Background()
 
+	// Collect all the provided schemas
+	schemas := map[string]*dynparquet.Schema{}
+	filepath.Walk(schemasDirectory, func(path string, info fs.FileInfo, err error) error {
+		if info.IsDir() {
+			return nil
+		}
+
+		b, err := ioutil.ReadFile(path)
+		require.NoError(t, err)
+
+		var def schemapb.Schema
+		require.NoError(t, json.Unmarshal(b, &def))
+
+		schema, err := dynparquet.SchemaFromDefinition(&def)
+		require.NoError(t, err)
+
+		schemas[strings.TrimRight(filepath.Base(path), ".json")] = schema
+		return nil
+	})
+
 	t.Parallel()
 	datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
 		columnStore, err := frostdb.New()
@@ -50,7 +79,7 @@ func TestLogic(t *testing.T) {
 		defer columnStore.Close()
 		db, err := columnStore.DB(ctx, "test")
 		require.NoError(t, err)
-		r := NewRunner(frostDB{DB: db}, dynparquet.NewSampleSchema())
+		r := NewRunner(frostDB{DB: db}, schemas)
 		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
 			return r.RunCmd(ctx, c)
 		})
