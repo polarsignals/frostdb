@@ -11,6 +11,8 @@ import (
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
+
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
 const testdataDirectory = "testdata"
@@ -33,6 +35,24 @@ func (db frostDB) ScanTable(name string) query.Builder {
 
 var schemas = map[string]*dynparquet.Schema{
 	"default": dynparquet.NewSampleSchema(),
+	"simple_bool": SchemaMust(&schemapb.Schema{
+		Name: "simple_bool",
+		Columns: []*schemapb.Column{{
+			Name: "name",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+		}, {
+			Name: "found",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_BOOL,
+			},
+		}},
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "found",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}}}),
 }
 
 // TestLogic runs all the datadriven tests in the testdata directory. Refer to
@@ -58,4 +78,13 @@ func TestLogic(t *testing.T) {
 			return r.RunCmd(ctx, c)
 		})
 	})
+}
+
+func SchemaMust(def *schemapb.Schema) *dynparquet.Schema {
+	schema, err := dynparquet.SchemaFromDefinition(def)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return schema
 }
