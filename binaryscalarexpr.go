@@ -138,6 +138,8 @@ func compare(v1, v2 parquet.Value) int {
 		return parquet.DoubleType.Compare(v1, v2)
 	case parquet.ByteArray, parquet.FixedLenByteArray:
 		return parquet.ByteArrayType.Compare(v1, v2)
+	case parquet.Boolean:
+		return parquet.BooleanType.Compare(v1, v2)
 	default:
 		panic(fmt.Sprintf("unsupported value comparison: %v", v1.Kind()))
 	}

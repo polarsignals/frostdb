@@ -17,6 +17,8 @@ func NewBuilder(mem memory.Allocator, t arrow.DataType) ColumnBuilder {
 		return NewOptInt64Builder(arrow.PrimitiveTypes.Int64)
 	case *arrow.ListType:
 		return NewListBuilder(mem, t.Elem())
+	case *arrow.BooleanType:
+		return NewOptBooleanBuilder(arrow.FixedWidthTypes.Boolean)
 	default:
 		return array.NewBuilder(mem, t)
 	}

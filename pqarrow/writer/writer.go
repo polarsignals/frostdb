@@ -239,3 +239,44 @@ func (w *float64ValueWriter) WritePage(p parquet.Page) error {
 
 	return nil
 }
+
+type booleanValueWriter struct {
+	b       *builder.OptBooleanBuilder
+	scratch struct {
+		values []parquet.Value
+	}
+}
+
+func NewBooleanValueWriter(b builder.ColumnBuilder, numValues int) ValueWriter {
+	res := &booleanValueWriter{
+		b: b.(*builder.OptBooleanBuilder),
+	}
+	res.b.Reserve(numValues)
+	return res
+}
+
+func (w *booleanValueWriter) Write(values []parquet.Value) {
+	w.b.AppendParquetValues(values)
+}
+
+func (w *booleanValueWriter) WritePage(p parquet.Page) error {
+	if p.NumNulls() != 0 {
+		reader := p.Values()
+		if cap(w.scratch.values) < int(p.NumValues()) {
+			w.scratch.values = make([]parquet.Value, p.NumValues())
+		}
+		w.scratch.values = w.scratch.values[:p.NumValues()]
+		_, err := reader.ReadValues(w.scratch.values)
+		// We're reading all values in the page so we always expect an io.EOF.
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("read values: %w", err)
+		}
+		w.Write(w.scratch.values)
+		return nil
+	}
+
+	// No nulls in page.
+	values := p.Data()
+	w.b.Append(values.Boolean(), int(p.NumValues()))
+	return nil
+}

@@ -272,6 +272,8 @@ func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData, nullab
 		layout.Type = schemapb.StorageLayout_TYPE_INT64
 	case format.Double:
 		layout.Type = schemapb.StorageLayout_TYPE_DOUBLE
+	case format.Boolean:
+		layout.Type = schemapb.StorageLayout_TYPE_BOOL
 	}
 
 	return layout
@@ -286,6 +288,8 @@ func storageLayoutToParquetNode(l *schemapb.StorageLayout) (parquet.Node, error)
 		node = parquet.Int(64)
 	case schemapb.StorageLayout_TYPE_DOUBLE:
 		node = parquet.Leaf(parquet.DoubleType)
+	case schemapb.StorageLayout_TYPE_BOOL:
+		node = parquet.Leaf(parquet.BooleanType)
 	default:
 		return nil, fmt.Errorf("unknown storage layout type: %s", l.Type)
 	}
@@ -710,6 +714,13 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 	cols := s.parquetSortingColumns(dynamicColumns)
 	bloomFilterColumns := make([]parquet.BloomFilterColumn, 0, len(cols))
 	for _, col := range cols {
+		// Don't add bloom filters to boolean columns
+		colName := strings.Split(col.Path()[0], ".")[0]
+		def, _ := s.ColumnByName(colName)
+		if def.StorageLayout.Type().Kind() == parquet.Boolean {
+			continue
+		}
+
 		bloomFilterColumns = append(bloomFilterColumns, parquet.SplitBlockFilter(col.Path()...))
 	}
 

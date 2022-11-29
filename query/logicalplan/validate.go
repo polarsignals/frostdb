@@ -300,6 +300,18 @@ func ValidateFilterBinaryExpr(plan *LogicalPlan, expr *BinaryExpr) *ExprValidati
 // ValidateComparingTypes validates if the types being compared by a binary expression are compatible.
 func ValidateComparingTypes(columnType *format.LogicalType, literal scalar.Scalar) *ExprValidationError {
 	switch {
+	// if the columns logical type is nil, it may be of type bool
+	case columnType == nil:
+		switch t := literal.(type) {
+		case *scalar.Boolean:
+			return nil
+		default:
+			return &ExprValidationError{
+				// TODO: this is probably correct? We should probably rewrite the query to be comparing against a bool I think...
+				message: fmt.Sprintf("incompatible types: nil logical type column cannot be compared with %v", t),
+			}
+		}
+
 	// if the column is a string type, it shouldn't be compared to a number
 	case columnType.UTF8 != nil:
 		switch literal.(type) {

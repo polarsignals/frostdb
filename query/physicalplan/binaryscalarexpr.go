@@ -63,6 +63,15 @@ var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logicalplan.Op) (*Bitmap, error) {
 	leftType := left.DataType()
 	switch leftType {
+	case arrow.FixedWidthTypes.Boolean:
+		switch operator {
+		case logicalplan.OpEq:
+			return BooleanArrayScalarEqual(left.(*array.Boolean), right.(*scalar.Boolean))
+		case logicalplan.OpNotEq:
+			return BooleanArrayScalarNotEqual(left.(*array.Boolean), right.(*scalar.Boolean))
+		default:
+			panic("something terrible has happened, this should have errored previously during validation")
+		}
 	case &arrow.FixedSizeBinaryType{ByteWidth: 16}:
 		switch operator {
 		case logicalplan.OpEq:
@@ -302,6 +311,36 @@ func Int64ArrayScalarGreaterThanOrEqual(left *array.Int64, right *scalar.Int64) 
 			continue
 		}
 		if left.Value(i) >= right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func BooleanArrayScalarEqual(left *array.Boolean, right *scalar.Boolean) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if left.Value(i) == right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func BooleanArrayScalarNotEqual(left *array.Boolean, right *scalar.Boolean) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if left.Value(i) != right.Value {
 			res.Add(uint32(i))
 		}
 	}
