@@ -2,9 +2,6 @@ package logictest
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -13,14 +10,10 @@ import (
 
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 )
 
-const (
-	testdataDirectory = "testdata"
-	schemasDirectory  = "schemas"
-)
+const testdataDirectory = "testdata"
 
 type frostDB struct {
 	*frostdb.DB
@@ -38,6 +31,10 @@ func (db frostDB) ScanTable(name string) query.Builder {
 	return queryEngine.ScanTable(name)
 }
 
+var schemas = map[string]*dynparquet.Schema{
+	"default": dynparquet.NewSampleSchema(),
+}
+
 // TestLogic runs all the datadriven tests in the testdata directory. Refer to
 // the RunCmd method of the Runner struct for more information on the expected
 // syntax of these tests. If this test fails but the results look the same, it
@@ -49,31 +46,6 @@ func (db frostDB) ScanTable(name string) query.Builder {
 // group split points, granule split size).
 func TestLogic(t *testing.T) {
 	ctx := context.Background()
-
-	// Collect all the provided schemas
-	schemas := map[string]*dynparquet.Schema{}
-	filepath.WalkDir(schemasDirectory, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if d.IsDir() {
-			return nil
-		}
-
-		b, err := os.ReadFile(path)
-		require.NoError(t, err)
-
-		var def schemapb.Schema
-		require.NoError(t, json.Unmarshal(b, &def))
-
-		schema, err := dynparquet.SchemaFromDefinition(&def)
-		require.NoError(t, err)
-
-		schemas[schema.Definition().Name] = schema
-		return nil
-	})
-
 	t.Parallel()
 	datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
 		columnStore, err := frostdb.New()
