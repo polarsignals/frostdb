@@ -3,8 +3,7 @@ package logictest
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -53,12 +52,16 @@ func TestLogic(t *testing.T) {
 
 	// Collect all the provided schemas
 	schemas := map[string]*dynparquet.Schema{}
-	filepath.Walk(schemasDirectory, func(path string, info fs.FileInfo, err error) error {
-		if info.IsDir() {
+	filepath.WalkDir(schemasDirectory, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
 			return nil
 		}
 
-		b, err := ioutil.ReadFile(path)
+		b, err := os.ReadFile(path)
 		require.NoError(t, err)
 
 		var def schemapb.Schema
