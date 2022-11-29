@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"io/ioutil"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow/memory"
@@ -68,7 +67,7 @@ func TestLogic(t *testing.T) {
 		schema, err := dynparquet.SchemaFromDefinition(&def)
 		require.NoError(t, err)
 
-		schemas[strings.TrimRight(filepath.Base(path), ".json")] = schema
+		schemas[schema.Definition().Name] = schema
 		return nil
 	})
 

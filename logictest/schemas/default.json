@@ -1,0 +1,60 @@
+{
+    "name": "default",
+    "columns": [
+        {
+            "name": "example_type",
+            "storage_layout": {
+                "type": 1,
+                "encoding": 1
+            }
+        },
+        {
+            "name": "labels",
+            "storage_layout": {
+                "type": 1,
+                "nullable": true,
+                "encoding": 1
+            },
+            "dynamic": true
+        },
+        {
+            "name": "stacktrace",
+            "storage_layout": {
+                "type": 1,
+                "encoding": 1
+            }
+        },
+        {
+            "name": "timestamp",
+            "storage_layout": {
+                "type": 2
+            }
+        },
+        {
+            "name": "value",
+            "storage_layout": {
+                "type": 2
+            }
+        }
+    ],
+    "sorting_columns": [
+        {
+            "name": "example_type",
+            "direction": 1
+        },
+        {
+            "name": "labels",
+            "direction": 1,
+            "nulls_first": true
+        },
+        {
+            "name": "stacktrace",
+            "direction": 1,
+            "nulls_first": true
+        },
+        {
+            "name": "timestamp",
+            "direction": 1
+        }
+    ]
+}
