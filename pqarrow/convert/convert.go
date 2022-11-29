@@ -59,6 +59,8 @@ func ParquetNodeToTypeWithWriterFunc(n parquet.Node) (arrow.DataType, writer.New
 			}
 		case t.String() == "group": // NOTE: this needs to be perfomed before t.Kind() because t.Kind() will panic when called on a group
 			return nil, nil, errors.New("unsupported type: " + n.Type().String())
+		case t.Kind() == parquet.Boolean:
+			return &arrow.BooleanType{}, writer.NewBooleanValueWriter, nil
 		case t.Kind() == parquet.Double:
 			return &arrow.Float64Type{}, writer.NewFloat64ValueWriter, nil
 		default:

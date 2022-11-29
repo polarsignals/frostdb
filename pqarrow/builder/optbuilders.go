@@ -85,6 +85,7 @@ func resizeBitmap(bitmap []byte, valuesToRepresent int) []byte {
 var (
 	_ OptimizedBuilder = (*OptBinaryBuilder)(nil)
 	_ OptimizedBuilder = (*OptInt64Builder)(nil)
+	_ OptimizedBuilder = (*OptBooleanBuilder)(nil)
 )
 
 // OptBinaryBuilder is an optimized array.BinaryBuilder.
@@ -334,5 +335,121 @@ func (b *OptInt64Builder) ResetToLength(n int) {
 
 	b.length = n
 	b.data = b.data[:n]
+	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
+}
+
+type OptBooleanBuilder struct {
+	builderBase
+	data []byte
+}
+
+func NewOptBooleanBuilder(dtype arrow.DataType) *OptBooleanBuilder {
+	b := &OptBooleanBuilder{}
+	b.dtype = dtype
+	return b
+}
+
+func (b *OptBooleanBuilder) resizeData(neededLength int) {
+	if cap(b.data) < neededLength {
+		oldData := b.data
+		b.data = make([]byte, bitutil.NextPowerOf2(neededLength))
+		copy(b.data, oldData)
+	}
+	b.data = b.data[:neededLength]
+}
+
+func (b *OptBooleanBuilder) Release() {
+	if atomic.AddInt64(&b.refCount, -1) == 0 {
+		b.data = nil
+		b.releaseInternal()
+	}
+}
+
+func (b *OptBooleanBuilder) AppendNull() {
+	b.AppendNulls(1)
+}
+
+func (b *OptBooleanBuilder) AppendNulls(n int) {
+	v := b.length + n
+	b.data = resizeBitmap(b.data, v)
+	b.validityBitmap = resizeBitmap(b.validityBitmap, v)
+
+	for i := 0; i < n; i++ {
+		bitutil.SetBitTo(b.data, b.length, false)
+		bitutil.SetBitTo(b.validityBitmap, b.length, false)
+		b.length++
+	}
+}
+
+func (b *OptBooleanBuilder) NewArray() arrow.Array {
+	data := array.NewData(
+		b.dtype,
+		b.length,
+		[]*memory.Buffer{
+			memory.NewBufferBytes(b.validityBitmap),
+			memory.NewBufferBytes(b.data),
+		},
+		nil,
+		b.length-bitutil.CountSetBits(b.validityBitmap, 0, b.length),
+		0,
+	)
+	b.reset()
+	b.data = b.data[:0]
+	array := array.NewBooleanData(data)
+	return array
+}
+
+func (b *OptBooleanBuilder) Append(data []byte, valid int) {
+	n := b.length + valid
+	b.data = resizeBitmap(b.data, n)
+	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
+
+	// TODO: This isn't ideal setting bits 1 by 1, when we could copy in all the bits
+	for i := 0; i < valid; i++ {
+		bitutil.SetBitTo(b.data, b.length, bitutil.BitIsSet(data, i))
+		bitutil.SetBitTo(b.validityBitmap, b.length, true)
+		b.length++
+	}
+}
+
+func (b *OptBooleanBuilder) AppendData(data []byte) {
+	panic("do not use AppendData for opt boolean builder, use Append instead")
+}
+
+func (b *OptBooleanBuilder) AppendParquetValues(values []parquet.Value) {
+	n := b.length + len(values)
+	b.data = resizeBitmap(b.data, n)
+	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
+
+	for _, v := range values {
+		bitutil.SetBitTo(b.data, b.length, v.Boolean())
+		bitutil.SetBitTo(b.validityBitmap, b.length, true)
+		b.length++
+	}
+}
+
+func (b *OptBooleanBuilder) RepeatLastValue(n int) {
+	if bitutil.BitIsNotSet(b.validityBitmap, b.length-1) {
+		b.AppendNulls(n)
+		return
+	}
+
+	lastValue := bitutil.BitIsSet(b.data, b.length-1)
+	b.data = resizeBitmap(b.data, b.length+n)
+	for i := b.length; i < b.length+n; i++ {
+		bitutil.SetBitTo(b.data, b.length, lastValue)
+		bitutil.SetBitTo(b.validityBitmap, b.length, true)
+		b.length++
+	}
+}
+
+// ResetToLength is specific to distinct optimizations in FrostDB.
+func (b *OptBooleanBuilder) ResetToLength(n int) {
+	if n == b.length {
+		return
+	}
+
+	b.length = n
+	b.data = resizeBitmap(b.data, n)
 	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
 }

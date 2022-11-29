@@ -19,6 +19,8 @@ func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 		v := [16]byte{}
 		copy(v[:width], s.Data())
 		return parquet.ValueOf(v), nil
+	case *scalar.Boolean:
+		return parquet.ValueOf(s.Value), nil
 	case nil:
 		return parquet.Value{}, nil
 	default:

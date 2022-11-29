@@ -263,6 +263,15 @@ func stringToValue(t parquet.Type, stringValue string) (any, error) {
 			return nil, fmt.Errorf("unexpected error converting %s to int: %w", stringValue, err)
 		}
 		return intValue, nil
+	case parquet.Boolean:
+		switch stringValue {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		default:
+			return nil, fmt.Errorf("invalid boolean value: %s", stringValue)
+		}
 	default:
 		return nil, fmt.Errorf("unhandled type %T", t.Kind())
 	}

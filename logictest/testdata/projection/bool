@@ -1,0 +1,14 @@
+createtable schema=simple_bool
+----
+
+insert cols=(name, found)
+test0 true
+test1 true
+test2 false
+----
+
+exec
+select name where found = 'true'
+----
+test0
+test1

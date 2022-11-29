@@ -100,7 +100,7 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			return nil
 		}
 		v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
-			Left:  leftExpr,
+			Left:  logicalplan.Col(leftExpr.Name()),
 			Op:    frostDBOp,
 			Right: rightExpr,
 		})
@@ -114,11 +114,18 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		}
 		v.exprStack = append(v.exprStack, col)
 	case *test_driver.ValueExpr:
-		v.exprStack = append(v.exprStack, logicalplan.Literal(expr.GetValue()))
+		switch logicalplan.Literal(expr.GetValue()).Name() { // NOTE: special case for boolean fields since the mysql parser doesn't support booleans as a type
+		case "true":
+			v.exprStack = append(v.exprStack, logicalplan.Literal(true))
+		case "false":
+			v.exprStack = append(v.exprStack, logicalplan.Literal(false))
+		default:
+			v.exprStack = append(v.exprStack, logicalplan.Literal(expr.GetValue()))
+		}
 	case *ast.SelectField:
 		if as := expr.AsName.String(); as != "" {
 			lastExpr := len(v.exprStack) - 1
-			v.exprStack[lastExpr] = v.exprStack[lastExpr].(*logicalplan.AggregationFunction).Alias(as)
+			v.exprStack[lastExpr] = v.exprStack[lastExpr].(*logicalplan.AggregationFunction).Alias(as) // TODO should probably just be an alias expr and not from an aggregate function
 		}
 	case *ast.FieldList, *ast.ColumnNameExpr, *ast.GroupByClause, *ast.ByItem, *ast.RowExpr,
 		*ast.ParenthesesExpr:

@@ -855,12 +855,12 @@ func binaryDistinctExpr(
 		)
 
 		if allGreater || noneGreater {
-			b := info.b.(*array.BooleanBuilder)
+			b := info.b.(*builder.OptBooleanBuilder)
 			if allGreater {
-				b.Append(true)
+				b.AppendParquetValues([]parquet.Value{parquet.ValueOf(true)})
 			}
 			if noneGreater {
-				b.Append(false)
+				b.AppendParquetValues([]parquet.Value{parquet.ValueOf(false)})
 			}
 			return true, nil
 		}

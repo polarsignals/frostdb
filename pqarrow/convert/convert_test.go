@@ -25,6 +25,10 @@ func TestParquetNodeToType(t *testing.T) {
 			parquetNode: parquet.Uint(64),
 			arrowType:   &arrow.Uint64Type{},
 		},
+		{
+			parquetNode: parquet.Leaf(parquet.BooleanType),
+			arrowType:   &arrow.BooleanType{},
+		},
 	}
 
 	for _, c := range cases {
@@ -37,10 +41,6 @@ func TestParquetNodeToType(t *testing.T) {
 		parquetNode parquet.Node
 		msg         string
 	}{
-		{
-			parquetNode: parquet.Leaf(parquet.BooleanType),
-			msg:         "unsupported type: BOOLEAN",
-		},
 		{
 			parquetNode: parquet.Int(32),
 			msg:         "unsupported int bit width",
