@@ -34,6 +34,8 @@ message StorageLayout {
         TYPE_INT64 = 2;
         // Represents a double type.
         TYPE_DOUBLE = 3;
+        // Represents a boolean type.
+        TYPE_BOOL = 4;
     }
 
     // Type of the column.
