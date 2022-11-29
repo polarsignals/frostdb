@@ -31,6 +31,10 @@ func (db frostDB) ScanTable(name string) query.Builder {
 	return queryEngine.ScanTable(name)
 }
 
+var schemas = map[string]*dynparquet.Schema{
+	"default": dynparquet.NewSampleSchema(),
+}
+
 // TestLogic runs all the datadriven tests in the testdata directory. Refer to
 // the RunCmd method of the Runner struct for more information on the expected
 // syntax of these tests. If this test fails but the results look the same, it
@@ -42,7 +46,6 @@ func (db frostDB) ScanTable(name string) query.Builder {
 // group split points, granule split size).
 func TestLogic(t *testing.T) {
 	ctx := context.Background()
-
 	t.Parallel()
 	datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
 		columnStore, err := frostdb.New()
@@ -50,7 +53,7 @@ func TestLogic(t *testing.T) {
 		defer columnStore.Close()
 		db, err := columnStore.DB(ctx, "test")
 		require.NoError(t, err)
-		r := NewRunner(frostDB{DB: db}, dynparquet.NewSampleSchema())
+		r := NewRunner(frostDB{DB: db}, schemas)
 		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
 			return r.RunCmd(ctx, c)
 		})
