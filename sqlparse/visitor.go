@@ -62,6 +62,8 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 				v.exprStack[0],
 				v.exprStack[1:]...,
 			)
+		default:
+			v.builder = v.builder.Project(v.exprStack...)
 		}
 		// Reset for safety.
 		v.exprStack = v.exprStack[:0]
