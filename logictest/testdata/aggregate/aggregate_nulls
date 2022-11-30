@@ -7,6 +7,8 @@ null    value2  stack1  2   2
 null    value2  stack1  3   3
 ----
 
+# TODO query results should explicitly return null values
+# https://github.com/polarsignals/frostdb/issues/259
 exec
 select sum(value) as value_sum group by labels.label2
 ----
