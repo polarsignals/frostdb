@@ -93,10 +93,21 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		switch expr.Op {
 		case opcode.GT:
 			frostDBOp = logicalplan.OpGt
+		case opcode.LT:
+			frostDBOp = logicalplan.OpLt
+		case opcode.GE:
+			frostDBOp = logicalplan.OpGtEq
+		case opcode.LE:
+			frostDBOp = logicalplan.OpLtEq
 		case opcode.EQ:
 			frostDBOp = logicalplan.OpEq
+		case opcode.NE:
+			frostDBOp = logicalplan.OpNotEq
 		case opcode.LogicAnd:
 			v.exprStack = append(v.exprStack, logicalplan.And(leftExpr, rightExpr))
+			return nil
+		case opcode.LogicOr:
+			v.exprStack = append(v.exprStack, logicalplan.Or(leftExpr, rightExpr))
 			return nil
 		}
 		v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
@@ -127,6 +138,20 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			lastExpr := len(v.exprStack) - 1
 			v.exprStack[lastExpr] = v.exprStack[lastExpr].(*logicalplan.AggregationFunction).Alias(as) // TODO should probably just be an alias expr and not from an aggregate function
 		}
+	case *ast.PatternRegexpExpr:
+		rightExpr, newExprs := pop(v.exprStack)
+		leftExpr, newExprs := pop(newExprs)
+		v.exprStack = newExprs
+
+		e := &logicalplan.BinaryExpr{
+			Left:  logicalplan.Col(leftExpr.Name()),
+			Op:    logicalplan.OpRegexMatch,
+			Right: rightExpr,
+		}
+		if expr.Not {
+			e.Op = logicalplan.OpRegexNotMatch
+		}
+		v.exprStack = append(v.exprStack, e)
 	case *ast.FieldList, *ast.ColumnNameExpr, *ast.GroupByClause, *ast.ByItem, *ast.RowExpr,
 		*ast.ParenthesesExpr:
 		// Deliberate pass-through nodes.

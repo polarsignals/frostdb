@@ -1,0 +1,22 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, stacktrace, timestamp, value)
+value1  value2  null    null    stack1  1   1
+value2  value2  value3  null    stack1  2   2
+value3  value2  null    value4  stack1  3   3
+----
+
+# dynamic projections no optimization
+exec
+select labels where timestamp >= 2
+----
+value2  value2  value3  
+value3  value2          value4
+
+# projection with optimization
+exec
+select timestamp where timestamp >= 2
+----
+2
+3

@@ -1,0 +1,103 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, stacktrace, timestamp, value)
+value1  value2  null    null    stack1  1   1
+value2  value2  value3  null    stack1  2   2
+value3  value2  null    value4  stack1  3   3
+----
+
+exec
+select labels, stacktrace, timestamp, value where timestamp >= 2
+----
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label4 = 'value4'
+----
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label1 = 'value1' or labels.label2 = 'value2'
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label5 != 'value4'
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label5 = ''
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label1 regexp 'value.' and labels.label2 = 'value2'
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label5 regexp ''
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label5 not regexp 'foo'
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label3 regexp 'value.' and labels.label5 regexp '' and labels.label2 = 'value2'
+----
+value2  value2  value3          stack1  2       2
+
+exec
+select labels, stacktrace, timestamp, value where labels.label1 regexp 'value.' and  labels.label2 = 'value2' and labels.label1 != 'value3'
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+
+# simple regex match
+exec
+select labels, stacktrace, timestamp, value where labels.label1 regexp 'value.'
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+# no regex match
+exec
+select labels, stacktrace, timestamp, value where labels.label1 regexp 'values.'
+----
+
+exec
+select labels, stacktrace, timestamp, value where labels.label1 regexp 'value.' and labels.label5 = ''
+----
+value1  value2                  stack1  1       1
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label3 regexp 'value.' and (labels.label1 = 'value1' or labels.label1 = 'value2')
+----
+value2  value2  value3          stack1  2       2
+
+exec
+select labels, stacktrace, timestamp, value where labels.label4 = 'value4' or (labels.label2 regexp 'value.' and labels.label1 = 'value2')
+----
+value2  value2  value3          stack1  2       2
+value3  value2          value4  stack1  3       3
