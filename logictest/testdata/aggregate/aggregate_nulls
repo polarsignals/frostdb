@@ -1,0 +1,28 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, labels.label2, stacktrace, timestamp, value)
+value1  null    stack1  1   1
+null    value2  stack1  2   2
+null    value2  stack1  3   3
+----
+
+# TODO query results should explicitly return null values
+# https://github.com/polarsignals/frostdb/issues/259
+exec
+select sum(value) as value_sum group by labels.label2
+----
+        1
+value2  5
+
+exec
+select max(value) as value_max group by labels.label2
+----
+        1
+value2  3
+
+exec
+select count(value) as value_count group by labels.label2
+----
+        1
+value2  2

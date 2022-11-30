@@ -11,3 +11,13 @@ exec
 select sum(value) as value_sum group by labels.label2
 ----
 value2  6
+
+exec
+select max(value) as value_max group by labels.label2
+----
+value2  3
+
+exec
+select count(value) as value_count group by labels.label2
+----
+value2  3

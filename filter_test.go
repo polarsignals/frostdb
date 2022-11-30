@@ -222,7 +222,7 @@ func TestFilter(t *testing.T) {
 	}
 }
 
-func Test_Projection(t *testing.T) {
+func TestProjection(t *testing.T) {
 	config := NewTableConfig(
 		dynparquet.NewSampleSchema(),
 	)
