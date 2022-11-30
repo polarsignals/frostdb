@@ -723,7 +723,7 @@ func (db *DB) begin() (uint64, uint64, func()) {
 		}
 
 		// place completed transaction in the waiting pool
-		db.txPool.Prepend(tx)
+		db.txPool.Insert(tx)
 	}
 }
 
