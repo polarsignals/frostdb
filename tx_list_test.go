@@ -17,17 +17,20 @@ func (x Uint64Slice) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
 
 func Test_TXList_Mark(t *testing.T) {
 	node := &TxNode{
-		next: atomic.Pointer[TxNode]{},
+		next:     &atomic.Pointer[TxNode]{},
+		original: &atomic.Pointer[TxNode]{},
 	}
 	next := &TxNode{
-		next: atomic.Pointer[TxNode]{},
+		next:     &atomic.Pointer[TxNode]{},
+		original: &atomic.Pointer[TxNode]{},
 	}
 	node.next.Store(next)
 
 	node.next.Store(getMarked(node))
-	require.True(t, isMarked(node) != nil)
+	node.original.Store(next)
+	require.NotNil(t, isMarked(node))
 	node.next.Store(getUnmarked(node))
-	require.True(t, isMarked(node) == nil)
+	require.Nil(t, isMarked(node))
 }
 
 func Test_TXList_Basic(t *testing.T) {

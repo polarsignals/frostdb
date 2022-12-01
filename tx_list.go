@@ -6,13 +6,14 @@ import (
 )
 
 type TxNode struct {
-	next atomic.Pointer[TxNode]
-	tx   uint64
+	next     *atomic.Pointer[TxNode]
+	original *atomic.Pointer[TxNode]
+	tx       uint64
 }
 
 type TxPool struct {
-	head  atomic.Pointer[TxNode]
-	tail  atomic.Pointer[TxNode]
+	head  *atomic.Pointer[TxNode]
+	tail  *atomic.Pointer[TxNode]
 	drain chan interface{}
 }
 
@@ -20,16 +21,18 @@ type TxPool struct {
 // TxPool is a sorted lockless linked-list described in https://timharris.uk/papers/2001-disc.pdf
 func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	tail := &TxNode{
-		next: atomic.Pointer[TxNode]{},
-		tx:   0,
+		next:     &atomic.Pointer[TxNode]{},
+		original: &atomic.Pointer[TxNode]{},
+		tx:       0,
 	}
 	head := &TxNode{
-		next: atomic.Pointer[TxNode]{},
-		tx:   0,
+		next:     &atomic.Pointer[TxNode]{},
+		original: &atomic.Pointer[TxNode]{},
+		tx:       0,
 	}
 	txpool := &TxPool{
-		head:  atomic.Pointer[TxNode]{},
-		tail:  atomic.Pointer[TxNode]{},
+		head:  &atomic.Pointer[TxNode]{},
+		tail:  &atomic.Pointer[TxNode]{},
 		drain: make(chan interface{}, 1),
 	}
 
@@ -45,7 +48,9 @@ func NewTxPool(watermark *atomic.Uint64) *TxPool {
 // Insert performs an insertion sort of the given tx.
 func (l *TxPool) Insert(tx uint64) {
 	n := &TxNode{
-		tx: tx,
+		tx:       tx,
+		next:     &atomic.Pointer[TxNode]{},
+		original: &atomic.Pointer[TxNode]{},
 	}
 	assertAlignment(n)
 
@@ -57,8 +62,8 @@ func (l *TxPool) Insert(tx uint64) {
 			}
 
 			// remove deleted nodes encountered
-			if unmarked := isMarked(node); unmarked != nil {
-				prev.next.CompareAndSwap(node, unmarked)
+			if next := isMarked(node); next != nil {
+				prev.next.CompareAndSwap(node, next)
 				return false
 			}
 
@@ -100,9 +105,9 @@ func (l *TxPool) delete(deleteFunc func(tx uint64) bool) {
 		if !deleteFunc(node.tx) {
 			return
 		}
-		for {
-			next := node.next.Load()
+		for next := node.next.Load(); next != nil; next = node.next.Load() { // only attempt to mark nodes as deleted that haven't already been marked
 			if node.next.CompareAndSwap(next, getMarked(node)) {
+				node.original.Store(next) // NOTE: deletes are not concurrent; so we don't need to CAS the original pointer
 				break
 			}
 		}
@@ -115,30 +120,38 @@ func assertAlignment(node *TxNode) {
 	}
 }
 
+// isMarked returns the next node if and only if the node is marked for deletion.
 func isMarked(node *TxNode) *TxNode {
 	next := node.next.Load()
-	if (uintptr(unsafe.Pointer(next)) & uintptr(1)) == 1 {
-		return (*TxNode)(unsafe.Add(unsafe.Pointer(next), -1))
+	if next != nil {
+		return nil
 	}
 
-	return nil
+	// this node has been marked for deletion, get the original next pointer
+	og := node.original.Load()
+	for og == nil {
+		og = node.original.Load()
+	}
+	return og
 }
 
 func getMarked(node *TxNode) *TxNode {
-	next := node.next.Load()
-	if (uintptr(unsafe.Pointer(next)) & uintptr(1)) == 1 {
-		return next
-	}
-	return (*TxNode)(unsafe.Add(unsafe.Pointer(next), 1))
+	// using nil as the marker
+	return nil
 }
 
 func getUnmarked(node *TxNode) *TxNode {
 	next := node.next.Load()
-	if (uintptr(unsafe.Pointer(next)) & uintptr(1)) == 0 {
+	if next != nil {
 		return next
 	}
 
-	return (*TxNode)(unsafe.Add(unsafe.Pointer(next), -1))
+	// get the original pointer
+	og := node.original.Load()
+	for og == nil {
+		og = node.original.Load()
+	}
+	return og
 }
 
 // cleaner sweeps the pool periodically, and bubbles up the given watermark.
