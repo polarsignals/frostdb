@@ -3,9 +3,8 @@ package frostdb
 import (
 	"sort"
 	"sync"
-	"testing"
-
 	"sync/atomic"
+	"testing"
 
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +31,6 @@ func Test_TXList_Mark(t *testing.T) {
 }
 
 func Test_TXList_Basic(t *testing.T) {
-
 	wm := &atomic.Uint64{}
 	wm.Store(1) // set the watermark so that the sweeper won't remove any of our txs
 	p := NewTxPool(wm)
@@ -53,7 +51,6 @@ func Test_TXList_Basic(t *testing.T) {
 }
 
 func Test_TXList_Async(t *testing.T) {
-
 	wm := &atomic.Uint64{}
 	p := NewTxPool(wm)
 
@@ -102,7 +99,6 @@ func Test_TXList_Async(t *testing.T) {
 }
 
 func Benchmark_TXList_InsertAndDrain(b *testing.B) {
-
 	benchmarks := map[string]struct {
 		writers int
 		values  int
@@ -148,7 +144,6 @@ func Benchmark_TXList_InsertAndDrain(b *testing.B) {
 				for v := wm.Load(); v < tx.Load(); v = wm.Load() {
 				}
 				require.Equal(b, tx.Load(), wm.Load())
-
 			}
 			p.Stop()
 		})

@@ -42,7 +42,7 @@ func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	return txpool
 }
 
-// Insert performs an insertion sort of the given tx
+// Insert performs an insertion sort of the given tx.
 func (l *TxPool) Insert(tx uint64) {
 	n := &TxNode{
 		tx: tx,
@@ -73,7 +73,7 @@ func (l *TxPool) Insert(tx uint64) {
 	}
 }
 
-// insert will insert the node after previous and before next
+// insert will insert the node after previous and before next.
 func (l *TxPool) insert(node, prev, next *TxNode) bool {
 	node.next.Store(next)
 	success := prev.next.CompareAndSwap(next, node)
@@ -94,7 +94,7 @@ func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
 	}
 }
 
-// delete iterates over the list and deletes until the delete function returns false
+// delete iterates over the list and deletes until the delete function returns false.
 func (l *TxPool) delete(deleteFunc func(tx uint64) bool) {
 	for node := l.head.Load().next.Load(); node.tx != 0; node = getUnmarked(node) {
 		if !deleteFunc(node.tx) {
