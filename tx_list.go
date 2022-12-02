@@ -2,77 +2,161 @@ package frostdb
 
 import (
 	"sync/atomic"
-	"time"
+	"unsafe"
 )
 
 type TxNode struct {
-	next atomic.Pointer[TxNode]
-	tx   uint64
+	next     *atomic.Pointer[TxNode]
+	original *atomic.Pointer[TxNode]
+	tx       uint64
 }
 
 type TxPool struct {
-	next  atomic.Pointer[TxNode]
+	head  *atomic.Pointer[TxNode]
+	tail  *atomic.Pointer[TxNode]
 	drain chan interface{}
 }
 
 // NewTxPool returns a new TxPool and starts the pool cleaner routine.
+// TxPool is a sorted lockless linked-list described in https://timharris.uk/papers/2001-disc.pdf
 func NewTxPool(watermark *atomic.Uint64) *TxPool {
+	tail := &TxNode{
+		next:     &atomic.Pointer[TxNode]{},
+		original: &atomic.Pointer[TxNode]{},
+		tx:       0,
+	}
+	head := &TxNode{
+		next:     &atomic.Pointer[TxNode]{},
+		original: &atomic.Pointer[TxNode]{},
+		tx:       0,
+	}
 	txpool := &TxPool{
-		next:  atomic.Pointer[TxNode]{},
+		head:  &atomic.Pointer[TxNode]{},
+		tail:  &atomic.Pointer[TxNode]{},
 		drain: make(chan interface{}, 1),
 	}
+
+	// [head] -> [tail]
+	head.next.Store(tail)
+	txpool.head.Store(head)
+	txpool.tail.Store(tail)
+
 	go txpool.cleaner(watermark)
 	return txpool
 }
 
-// Prepend a node onto the front of the list.
-func (l *TxPool) Prepend(tx uint64) *TxNode {
-	node := &TxNode{
-		tx: tx,
+// Insert performs an insertion sort of the given tx.
+func (l *TxPool) Insert(tx uint64) {
+	n := &TxNode{
+		tx:       tx,
+		next:     &atomic.Pointer[TxNode]{},
+		original: &atomic.Pointer[TxNode]{},
 	}
-	for { // continue until a successful compare and swap occurs.
-		next := l.next.Load()
-		node.next.Store(next)
-		if l.next.CompareAndSwap(next, node) {
-			select {
-			case l.drain <- true:
-				return node
-			default:
-				return node
+	assertAlignment(n)
+
+	tryInsert := func() bool {
+		prev := l.head.Load()
+		for node := l.head.Load().next.Load(); node != nil; node = getUnmarked(node) {
+			if node.tx == 0 { // end of list
+				return l.insert(n, prev, node)
+			}
+
+			// remove deleted nodes encountered
+			if next := isMarked(node); next != nil {
+				prev.next.CompareAndSwap(node, next)
+				return false
+			}
+
+			if node.tx > tx {
+				return l.insert(n, prev, node)
+			}
+			prev = node
+		}
+		return false
+	}
+	for !tryInsert() {
+	}
+}
+
+// insert will insert the node after previous and before next.
+func (l *TxPool) insert(node, prev, next *TxNode) bool {
+	node.next.Store(next)
+	success := prev.next.CompareAndSwap(next, node)
+	if success {
+		select {
+		case l.drain <- struct{}{}: // notify the cleaner
+		default:
+		}
+	}
+	return success
+}
+
+func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
+	for node := l.head.Load().next.Load(); node.tx != 0; node = getUnmarked(node) {
+		if isMarked(node) == nil && !iterate(node.tx) {
+			return
+		}
+	}
+}
+
+// delete iterates over the list and deletes until the delete function returns false.
+func (l *TxPool) delete(deleteFunc func(tx uint64) bool) {
+	for node := l.head.Load().next.Load(); node.tx != 0; node = getUnmarked(node) {
+		if !deleteFunc(node.tx) {
+			return
+		}
+		for next := node.next.Load(); next != nil; next = node.next.Load() { // only attempt to mark nodes as deleted that haven't already been marked
+			if node.next.CompareAndSwap(next, getMarked(node)) {
+				node.original.Store(next) // NOTE: deletes are not concurrent; so we don't need to CAS the original pointer
+				break
 			}
 		}
 	}
 }
 
-// Iterate accesses every node in the list.
-func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
-	next := l.next.Load()
-	prev := atomic.Pointer[TxNode]{}
-	for {
-		node := (*TxNode)(next)
-		if node == nil {
-			return
-		}
-		if iterate(node.tx) {
-			if prev.Load() == nil { // we're removing the first node
-				l.next.CompareAndSwap(nil, node.next.Load())
-			} else {
-				// set the previous nodes next to this nodes nex
-				prevnode := prev.Load()
-				prevnode.next.CompareAndSwap(prevnode.next.Load(), node.next.Load())
-			}
-		}
-		prev.Store(next)
-		next = node.next.Load()
+func assertAlignment(node *TxNode) {
+	if (uintptr(unsafe.Pointer(node)) & uintptr(1)) == 1 {
+		panic("node pointers are required to be aligned")
 	}
+}
+
+// isMarked returns the next node if and only if the node is marked for deletion.
+func isMarked(node *TxNode) *TxNode {
+	next := node.next.Load()
+	if next != nil {
+		return nil
+	}
+
+	// this node has been marked for deletion, get the original next pointer
+	og := node.original.Load()
+	for og == nil {
+		og = node.original.Load()
+	}
+	return og
+}
+
+func getMarked(node *TxNode) *TxNode {
+	// using nil as the marker
+	return nil
+}
+
+func getUnmarked(node *TxNode) *TxNode {
+	next := node.next.Load()
+	if next != nil {
+		return next
+	}
+
+	// get the original pointer
+	og := node.original.Load()
+	for og == nil {
+		og = node.original.Load()
+	}
+	return og
 }
 
 // cleaner sweeps the pool periodically, and bubbles up the given watermark.
 // this function does not return.
 func (l *TxPool) cleaner(watermark *atomic.Uint64) {
-	ticker := time.NewTicker(time.Millisecond * 10)
-	defer ticker.Stop()
-
 	for {
 		select { // sweep whenever notified or when ticker
 		case _, ok := <-l.drain:
@@ -80,26 +164,20 @@ func (l *TxPool) cleaner(watermark *atomic.Uint64) {
 				// Channel closed.
 				return
 			}
-			l.sweep(watermark)
-		case <-ticker.C:
-			l.sweep(watermark)
+			l.delete(func(tx uint64) bool {
+				mark := watermark.Load()
+				switch {
+				case mark+1 == tx:
+					watermark.Add(1)
+					return true // return true to indicate that this node should be removed from the tx list.
+				case mark >= tx:
+					return true
+				default:
+					return false
+				}
+			})
 		}
 	}
-}
-
-func (l *TxPool) sweep(watermark *atomic.Uint64) {
-	l.Iterate(func(tx uint64) bool {
-		mark := watermark.Load()
-		switch {
-		case mark+1 == tx:
-			watermark.Add(1)
-			return true // return true to indicate that this node should be removed from the tx list.
-		case mark >= tx:
-			return true
-		default:
-			return false
-		}
-	})
 }
 
 // Stop stops the TxPool's cleaner goroutine.
