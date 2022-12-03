@@ -21,3 +21,8 @@ exec
 select count(value) as value_count group by labels.label2
 ----
 value2  3
+
+exec
+select avg(value) as value_average group by labels.label2
+----
+value2  2.0

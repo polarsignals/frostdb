@@ -97,6 +97,8 @@ func chooseAggregationFunction(
 		}
 	case logicalplan.AggFuncCount:
 		return &CountAggregation{}, nil
+	case logicalplan.AggFuncAverage:
+		return &Int64AverageAggregation{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
 	}
@@ -556,4 +558,35 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 		res.Append(int64(arr.Len()))
 	}
 	return res.NewArray(), nil
+}
+
+type Int64AverageAggregation struct{}
+
+var ErrUnsupportedAverageType = errors.New("unsupported type for average aggregation, expected int64")
+
+func (a *Int64AverageAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	if len(arrs) == 0 {
+		return array.NewFloat64Builder(pool).NewArray(), nil
+	}
+
+	typ := arrs[0].DataType().ID()
+	switch typ {
+	case arrow.INT64:
+		return averageInt64arrays(pool, arrs), nil
+	default:
+		return nil, fmt.Errorf("average array of %s: %w", typ, ErrUnsupportedAverageType)
+	}
+}
+
+func averageInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
+	res := array.NewFloat64Builder(pool)
+	for _, arr := range arrs {
+		res.Append(averageInt64array(arr.(*array.Int64)))
+	}
+
+	return res.NewArray()
+}
+
+func averageInt64array(arr *array.Int64) float64 {
+	return float64(math.Int64.Sum(arr)) / float64(arr.Len())
 }
