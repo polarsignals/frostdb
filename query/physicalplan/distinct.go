@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -80,9 +81,9 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 		}
 	}
 
-	resBuilders := make([]array.Builder, 0, len(distinctArrays))
+	resBuilders := make([]builder.ColumnBuilder, 0, len(distinctArrays))
 	for _, arr := range distinctArrays {
-		resBuilders = append(resBuilders, array.NewBuilder(d.pool, arr.DataType()))
+		resBuilders = append(resBuilders, builder.NewBuilder(d.pool, arr.DataType()))
 	}
 	rows := int64(0)
 
@@ -117,7 +118,7 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 		d.mtx.RUnlock()
 
 		for j, arr := range distinctArrays {
-			err := appendValue(resBuilders[j], arr, i)
+			err := builder.AppendValue(resBuilders[j], arr, i)
 			if err != nil {
 				return err
 			}

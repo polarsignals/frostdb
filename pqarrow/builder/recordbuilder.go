@@ -9,21 +9,6 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/memory"
 )
 
-func NewBuilder(mem memory.Allocator, t arrow.DataType) ColumnBuilder {
-	switch t := t.(type) {
-	case *arrow.BinaryType:
-		return NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
-	case *arrow.Int64Type:
-		return NewOptInt64Builder(arrow.PrimitiveTypes.Int64)
-	case *arrow.ListType:
-		return NewListBuilder(mem, t.Elem())
-	case *arrow.BooleanType:
-		return NewOptBooleanBuilder(arrow.FixedWidthTypes.Boolean)
-	default:
-		return array.NewBuilder(mem, t)
-	}
-}
-
 // The code in this file is based heavily on Apache arrow's array.RecordBuilder,
 // with some modifications to use our own optimized record builders. Ideally, we
 // would eventually merge this upstream.
