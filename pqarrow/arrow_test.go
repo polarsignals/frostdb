@@ -553,13 +553,6 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	def := &schemapb.Schema{
 		Name: "test",
 		Columns: []*schemapb.Column{{
-			Name: "example_type",
-			StorageLayout: &schemapb.StorageLayout{
-				Type:     schemapb.StorageLayout_TYPE_STRING,
-				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-			},
-			Dynamic: false,
-		}, {
 			Name: "labels",
 			StorageLayout: &schemapb.StorageLayout{
 				Type:     schemapb.StorageLayout_TYPE_STRING,
@@ -567,14 +560,6 @@ func Test_Arrow_ListSchema(t *testing.T) {
 				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
 			},
 			Dynamic: true,
-		}, {
-			Name: "stacktrace",
-			StorageLayout: &schemapb.StorageLayout{
-				Type:     schemapb.StorageLayout_TYPE_STRING,
-				Repeated: true,
-				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-			},
-			Dynamic: false,
 		}, {
 			Name: "timestamp",
 			StorageLayout: &schemapb.StorageLayout{
@@ -591,9 +576,6 @@ func Test_Arrow_ListSchema(t *testing.T) {
 			Dynamic: false,
 		}},
 		SortingColumns: []*schemapb.SortingColumn{{
-			Name:      "example_type",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}, {
 			Name:       "labels",
 			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
 			NullsFirst: true,
@@ -606,84 +588,37 @@ func Test_Arrow_ListSchema(t *testing.T) {
 			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 		}},
 	}
-	dynSchema, err := dynparquet.SchemaFromDefinition(def)
+	schema, err := dynparquet.SchemaFromDefinition(def)
 	require.NoError(t, err)
 
-	samples := dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 1,
-		Value:     1,
-	}}
-
-	buf0, err := samples.ToBuffer(dynSchema)
+	b, err := schema.NewBuffer(map[string][]string{
+		"labels": {"lables1", "labels2"},
+	})
 	require.NoError(t, err)
 
-	samples = dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+	_, err = b.WriteRows([]parquet.Row{
+		{
+			parquet.ValueOf("value1").Level(0, 1, 0),
+			parquet.ValueOf("value2").Level(0, 1, 1),
+			parquet.ValueOf(int64(1)).Level(1, 0, 2),
+			parquet.ValueOf(int64(2)).Level(1, 0, 2),
+			parquet.ValueOf(int64(1)).Level(1, 0, 3),
+			parquet.ValueOf(int64(2)).Level(1, 0, 3),
 		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}}
-
-	buf1, err := samples.ToBuffer(dynSchema)
+	})
 	require.NoError(t, err)
 
-	samples = dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
+	_, err = b.WriteRows([]parquet.Row{
+		{
+			parquet.ValueOf("value3").Level(0, 1, 0),
+			parquet.ValueOf(int64(3)).Level(1, 0, 2),
+			parquet.ValueOf(int64(2)).Level(1, 0, 2),
+			parquet.ValueOf(int64(3)).Level(1, 0, 2),
+			parquet.ValueOf(int64(3)).Level(1, 0, 3),
+			parquet.ValueOf(int64(2)).Level(1, 0, 3),
+			parquet.ValueOf(int64(3)).Level(1, 0, 3),
 		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 3,
-		Value:     3,
-	}}
-
-	buf2, err := samples.ToBuffer(dynSchema)
-	require.NoError(t, err)
-
-	samples = dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}}
-
-	buf3, err := samples.ToBuffer(dynSchema)
-	require.NoError(t, err)
-
-	samples = dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 3,
-		Value:     3,
-	}}
-
-	buf4, err := samples.ToBuffer(dynSchema)
+	})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -691,27 +626,21 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 
-	require.NoError(t, c.Convert(ctx, buf0))
-	require.NoError(t, c.Convert(ctx, buf1))
-	require.NoError(t, c.Convert(ctx, buf2))
-	require.NoError(t, c.Convert(ctx, buf3))
-	require.NoError(t, c.Convert(ctx, buf4))
+	require.NoError(t, c.Convert(ctx, b))
 
 	ar := c.NewRecord()
 	fmt.Println(ar) // TODO: REMOVE ME
-	require.Equal(t, int64(6), ar.NumCols())
+	require.Equal(t, int64(4), ar.NumCols())
 	require.Equal(t, int64(2), ar.NumRows())
 	for j := 0; j < int(ar.NumCols()); j++ {
 		switch j {
 		case 0:
-			require.Equal(t, `["" ""]`, fmt.Sprintf("%v", ar.Column(j)))
-		case 1:
 			require.Equal(t, `["value1" "value3"]`, fmt.Sprintf("%v", ar.Column(j)))
-		case 2:
+		case 1:
 			require.Equal(t, `["value2" (null)]`, fmt.Sprintf("%v", ar.Column(j)))
-		case 3:
+		case 2:
 			require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
-		case 4:
+		case 3:
 			require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
 		}
 	}
