@@ -2,7 +2,6 @@ package frostdb
 
 import (
 	"sync/atomic"
-	"unsafe"
 )
 
 type TxNode struct {
@@ -17,8 +16,34 @@ type TxPool struct {
 	drain chan interface{}
 }
 
-// NewTxPool returns a new TxPool and starts the pool cleaner routine.
-// TxPool is a sorted lockless linked-list described in https://timharris.uk/papers/2001-disc.pdf
+/* NewTxPool returns a new TxPool and starts the pool cleaner routine.
+The transaction pool is used to keep track of completed transactions. It does this by inserting completed transactions into an ordered linked list
+
+Ex:
+insert: 12
+[9]->[10]->[13] => [9]->[10]->[12]->[13]
+
+Inserting a new node triggers the pool cleaner routine to run. The pool cleaners job is to increment a high-watermark counter when it encounters
+continguous transactions in the list, and then remove those elements in the pool.
+
+Ex:
+watermark: 7 insert: 8
+[9]->[10]->[13] => [8]->[9]->[10]->[13] (cleaner notified)
+
+[8]->[9]->[10]->[13]
+ ^ watermark++; delete 8
+
+[9]->[10]->[13]
+ ^ watermark++; delete 9
+
+[10]->[13]
+ ^ watermark++; delete 9
+
+[13]
+watermak: 10
+
+TxPool is a sorted lockless linked-list described in https://timharris.uk/papers/2001-disc.pdf
+*/
 func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	tail := &TxNode{
 		next:     &atomic.Pointer[TxNode]{},
@@ -52,7 +77,6 @@ func (l *TxPool) Insert(tx uint64) {
 		next:     &atomic.Pointer[TxNode]{},
 		original: &atomic.Pointer[TxNode]{},
 	}
-	assertAlignment(n)
 
 	tryInsert := func() bool {
 		prev := l.head.Load()
@@ -111,12 +135,6 @@ func (l *TxPool) delete(deleteFunc func(tx uint64) bool) {
 				break
 			}
 		}
-	}
-}
-
-func assertAlignment(node *TxNode) {
-	if (uintptr(unsafe.Pointer(node)) & uintptr(1)) == 1 {
-		panic("node pointers are required to be aligned")
 	}
 }
 
