@@ -314,6 +314,10 @@ func storageLayoutToParquetNode(l *schemapb.StorageLayout) (parquet.Node, error)
 		node = parquet.Compressed(node, comp)
 	}
 
+	if l.Repeated {
+		node = parquet.Repeated(node)
+	}
+
 	return node, nil
 }
 
