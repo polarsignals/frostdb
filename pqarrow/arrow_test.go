@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -549,7 +550,64 @@ func TestList(t *testing.T) {
 }
 
 func Test_Arrow_ListSchema(t *testing.T) {
-	dynSchema := dynparquet.NewSampleSchema()
+	def := &schemapb.Schema{
+		Name: "test",
+		Columns: []*schemapb.Column{{
+			Name: "example_type",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: false,
+		}, {
+			Name: "labels",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Nullable: true,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: true,
+		}, {
+			Name: "stacktrace",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Repeated: true,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: false,
+		}, {
+			Name: "timestamp",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_INT64,
+				Repeated: true,
+			},
+			Dynamic: false,
+		}, {
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_INT64,
+				Repeated: true,
+			},
+			Dynamic: false,
+		}},
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "example_type",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
+			Name:       "labels",
+			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+			NullsFirst: true,
+		}, {
+			Name:       "stacktrace",
+			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+			NullsFirst: true,
+		}, {
+			Name:      "timestamp",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	}
+	dynSchema, err := dynparquet.SchemaFromDefinition(def)
+	require.NoError(t, err)
 
 	samples := dynparquet.Samples{{
 		Labels: []dynparquet.Label{
@@ -640,6 +698,7 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	require.NoError(t, c.Convert(ctx, buf4))
 
 	ar := c.NewRecord()
+	fmt.Println(ar) // TODO: REMOVE ME
 	require.Equal(t, int64(6), ar.NumCols())
 	require.Equal(t, int64(2), ar.NumRows())
 	for j := 0; j < int(ar.NumCols()); j++ {
