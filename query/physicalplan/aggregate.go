@@ -16,6 +16,7 @@ import (
 	"github.com/segmentio/parquet-go"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -330,66 +331,19 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 					groupByCol.AppendNull()
 				}
 
-				err := appendValue(groupByCol, arr, i)
+				err := builder.AppendValue(groupByCol, arr, i)
 				if err != nil {
 					return err
 				}
 			}
 		}
 
-		if err := appendValue(a.arraysToAggregate[k], columnToAggregate, i); err != nil {
+		if err := builder.AppendValue(a.arraysToAggregate[k], columnToAggregate, i); err != nil {
 			return err
 		}
 	}
 
 	return nil
-}
-
-func appendValue(b array.Builder, arr arrow.Array, i int) error {
-	if arr == nil || arr.IsNull(i) {
-		b.AppendNull()
-		return nil
-	}
-
-	switch arr := arr.(type) {
-	case *array.Int64:
-		b.(*array.Int64Builder).Append(arr.Value(i))
-		return nil
-	case *array.String:
-		b.(*array.StringBuilder).Append(arr.Value(i))
-		return nil
-	case *array.Binary:
-		b.(*array.BinaryBuilder).Append(arr.Value(i))
-		return nil
-	case *array.FixedSizeBinary:
-		b.(*array.FixedSizeBinaryBuilder).Append(arr.Value(i))
-		return nil
-	case *array.Boolean:
-		b.(*array.BooleanBuilder).Append(arr.Value(i))
-		return nil
-	// case *array.List:
-	//	// TODO: This seems horribly inefficient, we already have the whole
-	//	// array and are just doing an expensive copy, but arrow doesn't seem
-	//	// to be able to append whole list scalars at once.
-	//	length := s.Value.Len()
-	//	larr := arr.(*array.ListBuilder)
-	//	vb := larr.ValueBuilder()
-	//	larr.Append(true)
-	//	for i := 0; i < length; i++ {
-	//		v, err := scalar.GetScalar(s.Value, i)
-	//		if err != nil {
-	//			return err
-	//		}
-
-	//		err = appendValue(vb, v)
-	//		if err != nil {
-	//			return err
-	//		}
-	//	}
-	//	return nil
-	default:
-		return errors.New("unsupported type for arrow append")
-	}
 }
 
 func (a *HashAggregate) Finish(ctx context.Context) error {

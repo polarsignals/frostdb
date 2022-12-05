@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -117,7 +118,7 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 		d.mtx.RUnlock()
 
 		for j, arr := range distinctArrays {
-			err := appendValue(resBuilders[j], arr, i)
+			err := builder.AppendValue(resBuilders[j], arr, i)
 			if err != nil {
 				return err
 			}

@@ -183,6 +183,14 @@ func (b *OptBinaryBuilder) AppendData(data []byte, offsets []uint32) {
 	bitutil.SetBitsTo(b.validityBitmap, int64(startOffset), int64(len(offsets)), true)
 }
 
+func (b *OptBinaryBuilder) Append(v []byte) {
+	b.offsets = append(b.offsets, uint32(len(b.data)))
+	b.data = append(b.data, v...)
+	b.length++
+	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
+	bitutil.SetBit(b.validityBitmap, b.length-1)
+}
+
 // AppendParquetValues appends the given parquet values to the builder. The
 // values may be null, but if it is known upfront that none of the values are
 // null, AppendData offers a more efficient way of appending values.
@@ -299,6 +307,13 @@ func (b *OptInt64Builder) AppendData(data []int64) {
 	b.length += len(data)
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
 	bitutil.SetBitsTo(b.validityBitmap, int64(oldLength), int64(len(data)), true)
+}
+
+func (b *OptInt64Builder) Append(v int64) {
+	b.data = append(b.data, v)
+	b.length++
+	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
+	bitutil.SetBit(b.validityBitmap, b.length-1)
 }
 
 func (b *OptInt64Builder) AppendParquetValues(values []parquet.Value) {
@@ -426,6 +441,14 @@ func (b *OptBooleanBuilder) AppendParquetValues(values []parquet.Value) {
 		bitutil.SetBitTo(b.validityBitmap, b.length, true)
 		b.length++
 	}
+}
+
+func (b *OptBooleanBuilder) AppendSingle(v bool) {
+	b.length++
+	b.data = resizeBitmap(b.data, b.length)
+	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
+	bitutil.SetBitTo(b.data, b.length-1, v)
+	bitutil.SetBit(b.validityBitmap, b.length-1)
 }
 
 func (b *OptBooleanBuilder) RepeatLastValue(n int) {
