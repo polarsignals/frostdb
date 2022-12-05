@@ -442,6 +442,8 @@ github.com/segmentio/encoding v0.3.5 h1:UZEiaZ55nlXGDL92scoVuw00RmiRCazIEmvPSbSv
 github.com/segmentio/encoding v0.3.5/go.mod h1:n0JeuIqEQrQoPDGsjo8UNd1iA0U8d8+oHAA4E3G3OxM=
 github.com/segmentio/parquet-go v0.0.0-20221020201645-63215c8128ff h1:qLJHWKeFq31XCEKVS4uUlS7D3qGDiTjy/bPNn27m0pQ=
 github.com/segmentio/parquet-go v0.0.0-20221020201645-63215c8128ff/go.mod h1:SclLlCfB7c7CH0YerV+OtYmZExyK5rhVOd6UT90erVw=
+github.com/segmentio/parquet-go v0.0.0-20221202145634-b835743499b4 h1:j2/+OabOE0iwzO7wWiXy4WBw7hD42OJcau4D1GriZyk=
+github.com/segmentio/parquet-go v0.0.0-20221202145634-b835743499b4/go.mod h1:SclLlCfB7c7CH0YerV+OtYmZExyK5rhVOd6UT90erVw=
 github.com/shurcooL/sanitized_anchor_name v1.0.0/go.mod h1:1NzhyTcUVG4SuEtjjoZeVRXNmyL/1OwPU0+IJeTBvfc=
 github.com/sirupsen/logrus v1.2.0/go.mod h1:LxeOpSwHxABJmUn/MG1IvRgCAasNZTLOkJPxbbu5VWo=
 github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=
