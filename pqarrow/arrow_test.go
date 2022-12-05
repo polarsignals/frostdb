@@ -547,3 +547,113 @@ func TestList(t *testing.T) {
 		)
 	}
 }
+
+func Test_Arrow_ListSchema(t *testing.T) {
+	dynSchema := dynparquet.NewSampleSchema()
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}}
+
+	buf0, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf1, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf2, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf3, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf4, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	defer c.Close()
+
+	require.NoError(t, c.Convert(ctx, buf0))
+	require.NoError(t, c.Convert(ctx, buf1))
+	require.NoError(t, c.Convert(ctx, buf2))
+	require.NoError(t, c.Convert(ctx, buf3))
+	require.NoError(t, c.Convert(ctx, buf4))
+
+	ar := c.NewRecord()
+	require.Equal(t, int64(6), ar.NumCols())
+	require.Equal(t, int64(2), ar.NumRows())
+	for j := 0; j < int(ar.NumCols()); j++ {
+		switch j {
+		case 0:
+			require.Equal(t, `["" ""]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 1:
+			require.Equal(t, `["value1" "value3"]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 2:
+			require.Equal(t, `["value2" (null)]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 3:
+			require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
+		case 4:
+			require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
+		}
+	}
+}
