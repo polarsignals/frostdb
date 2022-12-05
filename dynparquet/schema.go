@@ -652,12 +652,6 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 	}, nil
 }
 
-var rowBufPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]parquet.Row, 64) // Random guess.
-	},
-}
-
 func (s *Schema) SerializeBuffer(w io.Writer, buffer *Buffer) error {
 	pw, err := s.GetWriter(w, buffer.DynamicColumns())
 	if err != nil {
@@ -665,35 +659,11 @@ func (s *Schema) SerializeBuffer(w io.Writer, buffer *Buffer) error {
 	}
 	defer s.PutWriter(pw)
 
-	// TODO: This copying should be possible, but it's not at the time of
-	// writing this. This is likely a bug in the parquet-go library.
-	//_, err = parquet.CopyRows(w, buffer.Rows())
-	//if err != nil {
-	//	return nil, fmt.Errorf("copy rows: %w", err)
-	//}
-
 	rows := buffer.Rows()
 	defer rows.Close()
-	rowBuf := rowBufPool.Get().([]parquet.Row)
-	defer rowBufPool.Put(rowBuf[:cap(rowBuf)])
-
-	for {
-		rowBuf = rowBuf[:cap(rowBuf)]
-		n, err := rows.ReadRows(rowBuf)
-		if err == io.EOF && n == 0 {
-			break
-		}
-		if err != nil && err != io.EOF {
-			return fmt.Errorf("read row: %w", err)
-		}
-		rowBuf = rowBuf[:n]
-		_, err = pw.WriteRows(rowBuf)
-		if err != nil {
-			return fmt.Errorf("write row: %w", err)
-		}
-		if err == io.EOF {
-			break
-		}
+	_, err = parquet.CopyRows(pw, rows)
+	if err != nil {
+		return fmt.Errorf("copy rows: %w", err)
 	}
 
 	if err := pw.Close(); err != nil {

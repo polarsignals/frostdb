@@ -63,7 +63,7 @@ func TestParquetNodeToType(t *testing.T) {
 		},
 		{
 			parquetNode: parquet.Decimal(0, 9, parquet.Int32Type),
-			msg:         "unsupported logical type: DECIMAL(0,9)",
+			msg:         "unsupported logical type: DECIMAL(9,0)",
 		},
 		{
 			parquetNode: parquet.UUID(),
