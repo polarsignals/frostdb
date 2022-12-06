@@ -708,5 +708,6 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	pf, err := parquet.OpenFile(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
 	require.NoError(t, err)
 
+	fmt.Println("size: ", buf.Len())
 	fmt.Println(pf.Schema())
 }
