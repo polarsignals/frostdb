@@ -135,7 +135,18 @@ func nodeFromDefinition(node *schemav2pb.Node) parquet.Node {
 		for _, g := range n.Group.Nodes {
 			group[nameFromNodeDef(g)] = nodeFromDefinition(g)
 		}
-		return group
+
+		var node parquet.Node
+		node = group
+		if n.Group.Nullable {
+			node = parquet.Optional(node)
+		}
+
+		if n.Group.Repeated {
+			node = parquet.Repeated(node)
+		}
+
+		return node
 	default:
 		panic(fmt.Sprintf("unknown node type: %v", n))
 	}

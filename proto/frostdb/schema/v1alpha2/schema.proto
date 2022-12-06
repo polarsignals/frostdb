@@ -84,8 +84,12 @@ message Leaf {
 message Group {
     // Name of the group.
     string name = 1;
+    // Wether the group is allowed to be null.
+    bool nullable = 2;
+    // Indicates whether the group is repeated.
+    bool repeated = 3;
     // Nodes that this group is composed of.
-    repeated Node nodes = 2;
+    repeated Node nodes = 4;
 }
 
 // Storage layout describes the physical storage properties of a column.

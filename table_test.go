@@ -1021,7 +1021,8 @@ func Test_Table_NestedSchema(t *testing.T) {
 								{
 									Type: &schemav2pb.Node_Group{
 										Group: &schemav2pb.Group{
-											Name: "list",
+											Name:     "list",
+											Repeated: true,
 											Nodes: []*schemav2pb.Node{
 												{
 													Type: &schemav2pb.Node_Leaf{
@@ -1051,7 +1052,8 @@ func Test_Table_NestedSchema(t *testing.T) {
 								{
 									Type: &schemav2pb.Node_Group{
 										Group: &schemav2pb.Group{
-											Name: "list",
+											Name:     "list",
+											Repeated: true,
 											Nodes: []*schemav2pb.Node{
 												{
 													Type: &schemav2pb.Node_Leaf{
