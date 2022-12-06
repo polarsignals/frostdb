@@ -1090,7 +1090,18 @@ func Test_Table_NestedSchema(t *testing.T) {
 		},
 	}
 
-	dynparquet.SchemaFromV2Definition(def)
+	schema, err := dynparquet.SchemaFromV2Definition(def)
+	require.NoError(t, err)
 
-	// TODO actually parse the schema
+	ctx := context.Background()
+	config := NewTableConfig(schema)
+	c, err := New(WithLogger(newTestLogger(t)))
+	require.NoError(t, err)
+	db, err := c.DB(ctx, "nested")
+	require.NoError(t, err)
+
+	_, err = db.Table("nested", config)
+	require.NoError(t, err)
+
+	// TODO insert some data into table
 }
