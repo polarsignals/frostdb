@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v10/arrow"
 )
 
 // Synchronizer is used to combine the results of multiple parallel streams

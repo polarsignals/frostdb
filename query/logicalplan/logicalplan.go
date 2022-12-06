@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 )
