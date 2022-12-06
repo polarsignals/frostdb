@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	parquetv10 "github.com/apache/arrow/go/v10/parquet"
+	"github.com/apache/arrow/go/v10/parquet/schema"
 	"github.com/segmentio/parquet-go"
 	"github.com/segmentio/parquet-go/compress"
 	"github.com/segmentio/parquet-go/encoding"
@@ -411,6 +413,53 @@ func (s *Schema) ParquetSchema() *parquet.Schema {
 		g[col.Name] = col.StorageLayout
 	}
 	return parquet.NewSchema(s.def.Name, g)
+}
+
+// NOTE: EXPERIMENTAL converts the dynparquet schema into a apache parquet schema
+func (s *Schema) ParquetV10Schema() *schema.Schema {
+	fields := schema.FieldList{}
+
+	for _, col := range s.columns {
+		var node schema.Node
+		switch k := col.StorageLayout.Type().Kind(); k {
+		case parquet.Int64:
+			node = schema.NewInt64Node(col.Name, repetitionFromDefinition(col), -1)
+		case parquet.Double:
+			node = schema.NewFloat64Node(col.Name, repetitionFromDefinition(col), -1)
+		case parquet.Boolean:
+			node = schema.NewBooleanNode(col.Name, repetitionFromDefinition(col), -1)
+		case parquet.ByteArray:
+			node = schema.NewByteArrayNode(col.Name, repetitionFromDefinition(col), -1)
+		default:
+			panic(fmt.Sprintf("unsupported kind %v", k))
+		}
+
+		// Dynamic columns return an empty group
+		if col.Dynamic {
+			var err error
+			node, err = schema.NewGroupNode(col.Name, parquetv10.Repetitions.Optional, nil, -1)
+			if err != nil {
+				panic("at the disco")
+			}
+		}
+
+		fields = append(fields, node)
+	}
+
+	return schema.NewSchema(schema.MustGroup(schema.NewGroupNode("schema", parquetv10.Repetitions.Repeated, fields, -1)))
+}
+
+func repetitionFromDefinition(def ColumnDefinition) parquetv10.Repetition {
+	switch {
+	case def.StorageLayout.Required():
+		return parquetv10.Repetitions.Required
+	case def.StorageLayout.Optional():
+		return parquetv10.Repetitions.Optional
+	case def.StorageLayout.Repeated():
+		return parquetv10.Repetitions.Repeated
+	default:
+		return parquetv10.Repetitions.Required
+	}
 }
 
 // parquetSchema returns the parquet schema for the dynamic schema with the
