@@ -1,6 +1,7 @@
 package pqarrow
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -644,6 +645,12 @@ func Test_Arrow_ListSchema(t *testing.T) {
 			label2: value2
 		timestamp: [1, 2]
 		value:     [2, 3]
+		------------------
+		labels:
+			label1: value1
+			label2: null
+		timestamp: [4, 4]
+		value:     [5, 5]
 	*/
 	fmt.Println("=========================================")
 	fmt.Println(arschema)
@@ -658,6 +665,9 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	sb.Append(true)
 	sb.FieldBuilder(0).(*array.StringBuilder).Append("value1")
 	sb.FieldBuilder(1).(*array.StringBuilder).Append("value2")
+	sb.Append(true)
+	sb.FieldBuilder(0).(*array.StringBuilder).Append("value1")
+	sb.FieldBuilder(1).AppendNull()
 
 	// timestamp:[1,2]
 	lb := b.Field(1).(*array.ListBuilder)
@@ -667,6 +677,10 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	lb.ValueBuilder().(*array.Int64Builder).Append(1)
 	lb.ValueBuilder().(*array.Int64Builder).Append(2)
 
+	lb.Append(true)
+	lb.ValueBuilder().(*array.Int64Builder).Append(4)
+	lb.ValueBuilder().(*array.Int64Builder).Append(4)
+
 	// value:[2,3]
 	vb := b.Field(2).(*array.ListBuilder)
 	defer vb.Release()
@@ -675,64 +689,24 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	vb.ValueBuilder().(*array.Int64Builder).Append(2)
 	vb.ValueBuilder().(*array.Int64Builder).Append(3)
 
+	vb.Append(true)
+	vb.ValueBuilder().(*array.Int64Builder).Append(5)
+	vb.ValueBuilder().(*array.Int64Builder).Append(5)
+
 	fmt.Println("======================================")
 	rec := b.NewRecord()
+	defer rec.Release()
 	fmt.Println(rec)
-	rec.Release()
 
-	/*
-		b, err := schema.NewBuffer(map[string][]string{
-			"labels": {"lables1", "labels2"},
-		})
-		require.NoError(t, err)
+	fmt.Println("Convert into parquet")
 
-		_, err = b.WriteRows([]parquet.Row{
-			{
-				parquet.ValueOf("value1").Level(0, 1, 0),
-				parquet.ValueOf("value2").Level(0, 1, 1),
-				parquet.ValueOf(int64(1)).Level(1, 0, 2),
-				parquet.ValueOf(int64(2)).Level(1, 0, 2),
-				parquet.ValueOf(int64(1)).Level(1, 0, 3),
-				parquet.ValueOf(int64(2)).Level(1, 0, 3),
-			},
-		})
-		require.NoError(t, err)
+	tbl := array.NewTableFromRecords(arschema, []arrow.Record{rec})
 
-		_, err = b.WriteRows([]parquet.Row{
-			{
-				parquet.ValueOf("value3").Level(0, 1, 0),
-				parquet.ValueOf(int64(3)).Level(1, 0, 2),
-				parquet.ValueOf(int64(2)).Level(1, 0, 2),
-				parquet.ValueOf(int64(3)).Level(1, 0, 2),
-				parquet.ValueOf(int64(3)).Level(1, 0, 3),
-				parquet.ValueOf(int64(2)).Level(1, 0, 3),
-				parquet.ValueOf(int64(3)).Level(1, 0, 3),
-			},
-		})
-		require.NoError(t, err)
+	buf := &bytes.Buffer{}
+	require.NoError(t, pqarrowv10.WriteTable(tbl, buf, 1024, nil, pqarrowv10.ArrowWriterProperties{}))
 
-		ctx := context.Background()
+	pf, err := parquet.OpenFile(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	require.NoError(t, err)
 
-		c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
-		defer c.Close()
-
-		require.NoError(t, c.Convert(ctx, b))
-
-		ar := c.NewRecord()
-		fmt.Println(ar) // TODO: REMOVE ME
-		require.Equal(t, int64(4), ar.NumCols())
-		require.Equal(t, int64(2), ar.NumRows())
-		for j := 0; j < int(ar.NumCols()); j++ {
-			switch j {
-			case 0:
-				require.Equal(t, `["value1" "value3"]`, fmt.Sprintf("%v", ar.Column(j)))
-			case 1:
-				require.Equal(t, `["value2" (null)]`, fmt.Sprintf("%v", ar.Column(j)))
-			case 2:
-				require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
-			case 3:
-				require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
-			}
-		}
-	*/
+	fmt.Println(pf.Schema())
 }
