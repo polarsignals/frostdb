@@ -1096,6 +1096,7 @@ func Test_Table_NestedSchema(t *testing.T) {
 	ctx := context.Background()
 	config := NewTableConfig(schema)
 	c, err := New(WithLogger(newTestLogger(t)))
+	t.Cleanup(func() { c.Close() })
 	require.NoError(t, err)
 	db, err := c.DB(ctx, "nested")
 	require.NoError(t, err)
