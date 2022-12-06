@@ -8,6 +8,7 @@ import (
 	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/apache/arrow/go/v10/arrow/array"
 	"github.com/apache/arrow/go/v10/arrow/memory"
+	pqarrowv10 "github.com/apache/arrow/go/v10/parquet/pqarrow"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
@@ -550,7 +551,6 @@ func TestList(t *testing.T) {
 }
 
 func Test_Arrow_ListSchema(t *testing.T) {
-	t.Skip("WIP")
 	def := &schemapb.Schema{
 		Name: "test",
 		Columns: []*schemapb.Column{{
@@ -592,57 +592,70 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	schema, err := dynparquet.SchemaFromDefinition(def)
 	require.NoError(t, err)
 
-	b, err := schema.NewBuffer(map[string][]string{
-		"labels": {"lables1", "labels2"},
-	})
+	sc := schema.ParquetV10Schema()
+
+	fmt.Println("Converted schema")
+	fmt.Println(sc)
+
+	arschema, err := pqarrowv10.FromParquet(sc, nil, nil)
 	require.NoError(t, err)
 
-	_, err = b.WriteRows([]parquet.Row{
-		{
-			parquet.ValueOf("value1").Level(0, 1, 0),
-			parquet.ValueOf("value2").Level(0, 1, 1),
-			parquet.ValueOf(int64(1)).Level(1, 0, 2),
-			parquet.ValueOf(int64(2)).Level(1, 0, 2),
-			parquet.ValueOf(int64(1)).Level(1, 0, 3),
-			parquet.ValueOf(int64(2)).Level(1, 0, 3),
-		},
-	})
-	require.NoError(t, err)
+	fmt.Println("Arrow schema")
+	fmt.Println(arschema)
 
-	_, err = b.WriteRows([]parquet.Row{
-		{
-			parquet.ValueOf("value3").Level(0, 1, 0),
-			parquet.ValueOf(int64(3)).Level(1, 0, 2),
-			parquet.ValueOf(int64(2)).Level(1, 0, 2),
-			parquet.ValueOf(int64(3)).Level(1, 0, 2),
-			parquet.ValueOf(int64(3)).Level(1, 0, 3),
-			parquet.ValueOf(int64(2)).Level(1, 0, 3),
-			parquet.ValueOf(int64(3)).Level(1, 0, 3),
-		},
-	})
-	require.NoError(t, err)
+	/*
+		b, err := schema.NewBuffer(map[string][]string{
+			"labels": {"lables1", "labels2"},
+		})
+		require.NoError(t, err)
 
-	ctx := context.Background()
+		_, err = b.WriteRows([]parquet.Row{
+			{
+				parquet.ValueOf("value1").Level(0, 1, 0),
+				parquet.ValueOf("value2").Level(0, 1, 1),
+				parquet.ValueOf(int64(1)).Level(1, 0, 2),
+				parquet.ValueOf(int64(2)).Level(1, 0, 2),
+				parquet.ValueOf(int64(1)).Level(1, 0, 3),
+				parquet.ValueOf(int64(2)).Level(1, 0, 3),
+			},
+		})
+		require.NoError(t, err)
 
-	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
-	defer c.Close()
+		_, err = b.WriteRows([]parquet.Row{
+			{
+				parquet.ValueOf("value3").Level(0, 1, 0),
+				parquet.ValueOf(int64(3)).Level(1, 0, 2),
+				parquet.ValueOf(int64(2)).Level(1, 0, 2),
+				parquet.ValueOf(int64(3)).Level(1, 0, 2),
+				parquet.ValueOf(int64(3)).Level(1, 0, 3),
+				parquet.ValueOf(int64(2)).Level(1, 0, 3),
+				parquet.ValueOf(int64(3)).Level(1, 0, 3),
+			},
+		})
+		require.NoError(t, err)
 
-	require.NoError(t, c.Convert(ctx, b))
+		ctx := context.Background()
 
-	ar := c.NewRecord()
-	fmt.Println(ar) // TODO: REMOVE ME
-	require.Equal(t, int64(4), ar.NumCols())
-	require.Equal(t, int64(2), ar.NumRows())
-	for j := 0; j < int(ar.NumCols()); j++ {
-		switch j {
-		case 0:
-			require.Equal(t, `["value1" "value3"]`, fmt.Sprintf("%v", ar.Column(j)))
-		case 1:
-			require.Equal(t, `["value2" (null)]`, fmt.Sprintf("%v", ar.Column(j)))
-		case 2:
-			require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
-		case 3:
-			require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
+		c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+		defer c.Close()
+
+		require.NoError(t, c.Convert(ctx, b))
+
+		ar := c.NewRecord()
+		fmt.Println(ar) // TODO: REMOVE ME
+		require.Equal(t, int64(4), ar.NumCols())
+		require.Equal(t, int64(2), ar.NumRows())
+		for j := 0; j < int(ar.NumCols()); j++ {
+			switch j {
+			case 0:
+				require.Equal(t, `["value1" "value3"]`, fmt.Sprintf("%v", ar.Column(j)))
+			case 1:
+				require.Equal(t, `["value2" (null)]`, fmt.Sprintf("%v", ar.Column(j)))
+			case 2:
+				require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
+			case 3:
+				require.Equal(t, `[[1 2] [3 2 3]]`, fmt.Sprintf("%v", ar.Column(j)))
+			}
 		}
-	}
+	*/
 }
