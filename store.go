@@ -94,7 +94,7 @@ func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64)
 
 // ProcessFile will process a bucket block parquet file.
 func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, rowGroups chan<- dynparquet.DynamicRowGroup) error {
-	ctx, span := t.tracer.Start(ctx, "Table/ProcessFile")
+	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/ProcessFile")
 	defer span.End()
 
 	blockUlid, err := ulid.Parse(filepath.Base(blockDir))
@@ -127,10 +127,17 @@ func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimes
 		return err
 	}
 
+	return t.filterRowGroups(ctx, buf, filter, rowGroups)
+}
+
+func (t *Table) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, rowGroups chan<- dynparquet.DynamicRowGroup) error {
+	_, span := t.tracer.Start(ctx, "Table/filterRowGroups")
+	defer span.End()
+	span.SetAttributes(attribute.Int("row_groups", buf.NumRowGroups()))
+
 	for i := 0; i < buf.NumRowGroups(); i++ {
 		rg := buf.DynamicRowGroup(i)
-		var mayContainUsefulData bool
-		mayContainUsefulData, err = filter.Eval(rg)
+		mayContainUsefulData, err := filter.Eval(rg)
 		if err != nil {
 			return err
 		}
