@@ -114,12 +114,7 @@ func (s *Schema) IsDynamicColumn(col string) bool {
 func SchemaFromV2Definition(def *schemav2pb.Schema) (*Schema, error) {
 	root := parquet.Group{}
 	for _, node := range def.Root.Nodes {
-		switch n := node.Type.(type) {
-		case *schemav2pb.Node_Leaf:
-			root[n.Leaf.Name] = nodeFromDefinition(node)
-		case *schemav2pb.Node_Group:
-			root[n.Group.Name] = nodeFromDefinition(node)
-		}
+		root[nameFromNodeDef(node)] = nodeFromDefinition(node)
 	}
 
 	schema := parquet.NewSchema(def.Root.Name, root)

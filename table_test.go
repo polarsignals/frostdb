@@ -1013,7 +1013,7 @@ func Test_Table_NestedSchema(t *testing.T) {
 						},
 					},
 				},
-				{
+				{ // NOTE that this nested group structure for a list of ints is how parquet is converted from an arrow list of int64s
 					Type: &schemav2pb.Node_Group{
 						Group: &schemav2pb.Group{
 							Name: "timestamps",
