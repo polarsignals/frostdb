@@ -603,6 +603,83 @@ func Test_Arrow_ListSchema(t *testing.T) {
 	fmt.Println("Arrow schema")
 	fmt.Println(arschema)
 
+	//===================================
+	// Create out own arrow schema with a set of labels
+	//===================================
+
+	// concrete schema with a labels.label1 column
+	arschema = arrow.NewSchema(
+		[]arrow.Field{
+			{
+				Name: "labels",
+				Type: arrow.StructOf(
+					arrow.Field{
+						Name:     "label1",
+						Type:     arrow.BinaryTypes.String,
+						Nullable: true,
+					},
+					arrow.Field{
+						Name:     "label2",
+						Type:     arrow.BinaryTypes.String,
+						Nullable: true,
+					},
+				),
+			},
+			{
+				Name: "timestamp",
+				Type: arrow.ListOf(arrow.PrimitiveTypes.Int64),
+			},
+			{
+				Name: "value",
+				Type: arrow.ListOf(arrow.PrimitiveTypes.Int64),
+			},
+		},
+		nil,
+	)
+
+	/*
+
+		labels:
+			label1: value1
+			label2: value2
+		timestamp: [1, 2]
+		value:     [2, 3]
+	*/
+	fmt.Println("=========================================")
+	fmt.Println(arschema)
+
+	pool := memory.NewGoAllocator()
+	b := array.NewRecordBuilder(pool, arschema)
+	defer b.Release()
+
+	// label1:value1
+	sb := b.Field(0).(*array.StructBuilder)
+	defer sb.Release()
+	sb.Append(true)
+	sb.FieldBuilder(0).(*array.StringBuilder).Append("value1")
+	sb.FieldBuilder(1).(*array.StringBuilder).Append("value2")
+
+	// timestamp:[1,2]
+	lb := b.Field(1).(*array.ListBuilder)
+	defer lb.Release()
+
+	lb.Append(true)
+	lb.ValueBuilder().(*array.Int64Builder).Append(1)
+	lb.ValueBuilder().(*array.Int64Builder).Append(2)
+
+	// value:[2,3]
+	vb := b.Field(2).(*array.ListBuilder)
+	defer vb.Release()
+
+	vb.Append(true)
+	vb.ValueBuilder().(*array.Int64Builder).Append(2)
+	vb.ValueBuilder().(*array.Int64Builder).Append(3)
+
+	fmt.Println("======================================")
+	rec := b.NewRecord()
+	fmt.Println(rec)
+	rec.Release()
+
 	/*
 		b, err := schema.NewBuffer(map[string][]string{
 			"labels": {"lables1", "labels2"},
