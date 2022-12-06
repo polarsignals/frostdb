@@ -119,7 +119,7 @@ func SchemaFromV2Definition(def *schemav2pb.Schema) (*Schema, error) {
 
 	schema := parquet.NewSchema(def.Root.Name, root)
 	fmt.Println(schema) // TODO REMOVE ME
-	return nil, nil
+	return &Schema{}, nil
 }
 
 func nodeFromDefinition(node *schemav2pb.Node) parquet.Node {
