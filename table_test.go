@@ -24,6 +24,7 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -972,4 +973,122 @@ func Test_Table_EmptyRowGroup(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func Test_Table_NestedSchema(t *testing.T) {
+	def := &schemav2pb.Schema{
+		Root: &schemav2pb.Group{
+			Name: "nested",
+			Nodes: []*schemav2pb.Node{
+				{
+					Type: &schemav2pb.Node_Group{
+						Group: &schemav2pb.Group{
+							Name: "labels",
+							Nodes: []*schemav2pb.Node{
+								{
+									Type: &schemav2pb.Node_Leaf{
+										Leaf: &schemav2pb.Leaf{
+											Name: "label1",
+											StorageLayout: &schemav2pb.StorageLayout{
+												Type:     schemav2pb.StorageLayout_TYPE_STRING,
+												Nullable: true,
+												Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+											},
+										},
+									},
+								},
+								{
+									Type: &schemav2pb.Node_Leaf{
+										Leaf: &schemav2pb.Leaf{
+											Name: "label2",
+											StorageLayout: &schemav2pb.StorageLayout{
+												Type:     schemav2pb.StorageLayout_TYPE_STRING,
+												Nullable: true,
+												Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					Type: &schemav2pb.Node_Group{
+						Group: &schemav2pb.Group{
+							Name: "timestamps",
+							Nodes: []*schemav2pb.Node{
+								{
+									Type: &schemav2pb.Node_Group{
+										Group: &schemav2pb.Group{
+											Name: "list",
+											Nodes: []*schemav2pb.Node{
+												{
+													Type: &schemav2pb.Node_Leaf{
+														Leaf: &schemav2pb.Leaf{
+															Name: "element",
+															StorageLayout: &schemav2pb.StorageLayout{
+																Type:     schemav2pb.StorageLayout_TYPE_INT64,
+																Nullable: true,
+																Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					Type: &schemav2pb.Node_Group{
+						Group: &schemav2pb.Group{
+							Name: "values",
+							Nodes: []*schemav2pb.Node{
+								{
+									Type: &schemav2pb.Node_Group{
+										Group: &schemav2pb.Group{
+											Name: "list",
+											Nodes: []*schemav2pb.Node{
+												{
+													Type: &schemav2pb.Node_Leaf{
+														Leaf: &schemav2pb.Leaf{
+															Name: "element",
+															StorageLayout: &schemav2pb.StorageLayout{
+																Type:     schemav2pb.StorageLayout_TYPE_INT64,
+																Nullable: true,
+																Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		SortingColumns: []*schemav2pb.SortingColumn{
+			{
+				Name:       "labels",
+				Direction:  schemav2pb.SortingColumn_DIRECTION_ASCENDING,
+				NullsFirst: true,
+			},
+			{
+				Name:      "timestamp",
+				Direction: schemav2pb.SortingColumn_DIRECTION_ASCENDING,
+			},
+		},
+	}
+
+	dynparquet.SchemaFromV2Definition(def)
+
+	// TODO actually parse the schema
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/segmentio/parquet-go/format"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 )
 
 const (
@@ -109,10 +110,57 @@ func (s *Schema) IsDynamicColumn(col string) bool {
 	return s.columns[s.columnIndexes[col]].Dynamic
 }
 
+// TODO this function should recursively build the schema from the definition.
+func SchemaFromV2Definition(def *schemav2pb.Schema) (*Schema, error) {
+	root := parquet.Group{}
+	for _, node := range def.Root.Nodes {
+		switch n := node.Type.(type) {
+		case *schemav2pb.Node_Leaf:
+			root[n.Leaf.Name] = nodeFromDefinition(node)
+		case *schemav2pb.Node_Group:
+			root[n.Group.Name] = nodeFromDefinition(node)
+		}
+	}
+
+	schema := parquet.NewSchema(def.Root.Name, root)
+	fmt.Println(schema) // TODO REMOVE ME
+	return nil, nil
+}
+
+func nodeFromDefinition(node *schemav2pb.Node) parquet.Node {
+	switch n := node.Type.(type) {
+	case *schemav2pb.Node_Leaf:
+		ret, err := storageLayoutToParquetNode(&v2storageLayoutWrapper{n.Leaf.StorageLayout})
+		if err != nil {
+			panic("sheisse")
+		}
+		return ret
+	case *schemav2pb.Node_Group:
+		group := parquet.Group{}
+		for _, g := range n.Group.Nodes {
+			group[nameFromNodeDef(g)] = nodeFromDefinition(g)
+		}
+		return group
+	default:
+		panic(fmt.Sprintf("unknown node type: %v", n))
+	}
+}
+
+func nameFromNodeDef(node *schemav2pb.Node) string {
+	switch n := node.Type.(type) {
+	case *schemav2pb.Node_Leaf:
+		return n.Leaf.Name
+	case *schemav2pb.Node_Group:
+		return n.Group.Name
+	default:
+		panic(fmt.Sprintf("unknown node type: %v", n))
+	}
+}
+
 func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 	columns := make([]ColumnDefinition, 0, len(def.Columns))
 	for _, col := range def.Columns {
-		layout, err := storageLayoutToParquetNode(col.StorageLayout)
+		layout, err := storageLayoutToParquetNode(&v1storageLayoutWrapper{col.StorageLayout})
 		if err != nil {
 			return nil, err
 		}
@@ -281,77 +329,121 @@ func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData, nullab
 	return layout
 }
 
-func storageLayoutToParquetNode(l *schemapb.StorageLayout) (parquet.Node, error) {
+type StorageLayout interface {
+	GetType_Int32() int32
+	GetRepeated() bool
+	GetNullable() bool
+	GetEncoding_Int32() int32
+	GetCompression_Int32() int32
+}
+
+type v1storageLayoutWrapper struct {
+	*schemapb.StorageLayout
+}
+
+func (s *v1storageLayoutWrapper) GetType_Int32() int32 {
+	return int32(s.StorageLayout.GetType())
+}
+
+func (s *v1storageLayoutWrapper) GetEncoding_Int32() int32 {
+	return int32(s.StorageLayout.GetEncoding())
+}
+
+func (s *v1storageLayoutWrapper) GetCompression_Int32() int32 {
+	return int32(s.StorageLayout.GetCompression())
+}
+
+type v2storageLayoutWrapper struct {
+	*schemav2pb.StorageLayout
+}
+
+func (s *v2storageLayoutWrapper) GetType_Int32() int32 {
+	return int32(s.StorageLayout.GetType())
+}
+
+func (s *v2storageLayoutWrapper) GetEncoding_Int32() int32 {
+	return int32(s.StorageLayout.GetEncoding())
+}
+
+func (s *v2storageLayoutWrapper) GetCompression_Int32() int32 {
+	return int32(s.StorageLayout.GetCompression())
+}
+
+func StorageLayoutWrapper(layout *schemav2pb.StorageLayout) StorageLayout {
+	return nil
+}
+
+func storageLayoutToParquetNode(l StorageLayout) (parquet.Node, error) {
 	var node parquet.Node
-	switch l.Type {
-	case schemapb.StorageLayout_TYPE_STRING:
+	switch l.GetType_Int32() {
+	case int32(schemapb.StorageLayout_TYPE_STRING):
 		node = parquet.String()
-	case schemapb.StorageLayout_TYPE_INT64:
+	case int32(schemapb.StorageLayout_TYPE_INT64):
 		node = parquet.Int(64)
-	case schemapb.StorageLayout_TYPE_DOUBLE:
+	case int32(schemapb.StorageLayout_TYPE_DOUBLE):
 		node = parquet.Leaf(parquet.DoubleType)
-	case schemapb.StorageLayout_TYPE_BOOL:
+	case int32(schemapb.StorageLayout_TYPE_BOOL):
 		node = parquet.Leaf(parquet.BooleanType)
 	default:
-		return nil, fmt.Errorf("unknown storage layout type: %s", l.Type)
+		return nil, fmt.Errorf("unknown storage layout type: %v", l.GetType_Int32())
 	}
 
-	if l.Nullable {
+	if l.GetNullable() {
 		node = parquet.Optional(node)
 	}
 
-	if l.Encoding != schemapb.StorageLayout_ENCODING_PLAIN_UNSPECIFIED {
-		enc, err := encodingFromDefinition(l.Encoding)
+	if l.GetEncoding_Int32() != int32(schemapb.StorageLayout_ENCODING_PLAIN_UNSPECIFIED) {
+		enc, err := encodingFromDefinition(l.GetEncoding_Int32())
 		if err != nil {
 			return nil, err
 		}
 		node = parquet.Encoded(node, enc)
 	}
 
-	if l.Compression != schemapb.StorageLayout_COMPRESSION_NONE_UNSPECIFIED {
-		comp, err := compressionFromDefinition(l.Compression)
+	if l.GetCompression_Int32() != int32(schemapb.StorageLayout_COMPRESSION_NONE_UNSPECIFIED) {
+		comp, err := compressionFromDefinition(l.GetCompression_Int32())
 		if err != nil {
 			return nil, err
 		}
 		node = parquet.Compressed(node, comp)
 	}
 
-	if l.Repeated {
+	if l.GetRepeated() {
 		node = parquet.Repeated(node)
 	}
 
 	return node, nil
 }
 
-func encodingFromDefinition(enc schemapb.StorageLayout_Encoding) (encoding.Encoding, error) {
+func encodingFromDefinition(enc int32) (encoding.Encoding, error) {
 	switch enc {
-	case schemapb.StorageLayout_ENCODING_RLE_DICTIONARY:
+	case int32(schemapb.StorageLayout_ENCODING_RLE_DICTIONARY):
 		return &parquet.RLEDictionary, nil
-	case schemapb.StorageLayout_ENCODING_DELTA_BINARY_PACKED:
+	case int32(schemapb.StorageLayout_ENCODING_DELTA_BINARY_PACKED):
 		return &parquet.DeltaBinaryPacked, nil
-	case schemapb.StorageLayout_ENCODING_DELTA_BYTE_ARRAY:
+	case int32(schemapb.StorageLayout_ENCODING_DELTA_BYTE_ARRAY):
 		return &parquet.DeltaByteArray, nil
-	case schemapb.StorageLayout_ENCODING_DELTA_LENGTH_BYTE_ARRAY:
+	case int32(schemapb.StorageLayout_ENCODING_DELTA_LENGTH_BYTE_ARRAY):
 		return &parquet.DeltaLengthByteArray, nil
 	default:
-		return nil, fmt.Errorf("unknown encoding: %s", enc)
+		return nil, fmt.Errorf("unknown encoding: %v", enc)
 	}
 }
 
-func compressionFromDefinition(comp schemapb.StorageLayout_Compression) (compress.Codec, error) {
+func compressionFromDefinition(comp int32) (compress.Codec, error) {
 	switch comp {
-	case schemapb.StorageLayout_COMPRESSION_SNAPPY:
+	case int32(schemapb.StorageLayout_COMPRESSION_SNAPPY):
 		return &parquet.Snappy, nil
-	case schemapb.StorageLayout_COMPRESSION_GZIP:
+	case int32(schemapb.StorageLayout_COMPRESSION_GZIP):
 		return &parquet.Gzip, nil
-	case schemapb.StorageLayout_COMPRESSION_BROTLI:
+	case int32(schemapb.StorageLayout_COMPRESSION_BROTLI):
 		return &parquet.Brotli, nil
-	case schemapb.StorageLayout_COMPRESSION_LZ4_RAW:
+	case int32(schemapb.StorageLayout_COMPRESSION_LZ4_RAW):
 		return &parquet.Lz4Raw, nil
-	case schemapb.StorageLayout_COMPRESSION_ZSTD:
+	case int32(schemapb.StorageLayout_COMPRESSION_ZSTD):
 		return &parquet.Zstd, nil
 	default:
-		return nil, fmt.Errorf("unknown compression: %s", comp)
+		return nil, fmt.Errorf("unknown compression: %v", comp)
 	}
 }
 
