@@ -1119,7 +1119,25 @@ func Test_Table_NestedSchema(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// TODO insert some data into table
-	_, err = db.Table("nested", config)
+	tbl, err := db.Table("nested", config)
 	require.NoError(t, err)
+
+	pb, err := schema.NewBuffer(map[string][]string{})
+	require.NoError(t, err)
+
+	_, err = pb.WriteRows([]parquet.Row{
+		{
+			parquet.ValueOf("value1").Level(0, 2, 0), // labels.label1
+			parquet.ValueOf("value1").Level(0, 2, 1), // labels.label2
+			parquet.ValueOf(1).Level(0, 3, 2),        // timestamps: [1]
+			parquet.ValueOf(2).Level(1, 3, 2),        // timestamps: [1,2]
+			parquet.ValueOf(2).Level(0, 3, 3),        // values: [2]
+			parquet.ValueOf(3).Level(1, 3, 3),        // values: [2,3]
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = tbl.InsertBuffer(ctx, pb)
+	require.NoError(t, err)
+
 }

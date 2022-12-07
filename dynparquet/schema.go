@@ -634,19 +634,26 @@ func (s Schema) parquetSchema(
 		return nil, fmt.Errorf("expected %d dynamic column names, got %d", len(s.dynamicColumns), len(dynamicColumns))
 	}
 
-	g := parquet.Group{}
-	for _, col := range s.columns {
-		if col.Dynamic {
-			dyn := dynamicColumnsFor(col.Name, dynamicColumns)
-			for _, name := range dyn {
-				g[col.Name+"."+name] = col.StorageLayout
+	switch def := s.def.(type) {
+	case *schemav2pb.Schema:
+		return ParquetSchemaFromV2Definition(def), nil
+	case *schemapb.Schema:
+		g := parquet.Group{}
+		for _, col := range s.columns {
+			if col.Dynamic {
+				dyn := dynamicColumnsFor(col.Name, dynamicColumns)
+				for _, name := range dyn {
+					g[col.Name+"."+name] = col.StorageLayout
+				}
+				continue
 			}
-			continue
+			g[col.Name] = col.StorageLayout
 		}
-		g[col.Name] = col.StorageLayout
-	}
 
-	return parquet.NewSchema(s.Name(), g), nil
+		return parquet.NewSchema(s.Name(), g), nil
+	default:
+		return nil, fmt.Errorf("unsupported schema definition version")
+	}
 }
 
 // parquetSortingColumns returns the parquet sorting columns for the dynamic
@@ -899,7 +906,10 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 	for _, col := range cols {
 		// Don't add bloom filters to boolean columns
 		colName := strings.Split(col.Path()[0], ".")[0]
-		def, _ := s.ColumnByName(colName)
+		def, ok := s.ColumnByName(colName)
+		if !ok {
+			continue
+		}
 		if def.StorageLayout.Type().Kind() == parquet.Boolean {
 			continue
 		}
