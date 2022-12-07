@@ -16,7 +16,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
 	github.com/prometheus/client_golang v1.12.2
-	github.com/segmentio/parquet-go v0.0.0-20221202145634-b835743499b4
+	github.com/segmentio/parquet-go v0.0.0-20221207043206-db0f5ce13cf1
 	github.com/stretchr/testify v1.7.2
 	github.com/thanos-io/objstore v0.0.0-20220715165016-ce338803bc1e
 	github.com/tidwall/wal v1.1.7

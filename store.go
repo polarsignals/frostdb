@@ -84,6 +84,7 @@ func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64)
 		size,
 		parquet.ReadBufferSize(5*1024*1024), // 5MB read buffers
 		parquet.SkipBloomFilters(true),
+		parquet.FileReadMode(parquet.ReadModeAsync),
 	)
 	if err != nil {
 		return nil, err
