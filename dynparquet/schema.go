@@ -14,6 +14,7 @@ import (
 	"github.com/segmentio/parquet-go/compress"
 	"github.com/segmentio/parquet-go/encoding"
 	"github.com/segmentio/parquet-go/format"
+	"google.golang.org/protobuf/proto"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
@@ -95,7 +96,7 @@ func (dyn dynamicSortingColumn) Path() []string { return []string{dyn.ColumnName
 // ability that any column definition that is dynamic will have columns
 // dynamically created as their column name is seen for the first time.
 type Schema struct {
-	def            *schemapb.Schema
+	def            proto.Message
 	columns        []ColumnDefinition
 	columnIndexes  map[string]int
 	sortingColumns []SortingColumn
@@ -110,16 +111,66 @@ func (s *Schema) IsDynamicColumn(col string) bool {
 	return s.columns[s.columnIndexes[col]].Dynamic
 }
 
-// TODO this function should recursively build the schema from the definition.
+// This function should recursively build the schema from the definition.
 func SchemaFromV2Definition(def *schemav2pb.Schema) (*Schema, error) {
+	columns := []ColumnDefinition{}
+	for _, node := range def.Root.Nodes {
+		columns = append(columns, findLeavesFromNode(node)...)
+	}
+
+	sortingColumns := make([]SortingColumn, 0, len(def.SortingColumns))
+	for _, col := range def.SortingColumns {
+		var sortingColumn SortingColumn
+		switch col.Direction {
+		case schemav2pb.SortingColumn_DIRECTION_ASCENDING:
+			sortingColumn = Ascending(col.Name)
+		case schemav2pb.SortingColumn_DIRECTION_DESCENDING:
+			sortingColumn = Descending(col.Name)
+		default:
+			return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
+		}
+		if col.NullsFirst {
+			sortingColumn = NullsFirst(sortingColumn)
+		}
+		sortingColumns = append(sortingColumns, sortingColumn)
+	}
+
+	return newSchema(def, columns, sortingColumns), nil
+}
+
+func findLeavesFromNode(node *schemav2pb.Node) []ColumnDefinition {
+	switch n := node.Type.(type) {
+	case *schemav2pb.Node_Leaf:
+		ret, err := storageLayoutToParquetNode(&v2storageLayoutWrapper{n.Leaf.StorageLayout})
+		if err != nil {
+			panic("sheisse")
+		}
+		return []ColumnDefinition{
+			{
+				Name:          n.Leaf.Name,
+				StorageLayout: ret,
+				Dynamic:       false, // TODO(can we get rid of dynamic cols): do we need dynamic columns to be separate?
+			},
+		}
+	case *schemav2pb.Node_Group:
+		columns := make([]ColumnDefinition, 0, len(n.Group.Nodes))
+		for _, g := range n.Group.Nodes {
+			columns = append(columns, findLeavesFromNode(g)...)
+		}
+
+		return columns
+	default:
+		panic(fmt.Sprintf("unknown node type: %v", n))
+	}
+}
+
+func ParquetSchemaFromV2Definition(def *schemav2pb.Schema) *parquet.Schema {
 	root := parquet.Group{}
 	for _, node := range def.Root.Nodes {
 		root[nameFromNodeDef(node)] = nodeFromDefinition(node)
 	}
 
-	schema := parquet.NewSchema(def.Root.Name, root)
-	fmt.Println(schema) // TODO REMOVE ME
-	return &Schema{}, nil
+	return parquet.NewSchema(def.Root.Name, root)
 }
 
 func nodeFromDefinition(node *schemav2pb.Node) parquet.Node {
@@ -458,7 +509,7 @@ func compressionFromDefinition(comp int32) (compress.Codec, error) {
 // important as it determines the order in which data is written to a file or
 // laid out in memory.
 func newSchema(
-	def *schemapb.Schema,
+	def proto.Message,
 	columns []ColumnDefinition,
 	sortingColumns []SortingColumn,
 ) *Schema {
@@ -490,7 +541,7 @@ func newSchema(
 }
 
 func (s *Schema) Definition() *schemapb.Schema {
-	return s.def
+	return s.def.(*schemapb.Schema)
 }
 
 func (s *Schema) ColumnByName(name string) (ColumnDefinition, bool) {
@@ -510,7 +561,7 @@ func (s *Schema) ParquetSchema() *parquet.Schema {
 	for _, col := range s.columns {
 		g[col.Name] = col.StorageLayout
 	}
-	return parquet.NewSchema(s.def.Name, g)
+	return parquet.NewSchema(s.Definition().Name, g)
 }
 
 // NOTE: EXPERIMENTAL converts the dynparquet schema into a apache parquet schema
@@ -1245,4 +1296,25 @@ func (r *remappedValueReader) ReadValues(v []parquet.Value) (int, error) {
 	}
 
 	return n, nil
+}
+
+func SortingColumnsFromDef(def *schemav2pb.Schema) ([]parquet.SortingColumn, error) {
+	sortingColumns := make([]parquet.SortingColumn, 0, len(def.SortingColumns))
+	for _, col := range def.SortingColumns {
+		var sortingColumn SortingColumn
+		switch col.Direction {
+		case schemav2pb.SortingColumn_DIRECTION_ASCENDING:
+			sortingColumn = Ascending(col.Name)
+		case schemav2pb.SortingColumn_DIRECTION_DESCENDING:
+			sortingColumn = Descending(col.Name)
+		default:
+			return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
+		}
+		if col.NullsFirst {
+			sortingColumn = NullsFirst(sortingColumn)
+		}
+		sortingColumns = append(sortingColumns, sortingColumn)
+	}
+
+	return sortingColumns, nil
 }
