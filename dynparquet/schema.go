@@ -562,7 +562,9 @@ func (b *Buffer) Sort() {
 func (b *Buffer) Clone() (*Buffer, error) {
 	buf := parquet.NewBuffer(
 		b.buffer.Schema(),
-		parquet.SortingColumns(b.buffer.SortingColumns()...),
+		parquet.SortingRowGroupConfig(
+			parquet.SortingColumns(b.buffer.SortingColumns()...),
+		),
 	)
 
 	rows := b.buffer.Rows()
@@ -646,7 +648,9 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 		dynamicColumns: dynamicColumns,
 		buffer: parquet.NewBuffer(
 			ps,
-			parquet.SortingColumns(cols...),
+			parquet.SortingRowGroupConfig(
+				parquet.SortingColumns(cols...),
+			),
 		),
 		fields: ps.Fields(),
 	}, nil
@@ -702,7 +706,9 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 			DynamicColumnsKey,
 			serializeDynamicColumns(dynamicColumns),
 		),
-		parquet.SortingColumns(cols...),
+		parquet.SortingWriterConfig(
+			parquet.SortingColumns(cols...),
+		),
 	), nil
 }
 
@@ -810,7 +816,12 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowG
 		))
 	}
 
-	merge, err := parquet.MergeRowGroups(adapters, parquet.SortingColumns(cols...))
+	merge, err := parquet.MergeRowGroups(
+		adapters,
+		parquet.SortingRowGroupConfig(
+			parquet.SortingColumns(cols...),
+		),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create merge row groups: %w", err)
 	}

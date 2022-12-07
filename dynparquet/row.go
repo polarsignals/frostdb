@@ -1,6 +1,8 @@
 package dynparquet
 
 import (
+	"fmt"
+
 	"github.com/segmentio/parquet-go"
 )
 
@@ -48,6 +50,12 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 func (s *Schema) Cmp(a, b *DynamicRow) int {
 	dynamicColumns := mergeDynamicColumnSets([]map[string][]string{a.DynamicColumns, b.DynamicColumns})
 	cols := s.parquetSortingColumns(dynamicColumns)
+	// Iterate over all the sorting columns to prepare the rows for comparison.
+	// The main reason we can't directly pass in {a,b}.Row is that they might
+	// not have explicit values for dynamic columns we want to compare. These
+	// columns need to be populated with a NULL value.
+	rowA := make(parquet.Row, 0, len(a.fields))
+	rowB := make(parquet.Row, 0, len(b.fields))
 	for _, col := range cols {
 		name := col.Path()[0] // Currently we only support flat schemas.
 
@@ -58,45 +66,22 @@ func (s *Schema) Cmp(a, b *DynamicRow) int {
 			continue
 		}
 
-		var node parquet.Node
-		if aIndex != -1 {
-			node = FieldByName(a.fields, name)
-		} else {
-			node = FieldByName(b.fields, name)
-		}
-
 		av, bv := extractValues(a, b, aIndex, bIndex)
-		cmp := compare(col, node, av, bv)
-		if cmp < 0 {
-			return cmp
-		}
-		if cmp > 0 {
-			return cmp
-		}
-		// neither of those case are true so a and b are equal for this column
-		// and we need to continue with the next column.
+		rowA = append(rowA, av...)
+		rowB = append(rowB, bv...)
 	}
 
-	return 0
-}
-
-func compare(col parquet.SortingColumn, node parquet.Node, av, bv []parquet.Value) int {
-	sortOptions := []parquet.SortOption{
-		parquet.SortDescending(col.Descending()),
-		parquet.SortNullsFirst(col.NullsFirst()),
-	}
-	if node.Optional() || node.Repeated() {
-		sortOptions = append(sortOptions, parquet.SortMaxDefinitionLevel(1))
+	// Set the column indexes according to the merged schema.
+	for i := range rowA {
+		rowA[i] = rowA[i].Level(rowA[i].RepetitionLevel(), rowA[i].DefinitionLevel(), i)
+		rowB[i] = rowB[i].Level(rowB[i].RepetitionLevel(), rowB[i].DefinitionLevel(), i)
 	}
 
-	if node.Repeated() {
-		sortOptions = append(sortOptions, parquet.SortMaxRepetitionLevel(1))
+	ps, err := s.parquetSchema(dynamicColumns)
+	if err != nil {
+		panic(fmt.Sprintf("unexpected schema state: %v", err))
 	}
-
-	return parquet.SortFuncOf(
-		node.Type(),
-		sortOptions...,
-	)(av, bv)
+	return ps.Comparator(cols...)(rowA, rowB)
 }
 
 func extractValues(a, b *DynamicRow, aIndex, bIndex int) ([]parquet.Value, []parquet.Value) {
