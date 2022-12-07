@@ -23,6 +23,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/storage"
@@ -426,7 +428,20 @@ func (db *DB) replayWAL(ctx context.Context) error {
 			table, err := db.GetTable(tableName)
 			var tableErr ErrTableNotFound
 			if errors.As(err, &tableErr) {
-				schema, err := dynparquet.SchemaFromDefinition(entry.Schema)
+				var def proto.Message
+				switch {
+				case entry.Schema.MessageIs(&schemapb.Schema{}):
+					def = &schemapb.Schema{}
+					if err := entry.Schema.UnmarshalTo(def); err != nil {
+						return err
+					}
+				case entry.Schema.MessageIs(&schemav2pb.Schema{}):
+					def = &schemav2pb.Schema{}
+					if err := entry.Schema.UnmarshalTo(def); err != nil {
+						return err
+					}
+				}
+				schema, err := dynparquet.SchemaFromDefinition(def)
 				if err != nil {
 					return fmt.Errorf("initialize schema: %w", err)
 				}
@@ -475,8 +490,21 @@ func (db *DB) replayWAL(ctx context.Context) error {
 				// If schemas are identical from block to block we should we
 				// reuse the previous schema in order to retain pooled memory
 				// for it.
+				var def proto.Message
+				switch {
+				case entry.Schema.MessageIs(&schemapb.Schema{}):
+					def = &schemapb.Schema{}
+					if err := entry.Schema.UnmarshalTo(def); err != nil {
+						return err
+					}
+				case entry.Schema.MessageIs(&schemav2pb.Schema{}):
+					def = &schemav2pb.Schema{}
+					if err := entry.Schema.UnmarshalTo(def); err != nil {
+						return err
+					}
+				}
 
-				schema, err := dynparquet.SchemaFromDefinition(entry.Schema)
+				schema, err := dynparquet.SchemaFromDefinition(def)
 				if err != nil {
 					return fmt.Errorf("instantiate schema: %w", err)
 				}
