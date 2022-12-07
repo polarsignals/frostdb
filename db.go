@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/storage"
@@ -426,7 +427,11 @@ func (db *DB) replayWAL(ctx context.Context) error {
 			table, err := db.GetTable(tableName)
 			var tableErr ErrTableNotFound
 			if errors.As(err, &tableErr) {
-				schema, err := dynparquet.SchemaFromDefinition(entry.Schema)
+				v1schema := &schemapb.Schema{}
+				if err := entry.Schema.UnmarshalTo(v1schema); err != nil {
+					return err
+				}
+				schema, err := dynparquet.SchemaFromDefinition(v1schema)
 				if err != nil {
 					return fmt.Errorf("initialize schema: %w", err)
 				}
@@ -476,7 +481,12 @@ func (db *DB) replayWAL(ctx context.Context) error {
 				// reuse the previous schema in order to retain pooled memory
 				// for it.
 
-				schema, err := dynparquet.SchemaFromDefinition(entry.Schema)
+				v1schema := &schemapb.Schema{}
+				if err := entry.Schema.UnmarshalTo(v1schema); err != nil {
+					return err
+				}
+
+				schema, err := dynparquet.SchemaFromDefinition(v1schema)
 				if err != nil {
 					return fmt.Errorf("instantiate schema: %w", err)
 				}

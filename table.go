@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
@@ -268,13 +269,18 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 		return err
 	}
 
+	v1schema := &anypb.Any{}
+	if err := v1schema.MarshalFrom(t.config.schema.Definition()); err != nil {
+		return err
+	}
+
 	if err := t.wal.Log(tx, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_NewTableBlock_{
 				NewTableBlock: &walpb.Entry_NewTableBlock{
 					TableName: t.name,
 					BlockId:   b,
-					Schema:    t.config.schema.Definition(),
+					Schema:    v1schema,
 				},
 			},
 		},

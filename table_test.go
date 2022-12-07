@@ -1090,7 +1090,7 @@ func Test_Table_NestedSchema(t *testing.T) {
 		},
 	}
 
-	schema, err := dynparquet.SchemaFromV2Definition(def)
+	schema, err := dynparquet.SchemaFromDefinition(def)
 	require.NoError(t, err)
 
 	ctx := context.Background()

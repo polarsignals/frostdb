@@ -6,8 +6,9 @@ package walv1alpha1
 
 import (
 	fmt "fmt"
-	v1alpha1 "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	proto "google.golang.org/protobuf/proto"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	anypb "google.golang.org/protobuf/types/known/anypb"
 	io "io"
 	bits "math/bits"
 )
@@ -140,12 +141,24 @@ func (m *Entry_NewTableBlock) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		copy(dAtA[i:], m.unknownFields)
 	}
 	if m.Schema != nil {
-		size, err := m.Schema.MarshalToSizedBufferVT(dAtA[:i])
-		if err != nil {
-			return 0, err
+		if marshalto, ok := interface{}(m.Schema).(interface {
+			MarshalToSizedBufferVT([]byte) (int, error)
+		}); ok {
+			size, err := marshalto.MarshalToSizedBufferVT(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarint(dAtA, i, uint64(size))
+		} else {
+			encoded, err := proto.Marshal(m.Schema)
+			if err != nil {
+				return 0, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = encodeVarint(dAtA, i, uint64(len(encoded)))
 		}
-		i -= size
-		i = encodeVarint(dAtA, i, uint64(size))
 		i--
 		dAtA[i] = 0x1a
 	}
@@ -377,7 +390,13 @@ func (m *Entry_NewTableBlock) SizeVT() (n int) {
 		n += 1 + l + sov(uint64(l))
 	}
 	if m.Schema != nil {
-		l = m.Schema.SizeVT()
+		if size, ok := interface{}(m.Schema).(interface {
+			SizeVT() int
+		}); ok {
+			l = size.SizeVT()
+		} else {
+			l = proto.Size(m.Schema)
+		}
 		n += 1 + l + sov(uint64(l))
 	}
 	if m.unknownFields != nil {
@@ -793,10 +812,18 @@ func (m *Entry_NewTableBlock) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Schema == nil {
-				m.Schema = &v1alpha1.Schema{}
+				m.Schema = &anypb.Any{}
 			}
-			if err := m.Schema.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-				return err
+			if unmarshal, ok := interface{}(m.Schema).(interface {
+				UnmarshalVT([]byte) error
+			}); ok {
+				if err := unmarshal.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+					return err
+				}
+			} else {
+				if err := proto.Unmarshal(dAtA[iNdEx:postIndex], m.Schema); err != nil {
+					return err
+				}
 			}
 			iNdEx = postIndex
 		default:

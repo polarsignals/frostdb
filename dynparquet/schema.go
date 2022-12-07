@@ -111,33 +111,6 @@ func (s *Schema) IsDynamicColumn(col string) bool {
 	return s.columns[s.columnIndexes[col]].Dynamic
 }
 
-// This function should recursively build the schema from the definition.
-func SchemaFromV2Definition(def *schemav2pb.Schema) (*Schema, error) {
-	columns := []ColumnDefinition{}
-	for _, node := range def.Root.Nodes {
-		columns = append(columns, findLeavesFromNode(node)...)
-	}
-
-	sortingColumns := make([]SortingColumn, 0, len(def.SortingColumns))
-	for _, col := range def.SortingColumns {
-		var sortingColumn SortingColumn
-		switch col.Direction {
-		case schemav2pb.SortingColumn_DIRECTION_ASCENDING:
-			sortingColumn = Ascending(col.Name)
-		case schemav2pb.SortingColumn_DIRECTION_DESCENDING:
-			sortingColumn = Descending(col.Name)
-		default:
-			return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
-		}
-		if col.NullsFirst {
-			sortingColumn = NullsFirst(sortingColumn)
-		}
-		sortingColumns = append(sortingColumns, sortingColumn)
-	}
-
-	return newSchema(def, columns, sortingColumns), nil
-}
-
 func findLeavesFromNode(node *schemav2pb.Node) []ColumnDefinition {
 	switch n := node.Type.(type) {
 	case *schemav2pb.Node_Leaf:
@@ -214,39 +187,66 @@ func nameFromNodeDef(node *schemav2pb.Node) string {
 	}
 }
 
-func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
-	columns := make([]ColumnDefinition, 0, len(def.Columns))
-	for _, col := range def.Columns {
-		layout, err := storageLayoutToParquetNode(&v1storageLayoutWrapper{col.StorageLayout})
-		if err != nil {
-			return nil, err
+func SchemaFromDefinition(msg proto.Message) (*Schema, error) {
+	var columns []ColumnDefinition
+	var sortingColumns []SortingColumn
+	switch def := msg.(type) {
+	case *schemapb.Schema:
+		columns = make([]ColumnDefinition, 0, len(def.Columns))
+		for _, col := range def.Columns {
+			layout, err := storageLayoutToParquetNode(&v1storageLayoutWrapper{col.StorageLayout})
+			if err != nil {
+				return nil, err
+			}
+			columns = append(columns, ColumnDefinition{
+				Name:          col.Name,
+				StorageLayout: layout,
+				Dynamic:       col.Dynamic,
+			})
 		}
-		columns = append(columns, ColumnDefinition{
-			Name:          col.Name,
-			StorageLayout: layout,
-			Dynamic:       col.Dynamic,
-		})
-	}
 
-	sortingColumns := make([]SortingColumn, 0, len(def.SortingColumns))
-	for _, col := range def.SortingColumns {
-		var sortingColumn SortingColumn
-		switch col.Direction {
-		case schemapb.SortingColumn_DIRECTION_ASCENDING:
-			sortingColumn = Ascending(col.Name)
-		case schemapb.SortingColumn_DIRECTION_DESCENDING:
-			sortingColumn = Descending(col.Name)
-		default:
-			return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
+		sortingColumns = make([]SortingColumn, 0, len(def.SortingColumns))
+		for _, col := range def.SortingColumns {
+			var sortingColumn SortingColumn
+			switch col.Direction {
+			case schemapb.SortingColumn_DIRECTION_ASCENDING:
+				sortingColumn = Ascending(col.Name)
+			case schemapb.SortingColumn_DIRECTION_DESCENDING:
+				sortingColumn = Descending(col.Name)
+			default:
+				return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
+			}
+			if col.NullsFirst {
+				sortingColumn = NullsFirst(sortingColumn)
+			}
+			sortingColumns = append(sortingColumns, sortingColumn)
 		}
-		if col.NullsFirst {
-			sortingColumn = NullsFirst(sortingColumn)
+	case *schemav2pb.Schema:
+		columns = []ColumnDefinition{}
+		for _, node := range def.Root.Nodes {
+			columns = append(columns, findLeavesFromNode(node)...)
 		}
-		sortingColumns = append(sortingColumns, sortingColumn)
+
+		sortingColumns = make([]SortingColumn, 0, len(def.SortingColumns))
+		for _, col := range def.SortingColumns {
+			var sortingColumn SortingColumn
+			switch col.Direction {
+			case schemav2pb.SortingColumn_DIRECTION_ASCENDING:
+				sortingColumn = Ascending(col.Name)
+			case schemav2pb.SortingColumn_DIRECTION_DESCENDING:
+				sortingColumn = Descending(col.Name)
+			default:
+				return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
+			}
+			if col.NullsFirst {
+				sortingColumn = NullsFirst(sortingColumn)
+			}
+			sortingColumns = append(sortingColumns, sortingColumn)
+		}
 	}
 
 	return newSchema(
-		def,
+		msg,
 		columns,
 		sortingColumns,
 	), nil
@@ -540,8 +540,19 @@ func newSchema(
 	return s
 }
 
-func (s *Schema) Definition() *schemapb.Schema {
-	return s.def.(*schemapb.Schema)
+func (s *Schema) Name() string {
+	switch sc := s.def.(type) {
+	case *schemapb.Schema:
+		return sc.GetName()
+	case *schemav2pb.Schema:
+		return sc.Root.GetName()
+	default:
+		panic("unknown schema version")
+	}
+}
+
+func (s *Schema) Definition() proto.Message {
+	return s.def
 }
 
 func (s *Schema) ColumnByName(name string) (ColumnDefinition, bool) {
@@ -561,7 +572,7 @@ func (s *Schema) ParquetSchema() *parquet.Schema {
 	for _, col := range s.columns {
 		g[col.Name] = col.StorageLayout
 	}
-	return parquet.NewSchema(s.Definition().Name, g)
+	return parquet.NewSchema(s.Name(), g)
 }
 
 // NOTE: EXPERIMENTAL converts the dynparquet schema into a apache parquet schema
@@ -635,7 +646,7 @@ func (s Schema) parquetSchema(
 		g[col.Name] = col.StorageLayout
 	}
 
-	return parquet.NewSchema(s.def.Name, g), nil
+	return parquet.NewSchema(s.Name(), g), nil
 }
 
 // parquetSortingColumns returns the parquet sorting columns for the dynamic
