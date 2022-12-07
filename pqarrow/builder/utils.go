@@ -1,7 +1,8 @@
 package builder
 
 import (
-	"errors"
+	"fmt"
+	"unsafe"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -32,28 +33,20 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 	switch b := cb.(type) {
 	case *OptBinaryBuilder:
 		b.Append(arr.(*array.Binary).Value(i))
-		return nil
 	case *OptInt64Builder:
 		b.Append(arr.(*array.Int64).Value(i))
-		return nil
 	case *OptBooleanBuilder:
 		b.AppendSingle(arr.(*array.Boolean).Value(i))
-		return nil
 	case *array.Int64Builder:
 		b.Append(arr.(*array.Int64).Value(i))
-		return nil
 	case *array.StringBuilder:
 		b.Append(arr.(*array.String).Value(i))
-		return nil
 	case *array.BinaryBuilder:
 		b.Append(arr.(*array.Binary).Value(i))
-		return nil
 	case *array.FixedSizeBinaryBuilder:
 		b.Append(arr.(*array.FixedSizeBinary).Value(i))
-		return nil
 	case *array.BooleanBuilder:
 		b.Append(arr.(*array.Boolean).Value(i))
-		return nil
 	// case *array.List:
 	//	// TODO: This seems horribly inefficient, we already have the whole
 	//	// array and are just doing an expensive copy, but arrow doesn't seem
@@ -75,6 +68,84 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 	//	}
 	//	return nil
 	default:
-		return errors.New("unsupported type for arrow append")
+		return fmt.Errorf("unsupported type for arrow append %T", b)
+	}
+	return nil
+}
+
+// TODO(asubiotto): This function doesn't handle NULLs in the case of optimized
+// builders.
+func AppendArray(cb ColumnBuilder, arr arrow.Array) error {
+	switch b := cb.(type) {
+	case *OptBinaryBuilder:
+		v := arr.(*array.Binary)
+		offsets := v.ValueOffsets()
+		b.AppendData(v.ValueBytes(), *(*[]uint32)(unsafe.Pointer(&offsets)))
+	case *OptInt64Builder:
+		b.AppendData(arr.(*array.Int64).Int64Values())
+	default:
+		// TODO(asubiotto): Handle OptBooleanBuilder. It needs some way to
+		// append data.
+		for i := 0; i < arr.Len(); i++ {
+			// This is an interface conversion on each call, but we should care
+			// more about porting our uses of arrow builders to optimized
+			// builders for exactly these use cases.
+			if err := AppendValue(cb, arr, i); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func AppendGoValue(cb ColumnBuilder, v any) error {
+	if v == nil {
+		cb.AppendNull()
+		return nil
+	}
+
+	switch b := cb.(type) {
+	case *OptBinaryBuilder:
+		b.Append(v.([]byte))
+	case *OptInt64Builder:
+		b.Append(v.(int64))
+	case *OptBooleanBuilder:
+		b.AppendSingle(v.(bool))
+	case *array.Int64Builder:
+		b.Append(v.(int64))
+	case *array.StringBuilder:
+		b.Append(v.(string))
+	case *array.BinaryBuilder:
+		b.Append(v.([]byte))
+	case *array.FixedSizeBinaryBuilder:
+		b.Append(v.([]byte))
+	case *array.BooleanBuilder:
+		b.Append(v.(bool))
+	default:
+		return fmt.Errorf("unsupported type for append go value %T", b)
+	}
+	return nil
+}
+
+// GetValue returns the value at index i in arr. If the value is null, nil is
+// returned.
+func GetValue(arr arrow.Array, i int) (any, error) {
+	if arr.IsNull(i) {
+		return nil, nil
+	}
+
+	switch a := arr.(type) {
+	case *array.Binary:
+		return a.Value(i), nil
+	case *array.FixedSizeBinary:
+		return a.Value(i), nil
+	case *array.String:
+		return a.Value(i), nil
+	case *array.Int64:
+		return a.Value(i), nil
+	case *array.Boolean:
+		return a.Value(i), nil
+	default:
+		return nil, fmt.Errorf("unsupported type for GetValue %T", a)
 	}
 }
