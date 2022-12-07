@@ -385,11 +385,11 @@ func parquetColumnMetaDataToStorageLayout(metadata format.ColumnMetaData, nullab
 }
 
 type StorageLayout interface {
-	GetType_Int32() int32
+	GetTypeInt32() int32
 	GetRepeated() bool
 	GetNullable() bool
-	GetEncoding_Int32() int32
-	GetCompression_Int32() int32
+	GetEncodingInt32() int32
+	GetCompressionInt32() int32
 }
 
 type v1storageLayoutWrapper struct {
@@ -400,15 +400,15 @@ func (s *v1storageLayoutWrapper) GetRepeated() bool {
 	return false
 }
 
-func (s *v1storageLayoutWrapper) GetType_Int32() int32 {
+func (s *v1storageLayoutWrapper) GetTypeInt32() int32 {
 	return int32(s.StorageLayout.GetType())
 }
 
-func (s *v1storageLayoutWrapper) GetEncoding_Int32() int32 {
+func (s *v1storageLayoutWrapper) GetEncodingInt32() int32 {
 	return int32(s.StorageLayout.GetEncoding())
 }
 
-func (s *v1storageLayoutWrapper) GetCompression_Int32() int32 {
+func (s *v1storageLayoutWrapper) GetCompressionInt32() int32 {
 	return int32(s.StorageLayout.GetCompression())
 }
 
@@ -416,15 +416,15 @@ type v2storageLayoutWrapper struct {
 	*schemav2pb.StorageLayout
 }
 
-func (s *v2storageLayoutWrapper) GetType_Int32() int32 {
+func (s *v2storageLayoutWrapper) GetTypeInt32() int32 {
 	return int32(s.StorageLayout.GetType())
 }
 
-func (s *v2storageLayoutWrapper) GetEncoding_Int32() int32 {
+func (s *v2storageLayoutWrapper) GetEncodingInt32() int32 {
 	return int32(s.StorageLayout.GetEncoding())
 }
 
-func (s *v2storageLayoutWrapper) GetCompression_Int32() int32 {
+func (s *v2storageLayoutWrapper) GetCompressionInt32() int32 {
 	return int32(s.StorageLayout.GetCompression())
 }
 
@@ -434,7 +434,7 @@ func StorageLayoutWrapper(layout *schemav2pb.StorageLayout) StorageLayout {
 
 func storageLayoutToParquetNode(l StorageLayout) (parquet.Node, error) {
 	var node parquet.Node
-	switch l.GetType_Int32() {
+	switch l.GetTypeInt32() {
 	case int32(schemapb.StorageLayout_TYPE_STRING):
 		node = parquet.String()
 	case int32(schemapb.StorageLayout_TYPE_INT64):
@@ -444,23 +444,23 @@ func storageLayoutToParquetNode(l StorageLayout) (parquet.Node, error) {
 	case int32(schemapb.StorageLayout_TYPE_BOOL):
 		node = parquet.Leaf(parquet.BooleanType)
 	default:
-		return nil, fmt.Errorf("unknown storage layout type: %v", l.GetType_Int32())
+		return nil, fmt.Errorf("unknown storage layout type: %v", l.GetTypeInt32())
 	}
 
 	if l.GetNullable() {
 		node = parquet.Optional(node)
 	}
 
-	if l.GetEncoding_Int32() != int32(schemapb.StorageLayout_ENCODING_PLAIN_UNSPECIFIED) {
-		enc, err := encodingFromDefinition(l.GetEncoding_Int32())
+	if l.GetEncodingInt32() != int32(schemapb.StorageLayout_ENCODING_PLAIN_UNSPECIFIED) {
+		enc, err := encodingFromDefinition(l.GetEncodingInt32())
 		if err != nil {
 			return nil, err
 		}
 		node = parquet.Encoded(node, enc)
 	}
 
-	if l.GetCompression_Int32() != int32(schemapb.StorageLayout_COMPRESSION_NONE_UNSPECIFIED) {
-		comp, err := compressionFromDefinition(l.GetCompression_Int32())
+	if l.GetCompressionInt32() != int32(schemapb.StorageLayout_COMPRESSION_NONE_UNSPECIFIED) {
+		comp, err := compressionFromDefinition(l.GetCompressionInt32())
 		if err != nil {
 			return nil, err
 		}
