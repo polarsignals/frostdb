@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package frostdb.wal.v1alpha1;
 
-import "frostdb/schema/v1alpha1/schema.proto";
+import "google/protobuf/any.proto";
 
 // Record describes a single entry into the WAL.
 message Record {
@@ -29,7 +29,7 @@ message Entry {
     // Block ID of the new-table-block.
     bytes block_id = 2;
     // Schema of the new-table-block.
-    frostdb.schema.v1alpha1.Schema schema = 3;
+    google.protobuf.Any schema = 3;
   }
 
   // The table-block persisted entry.
