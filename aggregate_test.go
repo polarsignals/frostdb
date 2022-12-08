@@ -3,6 +3,7 @@ package frostdb
 import (
 	"context"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -225,4 +226,83 @@ func TestAggregationProjection(t *testing.T) {
 	require.True(t, record.Schema().HasField("labels.label3"))
 	require.True(t, record.Schema().HasField("labels.label4"))
 	require.True(t, record.Schema().HasField("sum(value)"))
+}
+
+// go test -bench=BenchmarkAggregation -benchmem -count=10 . | tee BenchmarkAggregation
+
+func BenchmarkAggregation(b *testing.B) {
+	ctx := context.Background()
+
+	columnStore, err := New()
+	require.NoError(b, err)
+	defer columnStore.Close()
+
+	db, err := columnStore.DB(ctx, "test")
+	require.NoError(b, err)
+
+	// Insert sample data
+	{
+		config := NewTableConfig(dynparquet.NewSampleSchema())
+		table, err := db.Table("test", config)
+		require.NoError(b, err)
+
+		samples := make(dynparquet.Samples, 0, 10_000)
+		for i := 0; i < cap(samples); i++ {
+			samples = append(samples, dynparquet.Sample{
+				Labels: []dynparquet.Label{
+					{Name: "label1", Value: "value1"},
+					{Name: "label2", Value: "value" + strconv.Itoa(i%3)},
+				},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				},
+				Timestamp: int64(i),
+				Value:     int64(i),
+			})
+		}
+
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(b, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(b, err)
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	for _, bc := range []struct {
+		name    string
+		builder query.Builder
+	}{{
+		name: "sum",
+		builder: engine.ScanTable("test").
+			Aggregate(
+				logicalplan.Sum(logicalplan.Col("value")),
+				logicalplan.Col("labels.label2"),
+			),
+	}, {
+		name: "count",
+		builder: engine.ScanTable("test").
+			Aggregate(
+				logicalplan.Count(logicalplan.Col("value")),
+				logicalplan.Col("labels.label2"),
+			),
+	}, {
+		name: "max",
+		builder: engine.ScanTable("test").
+			Aggregate(
+				logicalplan.Max(logicalplan.Col("value")),
+				logicalplan.Col("labels.label2"),
+			),
+	}} {
+		b.Run(bc.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					return nil
+				})
+			}
+		})
+	}
 }

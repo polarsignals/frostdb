@@ -126,7 +126,7 @@ type HashAggregate struct {
 
 	// Buffers that are reused across callback calls.
 	groupByFields      []arrow.Field
-	groupByFieldHashes []uint64
+	groupByFieldHashes []hashCombiner
 	groupByArrays      []arrow.Array
 }
 
@@ -155,7 +155,7 @@ func NewHashAggregate(
 		finalStage:            finalStage,
 
 		groupByFields:      make([]arrow.Field, 0, 10),
-		groupByFieldHashes: make([]uint64, 0, 10),
+		groupByFieldHashes: make([]hashCombiner, 0, 10),
 		groupByArrays:      make([]arrow.Array, 0, 10),
 	}
 }
@@ -183,6 +183,37 @@ func (a *HashAggregate) Draw() *Diagram {
 // are used and good choices: https://stackoverflow.com/questions/35985960/c-why-is-boosthash-combine-the-best-way-to-combine-hash-values
 func hashCombine(lhs, rhs uint64) uint64 {
 	return lhs ^ (rhs + 0x9e3779b9 + (lhs << 6) + (lhs >> 2))
+}
+
+// hashCombiner combines a given hash with another hash that is passed.
+type hashCombiner interface {
+	hashCombine(rhs uint64) uint64
+}
+
+// uint64HashCombine combines a pre-defined uint64 hash with a given uint64 hash.
+type uint64HashCombine struct {
+	value uint64
+}
+
+func (u *uint64HashCombine) hashCombine(rhs uint64) uint64 {
+	return hashCombine(u.value, rhs)
+}
+
+// durationHashCombine hashes a given timestamp by dividing it through a given duration.
+// timestamp | duration | hash
+// 0 		 | 2		| 0
+// 1 		 | 2		| 0
+// 2 		 | 2		| 1
+// 3 		 | 2		| 1
+// 4 		 | 2		| 2
+// 5 		 | 2		| 2
+// Essentially hashing timestamps into buckets of durations.
+type durationHashCombine struct {
+	milliseconds uint64
+}
+
+func (d *durationHashCombine) hashCombine(rhs uint64) uint64 {
+	return rhs / d.milliseconds // floors by default
 }
 
 func hashArray(arr arrow.Array) []uint64 {
@@ -268,8 +299,19 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		for _, matcher := range a.groupByColumnMatchers {
 			if matcher.MatchColumn(field.Name) {
 				groupByFields = append(groupByFields, field)
-				groupByFieldHashes = append(groupByFieldHashes, scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name)))
 				groupByArrays = append(groupByArrays, r.Column(i))
+
+				switch matcher.(type) {
+				case *logicalplan.DurationExpr:
+					duration := matcher.(*logicalplan.DurationExpr).Value()
+					groupByFieldHashes = append(groupByFieldHashes,
+						&durationHashCombine{milliseconds: uint64(duration.Milliseconds())},
+					)
+				default:
+					groupByFieldHashes = append(groupByFieldHashes,
+						&uint64HashCombine{value: scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name))},
+					)
+				}
 			}
 		}
 
@@ -299,10 +341,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 
 			hash = hashCombine(
 				hash,
-				hashCombine(
-					groupByFieldHashes[j],
-					colHashes[j][i],
-				),
+				groupByFieldHashes[j].hashCombine(colHashes[j][i]),
 			)
 		}
 

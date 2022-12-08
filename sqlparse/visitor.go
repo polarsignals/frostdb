@@ -3,7 +3,9 @@ package sqlparse
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/test_driver"
@@ -155,6 +157,25 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 	case *ast.FieldList, *ast.ColumnNameExpr, *ast.GroupByClause, *ast.ByItem, *ast.RowExpr,
 		*ast.ParenthesesExpr:
 		// Deliberate pass-through nodes.
+	case *ast.FuncCallExpr:
+		switch expr.FnName.String() {
+		case ast.Second:
+			// This is pretty hacky and only fine because it's in the test only.
+			left, right := pop(v.exprStack)
+			var exprStack []logicalplan.Expr
+			for _, expr := range right {
+				exprStack = append(exprStack, expr)
+			}
+			switch l := left.(type) {
+			case *logicalplan.LiteralExpr:
+				val := l.Value.(*scalar.Int64)
+				duration := time.Duration(val.Value) * time.Second
+				exprStack = append(exprStack, logicalplan.Duration(duration))
+				v.exprStack = exprStack
+			}
+		default:
+			return fmt.Errorf("unhandled func call: %s", expr.FnName.String())
+		}
 	default:
 		return fmt.Errorf("unhandled ast node %T", expr)
 	}
