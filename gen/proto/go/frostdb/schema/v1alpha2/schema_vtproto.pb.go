@@ -391,10 +391,10 @@ func (m *SortingColumn) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x10
 	}
-	if len(m.Name) > 0 {
-		i -= len(m.Name)
-		copy(dAtA[i:], m.Name)
-		i = encodeVarint(dAtA, i, uint64(len(m.Name)))
+	if len(m.Path) > 0 {
+		i -= len(m.Path)
+		copy(dAtA[i:], m.Path)
+		i = encodeVarint(dAtA, i, uint64(len(m.Path)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -554,7 +554,7 @@ func (m *SortingColumn) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.Name)
+	l = len(m.Path)
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
 	}
@@ -1285,7 +1285,7 @@ func (m *SortingColumn) UnmarshalVT(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Path", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -1313,7 +1313,7 @@ func (m *SortingColumn) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Path = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {

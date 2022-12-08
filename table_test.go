@@ -1080,12 +1080,12 @@ func Test_Table_NestedSchema(t *testing.T) {
 		},
 		SortingColumns: []*schemav2pb.SortingColumn{
 			{
-				Name:       "labels",
+				Path:       "labels",
 				Direction:  schemav2pb.SortingColumn_DIRECTION_ASCENDING,
 				NullsFirst: true,
 			},
 			{
-				Name:      "timestamp",
+				Path:      "timestamp",
 				Direction: schemav2pb.SortingColumn_DIRECTION_ASCENDING,
 			},
 		},

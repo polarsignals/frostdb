@@ -230,9 +230,9 @@ func SchemaFromDefinition(msg proto.Message) (*Schema, error) {
 			var sortingColumn SortingColumn
 			switch col.Direction {
 			case schemav2pb.SortingColumn_DIRECTION_ASCENDING:
-				sortingColumn = Ascending(col.Name)
+				sortingColumn = Ascending(col.Path)
 			case schemav2pb.SortingColumn_DIRECTION_DESCENDING:
-				sortingColumn = Descending(col.Name)
+				sortingColumn = Descending(col.Path)
 			default:
 				return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
 			}
@@ -1291,9 +1291,9 @@ func SortingColumnsFromDef(def *schemav2pb.Schema) ([]parquet.SortingColumn, err
 		var sortingColumn SortingColumn
 		switch col.Direction {
 		case schemav2pb.SortingColumn_DIRECTION_ASCENDING:
-			sortingColumn = Ascending(col.Name)
+			sortingColumn = Ascending(col.Path)
 		case schemav2pb.SortingColumn_DIRECTION_DESCENDING:
-			sortingColumn = Descending(col.Name)
+			sortingColumn = Descending(col.Path)
 		default:
 			return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
 		}

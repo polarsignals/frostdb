@@ -156,8 +156,8 @@ message StorageLayout {
 
 // SortingColumn definition.
 message SortingColumn {
-    // Name of the column to sort by.
-    string name = 1;
+    // Path to the leaf column to sort by.
+    string path = 1;
 
     // Enum of possible sorting directions.
     enum Direction {
