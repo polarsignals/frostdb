@@ -190,7 +190,7 @@ type hashCombiner interface {
 	hashCombine(rhs uint64) uint64
 }
 
-// uint64HashCombine combines a pre-defined uint64 hash with a given uint64 hash
+// uint64HashCombine combines a pre-defined uint64 hash with a given uint64 hash.
 type uint64HashCombine struct {
 	value uint64
 }
@@ -200,7 +200,6 @@ func (u *uint64HashCombine) hashCombine(rhs uint64) uint64 {
 }
 
 // durationHashCombine hashes a given timestamp by dividing it through a given duration.
-// Essentially hashing timestamps into buckets of durations.
 // timestamp | duration | hash
 // 0 		 | 2		| 0
 // 1 		 | 2		| 0
@@ -208,6 +207,7 @@ func (u *uint64HashCombine) hashCombine(rhs uint64) uint64 {
 // 3 		 | 2		| 1
 // 4 		 | 2		| 2
 // 5 		 | 2		| 2
+// Essentially hashing timestamps into buckets of durations.
 type durationHashCombine struct {
 	milliseconds uint64
 }
