@@ -40,8 +40,8 @@ func (w *NopWAL) FirstIndex() (uint64, error) {
 
 type fileWALMetrics struct {
 	recordsLogged        prometheus.Counter
-	failedLogs           prometheus.Counter
-	lastTruncationAt     prometheus.Gauge
+	recordsLoggedFailed  prometheus.Counter
+	lastTruncation       prometheus.Gauge
 	walTruncations       prometheus.Counter
 	walTruncationsFailed prometheus.Counter
 }
@@ -120,23 +120,23 @@ func Open(
 		queue: &logRequestQueue{},
 		metrics: &fileWALMetrics{
 			recordsLogged: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "wal_records_logged_total",
+				Name: "frostdb_wal_records_logged_total",
 				Help: "Number of records logged to WAL",
 			}),
-			failedLogs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "wal_failed_logs_total",
+			recordsLoggedFailed: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "frostdb_wal_records_logged_failed_total",
 				Help: "Number of failed WAL logs",
 			}),
-			lastTruncationAt: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "last_truncation_at",
+			lastTruncation: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+				Name: "frostdb_wal_last_truncation_timestamp_seconds",
 				Help: "The last transaction the WAL was truncated to",
 			}),
 			walTruncations: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "wal_truncations_total",
+				Name: "frostdb_wal_truncations_total",
 				Help: "The number of WAL truncations",
 			}),
 			walTruncationsFailed: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "wal_truncations_failed_total",
+				Name: "frostdb_wal_truncations_failed_total",
 				Help: "The number of WAL truncations",
 			}),
 		},
@@ -195,11 +195,10 @@ func (w *FileWAL) Run(ctx context.Context) {
 
 			err := w.log.WriteBatch(walBatch)
 			if err != nil {
-				w.metrics.failedLogs.Add(float64(len(batch)))
+				w.metrics.recordsLoggedFailed.Add(float64(len(batch)))
 				level.Error(w.logger).Log("msg", "failed to write WAL batch", "err", err)
-			} else {
-				w.metrics.recordsLogged.Add(float64(len(batch)))
 			}
+			w.metrics.recordsLogged.Add(float64(len(batch)))
 
 			for _, r := range batch {
 				w.logRequestPool.Put(r)
@@ -213,7 +212,7 @@ func (w *FileWAL) Run(ctx context.Context) {
 }
 
 func (w *FileWAL) Truncate(tx uint64) error {
-	w.metrics.lastTruncationAt.Set(float64(tx))
+	w.metrics.lastTruncation.Set(float64(tx))
 	w.metrics.walTruncations.Inc()
 
 	level.Debug(w.logger).Log("msg", "truncating WAL", "tx", tx)
