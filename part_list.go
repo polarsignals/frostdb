@@ -14,7 +14,7 @@ const (
 
 // Node is a Part that is a part of a linked-list.
 type Node struct {
-	next atomic.Pointer[Node]
+	next *atomic.Pointer[Node]
 	part *Part
 
 	sentinel SentinelType // sentinel nodes contain no parts, and are to indicate the start of a new sub list
@@ -42,6 +42,7 @@ func NewPartList(next *atomic.Pointer[Node], total uint64, s SentinelType) *Part
 // Sentinel adds a new sentinel node to the list, and returns the sub list starting from that sentinel.
 func (l *PartList) Sentinel(s SentinelType) *PartList {
 	node := &Node{
+		next:     &atomic.Pointer[Node]{},
 		sentinel: s,
 	}
 	for { // continue until a successful compare and swap occurs
@@ -57,6 +58,7 @@ func (l *PartList) Sentinel(s SentinelType) *PartList {
 // Prepend a node onto the front of the list.
 func (l *PartList) Prepend(part *Part) *Node {
 	node := &Node{
+		next: &atomic.Pointer[Node]{},
 		part: part,
 	}
 	for { // continue until a successful compare and swap occurs
