@@ -111,9 +111,9 @@ type HashAggregate struct {
 	pool                  memory.Allocator
 	tracer                trace.Tracer
 	resultColumnName      string
-	groupByCols           map[string]builder.ColumnBuilder
+	groupByCols           map[string]array.Builder
 	colOrdering           []string
-	arraysToAggregate     []builder.ColumnBuilder
+	arraysToAggregate     []array.Builder
 	hashToAggregate       map[uint64]int
 	groupByColumnMatchers []logicalplan.Expr
 	columnToAggregate     logicalplan.Expr
@@ -143,9 +143,9 @@ func NewHashAggregate(
 		pool:              pool,
 		tracer:            tracer,
 		resultColumnName:  resultColumnName,
-		groupByCols:       map[string]builder.ColumnBuilder{},
+		groupByCols:       map[string]array.Builder{},
 		colOrdering:       []string{},
-		arraysToAggregate: make([]builder.ColumnBuilder, 0),
+		arraysToAggregate: make([]array.Builder, 0),
 		hashToAggregate:   map[uint64]int{},
 		columnToAggregate: columnToAggregate,
 		// TODO: Matchers can be optimized to be something like a radix tree or just a fast-lookup datastructure for exact matches or prefix matches.
@@ -308,7 +308,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 
 		k, ok := a.hashToAggregate[hash]
 		if !ok {
-			agg := builder.NewBuilder(a.pool, columnToAggregate.DataType())
+			agg := array.NewBuilder(a.pool, columnToAggregate.DataType())
 			a.arraysToAggregate = append(a.arraysToAggregate, agg)
 			k = len(a.arraysToAggregate) - 1
 			a.hashToAggregate[hash] = k
@@ -319,7 +319,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 
 				groupByCol, found := a.groupByCols[fieldName]
 				if !found {
-					groupByCol = builder.NewBuilder(a.pool, groupByFields[j].Type)
+					groupByCol = array.NewBuilder(a.pool, groupByFields[j].Type)
 					a.groupByCols[fieldName] = groupByCol
 					a.colOrdering = append(a.colOrdering, fieldName)
 				}
