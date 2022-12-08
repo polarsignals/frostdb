@@ -3,6 +3,7 @@ package logicalplan
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
@@ -470,4 +471,46 @@ func (f *AggregationFunction) Alias(alias string) *AliasExpr {
 		Expr:  f,
 		Alias: alias,
 	}
+}
+
+func Duration(d time.Duration) *DurationExpr {
+	return &DurationExpr{duration: d}
+}
+
+type DurationExpr struct {
+	duration time.Duration
+}
+
+func (d *DurationExpr) DataType(schema *parquet.Schema) (arrow.DataType, error) {
+	return &arrow.DurationType{}, nil
+}
+
+func (d *DurationExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(d)
+	if !continu {
+		return false
+	}
+
+	return visitor.PostVisit(d)
+}
+
+func (d *DurationExpr) Name() string {
+	return ""
+}
+
+func (d *DurationExpr) ColumnsUsedExprs() []Expr {
+	// DurationExpr expect to work on a timestamp column
+	return []Expr{Col("timestamp")}
+}
+
+func (d *DurationExpr) MatchColumn(columnName string) bool {
+	return columnName == "timestamp"
+}
+
+func (d *DurationExpr) Computed() bool {
+	return false
+}
+
+func (d *DurationExpr) Value() time.Duration {
+	return d.duration
 }
