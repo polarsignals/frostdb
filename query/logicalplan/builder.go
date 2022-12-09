@@ -108,15 +108,15 @@ func (b Builder) Distinct(
 }
 
 func (b Builder) Aggregate(
-	aggExpr Expr,
-	groupExprs ...Expr,
+	aggExpr []Expr,
+	groupExprs []Expr,
 ) Builder {
 	return Builder{
 		plan: &LogicalPlan{
 			Input: b.plan,
 			Aggregation: &Aggregation{
 				GroupExprs: groupExprs,
-				AggExpr:    aggExpr,
+				AggExprs:   aggExpr,
 			},
 		},
 	}

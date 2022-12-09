@@ -146,7 +146,7 @@ func ValidateSingleFieldSet(plan *LogicalPlan) *PlanValidationError {
 // ValidateAggregation validates the logical plan's aggregation step.
 func ValidateAggregation(plan *LogicalPlan) *PlanValidationError {
 	// check that the expression is not nil
-	if plan.Aggregation.AggExpr == nil {
+	if plan.Aggregation.AggExprs == nil {
 		return &PlanValidationError{
 			plan:    plan,
 			message: "invalid aggregation: expression cannot be nil",
@@ -167,17 +167,23 @@ func ValidateAggregation(plan *LogicalPlan) *PlanValidationError {
 }
 
 func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
+	// TODO: Check that aggregation columns don't have the same result name
+
 	// check that the aggregation expression has the required structure
 	colFinder := newTypeFinder((*Column)(nil))
-	plan.Aggregation.AggExpr.Accept(&colFinder)
+	for _, expr := range plan.Aggregation.AggExprs {
+		expr.Accept(&colFinder)
+	}
 
 	aggFuncFinder := newTypeFinder((*AggregationFunction)(nil))
-	plan.Aggregation.AggExpr.Accept(&aggFuncFinder)
+	for _, expr := range plan.Aggregation.AggExprs {
+		expr.Accept(&aggFuncFinder)
+	}
 
 	if colFinder.result == nil || aggFuncFinder.result == nil {
 		return &ExprValidationError{
 			message: "aggregation expression is invalid. must contain AggregationFunction and Column",
-			expr:    plan.Aggregation.AggExpr,
+			expr:    plan.Aggregation.AggExprs[0], // TODO
 		}
 	}
 
@@ -192,7 +198,7 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 	if !found {
 		return &ExprValidationError{
 			message: fmt.Sprintf("column not found: %s", colExpr.ColumnName),
-			expr:    plan.Aggregation.AggExpr,
+			expr:    plan.Aggregation.AggExprs[0], // TODO
 		}
 	}
 
@@ -204,12 +210,12 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 		case AggFuncSum:
 			return &ExprValidationError{
 				message: "cannot sum text column",
-				expr:    plan.Aggregation.AggExpr,
+				expr:    plan.Aggregation.AggExprs[0], // TODO
 			}
 		case AggFuncMax:
 			return &ExprValidationError{
 				message: "cannot max text column",
-				expr:    plan.Aggregation.AggExpr,
+				expr:    plan.Aggregation.AggExprs[0], // TODO
 			}
 		}
 	}

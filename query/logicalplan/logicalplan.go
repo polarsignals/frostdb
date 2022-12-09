@@ -210,10 +210,10 @@ func (p *Projection) String() string {
 }
 
 type Aggregation struct {
+	AggExprs   []Expr
 	GroupExprs []Expr
-	AggExpr    Expr
 }
 
 func (a *Aggregation) String() string {
-	return "Aggregation " + fmt.Sprint(a.AggExpr) + " Group: " + fmt.Sprint(a.GroupExprs)
+	return "Aggregation " + fmt.Sprint(a.AggExprs) + " Group: " + fmt.Sprint(a.GroupExprs)
 }

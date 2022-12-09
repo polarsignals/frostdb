@@ -60,8 +60,8 @@ func TestInputSchemaGetter(t *testing.T) {
 		Scan(&mockTableProvider{schema}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()
@@ -72,8 +72,8 @@ func TestInputSchemaGetter(t *testing.T) {
 		ScanSchema(&mockTableProvider{schema}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()
@@ -84,8 +84,8 @@ func TestInputSchemaGetter(t *testing.T) {
 	plan, _ = (&Builder{}).
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()

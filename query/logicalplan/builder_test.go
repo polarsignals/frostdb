@@ -15,8 +15,8 @@ func TestLogicalPlanBuilder(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()
@@ -32,10 +32,10 @@ func TestLogicalPlanBuilder(t *testing.T) {
 		Input: &LogicalPlan{
 			Aggregation: &Aggregation{
 				GroupExprs: []Expr{&Column{ColumnName: "stacktrace"}},
-				AggExpr: &AliasExpr{
+				AggExprs: []Expr{&AliasExpr{
 					Expr:  &AggregationFunction{Func: AggFuncSum, Expr: &Column{ColumnName: "value"}},
 					Alias: "value_sum",
-				},
+				}},
 			},
 			Input: &LogicalPlan{
 				Filter: &Filter{

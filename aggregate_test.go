@@ -104,8 +104,8 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 			var res arrow.Record
 			err = engine.ScanTable("test").
 				Aggregate(
-					testCase.fn(logicalplan.Col("value")).Alias(testCase.alias),
-					logicalplan.Col("labels.label2"),
+					[]logicalplan.Expr{testCase.fn(logicalplan.Col("value")).Alias(testCase.alias)},
+					[]logicalplan.Expr{logicalplan.Col("labels.label2")},
 				).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 				r.Retain()
 				res = r
@@ -200,12 +200,18 @@ func TestAggregationProjection(t *testing.T) {
 	records := []arrow.Record{}
 	err = engine.ScanTable("test").
 		Aggregate(
-			logicalplan.Sum(logicalplan.Col("value")),
-			logicalplan.DynCol("labels"),
-			logicalplan.Col("timestamp"),
+			[]logicalplan.Expr{
+				logicalplan.Sum(logicalplan.Col("value")),
+				logicalplan.Max(logicalplan.Col("value")),
+			},
+			[]logicalplan.Expr{
+				logicalplan.DynCol("labels"),
+				logicalplan.Col("timestamp"),
+			},
 		).
 		Project(
 			logicalplan.Col(logicalplan.Sum(logicalplan.Col("value")).Name()),
+			logicalplan.Col(logicalplan.Max(logicalplan.Col("value")).Name()),
 			logicalplan.DynCol("labels"),
 			logicalplan.Col("timestamp").Gt(logicalplan.Literal(1)).Alias("timestamp"),
 		).
@@ -217,7 +223,7 @@ func TestAggregationProjection(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(records))
 	record := records[0]
-	require.Equal(t, int64(6), record.NumCols())
+	require.Equal(t, int64(7), record.NumCols())
 	require.Equal(t, int64(3), record.NumRows())
 
 	require.True(t, record.Schema().HasField("timestamp"))
@@ -226,6 +232,7 @@ func TestAggregationProjection(t *testing.T) {
 	require.True(t, record.Schema().HasField("labels.label3"))
 	require.True(t, record.Schema().HasField("labels.label4"))
 	require.True(t, record.Schema().HasField("sum(value)"))
+	require.True(t, record.Schema().HasField("max(value)"))
 }
 
 // go test -bench=BenchmarkAggregation -benchmem -count=10 . | tee BenchmarkAggregation
@@ -279,22 +286,34 @@ func BenchmarkAggregation(b *testing.B) {
 		name: "sum",
 		builder: engine.ScanTable("test").
 			Aggregate(
-				logicalplan.Sum(logicalplan.Col("value")),
-				logicalplan.Col("labels.label2"),
+				[]logicalplan.Expr{
+					logicalplan.Sum(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
 			),
 	}, {
 		name: "count",
 		builder: engine.ScanTable("test").
 			Aggregate(
-				logicalplan.Count(logicalplan.Col("value")),
-				logicalplan.Col("labels.label2"),
+				[]logicalplan.Expr{
+					logicalplan.Count(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
 			),
 	}, {
 		name: "max",
 		builder: engine.ScanTable("test").
 			Aggregate(
-				logicalplan.Max(logicalplan.Col("value")),
-				logicalplan.Col("labels.label2"),
+				[]logicalplan.Expr{
+					logicalplan.Max(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
 			),
 	}} {
 		b.Run(bc.name, func(b *testing.B) {

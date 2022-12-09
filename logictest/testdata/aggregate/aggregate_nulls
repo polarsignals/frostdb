@@ -26,3 +26,9 @@ select count(value) as value_count group by labels.label2
 ----
         1
 value2  2
+
+exec
+select sum(value) as value_sum, count(value) as value_count group by labels.label2
+----
+        1       1
+value2  5       2

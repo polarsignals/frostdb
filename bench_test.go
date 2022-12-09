@@ -71,7 +71,10 @@ func getLatest15MinInterval(ctx context.Context, b testing.TB, engine *query.Loc
 	var result arrow.Record
 	require.NoError(b, engine.ScanTable(tableName).
 		Aggregate(
-			logicalplan.Max(logicalplan.Col("timestamp")),
+			[]logicalplan.Expr{
+				logicalplan.Max(logicalplan.Col("timestamp")),
+			},
+			nil,
 		).Execute(ctx,
 		func(ctx context.Context, r arrow.Record) error {
 			r.Retain()
@@ -156,8 +159,12 @@ func BenchmarkQuery(b *testing.B) {
 					logicalplan.And(filterExprs(start, end)...),
 				).
 				Aggregate(
-					logicalplan.Sum(logicalplan.Col("value")),
-					logicalplan.Col("stacktrace"),
+					[]logicalplan.Expr{
+						logicalplan.Sum(logicalplan.Col("value")),
+					},
+					[]logicalplan.Expr{
+						logicalplan.Col("stacktrace"),
+					},
 				).
 				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {
@@ -178,9 +185,13 @@ func BenchmarkQuery(b *testing.B) {
 					logicalplan.And(filterExprs(start, end)...),
 				).
 				Aggregate(
-					logicalplan.Sum(logicalplan.Col("value")),
-					logicalplan.DynCol("labels"),
-					logicalplan.Col("timestamp"),
+					[]logicalplan.Expr{
+						logicalplan.Sum(logicalplan.Col("value")),
+					},
+					[]logicalplan.Expr{
+						logicalplan.DynCol("labels"),
+						logicalplan.Col("timestamp"),
+					},
 				).
 				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {

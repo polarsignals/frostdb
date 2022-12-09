@@ -59,7 +59,7 @@ func TestCanTraverseInputThatIsInvalid(t *testing.T) {
 
 func TestAggregationMustHaveExpr(t *testing.T) {
 	_, err := (&Builder{}).
-		Aggregate(nil).
+		Aggregate(nil, nil).
 		Build()
 
 	require.NotNil(t, err)
@@ -70,13 +70,14 @@ func TestAggregationMustHaveExpr(t *testing.T) {
 }
 
 func TestAggregationExprCannotHaveInvalidType(t *testing.T) {
-	invalidExprs := []Expr{
-		Literal(4),
-		Col("Test"),
+	invalidExprs := [][]Expr{
+		{Literal(4)},
+		{Col("Test")},
 	}
+
 	for _, expr := range invalidExprs {
 		_, err := (&Builder{}).
-			Aggregate(expr).
+			Aggregate(expr, nil).
 			Build()
 
 		require.NotNil(t, err)
@@ -93,7 +94,7 @@ func TestAggregationExprCannotHaveInvalidType(t *testing.T) {
 func TestAggregationExprColumnMustExistInSchema(t *testing.T) {
 	_, err := (&Builder{}).
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-		Aggregate(Sum(Col("bad_column"))).
+		Aggregate([]Expr{Sum(Col("bad_column"))}, nil).
 		Build()
 
 	require.NotNil(t, err)
@@ -122,7 +123,7 @@ func TestAggregationCannotSumOrMaxTextColumn(t *testing.T) {
 	} {
 		_, err := (&Builder{}).
 			Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-			Aggregate(testCase.fn(Col("example_type"))).
+			Aggregate([]Expr{testCase.fn(Col("example_type"))}, nil).
 			Build()
 
 		require.NotNil(t, err)

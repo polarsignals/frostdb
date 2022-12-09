@@ -12,7 +12,7 @@ import (
 )
 
 type Builder interface {
-	Aggregate(aggExpr logicalplan.Expr, groupExprs ...logicalplan.Expr) Builder
+	Aggregate(aggExpr, groupExprs []logicalplan.Expr) Builder
 	Filter(expr logicalplan.Expr) Builder
 	Distinct(expr ...logicalplan.Expr) Builder
 	Project(projections ...logicalplan.Expr) Builder
@@ -74,13 +74,13 @@ func (e *LocalEngine) ScanSchema(name string) Builder {
 }
 
 func (b LocalQueryBuilder) Aggregate(
-	aggExpr logicalplan.Expr,
-	groupExprs ...logicalplan.Expr,
+	aggExpr []logicalplan.Expr,
+	groupExprs []logicalplan.Expr,
 ) Builder {
 	return LocalQueryBuilder{
 		pool:        b.pool,
 		tracer:      b.tracer,
-		planBuilder: b.planBuilder.Aggregate(aggExpr, groupExprs...),
+		planBuilder: b.planBuilder.Aggregate(aggExpr, groupExprs),
 	}
 }
 

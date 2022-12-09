@@ -60,8 +60,8 @@ func TestBuildPhysicalPlan(t *testing.T) {
 		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(logicalplan.Col("labels.test").Eq(logicalplan.Literal("abc"))).
 		Aggregate(
-			logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
-			logicalplan.Col("stacktrace"),
+			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum")},
+			[]logicalplan.Expr{logicalplan.Col("stacktrace")},
 		).
 		Project(logicalplan.Col("stacktrace"), logicalplan.Col("value_sum")).
 		Build()

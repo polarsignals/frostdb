@@ -21,3 +21,18 @@ exec
 select count(value) as value_count group by labels.label2
 ----
 value2  3
+
+exec
+select sum(value), count(value) group by stacktrace
+----
+stack1  6       3
+
+exec
+select sum(value) as value_sum, count(value) as value_count group by stacktrace
+----
+stack1  6       3
+
+exec
+select sum(value), count(value), max(value) group by labels.label2
+----
+value2  6       3       3
