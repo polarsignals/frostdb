@@ -852,6 +852,10 @@ func (s *Schema) SerializeBuffer(w io.Writer, buffer *Buffer) error {
 	return nil
 }
 
+// bloomFilterBitsPerValue is the number of bits used by the bloom filter. 10
+// was the default value used by parquet before it was made configurable.
+const bloomFilterBitsPerValue = 10
+
 // NewWriter returns a new parquet writer with a concrete parquet schema
 // generated using the given concrete dynamic column names.
 func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*parquet.Writer, error) {
@@ -873,7 +877,9 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 			continue
 		}
 
-		bloomFilterColumns = append(bloomFilterColumns, parquet.SplitBlockFilter(col.Path()...))
+		bloomFilterColumns = append(
+			bloomFilterColumns, parquet.SplitBlockFilter(bloomFilterBitsPerValue, col.Path()...),
+		)
 	}
 
 	return parquet.NewWriter(w,
