@@ -611,6 +611,35 @@ func (s Schema) parquetSchema(
 	}
 }
 
+// parquetSortingSchema returns the parquet schema of just the sorting columns
+// with the concrete dynamic column names given in the argument.
+func (s Schema) parquetSortingSchema(
+	dynamicColumns map[string][]string,
+) (
+	*parquet.Schema,
+	error,
+) {
+	if len(dynamicColumns) != len(s.dynamicColumns) {
+		return nil, fmt.Errorf("expected %d dynamic column names, got %d", len(s.dynamicColumns), len(dynamicColumns))
+	}
+
+	g := parquet.Group{}
+	for _, col := range s.sortingColumns {
+		colName := col.ColumnName()
+		col := s.columns[s.columnIndexes[colName]]
+		if !col.Dynamic {
+			g[colName] = col.StorageLayout
+			continue
+		}
+
+		dyn := dynamicColumnsFor(col.Name, dynamicColumns)
+		for _, name := range dyn {
+			g[colName+"."+name] = col.StorageLayout
+		}
+	}
+	return parquet.NewSchema(s.Name(), g), nil
+}
+
 // parquetSortingColumns returns the parquet sorting columns for the dynamic
 // sorting columns with the concrete dynamic column names given in the
 // argument.
