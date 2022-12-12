@@ -72,6 +72,13 @@ func (b *builderBase) AppendNulls(n int) {
 	b.length += n
 }
 
+// appendValid does the opposite of appendNulls.
+func (b *builderBase) appendValid(n int) {
+	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length+n)
+	bitutil.SetBitsTo(b.validityBitmap, int64(b.length), int64(n), true)
+	b.length += n
+}
+
 func resizeBitmap(bitmap []byte, valuesToRepresent int) []byte {
 	bytesNeeded := int(bitutil.BytesForBits(int64(valuesToRepresent)))
 	if cap(bitmap) < bytesNeeded {
@@ -223,7 +230,7 @@ func (b *OptBinaryBuilder) RepeatLastValue(n int) {
 		b.offsets = append(b.offsets, uint32(len(b.data)))
 		b.data = append(b.data, lastValue...)
 	}
-	b.length += n
+	b.appendValid(n)
 }
 
 // ResetToLength is specific to distinct optimizations in FrostDB.
@@ -340,7 +347,7 @@ func (b *OptInt64Builder) RepeatLastValue(n int) {
 	for i := b.length; i < b.length+n; i++ {
 		b.data[i] = lastValue
 	}
-	b.length += n
+	b.appendValid(n)
 }
 
 // ResetToLength is specific to distinct optimizations in FrostDB.
@@ -363,15 +370,6 @@ func NewOptBooleanBuilder(dtype arrow.DataType) *OptBooleanBuilder {
 	b := &OptBooleanBuilder{}
 	b.dtype = dtype
 	return b
-}
-
-func (b *OptBooleanBuilder) resizeData(neededLength int) {
-	if cap(b.data) < neededLength {
-		oldData := b.data
-		b.data = make([]byte, bitutil.NextPowerOf2(neededLength))
-		copy(b.data, oldData)
-	}
-	b.data = b.data[:neededLength]
 }
 
 func (b *OptBooleanBuilder) Release() {
@@ -460,11 +458,8 @@ func (b *OptBooleanBuilder) RepeatLastValue(n int) {
 
 	lastValue := bitutil.BitIsSet(b.data, b.length-1)
 	b.data = resizeBitmap(b.data, b.length+n)
-	for i := b.length; i < b.length+n; i++ {
-		bitutil.SetBitTo(b.data, b.length, lastValue)
-		bitutil.SetBitTo(b.validityBitmap, b.length, true)
-		b.length++
-	}
+	bitutil.SetBitsTo(b.data, int64(b.length), int64(n), lastValue)
+	b.appendValid(n)
 }
 
 // ResetToLength is specific to distinct optimizations in FrostDB.
