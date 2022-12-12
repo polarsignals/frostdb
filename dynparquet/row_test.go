@@ -6,6 +6,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
+
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
 type TestStructMiddleList struct {
@@ -141,6 +143,37 @@ func TestLess(t *testing.T) {
 	require.False(t, schema.RowLessThan(row2.Get(0), row1.Get(0)))
 	require.False(t, schema.RowLessThan(row3.Get(0), row1.Get(0)))
 	require.False(t, schema.RowLessThan(row3.Get(0), row2.Get(0)))
+
+	t.Run("SortingColSubset", func(t *testing.T) {
+		// This is a regression test where the sorting columns are only a small
+		// subset of the schema.
+		def := SampleDefinition()
+		def.SortingColumns = []*schemapb.SortingColumn{
+			{
+				Name:      "timestamp",
+				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+			},
+		}
+		schema, err := SchemaFromDefinition(def)
+		require.NoError(t, err)
+
+		// Modify only the timestamp, which is the sorting column.
+		modifiedSample := samples[0]
+		modifiedSample.Timestamp++
+
+		rg, err := (Samples{modifiedSample}).ToBuffer(schema)
+		require.NoError(t, err)
+		row4 := &DynamicRows{
+			Schema:         rg.Schema(),
+			DynamicColumns: rg.DynamicColumns(),
+			Rows:           make([]parquet.Row, 1),
+			fields:         rg.Schema().Fields(),
+		}
+		n, err = rg.Rows().ReadRows(row4.Rows)
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+		require.True(t, schema.RowLessThan(row1.Get(0), row4.Get(0)))
+	})
 }
 
 func TestLessWithDynamicSchemas(t *testing.T) {

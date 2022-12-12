@@ -50,6 +50,10 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 func (s *Schema) Cmp(a, b *DynamicRow) int {
 	dynamicColumns := mergeDynamicColumnSets([]map[string][]string{a.DynamicColumns, b.DynamicColumns})
 	cols := s.parquetSortingColumns(dynamicColumns)
+	sortingSchema, err := s.parquetSortingSchema(dynamicColumns)
+	if err != nil {
+		panic(fmt.Sprintf("unexpected schema state: %v", err))
+	}
 	// Iterate over all the sorting columns to prepare the rows for comparison.
 	// The main reason we can't directly pass in {a,b}.Row is that they might
 	// not have explicit values for dynamic columns we want to compare. These
@@ -77,11 +81,7 @@ func (s *Schema) Cmp(a, b *DynamicRow) int {
 		rowB[i] = rowB[i].Level(rowB[i].RepetitionLevel(), rowB[i].DefinitionLevel(), i)
 	}
 
-	ps, err := s.parquetSchema(dynamicColumns)
-	if err != nil {
-		panic(fmt.Sprintf("unexpected schema state: %v", err))
-	}
-	return ps.Comparator(cols...)(rowA, rowB)
+	return sortingSchema.Comparator(cols...)(rowA, rowB)
 }
 
 func extractValues(a, b *DynamicRow, aIndex, bIndex int) ([]parquet.Value, []parquet.Value) {
