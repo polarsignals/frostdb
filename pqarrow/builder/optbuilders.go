@@ -121,6 +121,7 @@ func (b *OptBinaryBuilder) Release() {
 // AppendNull adds a new null value to the array being built. This is slow,
 // don't use it.
 func (b *OptBinaryBuilder) AppendNull() {
+	b.offsets = append(b.offsets, uint32(len(b.data)))
 	b.builderBase.AppendNulls(1)
 }
 

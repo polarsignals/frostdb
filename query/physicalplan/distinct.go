@@ -81,9 +81,9 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 		}
 	}
 
-	resBuilders := make([]array.Builder, 0, len(distinctArrays))
+	resBuilders := make([]builder.ColumnBuilder, 0, len(distinctArrays))
 	for _, arr := range distinctArrays {
-		resBuilders = append(resBuilders, array.NewBuilder(d.pool, arr.DataType()))
+		resBuilders = append(resBuilders, builder.NewBuilder(d.pool, arr.DataType()))
 	}
 	rows := int64(0)
 
