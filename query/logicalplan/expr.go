@@ -92,6 +92,10 @@ func (e *BinaryExpr) ColumnsUsedExprs() []Expr {
 	return append(e.Left.ColumnsUsedExprs(), e.Right.ColumnsUsedExprs()...)
 }
 
+func (e *BinaryExpr) MatchPath(path string) bool {
+	return strings.HasPrefix(e.Name(), path)
+}
+
 func (e *BinaryExpr) MatchColumn(columnName string) bool {
 	return e.Name() == columnName
 }
@@ -127,12 +131,56 @@ func (c *Column) Name() string {
 
 func (c *Column) DataType(s *parquet.Schema) (arrow.DataType, error) {
 	for _, field := range s.Fields() {
-		if field.Name() == c.ColumnName {
-			return convert.ParquetNodeToType(field)
+		af, err := c.findField("", field)
+		if err != nil {
+			return nil, err
+		}
+		if af.Name != "" {
+			return af.Type, nil
 		}
 	}
 
 	return nil, errors.New("column not found")
+}
+
+func fullPath(prefix string, parquetField parquet.Field) string {
+	if prefix == "" {
+		return parquetField.Name()
+	}
+	return strings.Join([]string{prefix, parquetField.Name()}, ".")
+}
+
+func (c *Column) findField(prefix string, field parquet.Field) (arrow.Field, error) {
+	switch field.Leaf() {
+	case true:
+		if c.ColumnName == fullPath(prefix, field) {
+			return convert.ParquetFieldToArrowField(field)
+		}
+	default:
+		switch {
+		case c.ColumnName == fullPath(prefix, field):
+			return convert.ParquetFieldToArrowField(field)
+		case strings.HasPrefix(c.ColumnName, fullPath(prefix, field)):
+			group := []arrow.Field{}
+			for _, f := range field.Fields() {
+				af, err := c.findField(fullPath(prefix, field), f)
+				if err != nil {
+					return arrow.Field{}, err
+				}
+				if af.Name != "" {
+					group = append(group, af)
+				}
+			}
+			if len(group) > 0 {
+				return arrow.Field{
+					Name:     field.Name(),
+					Type:     arrow.StructOf(group...),
+					Nullable: field.Optional(),
+				}, nil
+			}
+		}
+	}
+	return arrow.Field{}, nil
 }
 
 func (c *Column) Alias(alias string) *AliasExpr {
@@ -141,6 +189,10 @@ func (c *Column) Alias(alias string) *AliasExpr {
 
 func (c *Column) ColumnsUsedExprs() []Expr {
 	return []Expr{c}
+}
+
+func (c *Column) MatchPath(path string) bool {
+	return strings.HasPrefix(c.Name(), path)
 }
 
 func (c *Column) MatchColumn(columnName string) bool {
@@ -288,6 +340,10 @@ func (c *DynamicColumn) ColumnsUsedExprs() []Expr {
 	return []Expr{c}
 }
 
+func (c *DynamicColumn) MatchPath(path string) bool {
+	return strings.HasPrefix(c.Name(), path)
+}
+
 func (c *DynamicColumn) MatchColumn(columnName string) bool {
 	return strings.HasPrefix(columnName, c.ColumnName+".")
 }
@@ -341,6 +397,10 @@ func (e *LiteralExpr) Accept(visitor Visitor) bool {
 
 func (e *LiteralExpr) ColumnsUsedExprs() []Expr { return nil }
 
+func (e *LiteralExpr) MatchPath(path string) bool {
+	return strings.HasPrefix(e.Name(), path)
+}
+
 func (e *LiteralExpr) MatchColumn(columnName string) bool {
 	return e.Name() == columnName
 }
@@ -382,6 +442,10 @@ func (f *AggregationFunction) ColumnsUsedExprs() []Expr {
 
 func (f *AggregationFunction) MatchColumn(columnName string) bool {
 	return f.Name() == columnName
+}
+
+func (f *AggregationFunction) MatchPath(path string) bool {
+	return strings.HasPrefix(f.Name(), path)
 }
 
 type AggFunc uint32
@@ -448,6 +512,10 @@ func (e *AliasExpr) ColumnsUsedExprs() []Expr {
 	return e.Expr.ColumnsUsedExprs()
 }
 
+func (e *AliasExpr) MatchPath(path string) bool {
+	return strings.HasPrefix(e.Name(), path)
+}
+
 func (e *AliasExpr) MatchColumn(columnName string) bool {
 	return e.Name() == columnName
 }
@@ -483,6 +551,10 @@ type DurationExpr struct {
 
 func (d *DurationExpr) DataType(schema *parquet.Schema) (arrow.DataType, error) {
 	return &arrow.DurationType{}, nil
+}
+
+func (d *DurationExpr) MatchPath(path string) bool {
+	return false
 }
 
 func (d *DurationExpr) Accept(visitor Visitor) bool {
