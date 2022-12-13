@@ -1,6 +1,7 @@
 package convert
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -9,6 +10,7 @@ import (
 )
 
 func TestParquetNodeToType(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		parquetNode parquet.Node
 		arrowType   arrow.DataType
@@ -29,12 +31,29 @@ func TestParquetNodeToType(t *testing.T) {
 			parquetNode: parquet.Leaf(parquet.BooleanType),
 			arrowType:   &arrow.BooleanType{},
 		},
+		{
+			parquetNode: parquet.Group{},
+			arrowType:   &arrow.StructType{},
+		},
+		{
+			parquetNode: parquet.List(parquet.String()), // NOTE: can't determine string vs binary in conversion
+			arrowType:   arrow.ListOf(&arrow.BinaryType{}),
+		},
+		{
+			parquetNode: parquet.Map( // NOTE: can't determine string vs binary in conversion
+				parquet.String(),
+				parquet.String(),
+			),
+			arrowType: arrow.MapOf(&arrow.BinaryType{}, &arrow.BinaryType{}),
+		},
 	}
 
 	for _, c := range cases {
-		typ, err := ParquetNodeToType(c.parquetNode)
-		require.NoError(t, err)
-		require.Equal(t, c.arrowType, typ)
+		t.Run(fmt.Sprintf("%v", c.arrowType.Name()), func(t *testing.T) {
+			typ, err := ParquetNodeToType(c.parquetNode)
+			require.NoError(t, err)
+			require.Equal(t, c.arrowType, typ)
+		})
 	}
 
 	errCases := []struct {
@@ -95,25 +114,12 @@ func TestParquetNodeToType(t *testing.T) {
 			parquetNode: parquet.Timestamp(parquet.Millisecond),
 			msg:         "unsupported logical type: TIMESTAMP(isAdjustedToUTC=true,unit=MILLIS)",
 		},
-		{
-			parquetNode: parquet.List(parquet.String()),
-			msg:         "unsupported logical type: LIST",
-		},
-		{
-			parquetNode: parquet.Map(
-				parquet.String(),
-				parquet.String(),
-			),
-			msg: "unsupported logical type: MAP",
-		},
-		{
-			parquetNode: parquet.Group{},
-			msg:         "unsupported type: group",
-		},
 		// nullType is unexported by segmentio/parquet-go.
 	}
 	for _, c := range errCases {
-		_, err := ParquetNodeToType(c.parquetNode)
-		require.EqualError(t, err, c.msg)
+		t.Run(c.msg, func(t *testing.T) {
+			typ, err := ParquetNodeToType(c.parquetNode)
+			require.EqualError(t, err, c.msg, "type returned: %v", typ)
+		})
 	}
 }
