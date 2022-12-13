@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/apache/arrow/go/v8/arrow"
@@ -81,43 +80,34 @@ func ParquetRowGroupToArrowSchema(
 }
 
 func parquetFieldToArrowField(prefix string, field parquet.Field, physicalProjections []logicalplan.Expr) (arrow.Field, error) {
-	switch field.Leaf() {
-	case true:
-		if includedProjection(physicalProjections, fullPath(prefix, field)) {
-			af, err := convert.ParquetFieldToArrowField(field)
-			if err != nil {
-				return arrow.Field{}, err
-			}
-			return af, nil
+	if includedProjection(physicalProjections, fullPath(prefix, field)) {
+		af, err := convert.ParquetFieldToArrowField(field)
+		if err != nil {
+			return arrow.Field{}, err
 		}
-	default:
-		switch {
-		case includedProjection(physicalProjections, fullPath(prefix, field)):
-			af, err := convert.ParquetFieldToArrowField(field)
+		return af, nil
+	}
+
+	if !field.Leaf() && includedPathProjection(physicalProjections, fullPath(prefix, field)) {
+		group := []arrow.Field{}
+		for _, f := range field.Fields() {
+			af, err := parquetFieldToArrowField(fullPath(prefix, field), f, physicalProjections)
 			if err != nil {
 				return arrow.Field{}, err
 			}
-			return af, nil
-		case includedPathProjection(physicalProjections, fullPath(prefix, field)):
-			group := []arrow.Field{}
-			for _, f := range field.Fields() {
-				af, err := parquetFieldToArrowField(fullPath(prefix, field), f, physicalProjections)
-				if err != nil {
-					return arrow.Field{}, err
-				}
-				if af.Name != "" {
-					group = append(group, af)
-				}
+			if af.Name != "" {
+				group = append(group, af)
 			}
-			if len(group) > 0 {
-				return arrow.Field{
-					Name:     field.Name(),
-					Type:     arrow.StructOf(group...),
-					Nullable: field.Optional(),
-				}, nil
-			}
+		}
+		if len(group) > 0 {
+			return arrow.Field{
+				Name:     field.Name(),
+				Type:     arrow.StructOf(group...),
+				Nullable: field.Optional(),
+			}, nil
 		}
 	}
+
 	return arrow.Field{}, nil
 }
 
@@ -125,7 +115,7 @@ func fullPath(prefix string, parquetField parquet.Field) string {
 	if prefix == "" {
 		return parquetField.Name()
 	}
-	return strings.Join([]string{prefix, parquetField.Name()}, ".")
+	return prefix + "." + parquetField.Name()
 }
 
 func includedPathProjection(projections []logicalplan.Expr, name string) bool {
