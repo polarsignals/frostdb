@@ -2,11 +2,14 @@ package dynparquet
 
 import (
 	"sort"
+	"testing"
 
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
+	"github.com/stretchr/testify/require"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 )
 
 type Label struct {
@@ -219,4 +222,125 @@ func NewTestSamples() Samples {
 			Value:     3,
 		},
 	}
+}
+
+func NewNestedSampleSchema(t *testing.T) *Schema {
+	def := &schemav2pb.Schema{
+		Root: &schemav2pb.Group{
+			Name: "nested",
+			Nodes: []*schemav2pb.Node{
+				{
+					Type: &schemav2pb.Node_Group{
+						Group: &schemav2pb.Group{
+							Name: "labels",
+							Nodes: []*schemav2pb.Node{
+								{
+									Type: &schemav2pb.Node_Leaf{
+										Leaf: &schemav2pb.Leaf{
+											Name: "label1",
+											StorageLayout: &schemav2pb.StorageLayout{
+												Type:     schemav2pb.StorageLayout_TYPE_STRING,
+												Nullable: true,
+												Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+											},
+										},
+									},
+								},
+								{
+									Type: &schemav2pb.Node_Leaf{
+										Leaf: &schemav2pb.Leaf{
+											Name: "label2",
+											StorageLayout: &schemav2pb.StorageLayout{
+												Type:     schemav2pb.StorageLayout_TYPE_STRING,
+												Nullable: true,
+												Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				{ // NOTE that this nested group structure for a list of ints is how parquet is converted from an arrow list of int64s
+					Type: &schemav2pb.Node_Group{
+						Group: &schemav2pb.Group{
+							Name: "timestamps",
+							Nodes: []*schemav2pb.Node{
+								{
+									Type: &schemav2pb.Node_Group{
+										Group: &schemav2pb.Group{
+											Name:     "list",
+											Repeated: true,
+											Nodes: []*schemav2pb.Node{
+												{
+													Type: &schemav2pb.Node_Leaf{
+														Leaf: &schemav2pb.Leaf{
+															Name: "element",
+															StorageLayout: &schemav2pb.StorageLayout{
+																Type:     schemav2pb.StorageLayout_TYPE_INT64,
+																Nullable: true,
+																Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					Type: &schemav2pb.Node_Group{
+						Group: &schemav2pb.Group{
+							Name: "values",
+							Nodes: []*schemav2pb.Node{
+								{
+									Type: &schemav2pb.Node_Group{
+										Group: &schemav2pb.Group{
+											Name:     "list",
+											Repeated: true,
+											Nodes: []*schemav2pb.Node{
+												{
+													Type: &schemav2pb.Node_Leaf{
+														Leaf: &schemav2pb.Leaf{
+															Name: "element",
+															StorageLayout: &schemav2pb.StorageLayout{
+																Type:     schemav2pb.StorageLayout_TYPE_INT64,
+																Nullable: true,
+																Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		SortingColumns: []*schemav2pb.SortingColumn{
+			{
+				Path:       "labels",
+				Direction:  schemav2pb.SortingColumn_DIRECTION_ASCENDING,
+				NullsFirst: true,
+			},
+			{
+				Path:      "timestamp",
+				Direction: schemav2pb.SortingColumn_DIRECTION_ASCENDING,
+			},
+		},
+	}
+
+	schema, err := SchemaFromDefinition(def)
+	require.NoError(t, err)
+
+	return schema
 }

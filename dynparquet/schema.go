@@ -570,11 +570,18 @@ func (s *Schema) Columns() []ColumnDefinition {
 }
 
 func (s *Schema) ParquetSchema() *parquet.Schema {
-	g := parquet.Group{}
-	for _, col := range s.columns {
-		g[col.Name] = col.StorageLayout
+	switch schema := s.def.(type) {
+	case *schemav2pb.Schema:
+		return ParquetSchemaFromV2Definition(schema)
+	case *schemapb.Schema:
+		g := parquet.Group{}
+		for _, col := range s.columns {
+			g[col.Name] = col.StorageLayout
+		}
+		return parquet.NewSchema(s.Name(), g)
+	default:
+		panic("unknown schema version")
 	}
-	return parquet.NewSchema(s.Name(), g)
 }
 
 // parquetSchema returns the parquet schema for the dynamic schema with the
