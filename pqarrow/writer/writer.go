@@ -316,7 +316,11 @@ func NewStructWriterFromOffset(offset int) NewWriterFunc {
 func (s *structWriter) WritePage(p parquet.Page) error {
 	// TODO: there's probably a more optimized way to handle a page of values here; but doing this for simplicity of implementation right meow.
 	values := make([]parquet.Value, p.NumValues())
-	p.Values().ReadValues(values)
+	_, err := p.Values().ReadValues(values)
+	// We're reading all values in the page so we always expect an io.EOF.
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("read values: %w", err)
+	}
 
 	s.Write(values)
 	return nil
@@ -430,8 +434,8 @@ func NewMapWriter(b builder.ColumnBuilder, _ int) ValueWriter {
 
 func (m *mapWriter) WritePage(p parquet.Page) error {
 	panic("not implemented")
-
 }
+
 func (m *mapWriter) Write(values []parquet.Value) {
 	panic("not implemented")
 }
