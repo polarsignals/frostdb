@@ -88,10 +88,9 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 		return nil, err
 	}
 
-	// unwrap list type
 	list := false
-	switch typ := dt.(type) {
-	case *arrow.ListType: // unwrap the list type
+	if typ, ok := dt.(*arrow.ListType); ok {
+		// Unwrap the list type.
 		list = true
 		dt = typ.Elem()
 	}

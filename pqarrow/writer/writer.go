@@ -334,8 +334,8 @@ func (s *structWriter) Write(values []parquet.Value) {
 	}
 }
 
-// findLeafBuilder is a recursive function to find the leaf builder whos column index matches the search index. It returns the number of leaves found for the given builder.
-// It returns true if one of the leaves in the builder was appended to.
+// findLeafBuilder is a recursive function to find the leaf builder whose column index matches the search index.
+// It returns the number of leaves found for the given builder and if one of the leaves in the builder was appended to.
 func (s *structWriter) findLeafBuilder(searchIndex, currentIndex int, builder array.Builder, values []parquet.Value) (int, bool) {
 	switch b := builder.(type) {
 	case *array.StructBuilder:

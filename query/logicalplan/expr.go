@@ -151,33 +151,27 @@ func fullPath(prefix string, parquetField parquet.Field) string {
 }
 
 func (c *Column) findField(prefix string, field parquet.Field) (arrow.Field, error) {
-	switch field.Leaf() {
-	case true:
-		if c.ColumnName == fullPath(prefix, field) {
-			return convert.ParquetFieldToArrowField(field)
+	if c.ColumnName == fullPath(prefix, field) {
+		return convert.ParquetFieldToArrowField(field)
+	}
+
+	if !field.Leaf() && strings.HasPrefix(c.ColumnName, fullPath(prefix, field)) {
+		group := []arrow.Field{}
+		for _, f := range field.Fields() {
+			af, err := c.findField(fullPath(prefix, field), f)
+			if err != nil {
+				return arrow.Field{}, err
+			}
+			if af.Name != "" {
+				group = append(group, af)
+			}
 		}
-	default:
-		switch {
-		case c.ColumnName == fullPath(prefix, field):
-			return convert.ParquetFieldToArrowField(field)
-		case strings.HasPrefix(c.ColumnName, fullPath(prefix, field)):
-			group := []arrow.Field{}
-			for _, f := range field.Fields() {
-				af, err := c.findField(fullPath(prefix, field), f)
-				if err != nil {
-					return arrow.Field{}, err
-				}
-				if af.Name != "" {
-					group = append(group, af)
-				}
-			}
-			if len(group) > 0 {
-				return arrow.Field{
-					Name:     field.Name(),
-					Type:     arrow.StructOf(group...),
-					Nullable: field.Optional(),
-				}, nil
-			}
+		if len(group) > 0 {
+			return arrow.Field{
+				Name:     field.Name(),
+				Type:     arrow.StructOf(group...),
+				Nullable: field.Optional(),
+			}, nil
 		}
 	}
 	return arrow.Field{}, nil
