@@ -224,6 +224,34 @@ func NewTestSamples() Samples {
 	}
 }
 
+func NestedListDef(name string, layout *schemav2pb.StorageLayout) *schemav2pb.Node_Group {
+	return &schemav2pb.Node_Group{
+		Group: &schemav2pb.Group{
+			Name: name,
+			Nodes: []*schemav2pb.Node{ // NOTE that this nested group structure for a list is for backwards compatability: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
+				{
+					Type: &schemav2pb.Node_Group{
+						Group: &schemav2pb.Group{
+							Name:     "list",
+							Repeated: true,
+							Nodes: []*schemav2pb.Node{
+								{
+									Type: &schemav2pb.Node_Leaf{
+										Leaf: &schemav2pb.Leaf{
+											Name:          "element",
+											StorageLayout: layout,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func NewNestedSampleSchema(t *testing.T) *Schema {
 	def := &schemav2pb.Schema{
 		Root: &schemav2pb.Group{
@@ -262,67 +290,19 @@ func NewNestedSampleSchema(t *testing.T) *Schema {
 						},
 					},
 				},
-				{ // NOTE that this nested group structure for a list of ints is how parquet is converted from an arrow list of int64s
-					Type: &schemav2pb.Node_Group{
-						Group: &schemav2pb.Group{
-							Name: "timestamps",
-							Nodes: []*schemav2pb.Node{
-								{
-									Type: &schemav2pb.Node_Group{
-										Group: &schemav2pb.Group{
-											Name:     "list",
-											Repeated: true,
-											Nodes: []*schemav2pb.Node{
-												{
-													Type: &schemav2pb.Node_Leaf{
-														Leaf: &schemav2pb.Leaf{
-															Name: "element",
-															StorageLayout: &schemav2pb.StorageLayout{
-																Type:     schemav2pb.StorageLayout_TYPE_INT64,
-																Nullable: true,
-																Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-															},
-														},
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
+				{
+					Type: NestedListDef("timestamps", &schemav2pb.StorageLayout{
+						Type:     schemav2pb.StorageLayout_TYPE_INT64,
+						Nullable: true,
+						Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+					}),
 				},
 				{
-					Type: &schemav2pb.Node_Group{
-						Group: &schemav2pb.Group{
-							Name: "values",
-							Nodes: []*schemav2pb.Node{
-								{
-									Type: &schemav2pb.Node_Group{
-										Group: &schemav2pb.Group{
-											Name:     "list",
-											Repeated: true,
-											Nodes: []*schemav2pb.Node{
-												{
-													Type: &schemav2pb.Node_Leaf{
-														Leaf: &schemav2pb.Leaf{
-															Name: "element",
-															StorageLayout: &schemav2pb.StorageLayout{
-																Type:     schemav2pb.StorageLayout_TYPE_INT64,
-																Nullable: true,
-																Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-															},
-														},
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
+					Type: NestedListDef("values", &schemav2pb.StorageLayout{
+						Type:     schemav2pb.StorageLayout_TYPE_INT64,
+						Nullable: true,
+						Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+					}),
 				},
 			},
 		},
