@@ -535,7 +535,7 @@ func TestList(t *testing.T) {
 
 	listArray := column.(*array.List)
 	vals := listArray.ListValues().(*array.Int64).Int64Values()
-	for i := range vals {
+	for i := range data {
 		require.Equal(
 			t,
 			data[i],
@@ -545,5 +545,144 @@ func TestList(t *testing.T) {
 			data,
 			vals,
 		)
+	}
+}
+
+func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
+	schema := dynparquet.NewNestedSampleSchema(t)
+	buf, err := schema.NewBuffer(map[string][]string{})
+	require.NoError(t, err)
+
+	_, err = buf.WriteRows([]parquet.Row{
+		{
+			parquet.ValueOf("value1").Level(0, 1, 0), // labels.label1
+			parquet.ValueOf("value1").Level(0, 1, 1), // labels.label2
+			parquet.ValueOf(1).Level(0, 2, 2),        // timestamps: [1]
+			parquet.ValueOf(2).Level(1, 2, 2),        // timestamps: [1,2]
+			parquet.ValueOf(2).Level(0, 2, 3),        // values: [2]
+			parquet.ValueOf(3).Level(1, 2, 3),        // values: [2,3]
+		},
+	})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	tests := map[string]struct {
+		physicalProjections []logicalplan.Expr
+		expectedSchema      *arrow.Schema
+	}{
+		"none": {
+			expectedSchema: arrow.NewSchema([]arrow.Field{
+				{
+					Name: "labels",
+					Type: arrow.StructOf([]arrow.Field{
+						{
+							Name:     "label1",
+							Type:     &arrow.BinaryType{},
+							Nullable: true,
+						},
+						{
+							Name:     "label2",
+							Type:     &arrow.BinaryType{},
+							Nullable: true,
+						},
+					}...),
+				},
+				{
+					Name: "timestamps",
+					Type: arrow.ListOf(&arrow.Int64Type{}),
+				},
+				{
+					Name: "values",
+					Type: arrow.ListOf(&arrow.Int64Type{}),
+				},
+			}, nil),
+		},
+		"label 1 select": {
+			physicalProjections: []logicalplan.Expr{
+				logicalplan.Col("labels.label1"),
+				logicalplan.Col("timestamps"),
+			},
+			expectedSchema: arrow.NewSchema([]arrow.Field{
+				{
+					Name: "labels",
+					Type: arrow.StructOf([]arrow.Field{
+						{
+							Name:     "label1",
+							Type:     &arrow.BinaryType{},
+							Nullable: true,
+						},
+					}...),
+				},
+				{
+					Name: "timestamps",
+					Type: arrow.ListOf(&arrow.Int64Type{}),
+				},
+			}, nil),
+		},
+		"label 2 select": {
+			physicalProjections: []logicalplan.Expr{
+				logicalplan.Col("labels.label2"),
+				logicalplan.Col("timestamps"),
+			},
+			expectedSchema: arrow.NewSchema([]arrow.Field{
+				{
+					Name: "labels",
+					Type: arrow.StructOf([]arrow.Field{
+						{
+							Name:     "label2",
+							Type:     &arrow.BinaryType{},
+							Nullable: true,
+						},
+					}...),
+				},
+				{
+					Name: "timestamps",
+					Type: arrow.ListOf(&arrow.Int64Type{}),
+				},
+			}, nil),
+		},
+		"select all labels": {
+			physicalProjections: []logicalplan.Expr{
+				logicalplan.Col("labels"),
+				logicalplan.Col("timestamps"),
+			},
+			expectedSchema: arrow.NewSchema([]arrow.Field{
+				{
+					Name: "labels",
+					Type: arrow.StructOf([]arrow.Field{
+						{
+							Name:     "label1",
+							Type:     &arrow.BinaryType{},
+							Nullable: true,
+						},
+						{
+							Name:     "label2",
+							Type:     &arrow.BinaryType{},
+							Nullable: true,
+						},
+					}...),
+				},
+				{
+					Name: "timestamps",
+					Type: arrow.ListOf(&arrow.Int64Type{}),
+				},
+			}, nil),
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			as, err := ParquetRowGroupToArrowSchema(
+				ctx,
+				buf,
+				test.physicalProjections,
+				nil,
+				nil,
+				nil,
+			)
+			require.NoError(t, err)
+			require.True(t, as.Equal(test.expectedSchema))
+		})
 	}
 }
