@@ -580,7 +580,7 @@ func (s *Schema) ParquetSchema() *parquet.Schema {
 		}
 		return parquet.NewSchema(s.Name(), g)
 	default:
-		panic("unknown schema version")
+		panic(fmt.Sprintf("unknown schema version %T", schema))
 	}
 }
 

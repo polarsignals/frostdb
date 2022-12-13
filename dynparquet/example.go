@@ -253,6 +253,7 @@ func NestedListDef(name string, layout *schemav2pb.StorageLayout) *schemav2pb.No
 }
 
 func NewNestedSampleSchema(t *testing.T) *Schema {
+	t.Helper()
 	def := &schemav2pb.Schema{
 		Root: &schemav2pb.Group{
 			Name: "nested",
