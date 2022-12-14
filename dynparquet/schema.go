@@ -13,6 +13,7 @@ import (
 	"github.com/segmentio/parquet-go/encoding"
 	"github.com/segmentio/parquet-go/format"
 	"google.golang.org/protobuf/proto"
+	anypb "google.golang.org/protobuf/types/known/anypb"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
@@ -1339,4 +1340,23 @@ func SortingColumnsFromDef(def *schemav2pb.Schema) ([]parquet.SortingColumn, err
 	}
 
 	return sortingColumns, nil
+}
+
+func SchemaFromProto(schema *anypb.Any) (*Schema, error) {
+	var def proto.Message
+	switch {
+	case schema.MessageIs(&schemav2pb.Schema{}):
+		def = &schemav2pb.Schema{}
+		if err := schema.UnmarshalTo(def); err != nil {
+			return nil, err
+		}
+	case schema.MessageIs(&schemapb.Schema{}):
+		fallthrough
+	default:
+		def = &schemapb.Schema{}
+		if err := schema.UnmarshalTo(def); err != nil {
+			return nil, err
+		}
+	}
+	return SchemaFromDefinition(def)
 }
