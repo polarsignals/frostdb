@@ -26,11 +26,11 @@ func Aggregate(
 	agg *logicalplan.Aggregation,
 	final bool,
 ) (*HashAggregate, error) {
-	aggregateColumns := make([]AggregateColumn, 0, len(agg.AggExprs))
+	aggregations := make([]Aggregation, 0, len(agg.AggExprs))
 
 	for _, expr := range agg.AggExprs {
 		var (
-			aggColumn      AggregateColumn
+			aggregation    Aggregation
 			aggFunc        logicalplan.AggFunc
 			aggFuncFound   bool
 			aggColumnFound bool
@@ -41,7 +41,7 @@ func Aggregate(
 				aggFunc = e.Func
 				aggFuncFound = true
 			case *logicalplan.Column:
-				aggColumn.expr = e
+				aggregation.expr = e
 				aggColumnFound = true
 			}
 
@@ -66,16 +66,16 @@ func Aggregate(
 			return nil, err
 		}
 
-		aggColumn.resultName = expr.Name()
-		aggColumn.function = f
+		aggregation.resultName = expr.Name()
+		aggregation.function = f
 
-		aggregateColumns = append(aggregateColumns, aggColumn)
+		aggregations = append(aggregations, aggregation)
 	}
 
 	return NewHashAggregate(
 		pool,
 		tracer,
-		aggregateColumns,
+		aggregations,
 		agg.GroupExprs,
 		final,
 	), nil
@@ -107,8 +107,8 @@ func chooseAggregationFunction(
 	}
 }
 
-// AggregateColumn groups together some lower level primitives to aggregate.
-type AggregateColumn struct {
+// Aggregation groups together some lower level primitives to for the column to be aggregated by its function.
+type Aggregation struct {
 	expr       logicalplan.Expr
 	resultName string
 	function   AggregationFunction
@@ -122,7 +122,7 @@ type AggregationFunction interface {
 type HashAggregate struct {
 	pool                  memory.Allocator
 	tracer                trace.Tracer
-	columns               []AggregateColumn
+	aggregations          []Aggregation
 	groupByCols           map[string]builder.ColumnBuilder
 	colOrdering           []string
 	hashToAggregate       map[uint64]int
@@ -142,14 +142,14 @@ type HashAggregate struct {
 func NewHashAggregate(
 	pool memory.Allocator,
 	tracer trace.Tracer,
-	columns []AggregateColumn,
+	aggregations []Aggregation,
 	groupByColumnMatchers []logicalplan.Expr,
 	finalStage bool,
 ) *HashAggregate {
 	return &HashAggregate{
 		pool:            pool,
 		tracer:          tracer,
-		columns:         columns,
+		aggregations:    aggregations,
 		groupByCols:     map[string]builder.ColumnBuilder{},
 		colOrdering:     []string{},
 		hashToAggregate: map[uint64]int{},
@@ -297,8 +297,8 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		groupByArrays = groupByArrays[:0]
 	}()
 
-	columnToAggregate := make([]arrow.Array, len(a.columns))
-	aggregateFieldFound := make([]bool, len(a.columns))
+	columnToAggregate := make([]arrow.Array, len(a.aggregations))
+	aggregateFieldFound := make([]bool, len(a.aggregations))
 
 	for i, field := range r.Schema().Fields() {
 		for _, matcher := range a.groupByColumnMatchers {
@@ -320,11 +320,11 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			}
 		}
 
-		for j, col := range a.columns {
-				if col.expr.MatchColumn(field.Name) || col.resultName == field.Name {
-					columnToAggregate[j] = r.Column(i)
-					aggregateFieldFound[j] = true
-				}
+		for j, col := range a.aggregations {
+			if col.expr.MatchColumn(field.Name) || col.resultName == field.Name {
+				columnToAggregate[j] = r.Column(i)
+				aggregateFieldFound[j] = true
+			}
 		}
 	}
 
@@ -358,9 +358,9 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		if !ok {
 			for j, col := range columnToAggregate {
 				agg := builder.NewBuilder(a.pool, col.DataType())
-				a.columns[j].arrays = append(a.columns[j].arrays, agg)
+				a.aggregations[j].arrays = append(a.aggregations[j].arrays, agg)
 			}
-			k = len(a.columns[0].arrays) - 1
+			k = len(a.aggregations[0].arrays) - 1
 			a.hashToAggregate[hash] = k
 
 			// insert new row into columns grouped by and create new aggregate array to append to.
@@ -377,7 +377,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 				// We already appended to the arrays to aggregate, so we have
 				// to account for that. We only want to back-fill null values
 				// up until the index that we are about to insert into.
-				for groupByCol.Len() < len(a.columns[0].arrays)-1 {
+				for groupByCol.Len() < len(a.aggregations[0].arrays)-1 {
 					groupByCol.AppendNull()
 				}
 
@@ -389,7 +389,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		}
 
 		for j, col := range columnToAggregate {
-			if err := builder.AppendValue(a.columns[j].arrays[k], col, i); err != nil {
+			if err := builder.AppendValue(a.aggregations[j].arrays[k], col, i); err != nil {
 				return err
 			}
 		}
@@ -403,7 +403,7 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	defer span.End()
 
 	numCols := len(a.groupByCols) + 1
-	numRows := len(a.columns[0].arrays)
+	numRows := len(a.aggregations[0].arrays)
 
 	groupByFields := make([]arrow.Field, 0, numCols)
 	groupByArrays := make([]arrow.Array, 0, numCols)
@@ -428,18 +428,18 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	aggregateColumns := append(groupByArrays)
 	aggregateFields := append(groupByFields)
 
-	for _, column := range a.columns {
+	for _, aggregation := range a.aggregations {
 		var (
 			aggregateArray arrow.Array
 			err            error
 		)
 
 		arr := make([]arrow.Array, 0, numRows)
-		for _, a := range column.arrays {
+		for _, a := range aggregation.arrays {
 			arr = append(arr, a.NewArray())
 		}
 
-		switch column.function.(type) {
+		switch aggregation.function.(type) {
 		case *CountAggregation:
 			if a.finalStage {
 				// The final stage of aggregation needs to sum up all the counts of the previous steps,
@@ -447,10 +447,10 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 				aggregateArray, err = (&Int64SumAggregation{}).Aggregate(a.pool, arr)
 			} else {
 				// If this isn't the final stage we simply run the count aggregation.
-				aggregateArray, err = column.function.Aggregate(a.pool, arr)
+				aggregateArray, err = aggregation.function.Aggregate(a.pool, arr)
 			}
 		default:
-			aggregateArray, err = column.function.Aggregate(a.pool, arr)
+			aggregateArray, err = aggregation.function.Aggregate(a.pool, arr)
 		}
 		if err != nil {
 			return fmt.Errorf("aggregate batched arrays: %w", err)
@@ -458,7 +458,7 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 		aggregateColumns = append(aggregateColumns, aggregateArray)
 
 		aggregateFields = append(aggregateFields, arrow.Field{
-			Name: column.resultName, Type: aggregateArray.DataType(),
+			Name: aggregation.resultName, Type: aggregateArray.DataType(),
 		})
 	}
 
