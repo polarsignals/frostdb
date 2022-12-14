@@ -7,32 +7,38 @@ value2  value2  value3  null    stack1  2   2
 value3  value2  null    value4  stack1  3   3
 ----
 
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, stacktrace, timestamp, value)
+value4  value2  null    null    stack1  4   4
+value5  value2  value3  null    stack1  5   5
+value6  value2  null    value4  stack1  6   6
+----
+
 exec
 select sum(value) as value_sum group by labels.label2
 ----
-value2  6
+value2  21
 
 exec
 select max(value) as value_max group by labels.label2
 ----
-value2  3
+value2  6
 
 exec
 select count(value) as value_count group by labels.label2
 ----
-value2  3
+value2  6
 
 exec
 select sum(value), count(value) group by stacktrace
 ----
-stack1  6       3
+stack1  21      6
 
 exec
 select sum(value) as value_sum, count(value) as value_count group by stacktrace
 ----
-stack1  6       3
+stack1  21      6
 
 exec
 select sum(value), count(value), max(value) group by labels.label2
 ----
-value2  6       3       3
+value2  21      6       6
