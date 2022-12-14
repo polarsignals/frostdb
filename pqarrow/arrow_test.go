@@ -730,8 +730,10 @@ func Test_ParquetToArrowV2(t *testing.T) {
 			{
 				parquet.ValueOf("value1").Level(0, 1, 0), // labels.label1
 				parquet.ValueOf("value1").Level(0, 1, 1), // labels.label2
-				parquet.ValueOf(i+1).Level(0, 2, 2),      // timestamps: [1]
+				parquet.ValueOf(i).Level(0, 2, 2),        // timestamps: [i]
+				parquet.ValueOf(i+1).Level(1, 2, 2),      // timestamps: [i,i+1]
 				parquet.ValueOf(2).Level(0, 2, 3),        // values: [2]
+				parquet.ValueOf(3).Level(1, 2, 3),        // values: [2,3]
 			},
 		})
 		require.NoError(t, err)
@@ -741,7 +743,7 @@ func Test_ParquetToArrowV2(t *testing.T) {
 	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 
-	require.NoError(t, c.ConvertByRow(ctx, pb))
+	require.NoError(t, c.Convert(ctx, pb))
 	r := c.NewRecord()
 	require.Equal(t, int64(1000), r.NumRows())
 }
