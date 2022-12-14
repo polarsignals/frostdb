@@ -321,17 +321,10 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		}
 
 		for j, col := range a.columns {
-			if a.finalStage {
-				if col.resultName == field.Name {
+				if col.expr.MatchColumn(field.Name) || col.resultName == field.Name {
 					columnToAggregate[j] = r.Column(i)
 					aggregateFieldFound[j] = true
 				}
-			} else {
-				if col.expr.MatchColumn(field.Name) {
-					columnToAggregate[j] = r.Column(i)
-					aggregateFieldFound[j] = true
-				}
-			}
 		}
 	}
 

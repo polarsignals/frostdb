@@ -64,9 +64,7 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 
 			for _, expr := range v.exprStack {
 				switch expr.(type) {
-				case *logicalplan.AliasExpr:
-					agg = append(agg, expr)
-				case *logicalplan.AggregationFunction:
+				case *logicalplan.AliasExpr, *logicalplan.AggregationFunction:
 					agg = append(agg, expr)
 				default:
 					groups = append(groups, expr)
