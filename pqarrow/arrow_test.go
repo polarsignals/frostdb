@@ -238,6 +238,38 @@ func TestMergeToArrow(t *testing.T) {
 	require.Len(t, ar.Schema().Fields(), 8)
 }
 
+func BenchmarkNestedParquetToArrow(b *testing.B) {
+	dynSchema := dynparquet.NewNestedSampleSchema(b)
+
+	pb, err := dynSchema.NewBuffer(map[string][]string{})
+	require.NoError(b, err)
+
+	for i := 0; i < 1000; i++ {
+		_, err = pb.WriteRows([]parquet.Row{
+			{
+				parquet.ValueOf("value1").Level(0, 1, 0), // labels.label1
+				parquet.ValueOf("value1").Level(0, 1, 1), // labels.label2
+				parquet.ValueOf(i+1).Level(0, 2, 2),      // timestamps: [1]
+				parquet.ValueOf(2).Level(0, 2, 3),        // values: [2]
+			},
+		})
+		require.NoError(b, err)
+	}
+
+	ctx := context.Background()
+
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	defer c.Close()
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		require.NoError(b, c.ConvertByRow(ctx, pb))
+		// Reset converter.
+		_ = c.NewRecord()
+	}
+}
+
 func BenchmarkParquetToArrow(b *testing.B) {
 	dynSchema := dynparquet.NewSampleSchema()
 
