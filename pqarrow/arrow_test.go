@@ -686,3 +686,63 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 		})
 	}
 }
+
+func Test_ParquetToArrowV2(t *testing.T) {
+	t.Skip("doesn't work")
+	dynSchema := dynparquet.NewNestedSampleSchema(t)
+
+	pb, err := dynSchema.NewBuffer(map[string][]string{})
+	require.NoError(t, err)
+
+	for i := 0; i < 1000; i++ {
+		_, err = pb.WriteRows([]parquet.Row{
+			{
+				parquet.ValueOf("value1").Level(0, 1, 0), // labels.label1
+				parquet.ValueOf("value1").Level(0, 1, 1), // labels.label2
+				parquet.ValueOf(i+1).Level(0, 2, 2),      // timestamps: [1]
+				parquet.ValueOf(2).Level(0, 2, 3),        // values: [2]
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	ctx := context.Background()
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	defer c.Close()
+
+	require.NoError(t, c.Convert(ctx, pb))
+	r := c.NewRecord()
+	require.Equal(t, 1000, r.NumRows())
+}
+
+func Test_ParquetToArrow(t *testing.T) {
+	dynSchema := dynparquet.NewSampleSchema()
+
+	samples := make(dynparquet.Samples, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		samples = append(samples, dynparquet.Sample{
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: int64(i + 1),
+			Value:     1,
+		})
+	}
+
+	buf, err := samples.ToBuffer(dynSchema)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	defer c.Close()
+
+	require.NoError(t, c.Convert(ctx, buf))
+	r := c.NewRecord()
+	require.Equal(t, int64(1000), r.NumRows())
+}
