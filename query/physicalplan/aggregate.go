@@ -303,7 +303,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 	}()
 
 	columnToAggregate := make([]arrow.Array, len(a.aggregations))
-	aggregateFieldFound := make([]bool, len(a.aggregations))
+	aggregateFieldsFound := 0
 
 	for i, field := range r.Schema().Fields() {
 		for _, matcher := range a.groupByColumnMatchers {
@@ -328,15 +328,13 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		for j, col := range a.aggregations {
 			if col.expr.MatchColumn(field.Name) || col.resultName == field.Name {
 				columnToAggregate[j] = r.Column(i)
-				aggregateFieldFound[j] = true
+				aggregateFieldsFound++
 			}
 		}
 	}
 
-	for _, found := range aggregateFieldFound {
-		if !found {
-			return errors.New("aggregate field not found, aggregations are not possible without it")
-		}
+	if aggregateFieldsFound != len(a.aggregations) {
+		return errors.New("aggregate field not found, aggregations are not possible without it")
 	}
 
 	numRows := int(r.NumRows())
