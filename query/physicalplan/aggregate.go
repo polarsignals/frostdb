@@ -406,7 +406,8 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	defer span.End()
 
 	numCols := len(a.groupByCols) + 1
-	numRows := len(a.aggregations[0].arrays)
+	// Each hash that's aggregated by will become one row in the final result.
+	numRows := len(a.hashToAggregate)
 
 	groupByFields := make([]arrow.Field, 0, numCols)
 	groupByArrays := make([]arrow.Array, 0, numCols)
