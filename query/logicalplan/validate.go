@@ -146,7 +146,7 @@ func ValidateSingleFieldSet(plan *LogicalPlan) *PlanValidationError {
 // ValidateAggregation validates the logical plan's aggregation step.
 func ValidateAggregation(plan *LogicalPlan) *PlanValidationError {
 	// check that the expression is not nil
-	if plan.Aggregation.AggExprs == nil {
+	if plan.Aggregation.AggExprs == nil || len(plan.Aggregation.AggExprs) == 0 {
 		return &PlanValidationError{
 			plan:    plan,
 			message: "invalid aggregation: expression cannot be nil",
@@ -167,55 +167,63 @@ func ValidateAggregation(plan *LogicalPlan) *PlanValidationError {
 }
 
 func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
-	// TODO: Check that aggregation columns don't have the same result name
+	aliases := map[string]struct{}{}
 
-	// check that the aggregation expression has the required structure
-	colFinder := newTypeFinder((*Column)(nil))
 	for _, expr := range plan.Aggregation.AggExprs {
+		// check that the aggregation expression has the required structure
+		colFinder := newTypeFinder((*Column)(nil))
 		expr.Accept(&colFinder)
-	}
 
-	aggFuncFinder := newTypeFinder((*AggregationFunction)(nil))
-	for _, expr := range plan.Aggregation.AggExprs {
+		aggFuncFinder := newTypeFinder((*AggregationFunction)(nil))
 		expr.Accept(&aggFuncFinder)
-	}
 
-	if colFinder.result == nil || aggFuncFinder.result == nil {
-		return &ExprValidationError{
-			message: "aggregation expression is invalid. must contain AggregationFunction and Column",
-			expr:    plan.Aggregation.AggExprs[0], // TODO
-		}
-	}
-
-	// check that column being aggregated on exists in the schema
-	colExpr := colFinder.result.(*Column)
-	schema := plan.InputSchema()
-	if schema == nil {
-		return nil // cannot check column type if there's no input schema
-	}
-
-	column, found := schema.ColumnByName(colExpr.ColumnName)
-	if !found {
-		return &ExprValidationError{
-			message: fmt.Sprintf("column not found: %s", colExpr.ColumnName),
-			expr:    plan.Aggregation.AggExprs[0], // TODO
-		}
-	}
-
-	// check that the column type can be aggregated by the function type
-	columnType := column.StorageLayout.Type()
-	aggFuncExpr := aggFuncFinder.result.(*AggregationFunction)
-	if columnType.LogicalType().UTF8 != nil {
-		switch aggFuncExpr.Func {
-		case AggFuncSum:
+		if colFinder.result == nil || aggFuncFinder.result == nil {
 			return &ExprValidationError{
-				message: "cannot sum text column",
-				expr:    plan.Aggregation.AggExprs[0], // TODO
+				message: "aggregation expression is invalid. must contain AggregationFunction and Column",
+				expr:    expr,
 			}
-		case AggFuncMax:
+		}
+
+		// check that column being aggregated on exists in the schema
+		colExpr := colFinder.result.(*Column)
+		schema := plan.InputSchema()
+		if schema == nil {
+			return nil // cannot check column type if there's no input schema
+		}
+
+		column, found := schema.ColumnByName(colExpr.ColumnName)
+		if !found {
 			return &ExprValidationError{
-				message: "cannot max text column",
-				expr:    plan.Aggregation.AggExprs[0], // TODO
+				message: fmt.Sprintf("column not found: %s", colExpr.ColumnName),
+				expr:    expr,
+			}
+		}
+
+		if alias, ok := expr.(*AliasExpr); ok {
+			if _, found := aliases[alias.Alias]; found {
+				return &ExprValidationError{
+					message: fmt.Sprintf("alias used twice: %s", alias.Alias),
+					expr:    expr,
+				}
+			}
+			aliases[alias.Alias] = struct{}{}
+		}
+
+		// check that the column type can be aggregated by the function type
+		columnType := column.StorageLayout.Type()
+		aggFuncExpr := aggFuncFinder.result.(*AggregationFunction)
+		if columnType.LogicalType().UTF8 != nil {
+			switch aggFuncExpr.Func {
+			case AggFuncSum:
+				return &ExprValidationError{
+					message: "cannot sum text column",
+					expr:    expr,
+				}
+			case AggFuncMax:
+				return &ExprValidationError{
+					message: "cannot max text column",
+					expr:    expr,
+				}
 			}
 		}
 	}

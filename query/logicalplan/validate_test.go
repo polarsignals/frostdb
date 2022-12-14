@@ -137,6 +137,24 @@ func TestAggregationCannotSumOrMaxTextColumn(t *testing.T) {
 	}
 }
 
+func TestAggregationCannotUseAliasTwice(t *testing.T) {
+	_, err := (&Builder{}).
+		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
+		Aggregate([]Expr{
+			Sum(Col("value")).Alias("value"), // should use e.g. sum_foo
+			Max(Col("value")).Alias("value"), // should use e.g. max_foo
+		}, nil).
+		Build()
+
+	require.NotNil(t, err)
+	planErr, ok := err.(*PlanValidationError)
+	require.True(t, ok)
+	require.True(t, strings.HasPrefix(planErr.message, "invalid aggregation"))
+	require.Len(t, planErr.children, 1)
+	exprErr := planErr.children[0]
+	require.True(t, strings.HasPrefix(exprErr.message, "alias used twice: value"))
+}
+
 func TestFilterBinaryExprLeftSideMustBeColumn(t *testing.T) {
 	_, err := (&Builder{}).
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
