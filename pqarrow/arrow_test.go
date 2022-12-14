@@ -712,7 +712,6 @@ func Test_ParquetToArrowV2(t *testing.T) {
 	require.NoError(t, c.ConvertByRow(ctx, pb))
 	r := c.NewRecord()
 	require.Equal(t, int64(1000), r.NumRows())
-	fmt.Println(r)
 }
 
 func Test_ParquetToArrow(t *testing.T) {
