@@ -260,6 +260,10 @@ func (b *ListBuilder) NewArray() arrow.Array {
 	return b.NewListArray()
 }
 
+func (b *ListBuilder) Len() int {
+	return b.values.Len() // TODO I think this is incorrect
+}
+
 // NewListArray creates a List array from the memory buffers used by the builder and resets the ListBuilder
 // so it can be used to build a new array.
 func (b *ListBuilder) NewListArray() (a *array.List) {
@@ -296,4 +300,8 @@ func (b *ListBuilder) newData() (data *array.Data) {
 	b.reset()
 
 	return
+}
+
+func (b *ListBuilder) Retain() {
+	b.values.Retain()
 }

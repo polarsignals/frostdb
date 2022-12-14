@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/segmentio/parquet-go"
 
@@ -139,47 +138,31 @@ func (w *uint64ValueWriter) WritePage(p parquet.Page) error {
 }
 
 type repeatedValueWriter struct {
-	b      *array.ListBuilder
-	typ    arrow.DataType
-	values array.Builder
+	b      *builder.ListBuilder
+	values ValueWriter
 }
 
-func NewListValueWriter(dtype arrow.DataType) func(b builder.ColumnBuilder, numValues int) ValueWriter {
+func NewListValueWriter(newValueWriter func(b builder.ColumnBuilder, numValues int) ValueWriter) func(b builder.ColumnBuilder, numValues int) ValueWriter {
 	return func(b builder.ColumnBuilder, numValues int) ValueWriter {
-		bld := b.(*array.ListBuilder)
+		builder := b.(*builder.ListBuilder)
+
 		return &repeatedValueWriter{
-			b:      bld,
-			typ:    dtype,
-			values: bld.ValueBuilder(),
+			b:      builder,
+			values: newValueWriter(builder.ValueBuilder(), numValues),
 		}
 	}
 }
 
 func (w *repeatedValueWriter) Write(values []parquet.Value) {
-	w.b.Append(true)
-	for _, v := range values {
-		switch v.IsNull() {
-		case true:
-			w.values.AppendNull()
-		default:
-			switch w.typ.ID() {
-			case arrow.INT64:
-				w.values.(*array.Int64Builder).Append(v.Int64())
-			case arrow.FLOAT64:
-				w.values.(*array.Float64Builder).Append(v.Double())
-			case arrow.BOOL:
-				w.values.(*array.BooleanBuilder).Append(v.Boolean())
-			case arrow.UINT64:
-				w.values.(*array.Uint64Builder).Append(v.Uint64())
-			case arrow.STRING:
-				w.values.(*array.StringBuilder).Append(string(v.ByteArray()))
-			case arrow.BINARY:
-				w.values.(*array.BinaryBuilder).Append(v.ByteArray())
-			case arrow.STRUCT:
-				panic("repeated structs not implemented")
-			}
-		}
+	v0 := values[0]
+	rep := v0.RepetitionLevel()
+	def := v0.DefinitionLevel()
+	if rep == 0 && def == 0 {
+		w.b.AppendNull()
 	}
+
+	w.b.Append(true)
+	w.values.Write(values)
 }
 
 // TODO: implement fast path of writing the whole page directly.

@@ -119,7 +119,7 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 		// TODO(asubiotto): We should use arrow.ListOfNonNullable if
 		// n.Optional(). The problem is that it doesn't seem like the arrow
 		// builder stores the nullability (NewArray always uses ListOf).
-		return writer.NewListValueWriter(dt), nil
+		return writer.NewListValueWriter(wr), nil
 	}
 	return wr, nil
 }
