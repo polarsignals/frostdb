@@ -262,7 +262,7 @@ func (b *ListBuilder) NewArray() arrow.Array {
 }
 
 func (b *ListBuilder) Len() int {
-	return b.values.Len() // TODO I think this is incorrect
+	return b.length
 }
 
 // NewListArray creates a List array from the memory buffers used by the builder and resets the ListBuilder
