@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -142,7 +143,7 @@ func (a *OrderedAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			b := builder.NewBuilder(a.pool, field.Type)
 			a.groupByCols[field.Name] = b
 			// Append the first group value to use below.
-			v, err := builder.GetValue(a.groupByArrays[i], 0)
+			v, err := arrowutils.GetValue(a.groupByArrays[i], 0)
 			if err != nil {
 				return err
 			}
@@ -185,7 +186,7 @@ func (a *OrderedAggregate) Callback(ctx context.Context, r arrow.Record) error {
 				v   any
 				err error
 			)
-			if v, err = builder.GetValue(a.groupByArrays[i], int(groupStart)); err != nil {
+			if v, err = arrowutils.GetValue(a.groupByArrays[i], int(groupStart)); err != nil {
 				return err
 			}
 			if err := builder.AppendGoValue(
@@ -304,7 +305,7 @@ func (a *OrderedAggregate) getGroupsAndOrderedSetRanges() (*int64Heap, *int64Hea
 			heap.Push(groupRanges, int64(j))
 
 			// And update the current group.
-			v, err := builder.GetValue(t, j)
+			v, err := arrowutils.GetValue(t, j)
 			if err != nil {
 				return err
 			}
