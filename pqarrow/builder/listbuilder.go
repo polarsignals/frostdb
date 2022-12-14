@@ -1,3 +1,6 @@
+// Copyright (c) The FrostDB Authors.
+// Licensed under the Apache License 2.0.
+
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -13,7 +16,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// TODO add our license
 package builder
 
 import (
@@ -176,7 +178,6 @@ func NewListBuilder(mem memory.Allocator, etype arrow.DataType) *ListBuilder {
 // Release decreases the reference count by 1.
 // When the reference count goes to zero, the memory is freed.
 func (b *ListBuilder) Release() {
-
 	if atomic.AddInt64(&b.refCount, -1) == 0 {
 		if b.nullBitmap != nil {
 			b.nullBitmap.Release()
