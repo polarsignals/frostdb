@@ -428,8 +428,9 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 		groupByArrays = append(groupByArrays, arr)
 	}
 
-	aggregateColumns := append(groupByArrays)
-	aggregateFields := append(groupByFields)
+	// Rename to clarity upon appending aggregations later
+	aggregateColumns := groupByArrays
+	aggregateFields := groupByFields
 
 	for _, aggregation := range a.aggregations {
 		var (
