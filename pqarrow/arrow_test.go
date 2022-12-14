@@ -264,7 +264,7 @@ func BenchmarkNestedParquetToArrow(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		require.NoError(b, c.ConvertByRow(ctx, pb))
+		require.NoError(b, c.Convert(ctx, pb))
 		// Reset converter.
 		_ = c.NewRecord()
 	}

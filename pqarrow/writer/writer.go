@@ -325,6 +325,15 @@ func (s *structWriter) WritePage(p parquet.Page) error {
 }
 
 func (s *structWriter) Write(values []parquet.Value) {
+	total := 0
+	for _, v := range values {
+		if v.RepetitionLevel() == 0 {
+			total++
+			if total > s.b.Len() {
+				s.b.Append(true)
+			}
+		}
+	}
 	// recursively search the struct builder for the leaf that matches the values column index
 	_, ok := s.findLeafBuilder(values[0].Column(), s.offset, s.b, values)
 	if !ok {
