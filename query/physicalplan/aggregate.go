@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/maphash"
+	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
@@ -174,13 +175,17 @@ func (a *HashAggregate) Draw() *Diagram {
 		child = a.next.Draw()
 	}
 
+	names := make([]string, 0, len(a.aggregations))
+	for _, agg := range a.aggregations {
+		names = append(names, agg.resultName)
+	}
+
 	var groupings []string
 	for _, grouping := range a.groupByColumnMatchers {
 		groupings = append(groupings, grouping.Name())
 	}
 
-	// details := fmt.Sprintf("HashAggregate (%s by %s)", a.columnsToAggregate[0].Name(), strings.Join(groupings, ","))
-	details := ""
+	details := fmt.Sprintf("HashAggregate (%s by %s)", strings.Join(names, ","), strings.Join(groupings, ","))
 	return &Diagram{Details: details, Child: child}
 }
 
