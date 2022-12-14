@@ -1,18 +1,18 @@
-package builder_test
+package builder
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/stretchr/testify/require"
-
-	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
 
 // https://github.com/polarsignals/frostdb/issues/270
 func TestIssue270(t *testing.T) {
-	b := builder.NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
+	b := NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
 	b.AppendNull()
 	const expString = "hello"
 	b.Append([]byte(expString))
@@ -26,32 +26,49 @@ func TestIssue270(t *testing.T) {
 
 func TestRepeatLastValue(t *testing.T) {
 	testCases := []struct {
-		b builder.OptimizedBuilder
+		b OptimizedBuilder
 		v any
 	}{
 		{
-			b: builder.NewOptBinaryBuilder(arrow.BinaryTypes.Binary),
+			b: NewOptBinaryBuilder(arrow.BinaryTypes.Binary),
 			v: []byte("hello"),
 		},
 		{
-			b: builder.NewOptInt64Builder(arrow.PrimitiveTypes.Int64),
+			b: NewOptInt64Builder(arrow.PrimitiveTypes.Int64),
 			v: int64(123),
 		},
 		{
-			b: builder.NewOptBooleanBuilder(arrow.FixedWidthTypes.Boolean),
+			b: NewOptBooleanBuilder(arrow.FixedWidthTypes.Boolean),
 			v: true,
 		},
 	}
 	for _, tc := range testCases {
-		require.NoError(t, builder.AppendGoValue(tc.b, tc.v))
+		require.NoError(t, AppendGoValue(tc.b, tc.v))
 		require.Equal(t, tc.b.Len(), 1)
 		tc.b.RepeatLastValue(9)
 		require.Equal(t, tc.b.Len(), 10)
 		a := tc.b.NewArray()
 		for i := 0; i < a.Len(); i++ {
-			v, err := builder.GetValue(a, i)
+			v, err := GetValue(a, i)
 			require.NoError(t, err)
 			require.Equal(t, tc.v, v)
 		}
 	}
+}
+
+func Test_ListBuilder(t *testing.T) {
+
+	lb := NewListBuilder(memory.NewGoAllocator(), &arrow.Int64Type{})
+
+	lb.Append(true)
+	lb.ValueBuilder().(*OptInt64Builder).Append(1)
+	lb.ValueBuilder().(*OptInt64Builder).Append(2)
+	lb.ValueBuilder().(*OptInt64Builder).Append(3)
+	lb.Append(true)
+	lb.ValueBuilder().(*OptInt64Builder).Append(4)
+	lb.ValueBuilder().(*OptInt64Builder).Append(5)
+	lb.ValueBuilder().(*OptInt64Builder).Append(6)
+
+	ar := lb.NewArray()
+	require.Equal(t, "[[1 2 3] [4 5 6]]", fmt.Sprintf("%v", ar))
 }
