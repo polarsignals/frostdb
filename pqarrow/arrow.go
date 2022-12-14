@@ -237,6 +237,113 @@ func NewParquetConverter(
 	return c
 }
 
+func (c *ParquetConverter) ConvertByRow(ctx context.Context, rg parquet.RowGroup) error {
+	schema, err := ParquetRowGroupToArrowSchema(ctx, rg, c.iterOpts.PhysicalProjection, c.iterOpts.Projection, c.iterOpts.Filter, c.iterOpts.DistinctColumns)
+	if err != nil {
+		return err
+	}
+	// If the schema has no fields we simply ignore this RowGroup that has no data.
+	if len(schema.Fields()) == 0 {
+		return nil
+	}
+
+	if c.outputSchema == nil {
+		c.outputSchema = schema
+		c.builder = builder.NewRecordBuilder(c.pool, c.outputSchema)
+	} else if !schema.Equal(c.outputSchema) { // new output schema; append new fields onto record builder
+		c.outputSchema = mergeArrowSchemas([]*arrow.Schema{c.outputSchema, schema})
+		c.builder.ExpandSchema(c.outputSchema)
+		// Since we expanded the field we need to append nulls to the new field to match the max column length
+		if maxLen, _, anomaly := recordBuilderLength(c.builder); anomaly {
+			for _, field := range c.builder.Fields() {
+				if fieldLen := field.Len(); fieldLen < maxLen {
+					if ob, ok := field.(builder.OptimizedBuilder); ok {
+						ob.AppendNulls(maxLen - fieldLen)
+						continue
+					}
+					// If the column is not the same length as the maximum length
+					// column, we need to append NULL as often as we have rows
+					// TODO: Is there a faster or better way?
+					for i := 0; i < maxLen-fieldLen; i++ {
+						field.AppendNull()
+					}
+				}
+			}
+		}
+	}
+
+	if _, ok := rg.(*dynparquet.MergedRowGroup); ok {
+		return rowBasedParquetRowGroupToArrowRecord(ctx, c.pool, rg, c.outputSchema, c.builder)
+	}
+
+	parquetSchema := rg.Schema()
+	parquetColumns := rg.ColumnChunks()
+	parquetFields := parquetSchema.Fields()
+
+	if !parquetSchemaEqual(c.prevSchema, parquetSchema) {
+		if err := c.schemaChanged(parquetFields); err != nil {
+			return err
+		}
+		c.prevSchema = parquetSchema
+	}
+
+	if c.mode == multiDistinctColumn {
+		// Since we're not filtering, we can use a faster path for distinct
+		// columns. If all the distinct columns are dictionary encoded, we can
+		// check their dictionaries and if all of them have a single value, we
+		// can just return a single row with each of their values.
+		appliedOptimization, err := c.writeDistinctAllColumns(
+			ctx,
+			parquetFields,
+			parquetColumns,
+		)
+		if err != nil {
+			return err
+		}
+
+		if appliedOptimization {
+			return nil
+		}
+		// If we get here, we couldn't use the fast path.
+	}
+
+	rows := rg.Rows()
+	defer rows.Close()
+	rowBuf := make([]parquet.Row, 1)
+
+	for i := int64(0); i < rg.NumRows(); i += int64(len(rowBuf)) {
+		if _, err := rows.ReadRows(rowBuf); err != nil && err != io.EOF {
+			return err
+		}
+
+		for i, v := range rowBuf[0] {
+			ColToWriter(i, c.writers).Write([]parquet.Value{v})
+		}
+	}
+
+	maxLen, _, anomaly := recordBuilderLength(c.builder)
+	if !anomaly {
+		return nil
+	}
+
+	for _, field := range c.builder.Fields() {
+		if fieldLen := field.Len(); fieldLen < maxLen {
+			if ob, ok := field.(builder.OptimizedBuilder); ok {
+				ob.AppendNulls(maxLen - fieldLen)
+				continue
+			}
+			// If the column is not the same length as the maximum length
+			// column, we need to append NULL as often as we have rows
+			// TODO: Is there a faster or better way?
+			for i := 0; i < maxLen-fieldLen; i++ {
+				field.AppendNull()
+			}
+		}
+	}
+
+	return nil
+}
+
 func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) error {
 	schema, err := ParquetRowGroupToArrowSchema(ctx, rg, c.iterOpts.PhysicalProjection, c.iterOpts.Projection, c.iterOpts.Filter, c.iterOpts.DistinctColumns)
 	if err != nil {
@@ -1126,4 +1233,16 @@ type MultiColumnWriter struct {
 	writer   writer.ValueWriter
 	fieldIdx int
 	colIdx   []int
+}
+
+func ColToWriter(col int, writers []MultiColumnWriter) writer.ValueWriter {
+	for _, w := range writers {
+		for _, idx := range w.colIdx {
+			if col == idx {
+				return w.writer
+			}
+		}
+	}
+
+	return nil
 }

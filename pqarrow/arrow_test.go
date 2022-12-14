@@ -688,7 +688,6 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 }
 
 func Test_ParquetToArrowV2(t *testing.T) {
-	t.Skip("doesn't work")
 	dynSchema := dynparquet.NewNestedSampleSchema(t)
 
 	pb, err := dynSchema.NewBuffer(map[string][]string{})
@@ -710,9 +709,10 @@ func Test_ParquetToArrowV2(t *testing.T) {
 	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 
-	require.NoError(t, c.Convert(ctx, pb))
+	require.NoError(t, c.ConvertByRow(ctx, pb))
 	r := c.NewRecord()
-	require.Equal(t, 1000, r.NumRows())
+	require.Equal(t, int64(1000), r.NumRows())
+	fmt.Println(r)
 }
 
 func Test_ParquetToArrow(t *testing.T) {
