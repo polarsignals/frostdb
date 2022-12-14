@@ -177,7 +177,6 @@ func (w *repeatedValueWriter) Write(values []parquet.Value) {
 	// write final list
 	w.b.Append(true)
 	w.values.Write(values[start:])
-
 }
 
 // TODO: implement fast path of writing the whole page directly.
