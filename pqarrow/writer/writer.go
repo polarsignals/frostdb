@@ -161,8 +161,23 @@ func (w *repeatedValueWriter) Write(values []parquet.Value) {
 		w.b.AppendNull()
 	}
 
+	listStart := false
+	start := 0
+	for i, v := range values {
+		if v.RepetitionLevel() == 0 {
+			if listStart {
+				w.b.Append(true)
+				w.values.Write(values[start:i])
+			}
+			listStart = true
+			start = i
+		}
+	}
+
+	// write final list
 	w.b.Append(true)
-	w.values.Write(values)
+	w.values.Write(values[start:])
+
 }
 
 // TODO: implement fast path of writing the whole page directly.
