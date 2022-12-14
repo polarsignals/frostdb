@@ -18,7 +18,6 @@ import (
 // TestOrderedAggregate unit tests aggregation logic specific to
 // OrderedAggregate internals using arrow records.
 func TestOrderedAggregate(t *testing.T) {
-	t.Skip("https://github.com/polarsignals/frostdb/issues/287")
 	ctx := context.Background()
 
 	type record struct {
@@ -47,15 +46,35 @@ func TestOrderedAggregate(t *testing.T) {
 			resultRecords: []record{
 				{
 					groups: [][]string{
-						{"a", "b"},
+						{"a", "b", "c"},
 					},
-					vals: []int64{2, 1},
+					vals: []int64{2, 1, 2},
+				},
+			},
+		},
+		{
+			name:         "MultipleRecords",
+			numGroupCols: 1,
+			inputRecords: []record{
+				{
+					groups: [][]string{
+						{"a", "a", "a"},
+					},
+					vals: []int64{1, 1, 1},
 				},
 				{
 					groups: [][]string{
-						{"c"},
+						{"b", "b"},
 					},
-					vals: []int64{2},
+					vals: []int64{1, 1},
+				},
+			},
+			resultRecords: []record{
+				{
+					groups: [][]string{
+						{"a", "b"},
+					},
+					vals: []int64{3, 2},
 				},
 			},
 		},
@@ -74,17 +93,56 @@ func TestOrderedAggregate(t *testing.T) {
 			resultRecords: []record{
 				{
 					groups: [][]string{
-						{"a", "a", "c"},
-						{"b", "c", "c"},
+						{"a", "a", "c", "d"},
+						{"b", "c", "c", "d"},
 					},
-					vals: []int64{2, 1, 1},
+					vals: []int64{2, 1, 1, 1},
+				},
+			},
+		},
+		{
+			name:         "PartialOrdering",
+			numGroupCols: 1,
+			inputRecords: []record{
+				{
+					groups: [][]string{
+						{"a", "a", "b", "c", "a", "b", "c"},
+					},
+					vals: []int64{1, 1, 2, 3, 1, 2, 3},
+				},
+			},
+			resultRecords: []record{
+				{
+					groups: [][]string{
+						{"a", "b", "c"},
+					},
+					vals: []int64{3, 4, 6},
+				},
+			},
+		},
+		{
+			name:         "PartialOrderingMultiRecord",
+			numGroupCols: 1,
+			inputRecords: []record{
+				{
+					groups: [][]string{
+						{"a", "a", "b", "c"},
+					},
+					vals: []int64{1, 1, 2, 3},
 				},
 				{
 					groups: [][]string{
-						{"d"},
-						{"d"},
+						{"a", "b", "c"},
 					},
-					vals: []int64{1},
+					vals: []int64{1, 2, 3},
+				},
+			},
+			resultRecords: []record{
+				{
+					groups: [][]string{
+						{"a", "b", "c"},
+					},
+					vals: []int64{3, 4, 6},
 				},
 			},
 		},
@@ -108,9 +166,11 @@ func TestOrderedAggregate(t *testing.T) {
 			o := NewOrderedAggregate(
 				memory.DefaultAllocator,
 				trace.NewNoopTracerProvider().Tracer(""),
-				"result",
-				&Int64SumAggregation{},
-				logicalplan.Col(valColName),
+				Aggregation{
+					expr:       logicalplan.Col(valColName),
+					resultName: "result",
+					function:   &Int64SumAggregation{},
+				},
 				groupCols,
 				true,
 			)
