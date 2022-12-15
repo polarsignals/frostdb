@@ -725,13 +725,17 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 func Test_ParquetToArrowV2(t *testing.T) {
 	dynSchema := dynparquet.NewNestedSampleSchema(t)
 
-	pb, err := dynSchema.NewBufferV2(
-		dynparquet.LabelColumn("label1"),
-		dynparquet.LabelColumn("label2"),
-	)
-	require.NoError(t, err)
+	ctx := context.Background()
+	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	defer c.Close()
 
-	for i := 0; i < 1000; i++ {
+	n := 10
+	for i := 0; i < n; i++ {
+		pb, err := dynSchema.NewBufferV2(
+			dynparquet.LabelColumn("label1"),
+			dynparquet.LabelColumn("label2"),
+		)
+		require.NoError(t, err)
 		_, err = pb.WriteRows([]parquet.Row{
 			{
 				parquet.ValueOf("value1").Level(0, 1, 0), // labels.label1
@@ -743,15 +747,11 @@ func Test_ParquetToArrowV2(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
+		require.NoError(t, c.Convert(ctx, pb))
 	}
-
-	ctx := context.Background()
-	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
-	defer c.Close()
-
-	require.NoError(t, c.Convert(ctx, pb))
 	r := c.NewRecord()
-	require.Equal(t, int64(1000), r.NumRows())
+	fmt.Println(r)
+	require.Equal(t, int64(n), r.NumRows())
 }
 
 func Test_ParquetToArrow(t *testing.T) {

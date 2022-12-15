@@ -276,10 +276,8 @@ func LabelColumn(name string) *schemav2pb.Node {
 	}
 }
 
-func NewNestedSampleSchema(t require.TestingT) *Schema {
-	if tt, ok := t.(*testing.T); ok {
-		tt.Helper()
-	}
+func NewNestedSampleSchema(t testing.TB) *Schema {
+	t.Helper()
 	def := &schemav2pb.Schema{
 		Root: &schemav2pb.Group{
 			Name: "nested",
