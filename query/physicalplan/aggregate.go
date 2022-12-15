@@ -578,7 +578,7 @@ func (a *Int64MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Arra
 	case arrow.INT64:
 		return maxInt64arrays(pool, arrs), nil
 	default:
-		return nil, fmt.Errorf("sum array of %s: %w", typ, ErrUnsupportedMaxType)
+		return nil, fmt.Errorf("max array of %s: %w", typ, ErrUnsupportedMaxType)
 	}
 }
 
