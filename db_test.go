@@ -1214,3 +1214,13 @@ func Test_DB_TableNotExist(t *testing.T) {
 	})
 	require.Error(t, err)
 }
+
+func TestReplayBackwardsCompatibility(t *testing.T) {
+	ctx := context.Background()
+	const storagePath = "testdata/oldwal"
+	c, err := New(WithWAL(), WithStoragePath(storagePath))
+	require.NoError(t, err)
+	defer c.Close()
+
+	require.NoError(t, c.ReplayWALs(ctx))
+}

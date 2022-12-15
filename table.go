@@ -31,9 +31,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -269,19 +270,28 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 		return err
 	}
 
-	schema := &anypb.Any{}
-	if err := schema.MarshalFrom(t.config.schema.Definition()); err != nil {
-		return err
+	walTableBlock := &walpb.Entry_NewTableBlock{
+		TableName: t.name,
+		BlockId:   b,
+	}
+
+	switch v := t.config.schema.Definition().(type) {
+	case *schemapb.Schema:
+		walTableBlock.Schema = &walpb.Entry_NewTableBlock_DeprecatedSchema{
+			DeprecatedSchema: v,
+		}
+	case *schemav2pb.Schema:
+		walTableBlock.Schema = &walpb.Entry_NewTableBlock_SchemaV2{
+			SchemaV2: v,
+		}
+	default:
+		return fmt.Errorf("unknown schema type: %t", v)
 	}
 
 	if err := t.wal.Log(tx, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_NewTableBlock_{
-				NewTableBlock: &walpb.Entry_NewTableBlock{
-					TableName: t.name,
-					BlockId:   b,
-					Schema:    schema,
-				},
+				NewTableBlock: walTableBlock,
 			},
 		},
 	}); err != nil {
