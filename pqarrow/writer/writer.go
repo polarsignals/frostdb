@@ -161,8 +161,22 @@ func (w *repeatedValueWriter) Write(values []parquet.Value) {
 		w.b.AppendNull()
 	}
 
+	listStart := false
+	start := 0
+	for i, v := range values {
+		if v.RepetitionLevel() == 0 {
+			if listStart {
+				w.b.Append(true)
+				w.values.Write(values[start:i])
+			}
+			listStart = true
+			start = i
+		}
+	}
+
+	// write final list
 	w.b.Append(true)
-	w.values.Write(values)
+	w.values.Write(values[start:])
 }
 
 // TODO: implement fast path of writing the whole page directly.
@@ -279,4 +293,155 @@ func (w *booleanValueWriter) WritePage(p parquet.Page) error {
 	values := p.Data()
 	w.b.Append(values.Boolean(), int(p.NumValues()))
 	return nil
+}
+
+type structWriter struct {
+	// offset is the column index offset that this node has in the overall schema
+	offset int
+	b      *array.StructBuilder
+}
+
+func NewStructWriterFromOffset(offset int) NewWriterFunc {
+	return func(b builder.ColumnBuilder, _ int) ValueWriter {
+		return &structWriter{
+			offset: offset,
+			b:      b.(*array.StructBuilder),
+		}
+	}
+}
+
+func (s *structWriter) WritePage(p parquet.Page) error {
+	// TODO: there's probably a more optimized way to handle a page of values here; but doing this for simplicity of implementation right meow.
+	values := make([]parquet.Value, p.NumValues())
+	_, err := p.Values().ReadValues(values)
+	// We're reading all values in the page so we always expect an io.EOF.
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("read values: %w", err)
+	}
+
+	s.Write(values)
+	return nil
+}
+
+func (s *structWriter) Write(values []parquet.Value) {
+	total := 0
+	for _, v := range values {
+		if v.RepetitionLevel() == 0 {
+			total++
+			if total > s.b.Len() {
+				s.b.Append(true)
+			}
+		}
+	}
+	// recursively search the struct builder for the leaf that matches the values column index
+	_, ok := s.findLeafBuilder(values[0].Column(), s.offset, s.b, values)
+	if !ok {
+		panic("unable to write values to builder")
+	}
+}
+
+// findLeafBuilder is a recursive function to find the leaf builder whose column index matches the search index.
+// It returns the number of leaves found for the given builder and if one of the leaves in the builder was appended to.
+func (s *structWriter) findLeafBuilder(searchIndex, currentIndex int, builder array.Builder, values []parquet.Value) (int, bool) {
+	switch b := builder.(type) {
+	case *array.StructBuilder:
+		totalLeaves := 0
+		for i := 0; i < b.NumField(); i++ {
+			// recurse
+			leaves, appended := s.findLeafBuilder(searchIndex, currentIndex+totalLeaves, b.FieldBuilder(i), values)
+			if appended {
+				if b.FieldBuilder(i).Len() != b.Len() { // NOTE: I'm unsure if this is correct for multi-nested structs
+					b.Append(true)
+				}
+				return b.NumField(), true
+			}
+
+			totalLeaves += leaves
+		}
+
+		return totalLeaves, false
+
+	case *array.Int64Builder:
+		if searchIndex == currentIndex {
+			for _, v := range values {
+				switch v.IsNull() {
+				case true:
+					b.AppendNull()
+				default:
+					b.Append(v.Int64())
+				}
+			}
+			return 1, true
+		}
+	case *array.Uint64Builder:
+		if searchIndex == currentIndex {
+			for _, v := range values {
+				switch v.IsNull() {
+				case true:
+					b.AppendNull()
+				default:
+					b.Append(v.Uint64())
+				}
+			}
+			return 1, true
+		}
+	case *array.Float64Builder:
+		if searchIndex == currentIndex {
+			for _, v := range values {
+				switch v.IsNull() {
+				case true:
+					b.AppendNull()
+				default:
+					b.Append(v.Double())
+				}
+			}
+			return 1, true
+		}
+	case *array.StringBuilder:
+		if searchIndex == currentIndex {
+			for _, v := range values {
+				switch v.IsNull() {
+				case true:
+					b.AppendNull()
+				default:
+					b.Append(string(v.ByteArray()))
+				}
+			}
+			return 1, true
+		}
+	case *array.BinaryBuilder:
+		if searchIndex == currentIndex {
+			for _, v := range values {
+				switch v.IsNull() {
+				case true:
+					b.AppendNull()
+				default:
+					b.Append(v.ByteArray())
+				}
+			}
+			return 1, true
+		}
+	default:
+		panic(fmt.Sprintf("unsuported value type: %v", b))
+	}
+
+	return 1, false
+}
+
+type mapWriter struct {
+	b *array.MapBuilder
+}
+
+func NewMapWriter(b builder.ColumnBuilder, _ int) ValueWriter {
+	return &mapWriter{
+		b: b.(*array.MapBuilder),
+	}
+}
+
+func (m *mapWriter) WritePage(p parquet.Page) error {
+	panic("not implemented")
+}
+
+func (m *mapWriter) Write(values []parquet.Value) {
+	panic("not implemented")
 }

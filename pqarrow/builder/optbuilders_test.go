@@ -1,10 +1,12 @@
 package builder_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
@@ -54,4 +56,20 @@ func TestRepeatLastValue(t *testing.T) {
 			require.Equal(t, tc.v, v)
 		}
 	}
+}
+
+func Test_ListBuilder(t *testing.T) {
+	lb := builder.NewListBuilder(memory.NewGoAllocator(), &arrow.Int64Type{})
+
+	lb.Append(true)
+	lb.ValueBuilder().(*builder.OptInt64Builder).Append(1)
+	lb.ValueBuilder().(*builder.OptInt64Builder).Append(2)
+	lb.ValueBuilder().(*builder.OptInt64Builder).Append(3)
+	lb.Append(true)
+	lb.ValueBuilder().(*builder.OptInt64Builder).Append(4)
+	lb.ValueBuilder().(*builder.OptInt64Builder).Append(5)
+	lb.ValueBuilder().(*builder.OptInt64Builder).Append(6)
+
+	ar := lb.NewArray()
+	require.Equal(t, "[[1 2 3] [4 5 6]]", fmt.Sprintf("%v", ar))
 }

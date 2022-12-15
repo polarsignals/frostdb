@@ -571,11 +571,18 @@ func (s *Schema) Columns() []ColumnDefinition {
 }
 
 func (s *Schema) ParquetSchema() *parquet.Schema {
-	g := parquet.Group{}
-	for _, col := range s.columns {
-		g[col.Name] = col.StorageLayout
+	switch schema := s.def.(type) {
+	case *schemav2pb.Schema:
+		return ParquetSchemaFromV2Definition(schema)
+	case *schemapb.Schema:
+		g := parquet.Group{}
+		for _, col := range s.columns {
+			g[col.Name] = col.StorageLayout
+		}
+		return parquet.NewSchema(s.Name(), g)
+	default:
+		panic(fmt.Sprintf("unknown schema version %T", schema))
 	}
-	return parquet.NewSchema(s.Name(), g)
 }
 
 // parquetSchema returns the parquet schema for the dynamic schema with the
@@ -851,6 +858,39 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 	cols := s.parquetSortingColumns(dynamicColumns)
 	return &Buffer{
 		dynamicColumns: dynamicColumns,
+		buffer: parquet.NewBuffer(
+			ps,
+			parquet.SortingRowGroupConfig(
+				parquet.SortingColumns(cols...),
+			),
+		),
+		fields: ps.Fields(),
+	}, nil
+}
+
+func (s *Schema) NewBufferV2(dynamicColumns ...*schemav2pb.Node) (*Buffer, error) {
+	schema, ok := s.def.(*schemav2pb.Schema)
+	if !ok {
+		return nil, fmt.Errorf("unsupported schema")
+	}
+
+	// merge all the dynamic columns; then merge into the top-level schema
+	if len(dynamicColumns) > 0 {
+		mergedCols := dynamicColumns[0]
+		for i := 1; i < len(dynamicColumns); i++ {
+			proto.Merge(mergedCols, dynamicColumns[i])
+		}
+		proto.Merge(schema, &schemav2pb.Schema{
+			Root: &schemav2pb.Group{
+				Nodes: []*schemav2pb.Node{mergedCols},
+			},
+		})
+	}
+
+	ps := ParquetSchemaFromV2Definition(schema)
+	cols := s.parquetSortingColumns(map[string][]string{})
+	return &Buffer{
+		dynamicColumns: map[string][]string{}, // unused for v2
 		buffer: parquet.NewBuffer(
 			ps,
 			parquet.SortingRowGroupConfig(

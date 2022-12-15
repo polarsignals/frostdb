@@ -74,6 +74,9 @@ type Expr interface {
 	// ColumnsUsed will return `XYZ` to be necessary to be loaded physically.
 	MatchColumn(columnName string) bool
 
+	// MatchPath returns whether it would operate on the passed path. This is nessesary for nested schemas.
+	MatchPath(path string) bool
+
 	// Computed returns whether the expression is computed as opposed to being
 	// a static value or unmodified physical column.
 	Computed() bool

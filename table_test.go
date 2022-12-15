@@ -24,7 +24,6 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -976,123 +975,7 @@ func Test_Table_EmptyRowGroup(t *testing.T) {
 }
 
 func Test_Table_NestedSchema(t *testing.T) {
-	t.Skip("WIP: queries of v2 tables fail due not being able to convert groups into arrow")
-	def := &schemav2pb.Schema{
-		Root: &schemav2pb.Group{
-			Name: "nested",
-			Nodes: []*schemav2pb.Node{
-				{
-					Type: &schemav2pb.Node_Group{
-						Group: &schemav2pb.Group{
-							Name: "labels",
-							Nodes: []*schemav2pb.Node{
-								{
-									Type: &schemav2pb.Node_Leaf{
-										Leaf: &schemav2pb.Leaf{
-											Name: "label1",
-											StorageLayout: &schemav2pb.StorageLayout{
-												Type:     schemav2pb.StorageLayout_TYPE_STRING,
-												Nullable: true,
-												Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-											},
-										},
-									},
-								},
-								{
-									Type: &schemav2pb.Node_Leaf{
-										Leaf: &schemav2pb.Leaf{
-											Name: "label2",
-											StorageLayout: &schemav2pb.StorageLayout{
-												Type:     schemav2pb.StorageLayout_TYPE_STRING,
-												Nullable: true,
-												Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				{ // NOTE that this nested group structure for a list of ints is how parquet is converted from an arrow list of int64s
-					Type: &schemav2pb.Node_Group{
-						Group: &schemav2pb.Group{
-							Name: "timestamps",
-							Nodes: []*schemav2pb.Node{
-								{
-									Type: &schemav2pb.Node_Group{
-										Group: &schemav2pb.Group{
-											Name:     "list",
-											Repeated: true,
-											Nodes: []*schemav2pb.Node{
-												{
-													Type: &schemav2pb.Node_Leaf{
-														Leaf: &schemav2pb.Leaf{
-															Name: "element",
-															StorageLayout: &schemav2pb.StorageLayout{
-																Type:     schemav2pb.StorageLayout_TYPE_INT64,
-																Nullable: true,
-																Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-															},
-														},
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				{
-					Type: &schemav2pb.Node_Group{
-						Group: &schemav2pb.Group{
-							Name: "values",
-							Nodes: []*schemav2pb.Node{
-								{
-									Type: &schemav2pb.Node_Group{
-										Group: &schemav2pb.Group{
-											Name:     "list",
-											Repeated: true,
-											Nodes: []*schemav2pb.Node{
-												{
-													Type: &schemav2pb.Node_Leaf{
-														Leaf: &schemav2pb.Leaf{
-															Name: "element",
-															StorageLayout: &schemav2pb.StorageLayout{
-																Type:     schemav2pb.StorageLayout_TYPE_INT64,
-																Nullable: true,
-																Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-															},
-														},
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		SortingColumns: []*schemav2pb.SortingColumn{
-			{
-				Path:       "labels",
-				Direction:  schemav2pb.SortingColumn_DIRECTION_ASCENDING,
-				NullsFirst: true,
-			},
-			{
-				Path:      "timestamp",
-				Direction: schemav2pb.SortingColumn_DIRECTION_ASCENDING,
-			},
-		},
-	}
-
-	schema, err := dynparquet.SchemaFromDefinition(def)
-	require.NoError(t, err)
+	schema := dynparquet.NewNestedSampleSchema(t)
 
 	ctx := context.Background()
 	config := NewTableConfig(schema)
@@ -1105,17 +988,21 @@ func Test_Table_NestedSchema(t *testing.T) {
 	tbl, err := db.Table("nested", config)
 	require.NoError(t, err)
 
-	pb, err := schema.NewBuffer(map[string][]string{})
+	pb, err := schema.NewBufferV2(
+		dynparquet.LabelColumn("label1"),
+		dynparquet.LabelColumn("label2"),
+	)
+
 	require.NoError(t, err)
 
 	_, err = pb.WriteRows([]parquet.Row{
 		{
-			parquet.ValueOf("value1").Level(0, 2, 0), // labels.label1
-			parquet.ValueOf("value1").Level(0, 2, 1), // labels.label2
-			parquet.ValueOf(1).Level(0, 3, 2),        // timestamps: [1]
-			parquet.ValueOf(2).Level(1, 3, 2),        // timestamps: [1,2]
-			parquet.ValueOf(2).Level(0, 3, 3),        // values: [2]
-			parquet.ValueOf(3).Level(1, 3, 3),        // values: [2,3]
+			parquet.ValueOf("value1").Level(0, 1, 0), // labels.label1
+			parquet.ValueOf("value1").Level(0, 1, 1), // labels.label2
+			parquet.ValueOf(1).Level(0, 2, 2),        // timestamps: [1]
+			parquet.ValueOf(2).Level(1, 2, 2),        // timestamps: [1,2]
+			parquet.ValueOf(2).Level(0, 2, 3),        // values: [2]
+			parquet.ValueOf(3).Level(1, 2, 3),        // values: [2,3]
 		},
 	})
 	require.NoError(t, err)
@@ -1125,8 +1012,9 @@ func Test_Table_NestedSchema(t *testing.T) {
 
 	pool := memory.NewGoAllocator()
 
+	var r arrow.Record
+	records := 0
 	err = tbl.View(ctx, func(ctx context.Context, tx uint64) error {
-		rows := int64(0)
 		err = tbl.Iterator(
 			ctx,
 			tx,
@@ -1134,17 +1022,23 @@ func Test_Table_NestedSchema(t *testing.T) {
 			// Select all distinct values for the label1 column.
 			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-				rows += ar.NumRows()
-				defer ar.Release()
-
+				records++
+				require.Equal(t, int64(1), ar.NumRows())
+				require.Equal(t, int64(3), ar.NumCols())
 				fmt.Println(ar)
-
+				ar.Retain()
+				r = ar
 				return nil
 			}},
 		)
 		require.NoError(t, err)
-		require.Equal(t, int64(0), rows)
 		return nil
 	})
+	t.Cleanup(r.Release)
 	require.NoError(t, err)
+	require.Equal(t, 1, records)
+
+	require.Equal(t, `{["value1"] ["value1"]}`, fmt.Sprintf("%v", r.Column(0)))
+	require.Equal(t, `[[1 2]]`, fmt.Sprintf("%v", r.Column(1)))
+	require.Equal(t, `[[2 3]]`, fmt.Sprintf("%v", r.Column(2)))
 }

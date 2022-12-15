@@ -39,12 +39,11 @@ func ParquetRowGroupToArrowSchema(
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			default:
-				name := field.Name()
-				if distinctColumns[0].MatchColumn(name) {
-					af, err := convert.ParquetFieldToArrowField(field)
-					if err != nil {
-						return nil, err
-					}
+				af, err := parquetFieldToArrowField("", field, distinctColumns)
+				if err != nil {
+					return nil, err
+				}
+				if af.Name != "" {
 					fields = append(fields, af)
 				}
 			}
@@ -53,19 +52,13 @@ func ParquetRowGroupToArrowSchema(
 	}
 
 	fields := make([]arrow.Field, 0, len(parquetFields))
-
-	for _, parquetField := range parquetFields {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			if includedProjection(physicalProjections, parquetField.Name()) {
-				af, err := convert.ParquetFieldToArrowField(parquetField)
-				if err != nil {
-					return nil, err
-				}
-				fields = append(fields, af)
-			}
+	for _, f := range parquetFields {
+		f, err := parquetFieldToArrowField("", f, physicalProjections)
+		if err != nil {
+			return nil, err
+		}
+		if f.Name != "" {
+			fields = append(fields, f)
 		}
 	}
 
@@ -84,6 +77,58 @@ func ParquetRowGroupToArrowSchema(
 	}
 
 	return arrow.NewSchema(fields, nil), nil
+}
+
+func parquetFieldToArrowField(prefix string, field parquet.Field, physicalProjections []logicalplan.Expr) (arrow.Field, error) {
+	if includedProjection(physicalProjections, fullPath(prefix, field)) {
+		af, err := convert.ParquetFieldToArrowField(field)
+		if err != nil {
+			return arrow.Field{}, err
+		}
+		return af, nil
+	}
+
+	if !field.Leaf() && includedPathProjection(physicalProjections, fullPath(prefix, field)) {
+		group := []arrow.Field{}
+		for _, f := range field.Fields() {
+			af, err := parquetFieldToArrowField(fullPath(prefix, field), f, physicalProjections)
+			if err != nil {
+				return arrow.Field{}, err
+			}
+			if af.Name != "" {
+				group = append(group, af)
+			}
+		}
+		if len(group) > 0 {
+			return arrow.Field{
+				Name:     field.Name(),
+				Type:     arrow.StructOf(group...),
+				Nullable: field.Optional(),
+			}, nil
+		}
+	}
+
+	return arrow.Field{}, nil
+}
+
+func fullPath(prefix string, parquetField parquet.Field) string {
+	if prefix == "" {
+		return parquetField.Name()
+	}
+	return prefix + "." + parquetField.Name()
+}
+
+func includedPathProjection(projections []logicalplan.Expr, name string) bool {
+	if len(projections) == 0 {
+		return true
+	}
+
+	for _, p := range projections {
+		if p.MatchPath(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func includedProjection(projections []logicalplan.Expr, name string) bool {
@@ -149,11 +194,7 @@ type ParquetConverter struct {
 	builder      *builder.RecordBuilder
 
 	// writers are wrappers over a subset of builder.Fields().
-	writers []writer.ValueWriter
-
-	// parquetIndexMapping is a mapping from an index into writers to a
-	// corresponding index into the parquet fields to be read.
-	parquetIndexMapping []int
+	writers []MultiColumnWriter
 
 	// prevSchema is stored to check for a different parquet schema on each
 	// Convert call. This avoids performing duplicate work (e.g. finding
@@ -246,35 +287,6 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 		c.prevSchema = parquetSchema
 	}
 
-	if c.iterOpts.Filter == nil &&
-		len(c.iterOpts.DistinctColumns) == 0 &&
-		SingleMatchingColumn(c.iterOpts.DistinctColumns, parquetFields) {
-		// TODO(asubiotto): Note that the above if check is always false. This
-		// should be changed to len(c.distinctColumns) == 1, but this currently
-		// results in a panic. To be investigated.
-		// We can use the faster path for a single distinct column by just
-		// writing its dictionary.
-		for i := range c.writers {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				parquetIndex := c.parquetIndexMapping[i]
-				field := parquetFields[parquetIndex]
-				name := field.Name()
-				if c.iterOpts.DistinctColumns[0].MatchColumn(name) {
-					if err := c.writeColumnToArray(
-						field,
-						parquetColumns[parquetIndex],
-						true,
-						c.writers[i],
-					); err != nil {
-						return fmt.Errorf("convert parquet column to arrow array: %w", err)
-					}
-				}
-			}
-		}
-	}
 	if c.mode == multiDistinctColumn {
 		// Since we're not filtering, we can use a faster path for distinct
 		// columns. If all the distinct columns are dictionary encoded, we can
@@ -295,19 +307,20 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 		// If we get here, we couldn't use the fast path.
 	}
 
-	for i := range c.writers {
-		parquetIndex := c.parquetIndexMapping[i]
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if err := c.writeColumnToArray(
-				parquetFields[parquetIndex],
-				parquetColumns[parquetIndex],
-				false,
-				c.writers[i],
-			); err != nil {
-				return fmt.Errorf("convert parquet column to arrow array: %w", err)
+	for _, w := range c.writers {
+		for _, col := range w.colIdx {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				if err := c.writeColumnToArray(
+					parquetFields[w.fieldIdx],
+					parquetColumns[col],
+					false,
+					w.writer,
+				); err != nil {
+					return fmt.Errorf("convert parquet column to arrow array: %w", err)
+				}
 			}
 		}
 	}
@@ -361,26 +374,53 @@ func (c *ParquetConverter) Close() {
 	}
 }
 
+func numLeaves(f parquet.Field) int {
+	if f.Leaf() {
+		return 1
+	}
+
+	leaves := 0
+	for _, field := range f.Fields() {
+		switch field.Leaf() {
+		case true:
+			leaves++
+		default:
+			leaves += numLeaves(field)
+		}
+	}
+
+	return leaves
+}
+
 // schemaChanged is called when a rowgroup to convert has a different schema
 // than previously seen. This causes a recalculation of helper fields.
 func (c *ParquetConverter) schemaChanged(parquetFields []parquet.Field) error {
 	c.writers = c.writers[:0]
-	c.parquetIndexMapping = c.parquetIndexMapping[:0]
 	parquetIndexToWriterMap := make(map[int]writer.ValueWriter)
+	colOffset := 0
 	for i, field := range parquetFields {
 		indices := c.outputSchema.FieldIndices(field.Name())
 		if len(indices) == 0 {
 			// This column can be skipped, it's not needed by the output.
+			colOffset += numLeaves(field)
 			continue
 		}
 
-		_, newWriter, err := convert.ParquetNodeToTypeWithWriterFunc(field)
+		newWriter, err := convert.GetWriter(i, field)
 		if err != nil {
 			return err
 		}
 		writer := newWriter(c.builder.Field(indices[0]), 0)
-		c.writers = append(c.writers, writer)
-		c.parquetIndexMapping = append(c.parquetIndexMapping, i)
+		cols := make([]int, numLeaves(field))
+		for i := range cols {
+			cols[i] = colOffset
+			colOffset++
+		}
+		c.writers = append(c.writers, MultiColumnWriter{
+			writer:   writer,
+			fieldIdx: i,
+			colIdx:   cols,
+		})
 		parquetIndexToWriterMap[i] = writer
 	}
 
@@ -583,7 +623,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 	// Create arrow writers from arrow and parquet schema
 	writers := make([]writer.ValueWriter, len(parquetFields))
 	for i, field := range builder.Fields() {
-		_, newValueWriter, err := convert.ParquetNodeToTypeWithWriterFunc(parquetFields[i])
+		newValueWriter, err := convert.GetWriter(i, parquetFields[i])
 		if err != nil {
 			return err
 		}
@@ -1080,4 +1120,22 @@ func mergeArrowSchemas(schemas []*arrow.Schema) *arrow.Schema {
 	}
 
 	return arrow.NewSchema(fields, nil)
+}
+
+type MultiColumnWriter struct {
+	writer   writer.ValueWriter
+	fieldIdx int
+	colIdx   []int
+}
+
+func ColToWriter(col int, writers []MultiColumnWriter) writer.ValueWriter {
+	for _, w := range writers {
+		for _, idx := range w.colIdx {
+			if col == idx {
+				return w.writer
+			}
+		}
+	}
+
+	return nil
 }
