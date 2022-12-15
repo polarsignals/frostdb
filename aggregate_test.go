@@ -90,6 +90,11 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 			expVals: []int64{5, 1},
 		},
 		{
+			fn:      logicalplan.Min,
+			alias:   "value_min",
+			expVals: []int64{2, 1},
+		},
+		{
 			fn:      logicalplan.Max,
 			alias:   "value_max",
 			expVals: []int64{3, 1},

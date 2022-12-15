@@ -389,6 +389,7 @@ type AggFunc uint32
 const (
 	AggFuncUnknown AggFunc = iota
 	AggFuncSum
+	AggFuncMin
 	AggFuncMax
 	AggFuncCount
 )
@@ -397,6 +398,8 @@ func (f AggFunc) String() string {
 	switch f {
 	case AggFuncSum:
 		return "sum"
+	case AggFuncMin:
+		return "min"
 	case AggFuncMax:
 		return "max"
 	case AggFuncCount:
@@ -409,6 +412,13 @@ func (f AggFunc) String() string {
 func Sum(expr Expr) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncSum,
+		Expr: expr,
+	}
+}
+
+func Min(expr Expr) *AggregationFunction {
+	return &AggregationFunction{
+		Func: AggFuncMin,
 		Expr: expr,
 	}
 }
