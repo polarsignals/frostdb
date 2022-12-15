@@ -1,14 +1,49 @@
 package logicalplan
 
+import (
+	"golang.org/x/exp/slices"
+)
+
 type Optimizer interface {
 	Optimize(plan *LogicalPlan) *LogicalPlan
 }
 
 var DefaultOptimizers = []Optimizer{
+	&AverageAggregationPushDown{},
 	&PhysicalProjectionPushDown{},
 	&FilterPushDown{},
 	&DistinctPushDown{},
 	&ProjectionPushDown{},
+}
+
+type AverageAggregationPushDown struct{}
+
+func (p *AverageAggregationPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
+	for i, aggExpr := range plan.Aggregation.AggExprs {
+		if aliasExpr, ok := aggExpr.(*AliasExpr); ok {
+			if aggFunc, ok := aliasExpr.Expr.(*AggregationFunction); ok {
+				if aggFunc.Func == AggFuncAvg {
+					// Delete this average aggregation from the logicalplan.
+					plan.Aggregation.AggExprs = slices.Delete(plan.Aggregation.AggExprs, i, i+1)
+					// Add sum and count aggregation for the column to the logicalplan.
+					plan.Aggregation.AggExprs = append(plan.Aggregation.AggExprs,
+						Sum(aggFunc.Expr),
+						Count(aggFunc.Expr),
+					)
+
+					// Wrap the aggregations with the average projection to always call it after aggregating.
+					plan = &LogicalPlan{
+						Input: plan,
+						Projection: &Projection{
+							Exprs: []Expr{&AverageExpr{Expr: aggFunc.Expr}},
+						},
+					}
+				}
+			}
+		}
+	}
+
+	return plan
 }
 
 // The PhysicalProjectionPushDown optimizer tries to push down the actual

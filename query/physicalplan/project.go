@@ -184,6 +184,8 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		return binaryExprProjection{
 			boolExpr: boolExpr,
 		}, nil
+	case *logicalplan.AverageExpr:
+		return &averageProjection{expr: e}, nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type for projection: %T", expr)
 	}
@@ -270,4 +272,64 @@ func (p *Projection) Draw() *Diagram {
 	}
 	details := fmt.Sprintf("Projection (%s)", strings.Join(columns, ","))
 	return &Diagram{Details: details, Child: child}
+}
+
+type averageProjection struct {
+	expr logicalplan.Expr
+}
+
+func (a *averageProjection) Name() string {
+	return a.expr.Name()
+}
+
+func (a *averageProjection) Project(mem memory.Allocator, r arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	columnName := a.expr.Name()
+	columnSum := "sum(" + columnName + ")"
+	columnCount := "count(" + columnName + ")"
+
+	schema := r.Schema()
+
+	sumIndex := schema.FieldIndices(columnSum)
+	if len(sumIndex) != 1 {
+		return nil, nil, fmt.Errorf("sum column for average projection for column %s not found", columnName)
+	}
+	countIndex := schema.FieldIndices(columnCount)
+	if len(countIndex) != 1 {
+		return nil, nil, fmt.Errorf("count column for average projection for column %s not found", columnName)
+	}
+
+	sums := r.Column(sumIndex[0])
+	counts := r.Column(countIndex[0])
+
+	fields := make([]arrow.Field, 0, len(schema.Fields())-1)
+	columns := make([]arrow.Array, 0, len(schema.Fields())-1)
+
+	// Only add the fields and columns that aren't the average's underlying sum and count columns.
+	for i, field := range schema.Fields() {
+		if i != sumIndex[0] && i != countIndex[0] {
+			fields = append(fields, field)
+			columns = append(columns, r.Column(i))
+		}
+	}
+
+	// Add the field and column for the projected average aggregation.
+	fields = append(fields, arrow.Field{
+		Name: "avg(" + columnName + ")",
+		Type: &arrow.Int64Type{},
+	})
+	columns = append(columns, avgInt64arrays(mem, sums, counts))
+
+	return fields, columns, nil
+}
+
+func avgInt64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array {
+	sumsInts := sums.(*array.Int64)
+	countsInts := counts.(*array.Int64)
+
+	res := array.NewInt64Builder(pool)
+	for i := 0; i < sumsInts.Len(); i++ {
+		res.Append(sumsInts.Value(i) / countsInts.Value(i))
+	}
+
+	return res.NewArray()
 }

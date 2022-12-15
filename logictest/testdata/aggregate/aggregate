@@ -29,6 +29,17 @@ select count(value) as value_count group by labels.label2
 value2  6
 
 exec
+select avg(value) as value_avg group by labels.label2
+----
+value2  3
+
+exec
+select avg(value) as value_avg group by labels.label4
+----
+        3
+value4  4
+
+exec
 select sum(value), count(value) group by stacktrace
 ----
 stack1  21      6
