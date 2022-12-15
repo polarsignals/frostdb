@@ -31,6 +31,12 @@ select sum(value) as value_sum group by second(3)
 123000  4
 
 exec
+select sum(value) as value_sum, count(value) as value_count group by second(3)
+----
+120000  6       3
+123000  4       1
+
+exec
 select sum(value) as value_sum group by second(4)
 ----
 120000  10

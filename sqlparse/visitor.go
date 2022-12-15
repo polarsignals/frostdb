@@ -59,11 +59,18 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		case expr.Distinct:
 			v.builder = v.builder.Distinct(v.exprStack...)
 		case expr.GroupBy != nil:
-			v.builder = v.builder.Aggregate(
-				// Aggregation function is evaluated first.
-				v.exprStack[0],
-				v.exprStack[1:]...,
-			)
+			var agg []logicalplan.Expr
+			var groups []logicalplan.Expr
+
+			for _, expr := range v.exprStack {
+				switch expr.(type) {
+				case *logicalplan.AliasExpr, *logicalplan.AggregationFunction:
+					agg = append(agg, expr)
+				default:
+					groups = append(groups, expr)
+				}
+			}
+			v.builder = v.builder.Aggregate(agg, groups)
 		default:
 			v.builder = v.builder.Project(v.exprStack...)
 		}

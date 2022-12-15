@@ -42,7 +42,9 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsedExpr
 		for _, expr := range plan.Aggregation.GroupExprs {
 			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
-		columnsUsedExprs = append(columnsUsedExprs, plan.Aggregation.AggExpr.ColumnsUsedExprs()...)
+		for _, expr := range plan.Aggregation.AggExprs {
+			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
+		}
 	}
 
 	if plan.Input != nil {
@@ -136,7 +138,9 @@ func aggregationColumns(plan *LogicalPlan) []Expr {
 		for _, expr := range plan.Aggregation.GroupExprs {
 			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
-		columnsUsedExprs = append(columnsUsedExprs, plan.Aggregation.AggExpr.ColumnsUsedExprs()...)
+		for _, expr := range plan.Aggregation.AggExprs {
+			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
+		}
 	}
 
 	return append(columnsUsedExprs, aggregationColumns(plan.Input)...)

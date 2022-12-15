@@ -15,8 +15,8 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()
@@ -69,8 +69,8 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()
@@ -100,8 +100,8 @@ func TestRemoveProjectionAtRoot(t *testing.T) {
 		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()
@@ -117,8 +117,8 @@ func TestRemoveMiddleProjection(t *testing.T) {
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Project(Col("stacktrace")).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Build()
 
@@ -133,8 +133,8 @@ func TestRemoveLowestProjection(t *testing.T) {
 		Project(Col("stacktrace")).
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Build()
 
@@ -148,8 +148,8 @@ func TestProjectionPushDown(t *testing.T) {
 		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("labels")).
 		Build()
@@ -176,8 +176,8 @@ func TestAllOptimizers(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			Sum(Col("value")).Alias("value_sum"),
-			Col("stacktrace"),
+			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()
