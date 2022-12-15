@@ -36,6 +36,7 @@ import (
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
+	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -910,11 +911,11 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	}
 	defer t.table.config.schema.PutWriter(w)
 
-	parts := []*Part{}
+	list := []*parts.Part{}
 	for granule, indicies := range rowsToInsertPerGranule {
 		select {
 		case <-ctx.Done():
-			tombstone(parts)
+			parts.Tombstone(list)
 			return ctx.Err()
 		default:
 
@@ -949,11 +950,11 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 				return fmt.Errorf("failed to get reader from bytes: %w", err)
 			}
 
-			part := NewPart(tx, serBuf)
+			part := parts.NewPart(tx, serBuf)
 			if _, err := granule.AddPart(part); err != nil {
 				return fmt.Errorf("failed to add part to granule: %w", err)
 			}
-			parts = append(parts, part)
+			list = append(list, part)
 			t.size.Add(serBuf.ParquetFile().Size())
 
 			b = bytes.NewBuffer(nil)
@@ -961,7 +962,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 		}
 	}
 
-	t.table.metrics.numParts.Add(float64(len(parts)))
+	t.table.metrics.numParts.Add(float64(len(list)))
 	return nil
 }
 
@@ -1118,7 +1119,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
-func addPartToGranule(granules []*Granule, p *Part) error {
+func addPartToGranule(granules []*Granule, p *parts.Part) error {
 	row, err := p.Least()
 	if err != nil {
 		return err

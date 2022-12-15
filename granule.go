@@ -9,12 +9,13 @@ import (
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/parts"
 )
 
 type Granule struct {
 	metadata GranuleMetadata
 
-	parts       *PartList
+	parts       *parts.List
 	tableConfig *TableConfig
 
 	granulesCreated prometheus.Counter
@@ -37,10 +38,10 @@ type GranuleMetadata struct {
 	pruned atomic.Uint64
 }
 
-func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *Part) (*Granule, error) {
+func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, firstPart *parts.Part) (*Granule, error) {
 	g := &Granule{
 		granulesCreated: granulesCreated,
-		parts:           NewPartList(&atomic.Pointer[Node]{}, 0, None),
+		parts:           parts.NewList(&atomic.Pointer[parts.Node]{}, parts.None),
 		tableConfig:     tableConfig,
 
 		metadata: GranuleMetadata{
@@ -63,7 +64,7 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, fi
 	return g, nil
 }
 
-func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
+func (g *Granule) addPart(p *parts.Part, r *dynparquet.DynamicRow) (uint64, error) {
 	rows := p.Buf.NumRows()
 	if rows == 0 {
 		return g.metadata.size.Load(), nil
@@ -85,7 +86,7 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 
 	// If the prepend returned that we're adding to the compacted list; then we
 	// need to propagate the Part to the new granules.
-	if node.sentinel == Compacted {
+	if node.Compacted() {
 		err := addPartToGranule(g.newGranules, p)
 		if err != nil {
 			return 0, err
@@ -96,7 +97,7 @@ func (g *Granule) addPart(p *Part, r *dynparquet.DynamicRow) (uint64, error) {
 }
 
 // AddPart returns the new size of the Granule.
-func (g *Granule) AddPart(p *Part) (uint64, error) {
+func (g *Granule) AddPart(p *parts.Part) (uint64, error) {
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
 	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
 	n, err := reader.ReadRows(rowBuf)
@@ -116,9 +117,9 @@ func (g *Granule) AddPart(p *Part) (uint64, error) {
 
 // PartBuffersForTx returns the PartBuffers for the given transaction constraints.
 func (g *Granule) PartBuffersForTx(watermark uint64, iterator func(*dynparquet.SerializedBuffer) bool) {
-	g.parts.Iterate(func(p *Part) bool {
+	g.parts.Iterate(func(p *parts.Part) bool {
 		// Don't iterate over parts from an uncompleted transaction
-		if p.tx > watermark {
+		if p.TX() > watermark {
 			return true
 		}
 

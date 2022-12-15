@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/parts"
 )
 
 // insertSamples is a helper function to insert a deterministic sample with a
@@ -34,7 +35,7 @@ func insertSamples(ctx context.Context, t *testing.T, table *Table, timestamps .
 func TestCompaction(t *testing.T) {
 	// expectedPart specifies the expected part data the test should verify.
 	type expectedPart struct {
-		compactionLevel compactionLevel
+		compactionLevel parts.CompactionLevel
 		numRowGroups    int
 		// data is the expected data. Only the timestamps are verified in this
 		// test for simplicity.
@@ -83,7 +84,7 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    2,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{1, 2, 3},
 						},
 					},
@@ -101,12 +102,12 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    1,
-							compactionLevel: compactionLevel0,
+							compactionLevel: parts.CompactionLevel0,
 							data:            []int64{4},
 						},
 						{
 							numRowGroups:    2,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{1, 2, 3},
 						},
 					},
@@ -130,7 +131,7 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    2,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{1, 2, 3},
 						},
 					},
@@ -139,7 +140,7 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    1,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{4, 5},
 						},
 					},
@@ -158,7 +159,7 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    2,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{1, 2, 2, 3},
 						},
 					},
@@ -182,12 +183,12 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    2,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{7, 8, 9},
 						},
 						{
 							numRowGroups:    4,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{1, 1, 2, 3, 4, 5, 5, 6},
 						},
 					},
@@ -209,7 +210,7 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    4,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{1, 2, 3, 4, 4, 5, 6},
 						},
 					},
@@ -259,12 +260,12 @@ func TestCompaction(t *testing.T) {
 	}
 
 	numParts := func(g *Granule) int {
-		parts := 0
-		g.parts.Iterate(func(p *Part) bool {
-			parts++
+		numparts := 0
+		g.parts.Iterate(func(p *parts.Part) bool {
+			numparts++
 			return true
 		})
-		return parts
+		return numparts
 	}
 
 	for _, tc := range testCases {
@@ -340,11 +341,11 @@ func TestCompaction(t *testing.T) {
 				require.Equal(t, len(expected.parts), numParts(g))
 
 				j := 0
-				g.parts.Iterate(func(p *Part) bool {
+				g.parts.Iterate(func(p *parts.Part) bool {
 					expectedPart := expected.parts[j]
 					rgs := p.Buf.ParquetFile().RowGroups()
 					require.Equal(t, expectedPart.numRowGroups, len(rgs))
-					require.Equal(t, expectedPart.compactionLevel, p.compactionLevel)
+					require.Equal(t, expectedPart.compactionLevel, p.CompactionLevel())
 					rowsRead := make([]parquet.Row, 0)
 					for _, rg := range rgs {
 						func() {
