@@ -326,9 +326,19 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		}
 
 		for j, col := range a.aggregations {
-			if col.expr.MatchColumn(field.Name) || col.resultName == field.Name {
-				columnToAggregate[j] = r.Column(i)
-				aggregateFieldsFound++
+			// If we're aggregating at the final stage we have previously
+			// renamed the pre-aggregated columns to their result names.
+			if a.finalStage {
+				if col.resultName == field.Name {
+					columnToAggregate[j] = r.Column(i)
+					aggregateFieldsFound++
+				}
+			} else {
+				// If we're aggregating the raw data we need to find the columns by their actual names for now.
+				if col.expr.MatchColumn(field.Name) {
+					columnToAggregate[j] = r.Column(i)
+					aggregateFieldsFound++
+				}
 			}
 		}
 	}
