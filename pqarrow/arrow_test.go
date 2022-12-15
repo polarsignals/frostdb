@@ -582,7 +582,10 @@ func TestList(t *testing.T) {
 
 func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 	schema := dynparquet.NewNestedSampleSchema(t)
-	buf, err := schema.NewBuffer(map[string][]string{})
+	buf, err := schema.NewBufferV2(
+		dynparquet.LabelColumn("label1"),
+		dynparquet.LabelColumn("label2"),
+	)
 	require.NoError(t, err)
 
 	_, err = buf.WriteRows([]parquet.Row{
@@ -722,7 +725,10 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 func Test_ParquetToArrowV2(t *testing.T) {
 	dynSchema := dynparquet.NewNestedSampleSchema(t)
 
-	pb, err := dynSchema.NewBuffer(map[string][]string{})
+	pb, err := dynSchema.NewBufferV2(
+		dynparquet.LabelColumn("label1"),
+		dynparquet.LabelColumn("label2"),
+	)
 	require.NoError(t, err)
 
 	for i := 0; i < 1000; i++ {

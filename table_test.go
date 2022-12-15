@@ -988,7 +988,11 @@ func Test_Table_NestedSchema(t *testing.T) {
 	tbl, err := db.Table("nested", config)
 	require.NoError(t, err)
 
-	pb, err := schema.NewBuffer(map[string][]string{})
+	pb, err := schema.NewBufferV2(
+		dynparquet.LabelColumn("label1"),
+		dynparquet.LabelColumn("label2"),
+	)
+
 	require.NoError(t, err)
 
 	_, err = pb.WriteRows([]parquet.Row{

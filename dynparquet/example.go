@@ -252,6 +252,30 @@ func NestedListDef(name string, layout *schemav2pb.StorageLayout) *schemav2pb.No
 	}
 }
 
+func LabelColumn(name string) *schemav2pb.Node {
+	return &schemav2pb.Node{
+		Type: &schemav2pb.Node_Group{
+			Group: &schemav2pb.Group{
+				Name: "labels",
+				Nodes: []*schemav2pb.Node{
+					{
+						Type: &schemav2pb.Node_Leaf{
+							Leaf: &schemav2pb.Leaf{
+								Name: name,
+								StorageLayout: &schemav2pb.StorageLayout{
+									Type:     schemav2pb.StorageLayout_TYPE_STRING,
+									Nullable: true,
+									Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func NewNestedSampleSchema(t require.TestingT) *Schema {
 	if tt, ok := t.(*testing.T); ok {
 		tt.Helper()
@@ -263,33 +287,8 @@ func NewNestedSampleSchema(t require.TestingT) *Schema {
 				{
 					Type: &schemav2pb.Node_Group{
 						Group: &schemav2pb.Group{
-							Name: "labels",
-							Nodes: []*schemav2pb.Node{
-								{
-									Type: &schemav2pb.Node_Leaf{
-										Leaf: &schemav2pb.Leaf{
-											Name: "label1",
-											StorageLayout: &schemav2pb.StorageLayout{
-												Type:     schemav2pb.StorageLayout_TYPE_STRING,
-												Nullable: true,
-												Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-											},
-										},
-									},
-								},
-								{
-									Type: &schemav2pb.Node_Leaf{
-										Leaf: &schemav2pb.Leaf{
-											Name: "label2",
-											StorageLayout: &schemav2pb.StorageLayout{
-												Type:     schemav2pb.StorageLayout_TYPE_STRING,
-												Nullable: true,
-												Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-											},
-										},
-									},
-								},
-							},
+							Name:  "labels",
+							Nodes: []*schemav2pb.Node{},
 						},
 					},
 				},

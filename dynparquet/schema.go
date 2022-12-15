@@ -867,6 +867,39 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 	}, nil
 }
 
+func (s *Schema) NewBufferV2(dynamicColumns ...*schemav2pb.Node) (*Buffer, error) {
+	schema, ok := s.def.(*schemav2pb.Schema)
+	if !ok {
+		return nil, fmt.Errorf("unsupported schema")
+	}
+
+	// merge all the dynamic columns; then merge into the top-level schema
+	if len(dynamicColumns) > 0 {
+		mergedCols := dynamicColumns[0]
+		for i := 1; i < len(dynamicColumns); i++ {
+			proto.Merge(mergedCols, dynamicColumns[i])
+		}
+		proto.Merge(schema, &schemav2pb.Schema{
+			Root: &schemav2pb.Group{
+				Nodes: []*schemav2pb.Node{mergedCols},
+			},
+		})
+	}
+
+	ps := ParquetSchemaFromV2Definition(schema)
+	cols := s.parquetSortingColumns(map[string][]string{})
+	return &Buffer{
+		dynamicColumns: map[string][]string{}, // unused for v2
+		buffer: parquet.NewBuffer(
+			ps,
+			parquet.SortingRowGroupConfig(
+				parquet.SortingColumns(cols...),
+			),
+		),
+		fields: ps.Fields(),
+	}, nil
+}
+
 func (s *Schema) SerializeBuffer(w io.Writer, buffer *Buffer) error {
 	pw, err := s.GetWriter(w, buffer.DynamicColumns())
 	if err != nil {
