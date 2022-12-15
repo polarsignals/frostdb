@@ -86,6 +86,8 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			v.exprStack[lastExpr] = logicalplan.Count(v.exprStack[lastExpr])
 		case "sum":
 			v.exprStack[lastExpr] = logicalplan.Sum(v.exprStack[lastExpr])
+		case "min":
+			v.exprStack[lastExpr] = logicalplan.Min(v.exprStack[lastExpr])
 		case "max":
 			v.exprStack[lastExpr] = logicalplan.Max(v.exprStack[lastExpr])
 		default:
