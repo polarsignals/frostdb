@@ -18,6 +18,7 @@ import (
 // TestOrderedAggregate unit tests aggregation logic specific to
 // OrderedAggregate internals using arrow records.
 func TestOrderedAggregate(t *testing.T) {
+	t.Skip("https://github.com/polarsignals/frostdb/issues/287")
 	ctx := context.Background()
 
 	type record struct {
