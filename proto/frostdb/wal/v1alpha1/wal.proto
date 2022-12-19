@@ -2,13 +2,14 @@ syntax = "proto3";
 
 package frostdb.wal.v1alpha1;
 
-import "google/protobuf/any.proto";
+import "frostdb/schema/v1alpha1/schema.proto";
+import "frostdb/schema/v1alpha2/schema.proto";
 
 // Record describes a single entry into the WAL.
 message Record {
-    // Data of the record. This is intentionally nested so the only thing in
-    // the entry can be a protobuf `oneof` and have forward compatilibity.
-    Entry entry = 1;
+  // Data of the record. This is intentionally nested so the only thing in
+  // the entry can be a protobuf `oneof` and have forward compatilibity.
+  Entry entry = 1;
 }
 
 // The data of a WAL Record. This is intentionally separate to allow using the
@@ -29,7 +30,13 @@ message Entry {
     // Block ID of the new-table-block.
     bytes block_id = 2;
     // Schema of the new-table-block.
-    google.protobuf.Any schema = 3;
+    oneof schema {
+      // Deprecated schema of the new-table-block. Only used for reading for
+      // backwards compatibility.
+      frostdb.schema.v1alpha1.Schema deprecated_schema = 3;
+      // Schema of the new-table-block. Use this field.
+      frostdb.schema.v1alpha2.Schema schema_v2 = 4;
+    }
   }
 
   // The table-block persisted entry.

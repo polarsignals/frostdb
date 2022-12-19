@@ -411,6 +411,15 @@ func (db *DB) replayWAL(ctx context.Context) error {
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
 			entry := e.NewTableBlock
+			var schema proto.Message
+			switch v := entry.Schema.(type) {
+			case *walpb.Entry_NewTableBlock_DeprecatedSchema:
+				schema = v.DeprecatedSchema
+			case *walpb.Entry_NewTableBlock_SchemaV2:
+				schema = v.SchemaV2
+			default:
+				return fmt.Errorf("unhandled schema type: %T", v)
+			}
 
 			var id ulid.ULID
 			if err := id.UnmarshalBinary(entry.BlockId); err != nil {
@@ -426,7 +435,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 			table, err := db.GetTable(tableName)
 			var tableErr ErrTableNotFound
 			if errors.As(err, &tableErr) {
-				schema, err := dynparquet.SchemaFromProto(entry.Schema)
+				schema, err := dynparquet.SchemaFromDefinition(schema)
 				if err != nil {
 					return fmt.Errorf("initialize schema: %w", err)
 				}
@@ -471,11 +480,11 @@ func (db *DB) replayWAL(ctx context.Context) error {
 			table.pendingBlocks[table.active] = struct{}{}
 			go table.writeBlock(table.active)
 
-			if !proto.Equal(entry.Schema, table.config.schema.Definition()) {
+			if !proto.Equal(schema, table.config.schema.Definition()) {
 				// If schemas are identical from block to block we should we
 				// reuse the previous schema in order to retain pooled memory
 				// for it.
-				schema, err := dynparquet.SchemaFromProto(entry.Schema)
+				schema, err := dynparquet.SchemaFromDefinition(schema)
 				if err != nil {
 					return fmt.Errorf("initialize schema: %w", err)
 				}
