@@ -48,3 +48,15 @@ value1  120000  1
 value2  121000  2
 value3  122000  3
 value4  123000  4
+
+exec
+select sum(value) as value_sum, count(timestamp) as timestamp_count group by second(2)
+----
+120000  3       2
+122000  7       2
+
+exec
+select count(timestamp) as timestamp_count group by second(3)
+----
+120000  3
+123000  1
