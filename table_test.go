@@ -334,6 +334,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		WithStoragePath(dir),
 	)
 	require.NoError(b, err)
+	defer c.Close()
 
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(b, err)

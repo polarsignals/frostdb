@@ -566,9 +566,6 @@ func compactLevel0IntoLevel1(
 
 		for {
 			var mergedBytes bytes.Buffer
-			if err := rows.SeekToRow(int64(cursor)); err != nil {
-				return err
-			}
 			n, err := t.writeRows(&mergedBytes, rows, merged.DynamicColumns(), estimatedRowsPerPart)
 			if err != nil {
 				return err

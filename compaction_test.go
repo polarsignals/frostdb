@@ -216,6 +216,46 @@ func TestCompaction(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "MultipleL0ToL1",
+			inserts: []int64{
+				acc, 1, 2, 3, flushAcc,
+				acc, 4, 5, 6, flushAcc,
+				recordGranuleSizeCommand,
+				acc, 7, 8, 9, flushAcc,
+				setRecordedGranuleSizeCommand,
+				compactCommand,
+			},
+			expected: []expectedGranule{
+				{
+					[]expectedPart{
+						{
+							numRowGroups:    2,
+							compactionLevel: compactionLevel1,
+							data:            []int64{1, 2, 3, 4},
+						},
+					},
+				},
+				{
+					[]expectedPart{
+						{
+							numRowGroups:    2,
+							compactionLevel: compactionLevel1,
+							data:            []int64{5, 6, 7, 8},
+						},
+					},
+				},
+				{
+					[]expectedPart{
+						{
+							numRowGroups:    1,
+							compactionLevel: compactionLevel1,
+							data:            []int64{9},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	numParts := func(g *Granule) int {
