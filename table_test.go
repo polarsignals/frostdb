@@ -24,6 +24,7 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -1042,6 +1043,130 @@ func Test_Table_NestedSchema(t *testing.T) {
 	require.Equal(t, `{["value1"] ["value1"]}`, fmt.Sprintf("%v", r.Column(0)))
 	require.Equal(t, `[[1 2]]`, fmt.Sprintf("%v", r.Column(1)))
 	require.Equal(t, `[[2 3]]`, fmt.Sprintf("%v", r.Column(2)))
+}
+
+func Test_RecordToRow(t *testing.T) {
+	schema := arrow.NewSchema([]arrow.Field{
+		{
+			Name:     "labels.label1",
+			Type:     &arrow.StringType{},
+			Nullable: true,
+		},
+		{
+			Name:     "labels.label2",
+			Type:     &arrow.StringType{},
+			Nullable: true,
+		},
+		{
+			Name: "timestamp",
+			Type: &arrow.Int64Type{},
+		},
+		{
+			Name: "value",
+			Type: &arrow.Int64Type{},
+		},
+	}, nil)
+
+	bld := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
+	t.Cleanup(bld.Release)
+
+	bld.Field(0).(*array.StringBuilder).Append("hello")
+	bld.Field(1).(*array.StringBuilder).Append("world")
+	bld.Field(2).(*array.Int64Builder).Append(10)
+	bld.Field(3).(*array.Int64Builder).Append(20)
+
+	record := bld.NewRecord()
+
+	dynschema := dynparquet.NewSampleSchema()
+	ps, err := dynschema.DynamicParquetSchema(pqarrow.RecordDynamicCols(record))
+	require.NoError(t, err)
+
+	row, err := pqarrow.RecordToRow(dynschema, ps, record, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[<null> hello world <null> 10 20]", fmt.Sprintf("%v", row))
+}
+
+func Test_L0Query(t *testing.T) {
+	c, table := basicTable(t)
+	t.Cleanup(func() { c.Close() })
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+		"labels": {"label1", "label2", "label3", "label4"},
+	})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+	require.NoError(t, err)
+
+	r, err := samples.ToRecord(sc)
+	require.NoError(t, err)
+
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	// TODO query the record back
+	pool := memory.NewGoAllocator()
+
+	records := 0
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+		err = table.Iterator(
+			ctx,
+			tx,
+			pool,
+			logicalplan.IterOptions{},
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				records++
+				require.Equal(t, int64(3), ar.NumRows())
+				require.Equal(t, int64(8), ar.NumCols())
+				return nil
+			}},
+		)
+		require.NoError(t, err)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, records)
 }
 
 // This test checks to make sure that if a new row is added that is globally the least it shall be added as a new granule.
