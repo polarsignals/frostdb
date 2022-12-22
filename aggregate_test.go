@@ -107,7 +107,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		{
 			fn:      logicalplan.Avg,
 			alias:   "value_avg",
-			expVals: []int64{2, 2},
+			expVals: []int64{2, 1},
 		},
 	} {
 		t.Run(testCase.alias, func(t *testing.T) {

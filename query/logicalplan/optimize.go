@@ -19,6 +19,10 @@ var DefaultOptimizers = []Optimizer{
 type AverageAggregationPushDown struct{}
 
 func (p *AverageAggregationPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
+	if plan.Aggregation == nil {
+		return plan
+	}
+
 	for i, aggExpr := range plan.Aggregation.AggExprs {
 		if aliasExpr, ok := aggExpr.(*AliasExpr); ok {
 			if aggFunc, ok := aliasExpr.Expr.(*AggregationFunction); ok {
