@@ -36,6 +36,15 @@ func (r *DynamicRows) GetCopy(i int) *DynamicRow {
 	}
 }
 
+func NewDynamicRow(row parquet.Row, schema *parquet.Schema, dyncols map[string][]string, fields []parquet.Field) *DynamicRow {
+	return &DynamicRow{
+		Row:            row,
+		Schema:         schema,
+		DynamicColumns: dyncols,
+		fields:         fields,
+	}
+}
+
 type DynamicRow struct {
 	Row            parquet.Row
 	Schema         *parquet.Schema

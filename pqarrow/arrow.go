@@ -23,14 +23,20 @@ import (
 func ParquetRowGroupToArrowSchema(
 	ctx context.Context,
 	rg parquet.RowGroup,
-	physicalProjections []logicalplan.Expr,
-	projections []logicalplan.Expr,
-	filterExpr logicalplan.Expr,
-	distinctColumns []logicalplan.Expr,
+	options logicalplan.IterOptions,
 ) (*arrow.Schema, error) {
-	parquetFields := rg.Schema().Fields()
+	return ParquetSchemaToArrowSchema(ctx, rg.Schema(), options)
+}
 
-	if len(distinctColumns) == 1 && filterExpr == nil {
+func ParquetSchemaToArrowSchema(
+	ctx context.Context,
+	schema *parquet.Schema,
+	options logicalplan.IterOptions,
+) (*arrow.Schema, error) {
+
+	parquetFields := schema.Fields()
+
+	if len(options.DistinctColumns) == 1 && options.Filter == nil {
 		// We can use the faster path for a single distinct column by just
 		// returning its dictionary.
 		fields := make([]arrow.Field, 0, 1)
@@ -39,7 +45,7 @@ func ParquetRowGroupToArrowSchema(
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			default:
-				af, err := parquetFieldToArrowField("", field, distinctColumns)
+				af, err := parquetFieldToArrowField("", field, options.DistinctColumns)
 				if err != nil {
 					return nil, err
 				}
@@ -53,7 +59,7 @@ func ParquetRowGroupToArrowSchema(
 
 	fields := make([]arrow.Field, 0, len(parquetFields))
 	for _, f := range parquetFields {
-		f, err := parquetFieldToArrowField("", f, physicalProjections)
+		f, err := parquetFieldToArrowField("", f, options.PhysicalProjection)
 		if err != nil {
 			return nil, err
 		}
@@ -62,9 +68,9 @@ func ParquetRowGroupToArrowSchema(
 		}
 	}
 
-	for _, distinctExpr := range distinctColumns {
+	for _, distinctExpr := range options.DistinctColumns {
 		if distinctExpr.Computed() {
-			dataType, err := distinctExpr.DataType(rg.Schema())
+			dataType, err := distinctExpr.DataType(schema)
 			if err != nil {
 				return nil, err
 			}
@@ -238,7 +244,7 @@ func NewParquetConverter(
 }
 
 func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) error {
-	schema, err := ParquetRowGroupToArrowSchema(ctx, rg, c.iterOpts.PhysicalProjection, c.iterOpts.Projection, c.iterOpts.Filter, c.iterOpts.DistinctColumns)
+	schema, err := ParquetRowGroupToArrowSchema(ctx, rg, c.iterOpts)
 	if err != nil {
 		return err
 	}

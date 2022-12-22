@@ -2,9 +2,14 @@ package pqarrow
 
 import (
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"github.com/polarsignals/frostdb/bufutils"
+	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/segmentio/parquet-go"
 )
 
@@ -26,4 +31,164 @@ func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 	default:
 		return parquet.Value{}, fmt.Errorf("unsupported scalar type %T", s)
 	}
+}
+
+func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) ([]parquet.Value, error) {
+	switch c.DataType().ID() {
+	case arrow.INT64:
+		array, ok := c.(*array.Int64)
+		if !ok {
+			return nil, fmt.Errorf("column not of expected type")
+		}
+
+		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
+	case arrow.BOOL:
+		array, ok := c.(*array.Boolean)
+		if !ok {
+			return nil, fmt.Errorf("column not of expected type")
+		}
+
+		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
+	case arrow.BINARY:
+		array, ok := c.(*array.Binary)
+		if !ok {
+			return nil, fmt.Errorf("column not of expected type")
+		}
+
+		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
+	case arrow.STRING:
+		array, ok := c.(*array.String)
+		if !ok {
+			return nil, fmt.Errorf("column not of expected type")
+		}
+
+		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
+	case arrow.UINT64:
+		array, ok := c.(*array.Uint64)
+		if !ok {
+			return nil, fmt.Errorf("column not of expected type")
+		}
+
+		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
+	default:
+		return nil, fmt.Errorf("column not of expected type: %v", c.DataType().ID())
+	}
+
+	return row, nil
+}
+
+// RecordToRow converts an arrow record with dynamic columns into a row using a dynamic parquet schema.
+func RecordToRow(schema *dynparquet.Schema, final *parquet.Schema, record arrow.Record, index int) (parquet.Row, error) {
+	var err error
+	row := make([]parquet.Value, 0, len(final.Fields()))
+	for i, f := range final.Fields() { // assuming flat schema
+		found := false
+		for j, af := range record.Schema().Fields() {
+			if f.Name() == af.Name {
+				def := 0
+				if isDynamicColumn(schema, af.Name) {
+					def = 1
+				}
+				row, err = appendToRow(row, record.Column(j), index, 0, def, i)
+				if err != nil {
+					return nil, err
+				}
+				found = true
+				break
+			}
+		}
+
+		// No record field found; append null
+		if !found {
+			row = append(row, parquet.ValueOf(nil).Level(0, 0, i))
+		}
+	}
+
+	return row, nil
+}
+
+func isDynamicColumn(schema *dynparquet.Schema, column string) bool {
+	parts := strings.SplitN(column, ".", 2)
+	return len(parts) == 2 && schema.IsDynamicColumn(parts[0]) // dynamic column
+}
+
+func RecordDynamicCols(record arrow.Record) map[string][]string {
+	dyncols := map[string][]string{}
+	for _, af := range record.Schema().Fields() {
+		name := af.Name
+		parts := strings.SplitN(name, ".", 2)
+		if len(parts) == 2 { // dynamic column
+			name = parts[0]
+			dyncols[parts[0]] = append(dyncols[parts[0]], parts[1])
+		}
+	}
+
+	return bufutils.Dedupe(dyncols)
+}
+
+// RecordToDynamicSchema converts an arrow record into a parquet schema, dynamic cols, and parquet fields
+func RecordToDynamicSchema(schema *dynparquet.Schema, record arrow.Record) (*parquet.Schema, map[string][]string, []parquet.Field) {
+	dyncols := map[string][]string{}
+	g := parquet.Group{}
+	for _, f := range schema.ParquetSchema().Fields() {
+		for _, af := range record.Schema().Fields() {
+			name := af.Name
+			parts := strings.SplitN(name, ".", 2)
+			if len(parts) == 2 { // dynamic column
+				name = parts[0] // dedupe
+				dyncols[parts[0]] = append(dyncols[parts[0]], parts[1])
+			}
+
+			if f.Name() == name {
+				g[af.Name] = f
+			}
+		}
+	}
+
+	sc := parquet.NewSchema("arrow converted", g)
+	return sc, bufutils.Dedupe(dyncols), sc.Fields()
+}
+
+func RecordToDynamicRow(schema *dynparquet.Schema, record arrow.Record, index int) (*dynparquet.DynamicRow, error) {
+	if index >= int(record.NumRows()) {
+		return nil, io.EOF
+	}
+
+	ps, err := schema.DynamicParquetSchema(RecordDynamicCols(record))
+	if err != nil {
+		return nil, err
+	}
+
+	row, err := RecordToRow(schema, ps, record, index)
+	if err != nil {
+		return nil, err
+	}
+
+	sch, dyncols, fields := RecordToDynamicSchema(schema, record)
+	return dynparquet.NewDynamicRow(row, sch, dyncols, fields), nil
+}
+
+func RecordToFile(schema *dynparquet.Schema, w *parquet.Writer, r arrow.Record) error {
+	defer w.Close()
+
+	ps, err := schema.DynamicParquetSchema(RecordDynamicCols(r))
+	if err != nil {
+		return err
+	}
+
+	rows := make([]parquet.Row, 0, r.NumRows())
+	for i := 0; i < int(r.NumRows()); i++ {
+		row, err := RecordToRow(schema, ps, r, i)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, row)
+	}
+
+	_, err = w.WriteRows(rows)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
