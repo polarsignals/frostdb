@@ -1115,7 +1115,6 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	ps := t.table.config.schema
 
 	ri := int64(0)
-	exhaustedAllRows := false
 	row, err := pqarrow.RecordToDynamicRow(ps, record, int(ri))
 	if err != nil {
 		if err == io.EOF {
@@ -1144,10 +1143,6 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 
 					row, err = pqarrow.RecordToDynamicRow(ps, record, int(ri))
 					if err != nil {
-						if err == io.EOF {
-							exhaustedAllRows = true
-							return false
-						}
 						ascendErr = err
 						return false
 					}
@@ -1161,16 +1156,16 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 		}
 	})
 	if ascendErr != nil {
+		if ascendErr == io.EOF {
+			return nil
+		}
 		return ascendErr
 	}
 
-	if !exhaustedAllRows {
-		if _, err := prev.AddPart(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema)); err != nil {
-			return err
-		}
-		t.table.metrics.numParts.Add(float64(1))
+	if _, err := prev.AddPart(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema)); err != nil && err != io.EOF {
+		return err
 	}
-
+	t.table.metrics.numParts.Add(float64(1))
 	return nil
 }
 
