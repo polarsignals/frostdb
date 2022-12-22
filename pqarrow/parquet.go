@@ -8,9 +8,10 @@ import (
 	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"github.com/segmentio/parquet-go"
+
 	"github.com/polarsignals/frostdb/bufutils"
 	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/segmentio/parquet-go"
 )
 
 func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
@@ -115,10 +116,8 @@ func isDynamicColumn(schema *dynparquet.Schema, column string) bool {
 func RecordDynamicCols(record arrow.Record) map[string][]string {
 	dyncols := map[string][]string{}
 	for _, af := range record.Schema().Fields() {
-		name := af.Name
-		parts := strings.SplitN(name, ".", 2)
+		parts := strings.SplitN(af.Name, ".", 2)
 		if len(parts) == 2 { // dynamic column
-			name = parts[0]
 			dyncols[parts[0]] = append(dyncols[parts[0]], parts[1])
 		}
 	}
@@ -126,7 +125,7 @@ func RecordDynamicCols(record arrow.Record) map[string][]string {
 	return bufutils.Dedupe(dyncols)
 }
 
-// RecordToDynamicSchema converts an arrow record into a parquet schema, dynamic cols, and parquet fields
+// RecordToDynamicSchema converts an arrow record into a parquet schema, dynamic cols, and parquet fields.
 func RecordToDynamicSchema(schema *dynparquet.Schema, record arrow.Record) (*parquet.Schema, map[string][]string, []parquet.Field) {
 	dyncols := map[string][]string{}
 	g := parquet.Group{}

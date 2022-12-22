@@ -20,20 +20,11 @@ import (
 )
 
 // ParquetRowGroupToArrowSchema converts a parquet row group to an arrow schema.
-func ParquetRowGroupToArrowSchema(
-	ctx context.Context,
-	rg parquet.RowGroup,
-	options logicalplan.IterOptions,
-) (*arrow.Schema, error) {
+func ParquetRowGroupToArrowSchema(ctx context.Context, rg parquet.RowGroup, options logicalplan.IterOptions) (*arrow.Schema, error) {
 	return ParquetSchemaToArrowSchema(ctx, rg.Schema(), options)
 }
 
-func ParquetSchemaToArrowSchema(
-	ctx context.Context,
-	schema *parquet.Schema,
-	options logicalplan.IterOptions,
-) (*arrow.Schema, error) {
-
+func ParquetSchemaToArrowSchema(ctx context.Context, schema *parquet.Schema, options logicalplan.IterOptions) (*arrow.Schema, error) {
 	parquetFields := schema.Fields()
 
 	if len(options.DistinctColumns) == 1 && options.Filter == nil {

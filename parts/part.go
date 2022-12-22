@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/apache/arrow/go/v7/arrow"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -44,6 +45,21 @@ func WithCompactionLevel(level CompactionLevel) Option {
 	return func(p *Part) {
 		p.compactionLevel = level
 	}
+}
+
+// NewArrowPart returns a new Arrow part.
+func NewArrowPart(tx uint64, record arrow.Record, schema *dynparquet.Schema, options ...Option) *Part {
+	p := &Part{
+		tx:     tx,
+		record: record,
+		schema: schema,
+	}
+
+	for _, opt := range options {
+		opt(p)
+	}
+
+	return p
 }
 
 func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) *Part {

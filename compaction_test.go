@@ -62,7 +62,6 @@ func insertSampleRecords(ctx context.Context, t *testing.T, table *Table, timest
 	tx, err := table.InsertRecord(ctx, ar)
 	require.NoError(t, err)
 	return tx
-
 }
 
 func TestCompaction(t *testing.T) {
