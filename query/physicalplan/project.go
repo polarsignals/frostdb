@@ -284,6 +284,14 @@ func (a *averageProjection) Name() string {
 
 func (a *averageProjection) Project(mem memory.Allocator, r arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	columnName := a.expr.Name()
+	resultName := "avg(" + columnName + ")"
+	if avgExpr, ok := a.expr.(*logicalplan.AverageExpr); ok {
+		if ae, ok := avgExpr.Expr.(*logicalplan.AliasExpr); ok {
+			columnName = ae.Expr.Name()
+			resultName = ae.Alias
+		}
+	}
+
 	columnSum := "sum(" + columnName + ")"
 	columnCount := "count(" + columnName + ")"
 
@@ -314,7 +322,7 @@ func (a *averageProjection) Project(mem memory.Allocator, r arrow.Record) ([]arr
 
 	// Add the field and column for the projected average aggregation.
 	fields = append(fields, arrow.Field{
-		Name: "avg(" + columnName + ")",
+		Name: resultName,
 		Type: &arrow.Int64Type{},
 	})
 	columns = append(columns, avgInt64arrays(mem, sums, counts))
