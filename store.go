@@ -46,7 +46,7 @@ func (t *Table) IterateBucketBlocks(
 	logger log.Logger,
 	lastBlockTimestamp uint64,
 	filter TrueNegativeFilter,
-	rowGroups chan<- dynparquet.DynamicRowGroup,
+	rowGroups chan<- any,
 ) error {
 	if t.db.bucket == nil || t.db.ignoreStorageOnQuery {
 		return nil
@@ -94,7 +94,7 @@ func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64)
 }
 
 // ProcessFile will process a bucket block parquet file.
-func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, rowGroups chan<- dynparquet.DynamicRowGroup) error {
+func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, rowGroups chan<- any) error {
 	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/ProcessFile")
 	defer span.End()
 
@@ -131,7 +131,7 @@ func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimes
 	return t.filterRowGroups(ctx, buf, filter, rowGroups)
 }
 
-func (t *Table) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, rowGroups chan<- dynparquet.DynamicRowGroup) error {
+func (t *Table) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, rowGroups chan<- any) error {
 	_, span := t.tracer.Start(ctx, "Table/filterRowGroups")
 	defer span.End()
 	span.SetAttributes(attribute.Int("row_groups", buf.NumRowGroups()))

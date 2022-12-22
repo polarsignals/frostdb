@@ -86,15 +86,15 @@ func (g *Granule) Append(p *parts.Part) (uint64, error) {
 	return newSize, nil
 }
 
-// PartBuffersForTx returns the PartBuffers for the given transaction constraints.
-func (g *Granule) PartBuffersForTx(watermark uint64, iterator func(*dynparquet.SerializedBuffer) bool) {
+// PartsForTx returns the parts for the given transaction constraints.
+func (g *Granule) PartsForTx(watermark uint64, iterator func(*parts.Part) bool) {
 	g.parts.Iterate(func(p *parts.Part) bool {
 		// Don't iterate over parts from an uncompleted transaction
 		if p.TX() > watermark {
 			return true
 		}
 
-		return iterator(p.Buf())
+		return iterator(p)
 	})
 }
 

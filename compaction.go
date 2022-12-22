@@ -16,10 +16,12 @@ import (
 	"github.com/google/btree"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore/errutil"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
+	"github.com/polarsignals/frostdb/pqarrow"
 )
 
 type CompactionOption func(*CompactionConfig) error
@@ -483,6 +485,12 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	}
 	stats.totalDuration = time.Since(start)
 	stats.recordAndLog(t.table.metrics.compactionMetrics, t.logger)
+	// Release all records in L0 parts
+	for _, p := range level0Parts {
+		if r := p.Record(); r != nil {
+			r.Release()
+		}
+	}
 	return true, nil
 }
 
@@ -536,6 +544,31 @@ func compactLevel0IntoLevel1(
 
 	bufs := make([]dynparquet.DynamicRowGroup, 0, len(level0Parts))
 	for _, p := range partsToCompact {
+		buf := p.Buf()
+
+		// If this is a Arrow record part, convert the record into a serialized buffer
+		if buf == nil {
+			b := &bytes.Buffer{}
+
+			w, err := t.table.config.schema.GetWriter(b, pqarrow.RecordDynamicCols(p.Record()))
+			if err != nil {
+				return nil, err
+			}
+			defer t.table.config.schema.PutWriter(w)
+			if err := p.SerializeBuffer(t.table.config.schema, w.ParquetWriter()); err != nil {
+				return nil, err
+			}
+
+			f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
+			if err != nil {
+				return nil, err
+			}
+			buf, err = dynparquet.NewSerializedBuffer(f)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		// All the row groups in a part are wrapped in a single row group given
 		// that all rows are sorted within a part. This reduces the number of
 		// cursors open when merging the row groups.
@@ -598,18 +631,17 @@ func collectPartsForCompaction(tx uint64, list *parts.List) (
 			return true
 		}
 
-		f := p.Buf().ParquetFile()
 		switch cl := p.CompactionLevel(); cl {
 		case parts.CompactionLevel0:
 			level0Parts = append(level0Parts, p)
 			stats.level0CountBefore++
-			stats.level0SizeBefore += f.Size()
-			stats.level0NumRowsBefore += f.NumRows()
+			stats.level0SizeBefore += p.Size()
+			stats.level0NumRowsBefore += p.NumRows()
 		case parts.CompactionLevel1:
 			level1Parts = append(level1Parts, p)
 			stats.level1CountBefore++
-			stats.level1SizeBefore += f.Size()
-			stats.level1NumRowsBefore += f.NumRows()
+			stats.level1SizeBefore += p.Size()
+			stats.level1NumRowsBefore += p.NumRows()
 		default:
 			err = fmt.Errorf("unexpected part compaction level %d", cl)
 			return false
@@ -627,7 +659,7 @@ func divideLevel1PartsForGranule(t *TableBlock, tx uint64, level1 []*parts.Part,
 	var totalSize int64
 	sizes := make([]int64, len(level1))
 	for i, p := range level1 {
-		size := p.Buf().ParquetFile().Size()
+		size := p.Size()
 		totalSize += size
 		sizes[i] = size
 	}
