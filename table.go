@@ -1104,8 +1104,10 @@ func (t *TableBlock) Index() *btree.BTree {
 func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) error {
 	index := t.Index()
 	if index.Len() == 1 {
+		if _, err := index.Min().(*Granule).AddPart(parts.NewArrowPart(tx, record, t.table.config.schema)); err != nil {
+			return err
+		}
 		record.Retain()
-		index.Min().(*Granule).AddPart(parts.NewArrowPart(tx, record, t.table.config.schema))
 		t.table.metrics.numParts.Add(float64(1))
 		return nil
 	}
@@ -1163,7 +1165,9 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	}
 
 	if !exhaustedAllRows {
-		prev.AddPart(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema))
+		if _, err := prev.AddPart(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema)); err != nil {
+			return err
+		}
 		t.table.metrics.numParts.Add(float64(1))
 	}
 
