@@ -450,6 +450,7 @@ const (
 	AggFuncMin
 	AggFuncMax
 	AggFuncCount
+	AggFuncAvg
 )
 
 func (f AggFunc) String() string {
@@ -462,6 +463,8 @@ func (f AggFunc) String() string {
 		return "max"
 	case AggFuncCount:
 		return "count"
+	case AggFuncAvg:
+		return "avg"
 	default:
 		panic("unknown aggregation function")
 	}
@@ -491,6 +494,13 @@ func Max(expr Expr) *AggregationFunction {
 func Count(expr Expr) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncCount,
+		Expr: expr,
+	}
+}
+
+func Avg(expr Expr) *AggregationFunction {
+	return &AggregationFunction{
+		Func: AggFuncAvg,
 		Expr: expr,
 	}
 }
@@ -589,4 +599,41 @@ func (d *DurationExpr) Computed() bool {
 
 func (d *DurationExpr) Value() time.Duration {
 	return d.duration
+}
+
+type AverageExpr struct {
+	Expr Expr
+}
+
+func (a *AverageExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
+	return a.Expr.DataType(s)
+}
+
+func (a *AverageExpr) Name() string {
+	return a.Expr.Name()
+}
+
+func (a *AverageExpr) ColumnsUsedExprs() []Expr {
+	return a.Expr.ColumnsUsedExprs()
+}
+
+func (a *AverageExpr) MatchPath(path string) bool {
+	return a.Expr.MatchPath(path)
+}
+
+func (a *AverageExpr) MatchColumn(name string) bool {
+	return a.Expr.MatchColumn(name)
+}
+
+func (a *AverageExpr) Computed() bool {
+	return true
+}
+
+func (a *AverageExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(a)
+	if !continu {
+		return false
+	}
+
+	return visitor.PostVisit(a)
 }
