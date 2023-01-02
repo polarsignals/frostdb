@@ -36,13 +36,13 @@ func (f PrePlanVisitorFunc) PreVisit(plan *logicalplan.LogicalPlan) bool {
 	return f(plan)
 }
 
-func (f PrePlanVisitorFunc) PostVisit(plan *logicalplan.LogicalPlan) bool {
+func (f PrePlanVisitorFunc) PostVisit(_ *logicalplan.LogicalPlan) bool {
 	return false
 }
 
 type PostPlanVisitorFunc func(plan *logicalplan.LogicalPlan) bool
 
-func (f PostPlanVisitorFunc) PreVisit(plan *logicalplan.LogicalPlan) bool {
+func (f PostPlanVisitorFunc) PreVisit(_ *logicalplan.LogicalPlan) bool {
 	return true
 }
 
@@ -72,11 +72,11 @@ func (e *OutputPlan) SetNextCallback(next func(ctx context.Context, r arrow.Reco
 	e.callback = next
 }
 
-func (e *OutputPlan) Finish(ctx context.Context) error {
+func (e *OutputPlan) Finish(_ context.Context) error {
 	return nil
 }
 
-func (e *OutputPlan) SetNext(next PhysicalPlan) {
+func (e *OutputPlan) SetNext(_ PhysicalPlan) {
 	// OutputPlan should be the last step.
 	// If this gets called we're doing something wrong.
 	panic("bug in builder! output plan should not have a next plan!")
@@ -94,10 +94,10 @@ type TableScan struct {
 }
 
 func (s *TableScan) Draw() *Diagram {
-	//var child *Diagram
-	//if s.plans != nil {
+	// var child *Diagram
+	// if s.plans != nil {
 	//	child = s.plans.Draw()
-	//}
+	// }
 	details := fmt.Sprintf("TableScan")
 	return &Diagram{Details: details}
 }
@@ -153,10 +153,10 @@ type SchemaScan struct {
 }
 
 func (s *SchemaScan) Draw() *Diagram {
-	//var children []*Diagram
-	//for _, plan := range s.plans {
+	// var children []*Diagram
+	// for _, plan := range s.plans {
 	//	children = append(children, plan.Draw())
-	//}
+	// }
 	return &Diagram{Details: "SchemaScan"}
 }
 
@@ -201,141 +201,167 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	return errg.Wait()
 }
 
+type noopOperator struct {
+	next PhysicalPlan
+}
+
+func (p *noopOperator) Callback(ctx context.Context, r arrow.Record) error {
+	return p.next.Callback(ctx, r)
+}
+
+func (p *noopOperator) Finish(ctx context.Context) error {
+	return p.next.Finish(ctx)
+}
+
+func (p *noopOperator) SetNext(next PhysicalPlan) {
+	p.next = next
+}
+
+func (p *noopOperator) Draw() *Diagram {
+	return p.next.Draw()
+}
+
 func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
 	_, span := tracer.Start(ctx, "PhysicalPlan/Build")
 	defer span.End()
 
 	outputPlan := &OutputPlan{}
 	var (
-		err  error
-		prev = []PhysicalPlan{outputPlan}
+		visitErr error
+		prev     []PhysicalPlan
 	)
 
-	plan.Accept(PrePlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
-		var phyPlans []PhysicalPlan
+	plan.Accept(PostPlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
 		switch {
 		case plan.SchemaScan != nil:
+			// Create noop operators since we don't know what to push the scan
+			// results to. In a following node visit, these noops will have
+			// SetNext called on them and push to the correct operator.
+			plans := make([]PhysicalPlan, concurrencyHardcoded)
+			for i := range plans {
+				plans[i] = &noopOperator{}
+			}
 			outputPlan.scan = &SchemaScan{
 				tracer:  tracer,
 				options: plan.SchemaScan,
-				plans:   prev,
+				plans:   plans,
 			}
-			return false
+			prev = append(prev[:0], plans...)
 		case plan.TableScan != nil:
+			// Create noop operators since we don't know what to push the scan
+			// results to. In a following node visit, these noops will have
+			// SetNext called on them and push to the correct operator.
+			plans := make([]PhysicalPlan, concurrencyHardcoded)
+			for i := range plans {
+				plans[i] = &noopOperator{}
+			}
 			outputPlan.scan = &TableScan{
 				tracer:  tracer,
 				options: plan.TableScan,
-				plans:   prev,
+				plans:   plans,
 			}
-			return false
+			prev = append(prev[:0], plans...)
 		case plan.Projection != nil:
 			// For each previous physical plan create one Projection
-			for i := 0; i < len(prev); i++ {
+			for i := range prev {
 				p, err := Project(pool, tracer, plan.Projection.Exprs)
 				if err != nil {
+					visitErr = err
 					return false
 				}
-				phyPlans = append(phyPlans, p)
+				prev[i].SetNext(p)
+				prev[i] = p
 			}
 		case plan.Distinct != nil:
-			concurrency := concurrencyHardcoded
+			var sync *Synchronizer
 			if len(prev) > 1 {
-				// Just in case the previous plan's concurrency differs from the hardcoded concurrency
-				concurrency = len(prev)
+				// These distinct operators need to be synchronized.
+				sync = Synchronize(len(prev))
 			}
-
-			phyPlans = make([]PhysicalPlan, 0, concurrency)
-			for i := 0; i < concurrency; i++ {
-				phyPlans = append(phyPlans, Distinct(pool, tracer, plan.Distinct.Exprs))
-			}
-
-			// If the prev is 1 then we need a synchronizer to handle the concurrency
-			// writing into a single callback of the previous PhysicalPlan.
-			if len(prev) == 1 {
-				// This Distinct is going to do a final distinct on the previous concurrent Distincts.
-				synchronizeDistinct := Distinct(pool, tracer, plan.Distinct.Exprs)
-				synchronizeDistinct.SetNext(prev[0])
-
-				synchronizer := Synchronize(len(phyPlans))
-				synchronizer.SetNext(synchronizeDistinct)
-
-				for _, p := range phyPlans {
-					p.SetNext(synchronizer)
+			for i := 0; i < len(prev); i++ {
+				d := Distinct(pool, tracer, plan.Distinct.Exprs)
+				prev[i].SetNext(d)
+				prev[i] = d
+				if sync != nil {
+					d.SetNext(sync)
 				}
+			}
+			if sync != nil {
+				// Plan a distinct operator to run a distinct on all the
+				// synchronized distincts.
+				d := Distinct(pool, tracer, plan.Distinct.Exprs)
+				sync.SetNext(d)
+				prev = prev[0:1]
+				prev[0] = d
 			}
 		case plan.Filter != nil:
 			// Create a filter for each previous plan.
 			// Can be multiple filters or just a single
 			// filter depending on the previous concurrency.
-			for range prev {
-				p, err := Filter(pool, tracer, plan.Filter.Expr)
+			for i := range prev {
+				f, err := Filter(pool, tracer, plan.Filter.Expr)
 				if err != nil {
+					visitErr = err
 					return false
 				}
-				phyPlans = append(phyPlans, p)
+				prev[i].SetNext(f)
+				prev[i] = f
 			}
 		case plan.Aggregation != nil:
-			concurrency := concurrencyHardcoded
-			if len(prev) > 1 {
-				// Just in case the previous plan's concurrency differs from the hardcoded concurrency
-				concurrency = len(prev)
-			}
-
 			schema := s.ParquetSchema()
-
-			phyPlans = make([]PhysicalPlan, 0, concurrency)
-			for i := 0; i < concurrency; i++ {
-				p, err := Aggregate(pool, tracer, schema, plan.Aggregation, false)
-				if err != nil {
-					return false
-				}
-				phyPlans = append(phyPlans, p)
+			var sync *Synchronizer
+			if len(prev) > 1 {
+				// These aggregate operators need to be synchronized.
+				sync = Synchronize(len(prev))
 			}
-
-			// If the previous plan is not concurrent we need to add a synchronizer to
-			// fan-in/synchronize the concurrent callbacks before passing the data on to single previous plan.
-			if len(prev) == 1 {
-				synchronizeAggregate, err := Aggregate(pool, tracer, schema, plan.Aggregation, true)
+			for i := 0; i < len(prev); i++ {
+				a, err := Aggregate(pool, tracer, schema, plan.Aggregation, sync == nil)
 				if err != nil {
+					visitErr = err
 					return false
 				}
-				synchronizeAggregate.SetNext(prev[0])
-
-				synchronizer := Synchronize(len(phyPlans))
-				synchronizer.SetNext(synchronizeAggregate)
-
-				for _, p := range phyPlans {
-					p.SetNext(synchronizer)
+				prev[i].SetNext(a)
+				prev[i] = a
+				if sync != nil {
+					a.SetNext(sync)
 				}
+			}
+			if sync != nil {
+				// Plan an aggregate operator to run an aggregation on all the
+				// aggregations.
+				a, err := Aggregate(pool, tracer, schema, plan.Aggregation, true)
+				if err != nil {
+					visitErr = err
+					return false
+				}
+				sync.SetNext(a)
+				prev = prev[0:1]
+				prev[0] = a
 			}
 		default:
 			panic("Unsupported plan")
 		}
-
-		if err != nil {
-			return false
-		}
-
-		// If these aren't the same the operator should handle how to synchronize
-		if len(phyPlans) == len(prev) {
-			for i := 0; i < len(phyPlans); i++ {
-				phyPlans[i].SetNext(prev[i])
-			}
-		}
-
-		prev = phyPlans
-		return true
+		return visitErr == nil
 	}))
-
-	if len(prev) == 1 {
-		outputPlan.SetNextCallback(prev[0].Callback)
-	} else {
-		// This case should be handled in the concurrent operator above.
+	if visitErr != nil {
+		return nil, visitErr
 	}
 
 	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
 
-	return outputPlan, err
+	// Synchronize the last stage if necessary.
+	var sync *Synchronizer
+	if len(prev) > 1 {
+		sync = Synchronize(len(prev))
+		for i := range prev {
+			prev[i].SetNext(sync)
+		}
+		sync.SetNext(outputPlan)
+	} else {
+		prev[0].SetNext(outputPlan)
+	}
+
+	return outputPlan, nil
 }
 
 type Diagram struct {
