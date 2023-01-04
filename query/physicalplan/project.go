@@ -88,6 +88,10 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 		}
 	}
 
+	if expr, ok := b.boolExpr.(*AvgExpr); ok {
+		return expr.Project(mem, ar)
+	}
+
 	bitmap, err := b.boolExpr.Eval(ar)
 	if err != nil {
 		return nil, nil, err

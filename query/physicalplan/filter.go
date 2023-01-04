@@ -143,10 +143,12 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Right: right,
 		}, nil
 	case logicalplan.OpAvg:
+		var name string
 		var leftColumnRef *ArrayRef
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
 			case *logicalplan.Column:
+				name = e.ColumnName
 				leftColumnRef = &ArrayRef{
 					ColumnName: "sum(" + e.ColumnName + ")",
 				}
@@ -173,7 +175,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			return nil, errors.New("right side of average expression must be a column")
 		}
 
-		return &AvgExpr{left: leftColumnRef, right: rightColumnRef}, nil
+		return &AvgExpr{name: name, left: leftColumnRef, right: rightColumnRef}, nil
 	default:
 		panic("unsupported binary boolean expression")
 	}
@@ -230,21 +232,65 @@ func (a *OrExpr) String() string {
 }
 
 type AvgExpr struct {
+	name  string
 	left  *ArrayRef
 	right *ArrayRef
 }
 
 func (a *AvgExpr) Eval(r arrow.Record) (*Bitmap, error) {
-	rows := r.NumRows()
-
-	bitmap := NewBitmap()
-	// Keep all rows
-	bitmap.AddRange(0, uint64(rows))
-	return bitmap, nil
+	return nil, fmt.Errorf("not used")
 }
 
 func (a *AvgExpr) String() string {
 	return "avg(" + a.left.ColumnName + ")"
+}
+
+func (a *AvgExpr) Project(mem memory.Allocator, r arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	schema := r.Schema()
+
+	sumIndex := schema.FieldIndices(a.left.ColumnName)
+	if len(sumIndex) != 1 {
+		return nil, nil, fmt.Errorf("sum column for average projection for column %s not found", a.left.ColumnName)
+	}
+	countIndex := schema.FieldIndices(a.right.ColumnName)
+	if len(countIndex) != 1 {
+		return nil, nil, fmt.Errorf("count column for average projection for column %s not found", a.right.ColumnName)
+	}
+
+	sums := r.Column(sumIndex[0])
+	counts := r.Column(countIndex[0])
+
+	fields := make([]arrow.Field, 0, len(schema.Fields())-1)
+	columns := make([]arrow.Array, 0, len(schema.Fields())-1)
+
+	// Only add the fields and columns that aren't the average's underlying sum and count columns.
+	for i, field := range schema.Fields() {
+		if i != sumIndex[0] && i != countIndex[0] {
+			fields = append(fields, field)
+			columns = append(columns, r.Column(i))
+		}
+	}
+
+	// Add the field and column for the projected average aggregation.
+	fields = append(fields, arrow.Field{
+		Name: "avg(" + a.name + ")",
+		Type: &arrow.Int64Type{},
+	})
+	columns = append(columns, avgInt64arrays(mem, sums, counts))
+
+	return fields, columns, nil
+}
+
+func avgInt64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array {
+	sumsInts := sums.(*array.Int64)
+	countsInts := counts.(*array.Int64)
+
+	res := array.NewInt64Builder(pool)
+	for i := 0; i < sumsInts.Len(); i++ {
+		res.Append(sumsInts.Value(i) / countsInts.Value(i))
+	}
+
+	return res.NewArray()
 }
 
 func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
