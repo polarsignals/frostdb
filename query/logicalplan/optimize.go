@@ -58,10 +58,15 @@ func (p *AverageAggregationPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 			Count(aggFunc.Expr),
 		)
 
-		projection := &AverageExpr{Expr: column}
+		projection := &BinaryExpr{
+			Op:    OpAvg,
+			Left:  column,
+			Right: column,
+		}
+
 		if alias != nil {
 			alias.Expr = column
-			projection.Expr = alias
+			// projection.Expr = alias
 		}
 
 		// Wrap the aggregations with the average projection to always call it after aggregating.

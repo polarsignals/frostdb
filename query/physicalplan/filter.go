@@ -142,6 +142,38 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Left:  left,
 			Right: right,
 		}, nil
+	case logicalplan.OpAvg:
+		var leftColumnRef *ArrayRef
+		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+			switch e := expr.(type) {
+			case *logicalplan.Column:
+				leftColumnRef = &ArrayRef{
+					ColumnName: "sum(" + e.ColumnName + ")",
+				}
+				return false
+			}
+			return true
+		}))
+		if leftColumnRef == nil {
+			return nil, errors.New("left side of average expression must be a column")
+		}
+
+		var rightColumnRef *ArrayRef
+		expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
+			switch e := expr.(type) {
+			case *logicalplan.Column:
+				rightColumnRef = &ArrayRef{
+					ColumnName: "count(" + e.ColumnName + ")",
+				}
+				return false
+			}
+			return true
+		}))
+		if rightColumnRef == nil {
+			return nil, errors.New("right side of average expression must be a column")
+		}
+
+		return &AvgExpr{left: leftColumnRef, right: rightColumnRef}, nil
 	default:
 		panic("unsupported binary boolean expression")
 	}
@@ -195,6 +227,24 @@ func (a *OrExpr) Eval(r arrow.Record) (*Bitmap, error) {
 
 func (a *OrExpr) String() string {
 	return "(" + a.Left.String() + " OR " + a.Right.String() + ")"
+}
+
+type AvgExpr struct {
+	left  *ArrayRef
+	right *ArrayRef
+}
+
+func (a *AvgExpr) Eval(r arrow.Record) (*Bitmap, error) {
+	rows := r.NumRows()
+
+	bitmap := NewBitmap()
+	// Keep all rows
+	bitmap.AddRange(0, uint64(rows))
+	return bitmap, nil
+}
+
+func (a *AvgExpr) String() string {
+	return "avg(" + a.left.ColumnName + ")"
 }
 
 func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
