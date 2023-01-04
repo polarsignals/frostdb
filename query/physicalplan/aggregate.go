@@ -451,29 +451,12 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	aggregateFields := groupByFields
 
 	for _, aggregation := range a.aggregations {
-		var (
-			aggregateArray arrow.Array
-			err            error
-		)
-
 		arr := make([]arrow.Array, 0, numRows)
 		for _, a := range aggregation.arrays {
 			arr = append(arr, a.NewArray())
 		}
 
-		switch aggregation.function.(type) {
-		case *CountAggregation:
-			if a.finalStage {
-				// The final stage of aggregation needs to sum up all the counts of the previous steps,
-				// instead of counting the previous counts.
-				aggregateArray, err = (&Int64SumAggregation{}).Aggregate(a.pool, arr)
-			} else {
-				// If this isn't the final stage we simply run the count aggregation.
-				aggregateArray, err = aggregation.function.Aggregate(a.pool, arr)
-			}
-		default:
-			aggregateArray, err = aggregation.function.Aggregate(a.pool, arr)
-		}
+		aggregateArray, err := runAggregation(a.finalStage, aggregation.function, a.pool, arr)
 		if err != nil {
 			return fmt.Errorf("aggregate batched arrays: %w", err)
 		}
@@ -633,4 +616,21 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 		res.Append(int64(arr.Len()))
 	}
 	return res.NewArray(), nil
+}
+
+// runAggregation is a helper to run the given aggregation function given
+// the set of values. It is aware of the final stage and chooses the aggregation
+// function appropriately.
+func runAggregation(
+	finalStage bool,
+	fn AggregationFunction,
+	pool memory.Allocator,
+	arrs []arrow.Array,
+) (arrow.Array, error) {
+	if _, ok := fn.(*CountAggregation); ok && finalStage {
+		// The final stage of aggregation needs to sum up all the counts of the
+		// previous steps, instead of counting the previous counts.
+		return (&Int64SumAggregation{}).Aggregate(pool, arrs)
+	}
+	return fn.Aggregate(pool, arrs)
 }

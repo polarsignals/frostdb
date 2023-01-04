@@ -102,25 +102,6 @@ func (h cursorHeap) Less(i, j int) bool {
 	return false
 }
 
-// TODO(asubiotto): This is an exact copy of nullGroupComparison the
-// OrderedAggregate uses. Should this be extracted to a comparison package?
-// Nulls sort first.
-func nullComparison(leftNull, rightNull bool) (int, bool) {
-	if !leftNull && !rightNull {
-		// Both are not null, this implies that the null comparison should be
-		// disregarded.
-		return 0, false
-	}
-
-	if leftNull {
-		if !rightNull {
-			return -1, true
-		}
-		return 0, true
-	}
-	return 1, true
-}
-
 func (h cursorHeap) Swap(i, j int) {
 	h.cursors[i], h.cursors[j] = h.cursors[j], h.cursors[i]
 }
