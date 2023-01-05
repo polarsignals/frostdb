@@ -149,6 +149,18 @@ func GetGroupsAndOrderedSetRanges(
 					return nil, nil, nil, err
 				}
 			}
+		case VirtualNullArray:
+			for j := 0; j < arr.Len(); j++ {
+				cmp, ok := nullComparison(curGroup[i] == nil, true)
+				if !ok {
+					return nil, nil, nil, fmt.Errorf(
+						"null comparison should always be valid but group was: %v", curGroup[i],
+					)
+				}
+				if err := handleCmpResult(cmp, i, t, j); err != nil {
+					return nil, nil, nil, err
+				}
+			}
 		default:
 			panic("unsupported type")
 		}
