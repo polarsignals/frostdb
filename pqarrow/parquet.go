@@ -55,11 +55,15 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 
 // RecordToRow converts an arrow record with dynamic columns into a row using a dynamic parquet schema.
 func RecordToRow(schema *dynparquet.Schema, final *parquet.Schema, record arrow.Record, index int) (parquet.Row, error) {
+	return getRecordRow(schema, final, record, index, final.Fields(), record.Schema().Fields())
+}
+
+func getRecordRow(schema *dynparquet.Schema, final *parquet.Schema, record arrow.Record, index int, finalFields []parquet.Field, recordFields []arrow.Field) (parquet.Row, error) {
 	var err error
-	row := make([]parquet.Value, 0, len(final.Fields()))
-	for i, f := range final.Fields() { // assuming flat schema
+	row := make([]parquet.Value, 0, len(finalFields))
+	for i, f := range finalFields { // assuming flat schema
 		found := false
-		for j, af := range record.Schema().Fields() {
+		for j, af := range recordFields {
 			if f.Name() == af.Name {
 				def := 0
 				if isDynamicColumn(schema, af.Name) {
@@ -151,8 +155,10 @@ func RecordToFile(schema *dynparquet.Schema, w *parquet.Writer, r arrow.Record) 
 	}
 
 	rows := make([]parquet.Row, 0, r.NumRows())
+	finalFields := ps.Fields()
+	recordFields := r.Schema().Fields()
 	for i := 0; i < int(r.NumRows()); i++ {
-		row, err := RecordToRow(schema, ps, r, i)
+		row, err := getRecordRow(schema, ps, r, i, finalFields, recordFields)
 		if err != nil {
 			return err
 		}
