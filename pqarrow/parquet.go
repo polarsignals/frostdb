@@ -35,42 +35,17 @@ func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 }
 
 func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) ([]parquet.Value, error) {
-	switch c.DataType().ID() {
-	case arrow.INT64:
-		array, ok := c.(*array.Int64)
-		if !ok {
-			return nil, fmt.Errorf("column not of expected type")
-		}
-
-		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
-	case arrow.BOOL:
-		array, ok := c.(*array.Boolean)
-		if !ok {
-			return nil, fmt.Errorf("column not of expected type")
-		}
-
-		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
-	case arrow.BINARY:
-		array, ok := c.(*array.Binary)
-		if !ok {
-			return nil, fmt.Errorf("column not of expected type")
-		}
-
-		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
-	case arrow.STRING:
-		array, ok := c.(*array.String)
-		if !ok {
-			return nil, fmt.Errorf("column not of expected type")
-		}
-
-		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
-	case arrow.UINT64:
-		array, ok := c.(*array.Uint64)
-		if !ok {
-			return nil, fmt.Errorf("column not of expected type")
-		}
-
-		row = append(row, parquet.ValueOf(array.Value(index)).Level(rep, def, col))
+	switch arr := c.(type) {
+	case *array.Int64:
+		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
+	case *array.Boolean:
+		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
+	case *array.Binary:
+		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
+	case *array.String:
+		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
+	case *array.Uint64:
+		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
 	default:
 		return nil, fmt.Errorf("column not of expected type: %v", c.DataType().ID())
 	}

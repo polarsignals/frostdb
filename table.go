@@ -787,6 +787,8 @@ func (t *Table) Iterator(
 							}
 							r.Release()
 						}
+					default:
+						return fmt.Errorf("unknown row group type: %T", t)
 					}
 				}
 			}
@@ -878,6 +880,8 @@ func (t *Table) SchemaIterator(
 						}
 						record.Release()
 						b.Release()
+					default:
+						return fmt.Errorf("unknown row group type: %T", t)
 					}
 				}
 			}

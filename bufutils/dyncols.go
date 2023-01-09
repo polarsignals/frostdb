@@ -2,6 +2,7 @@ package bufutils
 
 import "sort"
 
+// Dedupe deduplicates the slices of values for each key in the map.
 func Dedupe(s map[string][]string) map[string][]string {
 	final := map[string][]string{}
 	set := map[string]map[string]struct{}{}
