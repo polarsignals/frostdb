@@ -1067,7 +1067,11 @@ func (t *TableBlock) RowGroupIterator(
 				return true
 			}
 
-			buf := p.Buf()
+			var buf *dynparquet.SerializedBuffer
+			buf, err = p.AsSerializedBuffer(t.table.config.schema)
+			if err != nil {
+				return false
+			}
 			f := buf.ParquetFile()
 			for i := range f.RowGroups() {
 				rg := buf.DynamicRowGroup(i)

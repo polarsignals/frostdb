@@ -16,12 +16,10 @@ import (
 	"github.com/google/btree"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore/errutil"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
-	"github.com/polarsignals/frostdb/pqarrow"
 )
 
 type CompactionOption func(*CompactionConfig) error
@@ -544,29 +542,9 @@ func compactLevel0IntoLevel1(
 
 	bufs := make([]dynparquet.DynamicRowGroup, 0, len(level0Parts))
 	for _, p := range partsToCompact {
-		buf := p.Buf()
-
-		// If this is a Arrow record part, convert the record into a serialized buffer
-		if buf == nil {
-			b := &bytes.Buffer{}
-
-			w, err := t.table.config.schema.GetWriter(b, pqarrow.RecordDynamicCols(p.Record()))
-			if err != nil {
-				return nil, err
-			}
-			defer t.table.config.schema.PutWriter(w)
-			if err := p.SerializeBuffer(t.table.config.schema, w.ParquetWriter()); err != nil {
-				return nil, err
-			}
-
-			f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
-			if err != nil {
-				return nil, err
-			}
-			buf, err = dynparquet.NewSerializedBuffer(f)
-			if err != nil {
-				return nil, err
-			}
+		buf, err := p.AsSerializedBuffer(t.table.config.schema)
+		if err != nil {
+			return nil, err
 		}
 
 		// All the row groups in a part are wrapped in a single row group given

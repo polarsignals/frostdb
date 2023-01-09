@@ -434,7 +434,9 @@ func TestCompaction(t *testing.T) {
 					if expectedPart.numRowGroups == 0 {
 						require.Equal(t, int64(expectedPart.numRows), p.Record().NumRows())
 					} else {
-						rgs := p.Buf().ParquetFile().RowGroups()
+						buf, err := p.AsSerializedBuffer(table.Schema())
+						require.NoError(t, err)
+						rgs := buf.ParquetFile().RowGroups()
 						require.Equal(t, expectedPart.numRowGroups, len(rgs))
 						require.Equal(t, expectedPart.compactionLevel, p.CompactionLevel())
 						rowsRead := make([]parquet.Row, 0)
