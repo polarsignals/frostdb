@@ -3,7 +3,6 @@ package parts
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"math"
 
 	"github.com/apache/arrow/go/v7/arrow"
@@ -44,12 +43,6 @@ func (p *Part) SerializeBuffer(schema *dynparquet.Schema, w *parquet.Writer) err
 	}
 
 	return pqarrow.RecordToFile(schema, w, p.record)
-}
-
-type SchemaWriter interface {
-	GetWriter(io.Writer, map[string][]string) (*dynparquet.PooledWriter, error)
-	PutWriter(io.Writer, map[string][]string) (*dynparquet.PooledWriter, error)
-	Schema() *dynparquet.Schema
 }
 
 func (p *Part) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error) {
