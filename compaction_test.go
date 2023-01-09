@@ -333,10 +333,11 @@ func TestCompaction(t *testing.T) {
 							table.active.Index().Len(),
 							"tests assume only a single granule as input",
 						)
-						success, err := table.active.compactGranule(
-							(table.active.Index().Min()).(*Granule),
-							table.db.columnStore.compactionConfig,
-						)
+						cfg := table.db.columnStore.compactionConfig
+						if asArrow {
+							cfg.l1ToGranuleSizeRatio = 0.6 // use a different ratio for arrow records
+						}
+						success, err := table.active.compactGranule((table.active.Index().Min()).(*Granule), cfg)
 						require.True(t, success)
 						require.NoError(t, err)
 					case recordGranuleSizeCommand:
