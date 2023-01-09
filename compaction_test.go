@@ -104,9 +104,7 @@ func TestCompaction(t *testing.T) {
 		// inserts are the timestamps to insert at. Negative int64s are
 		// interpreted as commands to do something, see the const declaration
 		// above.
-		inserts []int64
-		// record indicates if the values should be inserted as arrow records
-		record   bool
+		inserts  []int64
 		expected []expectedGranule
 	}{
 		{
@@ -292,49 +290,6 @@ func TestCompaction(t *testing.T) {
 				},
 			},
 		},
-		{
-			name: "ArrrowSimpleLevel0ToLevel1",
-			// Insert three rows.
-			inserts: []int64{1, 2, 3, compactCommand},
-			// Insert as an arrow record
-			record: true,
-			// Expect compaction into a single part with level1 compaction.
-			expected: []expectedGranule{
-				{
-					[]expectedPart{
-						{
-							numRowGroups:    2,
-							compactionLevel: parts.CompactionLevel1,
-							data:            []int64{1, 2, 3},
-						},
-					},
-				},
-			},
-		},
-		{
-			// This test is the same as above, but inserts a couple more rows,
-			// expecting a second part with compaction level 0 to be created.
-			name: "ArrowAddLevel0ToLevel1",
-			// Insert three rows.
-			inserts: []int64{1, 2, 3, compactCommand, 4},
-			record:  true,
-			expected: []expectedGranule{
-				{
-					[]expectedPart{
-						{
-							numRows:         1,
-							compactionLevel: parts.CompactionLevel0,
-							data:            []int64{4},
-						},
-						{
-							numRowGroups:    2,
-							compactionLevel: parts.CompactionLevel1,
-							data:            []int64{1, 2, 3},
-						},
-					},
-				},
-			},
-		},
 	}
 
 	numParts := func(g *Granule) int {
@@ -347,144 +302,148 @@ func TestCompaction(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			c, table := basicTable(t)
-			defer c.Close()
-			// Disable interval compaction for tests. These are triggered
-			// manually.
-			table.db.compactorPool.stop()
-			table.db.compactorPool = nil
+		f := func(asArrow bool) func(t *testing.T) {
+			return func(t *testing.T) {
+				c, table := basicTable(t)
+				defer c.Close()
+				// Disable interval compaction for tests. These are triggered
+				// manually.
+				table.db.compactorPool.stop()
+				table.db.compactorPool = nil
 
-			table.config.rowGroupSize = 2
-			if tc.rgSize != 0 {
-				table.config.rowGroupSize = tc.rgSize
-			}
-
-			var (
-				numInserts          int
-				accumulating        bool
-				accBuf              []int64
-				lastTx              uint64
-				recordedGranuleSize uint64
-			)
-			for _, v := range tc.inserts {
-				switch v {
-				case compactCommand:
-					table.db.Wait(lastTx)
-					require.Equal(
-						t,
-						1,
-						table.active.Index().Len(),
-						"tests assume only a single granule as input",
-					)
-					success, err := table.active.compactGranule(
-						(table.active.Index().Min()).(*Granule),
-						table.db.columnStore.compactionConfig,
-					)
-					require.True(t, success)
-					require.NoError(t, err)
-				case recordGranuleSizeCommand:
-					table.db.Wait(lastTx)
-					require.Equal(
-						t,
-						1,
-						table.active.Index().Len(),
-						"tests assume only a single granule as input",
-					)
-					recordedGranuleSize = (table.active.Index().Min()).(*Granule).metadata.size.Load()
-				case setRecordedGranuleSizeCommand:
-					table.db.columnStore.granuleSizeBytes = int64(recordedGranuleSize)
-				case acc:
-					accumulating = true
-				case flushAcc:
-					accumulating = false
-					switch tc.record {
-					case true:
-						lastTx = insertSampleRecords(context.Background(), t, table, accBuf...)
-					default:
-						lastTx = insertSamples(context.Background(), t, table, accBuf...)
-					}
-					accBuf = accBuf[:0]
-					numInserts++
-				default:
-					if accumulating {
-						accBuf = append(accBuf, v)
-						continue
-					}
-					switch tc.record {
-					case true:
-						lastTx = insertSampleRecords(context.Background(), t, table, v)
-					default:
-						lastTx = insertSamples(context.Background(), t, table, v)
-					}
-					numInserts++
+				table.config.rowGroupSize = 2
+				if tc.rgSize != 0 {
+					table.config.rowGroupSize = tc.rgSize
 				}
-			}
 
-			require.Equal(t, len(tc.expected), table.active.Index().Len())
-			i := 0
-			table.active.Index().Ascend(func(item btree.Item) bool {
-				g := item.(*Granule)
-				expected := tc.expected[i]
-				require.Equal(t, len(expected.parts), numParts(g))
-
-				j := 0
-				g.parts.Iterate(func(p *parts.Part) bool {
-					expectedPart := expected.parts[j]
-					if expectedPart.numRowGroups == 0 {
-						require.Equal(t, int64(expectedPart.numRows), p.Record().NumRows())
-					} else {
-						buf, err := p.AsSerializedBuffer(table.Schema())
-						require.NoError(t, err)
-						rgs := buf.ParquetFile().RowGroups()
-						require.Equal(t, expectedPart.numRowGroups, len(rgs))
-						require.Equal(t, expectedPart.compactionLevel, p.CompactionLevel())
-						rowsRead := make([]parquet.Row, 0)
-						for _, rg := range rgs {
-							func() {
-								rows := rg.Rows()
-								defer rows.Close()
-
-								for {
-									rowBuf := make([]parquet.Row, 1)
-									n, err := rows.ReadRows(rowBuf)
-									if err != nil && err != io.EOF {
-										require.NoError(t, err)
-									}
-									if n > 0 {
-										rowsRead = append(rowsRead, rowBuf...)
-									}
-
-									if err == io.EOF {
-										break
-									}
-								}
-							}()
-						}
+				var (
+					numInserts          int
+					accumulating        bool
+					accBuf              []int64
+					lastTx              uint64
+					recordedGranuleSize uint64
+				)
+				for _, v := range tc.inserts {
+					switch v {
+					case compactCommand:
+						table.db.Wait(lastTx)
 						require.Equal(
 							t,
-							len(expectedPart.data),
-							len(rowsRead),
-							"different number of rows read for granule %d part %d",
-							i,
-							j,
+							1,
+							table.active.Index().Len(),
+							"tests assume only a single granule as input",
 						)
-
-						// This is a bit of a hack. If the check below fails
-						// unexpectedly after a change to the default schema, think
-						// about a more robust search of the timestamp column index.
-						const timestampColumnIdx = 3
-						for k, expectedTimestamp := range expectedPart.data {
-							require.Equal(t, rowsRead[k][timestampColumnIdx].Int64(), expectedTimestamp)
+						success, err := table.active.compactGranule(
+							(table.active.Index().Min()).(*Granule),
+							table.db.columnStore.compactionConfig,
+						)
+						require.True(t, success)
+						require.NoError(t, err)
+					case recordGranuleSizeCommand:
+						table.db.Wait(lastTx)
+						require.Equal(
+							t,
+							1,
+							table.active.Index().Len(),
+							"tests assume only a single granule as input",
+						)
+						recordedGranuleSize = (table.active.Index().Min()).(*Granule).metadata.size.Load()
+					case setRecordedGranuleSizeCommand:
+						table.db.columnStore.granuleSizeBytes = int64(recordedGranuleSize)
+					case acc:
+						accumulating = true
+					case flushAcc:
+						accumulating = false
+						switch asArrow {
+						case true:
+							lastTx = insertSampleRecords(context.Background(), t, table, accBuf...)
+						default:
+							lastTx = insertSamples(context.Background(), t, table, accBuf...)
 						}
+						accBuf = accBuf[:0]
+						numInserts++
+					default:
+						if accumulating {
+							accBuf = append(accBuf, v)
+							continue
+						}
+						switch asArrow {
+						case true:
+							lastTx = insertSampleRecords(context.Background(), t, table, v)
+						default:
+							lastTx = insertSamples(context.Background(), t, table, v)
+						}
+						numInserts++
 					}
+				}
 
-					j++
+				require.Equal(t, len(tc.expected), table.active.Index().Len())
+				i := 0
+				table.active.Index().Ascend(func(item btree.Item) bool {
+					g := item.(*Granule)
+					expected := tc.expected[i]
+					require.Equal(t, len(expected.parts), numParts(g))
+
+					j := 0
+					g.parts.Iterate(func(p *parts.Part) bool {
+						expectedPart := expected.parts[j]
+						if expectedPart.numRowGroups == 0 {
+							require.Equal(t, int64(expectedPart.numRows), p.Record().NumRows())
+						} else {
+							buf, err := p.AsSerializedBuffer(table.Schema())
+							require.NoError(t, err)
+							rgs := buf.ParquetFile().RowGroups()
+							require.Equal(t, expectedPart.numRowGroups, len(rgs))
+							require.Equal(t, expectedPart.compactionLevel, p.CompactionLevel())
+							rowsRead := make([]parquet.Row, 0)
+							for _, rg := range rgs {
+								func() {
+									rows := rg.Rows()
+									defer rows.Close()
+
+									for {
+										rowBuf := make([]parquet.Row, 1)
+										n, err := rows.ReadRows(rowBuf)
+										if err != nil && err != io.EOF {
+											require.NoError(t, err)
+										}
+										if n > 0 {
+											rowsRead = append(rowsRead, rowBuf...)
+										}
+
+										if err == io.EOF {
+											break
+										}
+									}
+								}()
+							}
+							require.Equal(
+								t,
+								len(expectedPart.data),
+								len(rowsRead),
+								"different number of rows read for granule %d part %d",
+								i,
+								j,
+							)
+
+							// This is a bit of a hack. If the check below fails
+							// unexpectedly after a change to the default schema, think
+							// about a more robust search of the timestamp column index.
+							const timestampColumnIdx = 3
+							for k, expectedTimestamp := range expectedPart.data {
+								require.Equal(t, rowsRead[k][timestampColumnIdx].Int64(), expectedTimestamp)
+							}
+						}
+
+						j++
+						return true
+					})
+					i++
 					return true
 				})
-				i++
-				return true
-			})
-		})
+			}
+		}
+		t.Run(tc.name+"-parquet", f(false))
+		t.Run(tc.name+"-arrow", f(true))
 	}
 }
