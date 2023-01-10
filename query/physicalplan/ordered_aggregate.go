@@ -16,6 +16,11 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
+type groupColInfo struct {
+	field arrow.Field
+	arr   arrow.Array
+}
+
 // OrderedAggregate is an aggregation operator that supports aggregations on
 // streams of data ordered by the group by columns. This is a more efficient
 // aggregation than aggregating by hash since a group can be determined as
@@ -35,9 +40,6 @@ import (
 // of the second record as another ordered group [a, b, c], [1, 1, 1]. Only when
 // Finish is called, will the OrderedAggregate be able to emit the merged
 // aggregation results. The merged results should be: [a, b, c], [3, 2, 2].
-// TODO(asubiotto): The OrderedAggregate is not yet ready for production use. It
-// doesn't handle dynamic columns very well (i.e. grouping columns appearing and
-// disappearing in input).
 type OrderedAggregate struct {
 	// Fields that are constant throughout execution.
 	pool                  memory.Allocator
@@ -51,11 +53,11 @@ type OrderedAggregate struct {
 	// with another aggregation to follow after synchronizing.
 	finalStage bool
 
-	// Buffers that are reused across callback calls. These point to the fields
-	// and arrays in the record passed in to Callback.
-	groupByFields []arrow.Field
-	groupByArrays []arrow.Array
+	// groupColOrdering is needed to maintain a deterministic order of the group
+	// by columns, since the names are stored in a map.
+	groupColOrdering []arrow.Field
 
+	notFirstCall bool
 	// curGroup is used for comparisons against the groupResults found in each
 	// record. It is initialized to the first group of the first record and
 	// updated as new groupResults are found. The key is the field name, as in
@@ -90,6 +92,13 @@ type OrderedAggregate struct {
 	aggregationResults []arrow.Array
 
 	scratch struct {
+		// groupByMap is a scratch map that helps store a mapping from the
+		// field names of the group by columns found on each call to Callback to
+		// their corresponding fields/arrays.
+		groupByMap    map[string]groupColInfo
+		groupByArrays []arrow.Array
+		curGroup      []any
+		// indexes is used as scratch space to unroll group/set range indexes.
 		indexes []int64
 	}
 }
@@ -102,27 +111,30 @@ func NewOrderedAggregate(
 	finalStage bool,
 ) *OrderedAggregate {
 	if !finalStage {
-		panic("non-final stage ordered aggregation is not supprted yet")
+		panic("non-final stage ordered aggregation is not supported yet")
 	}
 
-	return &OrderedAggregate{
+	o := &OrderedAggregate{
 		pool:              pool,
 		tracer:            tracer,
 		resultColumnName:  aggregation.resultName,
 		columnToAggregate: aggregation.expr,
 		// TODO: Matchers can be optimized to be something like a radix tree or
-		// just a fast-lookup datastructure for exact matches or prefix matches.
+		// just a fast-lookup data structure for exact matches or prefix
+		// matches.
 		groupByColumnMatchers: groupByColumnMatchers,
 		aggregationFunction:   aggregation.function,
 		finalStage:            finalStage,
-
-		groupByFields: make([]arrow.Field, 0, 10),
-		groupByArrays: make([]arrow.Array, 0, 10),
+		curGroup:              make(map[string]any, 10),
 
 		groupBuilders: make(map[string]builder.ColumnBuilder),
 
 		aggregationResults: make([]arrow.Array, 0, 1),
 	}
+	o.scratch.groupByMap = make(map[string]groupColInfo, 10)
+	o.scratch.groupByArrays = make([]arrow.Array, 0, 10)
+	o.scratch.curGroup = make([]any, 0, 10)
+	return o
 }
 
 func (a *OrderedAggregate) SetNext(next PhysicalPlan) {
@@ -153,16 +165,33 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 	// ctx, span := a.tracer.Start(ctx, "OrderedAggregate/Callback")
 	// defer span.End()
 
-	a.groupByFields = a.groupByFields[:0]
-	a.groupByArrays = a.groupByArrays[:0]
+	for k := range a.scratch.groupByMap {
+		delete(a.scratch.groupByMap, k)
+	}
+
+	// TODO(asubiotto): Explore a static schema in the execution engine, all
+	// this should be initialization code.
 
 	var columnToAggregate arrow.Array
 	aggregateFieldFound := false
+	foundNewColumns := false
 	for i, field := range r.Schema().Fields() {
 		for _, matcher := range a.groupByColumnMatchers {
 			if matcher.MatchColumn(field.Name) {
-				a.groupByFields = append(a.groupByFields, field)
-				a.groupByArrays = append(a.groupByArrays, r.Column(i))
+				a.scratch.groupByMap[field.Name] = groupColInfo{field: field, arr: r.Column(i)}
+				if _, ok := a.groupBuilders[field.Name]; !ok {
+					a.groupColOrdering = append(a.groupColOrdering, field)
+					b := builder.NewBuilder(a.pool, field.Type)
+					a.groupBuilders[field.Name] = b
+					foundNewColumns = true
+					if a.notFirstCall {
+						// This builder needs to be filled up with NULLs up to the
+						// number of groups we currently have buffered.
+						for i := 0; i < a.groupBuilders[a.groupColOrdering[0].Name].Len(); i++ {
+							b.AppendNull()
+						}
+					}
+				}
 			}
 		}
 
@@ -175,52 +204,67 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 		}
 	}
 
-	firstCall := a.curGroup == nil
-	// curGroup is a slice that holds the group values for an index of the
-	// groupByFields it is done so that we can access group values without
-	// hashing by the field name.
-	curGroup := make([]any, len(a.groupByFields))
-	if !firstCall {
-		// This is not the first call to callback. Initialize curGroup to the
-		// values stored in the curGroup map.
-		for i, f := range a.groupByFields {
-			curGroup[i] = a.curGroup[f.Name]
-		}
-	} else {
-		a.curGroup = make(map[string]any, len(a.groupByFields))
-	}
-
 	if !aggregateFieldFound {
 		return errors.New("aggregate field not found, aggregations are not possible without it")
 	}
 
-	// TODO(asubiotto): Explore a static schema in the execution engine, all
-	// this should be initialization code.
-	for i, field := range a.groupByFields {
-		if _, ok := a.groupBuilders[field.Name]; !ok {
-			b := builder.NewBuilder(a.pool, field.Type)
-			a.groupBuilders[field.Name] = b
-			if firstCall {
-				// Append the first group value to use below.
-				v, err := arrowutils.GetValue(a.groupByArrays[i], 0)
-				if err != nil {
-					return err
-				}
-				switch concreteV := v.(type) {
-				case []byte:
-					// Safe copy.
-					a.curGroup[field.Name] = append([]byte(nil), concreteV...)
-				default:
-					a.curGroup[field.Name] = v
-				}
-				curGroup[i] = v
+	if foundNewColumns {
+		// Previous group results need to be updated with physical null columns
+		// for the new columns found. We can't use virtual null columns here
+		// because other operators aren't equipped to handle them.
+		for i := range a.groupResults {
+			for j := len(a.groupResults[i]); j < len(a.groupColOrdering); j++ {
+				a.groupResults[i] = append(
+					a.groupResults[i],
+					arrowutils.MakeNullArray(
+						a.pool,
+						a.groupColOrdering[j].Type,
+						a.groupResults[i][0].Len(),
+					),
+				)
 			}
 		}
 	}
 
+	// Initialize the groupByMap for all group columns seen over all Callback
+	// calls.
+	a.scratch.groupByArrays = a.scratch.groupByArrays[:0]
+	// curGroup is a slice that holds the group values for an index of the
+	// groupByFields it is done so that we can access group values without
+	// hashing by the field name.
+	a.scratch.curGroup = a.scratch.curGroup[:0]
+	for _, field := range a.groupColOrdering {
+		info, ok := a.scratch.groupByMap[field.Name]
+		var arr arrow.Array
+		if !ok {
+			// If a column that was previously seen in a record is not seen,
+			// add a virtual null column in its place.
+			arr = arrowutils.MakeVirtualNullArray(field.Type, int(r.NumRows()))
+		} else {
+			arr = info.arr
+		}
+		a.scratch.groupByArrays = append(a.scratch.groupByArrays, arr)
+		if !a.notFirstCall {
+			// Initialize curGroup to the first value in each column.
+			v, err := arrowutils.GetValue(arr, 0)
+			if err != nil {
+				return err
+			}
+			switch concreteV := v.(type) {
+			case []byte:
+				// Safe copy.
+				a.curGroup[field.Name] = append([]byte(nil), concreteV...)
+			default:
+				a.curGroup[field.Name] = v
+			}
+		}
+		a.scratch.curGroup = append(a.scratch.curGroup, a.curGroup[field.Name])
+	}
+	a.notFirstCall = true
+
 	groupRanges, wrappedSetRanges, lastGroup, err := arrowutils.GetGroupsAndOrderedSetRanges(
-		curGroup,
-		a.groupByArrays,
+		a.scratch.curGroup,
+		a.scratch.groupByArrays,
 	)
 	if err != nil {
 		return err
@@ -230,7 +274,7 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 	// and we need to know what values to append to the group builders.
 	defer func() {
 		for i, v := range lastGroup {
-			a.curGroup[a.groupByFields[i].Name] = v
+			a.curGroup[a.groupColOrdering[i].Name] = v
 		}
 	}()
 
@@ -290,21 +334,18 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 		}
 		arraysToAggregate = append(arraysToAggregate, toAgg)
 
-		// Here's a way to try out to solve th logic: Instead of consifering a new
-		// ordered set the current group, we could check groupEnd == setRanges
-		// This should indicate that the current group is the last one of the
-		// ordered set. This means that we would basically append to builders
-		// and then if newOrderedSet, we will flush to group results
-		//
-
 		// Append the groups.
 		newOrderedSet := false
 		if len(setRanges) > 0 && setCursor < len(setRanges) && setRanges[setCursor] == groupEnd {
 			setCursor++
 			newOrderedSet = true
 			arraysToAggregateSetIdxs = append(arraysToAggregateSetIdxs, int64(len(arraysToAggregate)))
+			// This group is the last one of the current ordered set. Flush
+			// it to the results. The corresponding aggregation results are
+			// flushed in a loop below.
+			a.groupResults = append(a.groupResults, nil)
 		}
-		for i, field := range a.groupByFields {
+		for i, field := range a.groupColOrdering {
 			var (
 				v   any
 				err error
@@ -313,7 +354,7 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 				// End of the current group of the last record.
 				v = a.curGroup[field.Name]
 			} else {
-				if v, err = arrowutils.GetValue(a.groupByArrays[i], int(groupStart)); err != nil {
+				if v, err = arrowutils.GetValue(a.scratch.groupByArrays[i], int(groupStart)); err != nil {
 					return err
 				}
 			}
@@ -325,14 +366,13 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 			}
 
 			if newOrderedSet {
-				// This group is the last one of the current ordered set. Flush
-				// it to the results. The corresponding aggregation results are
-				// flushed in a loop below.
-				a.groupResults = append(a.groupResults, nil)
 				n := len(a.groupResults) - 1
-				for _, field := range a.groupByFields {
-					a.groupResults[n] = append(a.groupResults[n], a.groupBuilders[field.Name].NewArray())
-				}
+				arr := a.groupBuilders[field.Name].NewArray()
+				// Since we're accumulating the group results until the call
+				// to Finish, it is unsafe to reuse this builder since the
+				// underlying buffers are reused, so allocate a new one.
+				a.groupBuilders[field.Name] = builder.NewBuilder(a.pool, arr.DataType())
+				a.groupResults[n] = append(a.groupResults[n], arr)
 			}
 		}
 
@@ -383,7 +423,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 		// Aggregate the last group.
 		a.groupResults = append(a.groupResults, nil)
 		n := len(a.groupResults) - 1
-		for _, field := range a.groupByFields {
+		for _, field := range a.groupColOrdering {
 			b := a.groupBuilders[field.Name]
 			if err := builder.AppendGoValue(
 				b, a.curGroup[field.Name],
@@ -418,7 +458,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 
 	schema := arrow.NewSchema(
 		append(
-			a.groupByFields,
+			a.groupColOrdering,
 			arrow.Field{Name: a.getResultColumnName(), Type: a.aggregationResults[0].DataType()},
 		),
 		nil,
@@ -440,14 +480,12 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 	}
 
 	if len(records) == 1 {
-		// TODO(asubiotto): This can probably be simplified (i.e. have a record
-		// var that is set either to records[0] or the merged records.
 		if err := a.next.Callback(ctx, records[0]); err != nil {
 			return err
 		}
 	} else {
 		// The aggregation results must be merged.
-		orderByCols := make([]int, len(a.groupByFields))
+		orderByCols := make([]int, len(a.groupColOrdering))
 		for i := range orderByCols {
 			orderByCols[i] = i
 		}
@@ -455,8 +493,8 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		firstGroup := make([]any, len(a.groupByFields))
-		groupArrs := mergedRecord.Columns()[:len(a.groupByFields)]
+		firstGroup := make([]any, len(a.groupColOrdering))
+		groupArrs := mergedRecord.Columns()[:len(a.groupColOrdering)]
 		for i, arr := range groupArrs {
 			v, err := arrowutils.GetValue(arr, 0)
 			if err != nil {
@@ -473,7 +511,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 		groupRanges = append(groupRanges, mergedRecord.NumRows())
 
 		// For better performance, the result is built a column at a time.
-		for i, field := range a.groupByFields {
+		for i, field := range a.groupColOrdering {
 			start := int64(0)
 			for _, end := range groupRanges {
 				if err := builder.AppendValue(
@@ -487,7 +525,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 
 		// The array of aggregation values is the first column index after the
 		// group fields.
-		aggregationVals := mergedRecord.Columns()[len(a.groupByFields)]
+		aggregationVals := mergedRecord.Columns()[len(a.groupColOrdering)]
 		start := int64(0)
 		toAggregate := make([]arrow.Array, 0, len(groupRanges))
 		for _, end := range groupRanges {
@@ -501,7 +539,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 		}
 
 		groups := make([]arrow.Array, 0, len(a.groupBuilders))
-		for _, field := range a.groupByFields {
+		for _, field := range a.groupColOrdering {
 			groups = append(groups, a.groupBuilders[field.Name].NewArray())
 		}
 		if err := a.next.Callback(

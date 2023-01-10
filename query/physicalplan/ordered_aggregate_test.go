@@ -188,7 +188,9 @@ func TestOrderedAggregate(t *testing.T) {
 						a := r.Column(i).(*array.Binary)
 						require.Equal(t, len(groupCol), a.Len())
 						for j, v := range groupCol {
-							require.Equal(t, v, string(a.Value(j)))
+							require.Equal(t, v, string(a.Value(j)),
+								"unexpected group at row %d column %d, record: %v", j, i, r,
+							)
 						}
 					}
 					a := r.Column(len(expected.groups)).(*array.Int64)
@@ -258,4 +260,83 @@ func TestOrderedAggregate(t *testing.T) {
 			require.NoError(t, o.Finish(ctx))
 		})
 	}
+}
+
+// TestOrderedAggregateDynCols verifies that the OrderedAggregate handles
+// dynamic group by columns appearing/disappearing in records correctly.
+func TestOrderedAggregateDynCols(t *testing.T) {
+	const (
+		dynColName = "labels"
+		valColName = "value"
+	)
+	ctx := context.Background()
+	o := NewOrderedAggregate(
+		memory.DefaultAllocator,
+		trace.NewNoopTracerProvider().Tracer(""),
+		Aggregation{
+			expr:     logicalplan.Col(valColName),
+			function: &Int64SumAggregation{},
+		},
+		[]logicalplan.Expr{
+			logicalplan.DynCol(dynColName),
+		},
+		true,
+	)
+	const (
+		dynCols = 4
+		numVals = 10
+	)
+	// The loop below will call Callback dynCols times with different dynamic
+	// column names. The group by column values will not change, so we expect
+	// to see four different groups.
+	o.SetNext(&OutputPlan{
+		callback: func(_ context.Context, r arrow.Record) error {
+			require.Equal(t, int64(dynCols), r.NumRows())
+			require.Equal(t, int64(dynCols+1), r.NumCols())
+			arr := r.Column(dynCols).(*array.Int64)
+			for i := 0; i < arr.Len(); i++ {
+				require.Equal(t, int64(numVals), arr.Value(i))
+			}
+			return nil
+		},
+	})
+	for i := 0; i < dynCols; i++ {
+		groupBuilder := builder.NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
+		valBuilder := builder.NewOptInt64Builder(arrow.PrimitiveTypes.Int64)
+		for j := 0; j < numVals; j++ {
+			groupBuilder.Append([]byte("group"))
+			valBuilder.Append(1)
+		}
+
+		// Keep the first dynamic column as a constant in the schema.
+		schema := []arrow.Field{
+			{Name: dynColName + ".0", Type: arrow.BinaryTypes.Binary},
+		}
+		groupArr := groupBuilder.NewArray()
+		arrs := []arrow.Array{groupArr}
+		if i != 0 {
+			schema = append(schema, arrow.Field{
+				Name: dynColName + fmt.Sprintf(".%d", i), Type: arrow.BinaryTypes.Binary,
+			})
+			arrs = append(arrs, groupArr)
+		}
+		schema = append(schema, arrow.Field{Name: valColName, Type: arrow.PrimitiveTypes.Int64})
+		arrs = append(arrs, valBuilder.NewArray())
+
+		require.NoError(
+			t,
+			o.Callback(
+				ctx,
+				array.NewRecord(
+					arrow.NewSchema(
+						schema,
+						nil,
+					),
+					arrs,
+					int64(numVals),
+				),
+			),
+		)
+	}
+	require.NoError(t, o.Finish(ctx))
 }
