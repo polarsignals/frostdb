@@ -43,12 +43,17 @@ func TestOrderedSynchronizer(t *testing.T) {
 	ctx := context.Background()
 	var errg errgroup.Group
 	for i := 0; i < inputs; i++ {
+		inputI := i
 		errg.Go(func() error {
+			if (inputI % (inputs / 2)) == 0 {
+				// Have a couple of inputs call Finish without calling Callback.
+				return osync.Finish(ctx)
+			}
 			b := builder.NewOptInt64Builder(arrow.PrimitiveTypes.Int64)
 			for {
 				cursor := sourceCursor.Add(1)
 				if int(cursor) >= len(source) {
-					break
+					return osync.Finish(ctx)
 				}
 				sourceMtx.Lock()
 				b.Append(source[cursor])
@@ -67,7 +72,6 @@ func TestOrderedSynchronizer(t *testing.T) {
 					return err
 				}
 			}
-			return nil
 		})
 	}
 	require.NoError(t, errg.Wait())
