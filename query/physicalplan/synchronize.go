@@ -58,5 +58,5 @@ func (m *Synchronizer) SetNextPlan(nextPlan PhysicalPlan) {
 }
 
 func (m *Synchronizer) Draw() *Diagram {
-	return &Diagram{}
+	return &Diagram{Details: "Synchronizer", Child: m.next.Draw()}
 }

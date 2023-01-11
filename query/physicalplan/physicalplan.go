@@ -94,12 +94,15 @@ type TableScan struct {
 }
 
 func (s *TableScan) Draw() *Diagram {
-	// var child *Diagram
-	// if s.plans != nil {
-	//	child = s.plans.Draw()
-	// }
-	details := fmt.Sprintf("TableScan")
-	return &Diagram{Details: details}
+	details := "TableScan"
+	var child *Diagram
+	if children := len(s.plans); children > 0 {
+		child = s.plans[0].Draw()
+		if children > 1 {
+			details += " [concurrent]"
+		}
+	}
+	return &Diagram{Details: details, Child: child}
 }
 
 func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
@@ -218,6 +221,9 @@ func (p *noopOperator) SetNext(next PhysicalPlan) {
 }
 
 func (p *noopOperator) Draw() *Diagram {
+	if p.next == nil {
+		return nil
+	}
 	return p.next.Draw()
 }
 

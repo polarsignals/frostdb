@@ -285,9 +285,16 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 			break
 		}
 	}
-	plan, err := r.parseSQL(r.activeTableDynamicColumns, c.Input)
+	res, err := r.parseSQL(r.activeTableDynamicColumns, c.Input)
 	if err != nil {
 		return "", fmt.Errorf("exec: %w", err)
+	}
+
+	if res.Explain {
+		// This plan should be explained. Note that we need to execute an
+		// explain this way because we have no notion of building an explain
+		// statement.
+		return res.Plan.Explain(ctx)
 	}
 
 	var b bytes.Buffer
@@ -301,7 +308,7 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 	w := tabwriter.NewWriter(&b, minWidth, tabWidth, padding, padChar, noFlags)
 
 	var results []string
-	if err := plan.Execute(ctx, func(_ context.Context, ar arrow.Record) error {
+	if err := res.Plan.Execute(ctx, func(_ context.Context, ar arrow.Record) error {
 		colStrings := make([][]string, ar.NumCols())
 		for i, col := range ar.Columns() {
 			stringVals, err := arrayToStringVals(col)
@@ -341,15 +348,15 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 	return b.String(), nil
 }
 
-func (r *Runner) parseSQL(dynColNames []string, sql string) (query.Builder, error) {
-	query, err := r.sqlParser.ExperimentalParse(
+func (r *Runner) parseSQL(dynColNames []string, sql string) (sqlparse.ParseResult, error) {
+	res, err := r.sqlParser.ExperimentalParse(
 		r.db.ScanTable(r.activeTableName), dynColNames, sql,
 	)
 	if err != nil {
-		return nil, err
+		return sqlparse.ParseResult{}, err
 	}
 
-	return query, nil
+	return res, nil
 }
 
 func arrayToStringVals(a arrow.Array) ([]string, error) {

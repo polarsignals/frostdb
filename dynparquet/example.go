@@ -158,12 +158,12 @@ func SampleDefinition() *schemapb.Schema {
 			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
 			NullsFirst: true,
 		}, {
+			Name:      "timestamp",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
 			Name:       "stacktrace",
 			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
 			NullsFirst: true,
-		}, {
-			Name:      "timestamp",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 		}},
 	}
 }

@@ -17,6 +17,7 @@ type Builder interface {
 	Distinct(expr ...logicalplan.Expr) Builder
 	Project(projections ...logicalplan.Expr) Builder
 	Execute(ctx context.Context, callback func(ctx context.Context, r arrow.Record) error) error
+	Explain(ctx context.Context) (string, error)
 }
 
 type LocalEngine struct {
@@ -118,25 +119,37 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(ctx contex
 	ctx, span := b.tracer.Start(ctx, "LocalQueryBuilder/Execute")
 	defer span.End()
 
-	logicalPlan, err := b.planBuilder.Build()
+	phyPlan, err := b.buildPhysical(ctx)
 	if err != nil {
 		return err
+	}
+
+	return phyPlan.Execute(ctx, b.pool, callback)
+}
+
+func (b LocalQueryBuilder) Explain(ctx context.Context) (string, error) {
+	phyPlan, err := b.buildPhysical(ctx)
+	if err != nil {
+		return "", err
+	}
+	return phyPlan.DrawString(), nil
+}
+
+func (b LocalQueryBuilder) buildPhysical(ctx context.Context) (*physicalplan.OutputPlan, error) {
+	logicalPlan, err := b.planBuilder.Build()
+	if err != nil {
+		return nil, err
 	}
 
 	for _, optimizer := range logicalplan.DefaultOptimizers {
 		logicalPlan = optimizer.Optimize(logicalPlan)
 	}
 
-	phyPlan, err := physicalplan.Build(
+	return physicalplan.Build(
 		ctx,
 		b.pool,
 		b.tracer,
 		logicalPlan.InputSchema(),
 		logicalPlan,
 	)
-	if err != nil {
-		return err
-	}
-
-	return phyPlan.Execute(ctx, b.pool, callback)
 }
