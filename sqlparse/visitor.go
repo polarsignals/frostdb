@@ -15,6 +15,7 @@ import (
 )
 
 type astVisitor struct {
+	explain     bool
 	builder     query.Builder
 	dynColNames map[string]struct{}
 	err         error
@@ -76,6 +77,9 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		}
 		// Reset for safety.
 		v.exprStack = v.exprStack[:0]
+		return nil
+	case *ast.ExplainStmt:
+		v.explain = true
 		return nil
 	case *ast.AggregateFuncExpr:
 		// At this point, the child node is the column name, so it has just been

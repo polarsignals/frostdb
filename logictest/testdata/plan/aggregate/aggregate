@@ -1,0 +1,7 @@
+createtable schema=default
+----
+
+exec
+explain select sum(value) as value_sum group by (example_type, labels.label1)
+----
+TableScan [concurrent] - HashAggregate (value_sum by example_type,labels.label1) - Synchronizer - HashAggregate (value_sum by example_type,labels.label1)
