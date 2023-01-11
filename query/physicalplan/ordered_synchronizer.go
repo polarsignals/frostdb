@@ -128,5 +128,5 @@ func (o *OrderedSynchronizer) SetNext(next PhysicalPlan) {
 }
 
 func (o *OrderedSynchronizer) Draw() *Diagram {
-	return &Diagram{}
+	return &Diagram{Details: "OrderedSynchronizer", Child: o.next.Draw()}
 }

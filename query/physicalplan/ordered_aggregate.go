@@ -415,6 +415,11 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 	ctx, span := a.tracer.Start(ctx, "OrderedAggregate/Finish")
 	defer span.End()
 
+	if !a.notFirstCall {
+		// Callback was never called, simply call Finish.
+		return a.next.Finish(ctx)
+	}
+
 	if a.arrayToAggCarry.Len() > 0 {
 		// Aggregate the last group.
 		a.groupResults = append(a.groupResults, nil)

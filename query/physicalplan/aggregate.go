@@ -26,7 +26,8 @@ func Aggregate(
 	s *parquet.Schema,
 	agg *logicalplan.Aggregation,
 	final bool,
-) (*HashAggregate, error) {
+	ordered bool,
+) (PhysicalPlan, error) {
 	aggregations := make([]Aggregation, 0, len(agg.AggExprs))
 
 	for _, expr := range agg.AggExprs {
@@ -73,6 +74,23 @@ func Aggregate(
 		aggregations = append(aggregations, aggregation)
 	}
 
+	if ordered {
+		if len(aggregations) > 1 {
+			return nil, fmt.Errorf(
+				"OrderedAggregate does not support multiple aggregations, found %d", len(aggregations),
+			)
+		}
+		return NewOrderedAggregate(
+			pool,
+			tracer,
+			// TODO(asubiotto): Multiple aggregation functions are not yet
+			// supported. The planning code should already have planned a hash
+			// aggregation in this case.
+			aggregations[0],
+			agg.GroupExprs,
+			final,
+		), nil
+	}
 	return NewHashAggregate(
 		pool,
 		tracer,

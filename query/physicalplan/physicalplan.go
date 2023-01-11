@@ -237,7 +237,17 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 		prev     []PhysicalPlan
 	)
 
+	oInfo := &planOrderingInfo{
+		state: planOrderingInfoStateInit,
+	}
+	if s != nil {
+		// TODO(asubiotto): There are cases in which the schema can be nil.
+		// Eradicate these.
+		oInfo.sortingCols = s.SortingColumns()
+	}
+
 	plan.Accept(PostPlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
+		oInfo.newNode()
 		switch {
 		case plan.SchemaScan != nil:
 			// Create noop operators since we don't know what to push the scan
@@ -267,6 +277,7 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 				plans:   plans,
 			}
 			prev = append(prev[:0], plans...)
+			oInfo.nodeMaintainsOrdering()
 		case plan.Projection != nil:
 			// For each previous physical plan create one Projection
 			for i := range prev {
@@ -313,15 +324,39 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 				prev[i].SetNext(f)
 				prev[i] = f
 			}
+			oInfo.applyFilter(plan.Filter.Expr)
+			oInfo.nodeMaintainsOrdering()
 		case plan.Aggregation != nil:
 			schema := s.ParquetSchema()
-			var sync *Synchronizer
+			ordered, err := shouldPlanOrderedAggregate(oInfo, plan.Aggregation)
+			if err != nil {
+				// TODO(asubiotto): Log the error.
+				ordered = false
+			}
+			var sync PhysicalPlan
 			if len(prev) > 1 {
 				// These aggregate operators need to be synchronized.
-				sync = Synchronize(len(prev))
+				if ordered {
+					// The group columns are known to be the first groupExpr
+					// columns. This might be a bit brittle though because group
+					// columns are not necessarily output in the input order.
+					// However, we don't know the group column output ordering
+					// until execution.
+					// TODO(asubiotto): Fix this. We can enforce group column
+					// output in the ordered aggregator (minus dynamic
+					// columns?). Maybe we can use column name matching as
+					// elsewhere.
+					orderCols := make([]int, len(plan.Aggregation.GroupExprs))
+					for i := range orderCols {
+						orderCols[i] = i
+					}
+					sync = NewOrderedSynchronizer(pool, len(prev), orderCols)
+				} else {
+					sync = Synchronize(len(prev))
+				}
 			}
 			for i := 0; i < len(prev); i++ {
-				a, err := Aggregate(pool, tracer, schema, plan.Aggregation, sync == nil)
+				a, err := Aggregate(pool, tracer, schema, plan.Aggregation, sync == nil, ordered)
 				if err != nil {
 					visitErr = err
 					return false
@@ -335,7 +370,7 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			if sync != nil {
 				// Plan an aggregate operator to run an aggregation on all the
 				// aggregations.
-				a, err := Aggregate(pool, tracer, schema, plan.Aggregation, true)
+				a, err := Aggregate(pool, tracer, schema, plan.Aggregation, true, ordered)
 				if err != nil {
 					visitErr = err
 					return false
@@ -343,6 +378,9 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 				sync.SetNext(a)
 				prev = prev[0:1]
 				prev[0] = a
+			}
+			if ordered {
+				oInfo.nodeMaintainsOrdering()
 			}
 		default:
 			panic("Unsupported plan")
@@ -368,6 +406,40 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 	}
 
 	return outputPlan, nil
+}
+
+func shouldPlanOrderedAggregate(oInfo *planOrderingInfo, agg *logicalplan.Aggregation) (bool, error) {
+	if len(agg.AggExprs) > 1 {
+		// More than one aggregation is not yet supported.
+		return false, nil
+	}
+	if !oInfo.orderingMaintained() {
+		return false, nil
+	}
+	groupExprs := agg.GroupExprs
+	ordering := oInfo.getNonCoveringOrdering()
+	for _, expr := range groupExprs {
+		groupCols := expr.ColumnsUsedExprs()
+		if len(groupCols) > 1 {
+			return false, fmt.Errorf("expected only one group column but found %v", groupCols)
+		}
+		if len(ordering) == 0 {
+			return false, nil
+		}
+		orderCol := ordering[0]
+		ordering = ordering[1:]
+		orderColName := orderCol.Name
+		if orderCol.Dynamic {
+			// TODO(asubiotto): Appending a "." is necessary for the MatchColumn
+			// call below to work for dynamic columns. Not sure if there's a
+			// better way to do this.
+			orderColName += "."
+		}
+		if !groupCols[0].MatchColumn(orderColName) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 type Diagram struct {
