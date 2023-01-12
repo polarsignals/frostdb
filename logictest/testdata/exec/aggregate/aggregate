@@ -53,3 +53,13 @@ exec
 select sum(value), count(value), min(value), max(value) group by labels.label2
 ----
 value2  21      6       1       6
+
+exec unordered
+select sum(value) as value_sum where timestamp >= 1 group by labels.label1
+----
+value1  1
+value2  2
+value3  3
+value4  4
+value5  5
+value6  6
