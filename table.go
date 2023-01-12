@@ -1142,7 +1142,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 			isLess := t.table.config.schema.RowLessThan(row, least)
 			if isLess {
 				if prev != nil {
-					if _, err := prev.AddPart(parts.NewArrowPart(tx, record.NewSlice(ri, ri), t.table.config.schema)); err != nil {
+					if _, err := prev.AddPart(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), t.table.config.schema)); err != nil {
 						ascendErr = err
 						return false
 					}
