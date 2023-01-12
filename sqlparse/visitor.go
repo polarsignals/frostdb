@@ -37,6 +37,40 @@ func newASTVisitor(builder query.Builder, dynColNames []string) *astVisitor {
 }
 
 func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
+	switch expr := n.(type) {
+	case *ast.SelectStmt:
+		// The SelectStmt is handled in during pre-visit given that it has many
+		// clauses we need to handle independently (e.g. a group by with a
+		// filter).
+		if expr.Where != nil {
+			expr.Where.Accept(v)
+			lastExpr, newExprs := pop(v.exprStack)
+			v.exprStack = newExprs
+			v.builder = v.builder.Filter(lastExpr)
+		}
+		expr.Fields.Accept(v)
+		switch {
+		case expr.GroupBy != nil:
+			expr.GroupBy.Accept(v)
+			var agg []logicalplan.Expr
+			var groups []logicalplan.Expr
+
+			for _, expr := range v.exprStack {
+				switch expr.(type) {
+				case *logicalplan.AliasExpr, *logicalplan.AggregationFunction:
+					agg = append(agg, expr)
+				default:
+					groups = append(groups, expr)
+				}
+			}
+			v.builder = v.builder.Aggregate(agg, groups)
+		case expr.Distinct:
+			v.builder = v.builder.Distinct(v.exprStack...)
+		default:
+			v.builder = v.builder.Project(v.exprStack...)
+		}
+		return n, true
+	}
 	return n, false
 }
 
@@ -51,32 +85,7 @@ func (v *astVisitor) Leave(n ast.Node) (nRes ast.Node, ok bool) {
 func (v *astVisitor) leaveImpl(n ast.Node) error {
 	switch expr := n.(type) {
 	case *ast.SelectStmt:
-		if expr.Where != nil {
-			lastExpr, newExprs := pop(v.exprStack)
-			v.exprStack = newExprs
-			v.builder = v.builder.Filter(lastExpr)
-		}
-		switch {
-		case expr.Distinct:
-			v.builder = v.builder.Distinct(v.exprStack...)
-		case expr.GroupBy != nil:
-			var agg []logicalplan.Expr
-			var groups []logicalplan.Expr
-
-			for _, expr := range v.exprStack {
-				switch expr.(type) {
-				case *logicalplan.AliasExpr, *logicalplan.AggregationFunction:
-					agg = append(agg, expr)
-				default:
-					groups = append(groups, expr)
-				}
-			}
-			v.builder = v.builder.Aggregate(agg, groups)
-		default:
-			v.builder = v.builder.Project(v.exprStack...)
-		}
-		// Reset for safety.
-		v.exprStack = v.exprStack[:0]
+		// Handled in Enter.
 		return nil
 	case *ast.ExplainStmt:
 		v.explain = true

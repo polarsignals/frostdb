@@ -287,7 +287,7 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 	}
 	res, err := r.parseSQL(r.activeTableDynamicColumns, c.Input)
 	if err != nil {
-		return "", fmt.Errorf("exec: %w", err)
+		return "", fmt.Errorf("exec: parse err: %w", err)
 	}
 
 	if res.Explain {

@@ -5,3 +5,8 @@ exec
 explain select sum(value) as value_sum group by (example_type, labels.label1)
 ----
 TableScan [concurrent] - HashAggregate (value_sum by example_type,labels.label1) - Synchronizer - HashAggregate (value_sum by example_type,labels.label1)
+
+exec
+explain select sum(value) as value_sum where timestamp >= 1 group by labels.label1
+----
+TableScan [concurrent] - PredicateFilter (timestamp >= 1) - HashAggregate (value_sum by labels.label1) - Synchronizer - HashAggregate (value_sum by labels.label1)
