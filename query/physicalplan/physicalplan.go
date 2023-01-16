@@ -227,9 +227,33 @@ func (p *noopOperator) Draw() *Diagram {
 	return p.next.Draw()
 }
 
-func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *dynparquet.Schema, plan *logicalplan.LogicalPlan) (*OutputPlan, error) {
+type execOptions struct {
+	orderedAggregations bool
+}
+
+type Option func(o *execOptions)
+
+func WithOrderedAggregations() Option {
+	return func(o *execOptions) {
+		o.orderedAggregations = true
+	}
+}
+
+func Build(
+	ctx context.Context,
+	pool memory.Allocator,
+	tracer trace.Tracer,
+	s *dynparquet.Schema,
+	plan *logicalplan.LogicalPlan,
+	options ...Option,
+) (*OutputPlan, error) {
 	_, span := tracer.Start(ctx, "PhysicalPlan/Build")
 	defer span.End()
+
+	execOpts := execOptions{}
+	for _, o := range options {
+		o(&execOpts)
+	}
 
 	outputPlan := &OutputPlan{}
 	var (
@@ -328,7 +352,7 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			oInfo.nodeMaintainsOrdering()
 		case plan.Aggregation != nil:
 			schema := s.ParquetSchema()
-			ordered, err := shouldPlanOrderedAggregate(oInfo, plan.Aggregation)
+			ordered, err := shouldPlanOrderedAggregate(execOpts, oInfo, plan.Aggregation)
 			if err != nil {
 				// TODO(asubiotto): Log the error.
 				ordered = false
@@ -395,7 +419,13 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 	return outputPlan, nil
 }
 
-func shouldPlanOrderedAggregate(oInfo *planOrderingInfo, agg *logicalplan.Aggregation) (bool, error) {
+func shouldPlanOrderedAggregate(
+	execOpts execOptions, oInfo *planOrderingInfo, agg *logicalplan.Aggregation,
+) (bool, error) {
+	if !execOpts.orderedAggregations {
+		// Ordered aggregations disabled.
+		return false, nil
+	}
 	if len(agg.AggExprs) > 1 {
 		// More than one aggregation is not yet supported.
 		return false, nil
