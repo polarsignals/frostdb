@@ -336,21 +336,8 @@ func Build(ctx context.Context, pool memory.Allocator, tracer trace.Tracer, s *d
 			var sync PhysicalPlan
 			if len(prev) > 1 {
 				// These aggregate operators need to be synchronized.
-				if ordered {
-					// The group columns are known to be the first groupExpr
-					// columns. This might be a bit brittle though because group
-					// columns are not necessarily output in the input order.
-					// However, we don't know the group column output ordering
-					// until execution.
-					// TODO(asubiotto): Fix this. We can enforce group column
-					// output in the ordered aggregator (minus dynamic
-					// columns?). Maybe we can use column name matching as
-					// elsewhere.
-					orderCols := make([]int, len(plan.Aggregation.GroupExprs))
-					for i := range orderCols {
-						orderCols[i] = i
-					}
-					sync = NewOrderedSynchronizer(pool, len(prev), orderCols)
+				if ordered && len(plan.Aggregation.GroupExprs) > 0 {
+					sync = NewOrderedSynchronizer(pool, len(prev), plan.Aggregation.GroupExprs)
 				} else {
 					sync = Synchronize(len(prev))
 				}

@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 func TestOrderedSynchronizer(t *testing.T) {
@@ -26,8 +27,15 @@ func TestOrderedSynchronizer(t *testing.T) {
 	}
 	// Initialize sourceCursor to -1 so that the first increment is 0.
 	sourceCursor.Store(-1)
-	const inputs = 8
-	osync := NewOrderedSynchronizer(memory.DefaultAllocator, inputs, []int{0})
+	const (
+		inputs         = 8
+		orderByColName = "colName"
+	)
+	osync := NewOrderedSynchronizer(
+		memory.DefaultAllocator,
+		inputs,
+		[]logicalplan.Expr{logicalplan.Col(orderByColName)},
+	)
 	expected := int64(0)
 	osync.SetNext(&OutputPlan{
 		callback: func(_ context.Context, r arrow.Record) error {
@@ -63,7 +71,7 @@ func TestOrderedSynchronizer(t *testing.T) {
 					ctx,
 					array.NewRecord(
 						arrow.NewSchema(
-							[]arrow.Field{{Type: arr.DataType()}}, nil,
+							[]arrow.Field{{Name: orderByColName, Type: arr.DataType()}}, nil,
 						),
 						[]arrow.Array{arr},
 						1,

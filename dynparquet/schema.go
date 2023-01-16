@@ -1146,8 +1146,17 @@ func mergeStrings(str [][]string) []string {
 			}
 		}
 	}
-	sort.Strings(result)
-	return result
+	return MergeDeduplicatedDynCols(result)
+}
+
+// MergeDeduplicatedDynCols is a light wrapper over sorting the deduplicated
+// dynamic column names provided in dyn. It is extracted as a public method
+// since this merging determines the order in which dynamic columns are stored
+// and components from other packages sometimes need to figure out the physical
+// sort order between dynamic columns.
+func MergeDeduplicatedDynCols(dyn []string) []string {
+	sort.Strings(dyn)
+	return dyn
 }
 
 // NewDynamicRowGroupMergeAdapter returns a *DynamicRowGroupMergeAdapter, which

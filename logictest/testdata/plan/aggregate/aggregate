@@ -15,6 +15,13 @@ explain select sum(value) as value_sum group by (example_type, labels)
 ----
 TableScan [concurrent] - OrderedAggregate (value by example_type,labels) - OrderedSynchronizer - OrderedAggregate (value by example_type,labels)
 
+# A hash aggregation is planned in the case that the group by columns are inverted. TODO(asubiotto): We could probably
+# plan an ordered aggregation in this case, but let's not do so unless necessary.
+exec
+explain select sum(value) as value_sum group by (labels, example_type)
+----
+TableScan [concurrent] - HashAggregate (value_sum by labels,example_type) - Synchronizer - HashAggregate (value_sum by labels,example_type)
+
 # A hash aggregation should be planned in this case because we are not grouping by example_type, so the group by columns
 # are not a prefix of the sorting columns.
 exec
@@ -28,6 +35,11 @@ exec
 explain select sum(value) as value_sum where example_type = 'some_value' group by (labels)
 ----
 TableScan [concurrent] - PredicateFilter (example_type == some_value) - OrderedAggregate (value by labels) - OrderedSynchronizer - OrderedAggregate (value by labels)
+
+exec
+explain select sum(value) as value_sum where example_type = 'some_value' group by (labels, timestamp)
+----
+TableScan [concurrent] - PredicateFilter (example_type == some_value) - OrderedAggregate (value by labels,timestamp) - OrderedSynchronizer - OrderedAggregate (value by labels,timestamp)
 
 # The above only applies to equality filters of course.
 exec
