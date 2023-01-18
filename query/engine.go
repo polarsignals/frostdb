@@ -24,6 +24,7 @@ type LocalEngine struct {
 	pool          memory.Allocator
 	tracer        trace.Tracer
 	tableProvider logicalplan.TableProvider
+	execOpts      []physicalplan.Option
 }
 
 type Option func(*LocalEngine)
@@ -31,6 +32,12 @@ type Option func(*LocalEngine)
 func WithTracer(tracer trace.Tracer) Option {
 	return func(e *LocalEngine) {
 		e.tracer = tracer
+	}
+}
+
+func WithPhysicalplanOptions(opts ...physicalplan.Option) Option {
+	return func(e *LocalEngine) {
+		e.execOpts = opts
 	}
 }
 
@@ -56,6 +63,7 @@ type LocalQueryBuilder struct {
 	pool        memory.Allocator
 	tracer      trace.Tracer
 	planBuilder logicalplan.Builder
+	execOpts    []physicalplan.Option
 }
 
 func (e *LocalEngine) ScanTable(name string) Builder {
@@ -63,6 +71,7 @@ func (e *LocalEngine) ScanTable(name string) Builder {
 		pool:        e.pool,
 		tracer:      e.tracer,
 		planBuilder: (&logicalplan.Builder{}).Scan(e.tableProvider, name),
+		execOpts:    e.execOpts,
 	}
 }
 
@@ -71,6 +80,7 @@ func (e *LocalEngine) ScanSchema(name string) Builder {
 		pool:        e.pool,
 		tracer:      e.tracer,
 		planBuilder: (&logicalplan.Builder{}).ScanSchema(e.tableProvider, name),
+		execOpts:    e.execOpts,
 	}
 }
 
@@ -82,6 +92,7 @@ func (b LocalQueryBuilder) Aggregate(
 		pool:        b.pool,
 		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Aggregate(aggExpr, groupExprs),
+		execOpts:    b.execOpts,
 	}
 }
 
@@ -92,6 +103,7 @@ func (b LocalQueryBuilder) Filter(
 		pool:        b.pool,
 		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Filter(expr),
+		execOpts:    b.execOpts,
 	}
 }
 
@@ -102,6 +114,7 @@ func (b LocalQueryBuilder) Distinct(
 		pool:        b.pool,
 		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Distinct(expr...),
+		execOpts:    b.execOpts,
 	}
 }
 
@@ -112,6 +125,7 @@ func (b LocalQueryBuilder) Project(
 		pool:        b.pool,
 		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Project(projections...),
+		execOpts:    b.execOpts,
 	}
 }
 
@@ -151,5 +165,6 @@ func (b LocalQueryBuilder) buildPhysical(ctx context.Context) (*physicalplan.Out
 		b.tracer,
 		logicalPlan.InputSchema(),
 		logicalPlan,
+		b.execOpts...,
 	)
 }

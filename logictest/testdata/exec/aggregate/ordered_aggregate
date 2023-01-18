@@ -1,0 +1,53 @@
+createtable schema=default
+----
+
+insert cols=(example_type, labels.label1, timestamp, value)
+type1   value1  1   1
+type1   value1  2   1
+type2   value1  1   1
+----
+
+insert cols=(example_type, labels.label1, timestamp, value)
+type1   value1  1   1
+type1   value1  2   1
+type2   value1  1   1
+----
+
+insert cols=(example_type, labels.label2, timestamp, value)
+type1   value2  1   1
+type1   value2  2   1
+type2   value2  1   1
+----
+
+insert cols=(example_type, labels.label3, timestamp, value)
+type1   value3  1   1
+type1   value3  2   1
+type2   value3  1   1
+----
+
+exec
+select sum(value) as value_sum group by (example_type, labels)
+----
+type1   null    null    value3  2
+type1   null    value2  null    2
+type1   value1  null    null    4
+type2   null    null    value3  1
+type2   null    value2  null    1
+type2   value1  null    null    2
+
+exec
+select sum(value) as value_sum where example_type = 'type1' group by (labels)
+----
+null    null    value3  2
+null    value2  null    2
+value1  null    null    4
+
+exec
+select sum(value) as value_sum where example_type = 'type1' group by (labels, timestamp)
+----
+null    null    value3  1       1
+null    null    value3  2       1
+null    value2  null    1       1
+null    value2  null    2       1
+value1  null    null    1       2
+value1  null    null    2       2

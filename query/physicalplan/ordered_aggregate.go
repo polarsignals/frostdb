@@ -110,10 +110,6 @@ func NewOrderedAggregate(
 	groupByColumnMatchers []logicalplan.Expr,
 	finalStage bool,
 ) *OrderedAggregate {
-	if !finalStage {
-		panic("non-final stage ordered aggregation is not supported yet")
-	}
-
 	o := &OrderedAggregate{
 		pool:              pool,
 		tracer:            tracer,
@@ -384,7 +380,7 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 		return nil
 	}
 
-	results, err := a.aggregationFunction.Aggregate(a.pool, arraysToAggregate)
+	results, err := runAggregation(a.finalStage, a.aggregationFunction, a.pool, arraysToAggregate)
 	if err != nil {
 		return err
 	}
@@ -419,6 +415,11 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 	ctx, span := a.tracer.Start(ctx, "OrderedAggregate/Finish")
 	defer span.End()
 
+	if !a.notFirstCall {
+		// Callback was never called, simply call Finish.
+		return a.next.Finish(ctx)
+	}
+
 	if a.arrayToAggCarry.Len() > 0 {
 		// Aggregate the last group.
 		a.groupResults = append(a.groupResults, nil)
@@ -433,9 +434,8 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 			a.groupResults[n] = append(a.groupResults[n], b.NewArray())
 		}
 
-		results, err := a.aggregationFunction.Aggregate(
-			a.pool,
-			[]arrow.Array{a.arrayToAggCarry.NewArray()},
+		results, err := runAggregation(
+			a.finalStage, a.aggregationFunction, a.pool, []arrow.Array{a.arrayToAggCarry.NewArray()},
 		)
 		if err != nil {
 			return err

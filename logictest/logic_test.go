@@ -11,6 +11,7 @@ import (
 	"github.com/polarsignals/frostdb"
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query"
+	"github.com/polarsignals/frostdb/query/physicalplan"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
@@ -29,6 +30,9 @@ func (db frostDB) ScanTable(name string) query.Builder {
 	queryEngine := query.NewEngine(
 		memory.NewGoAllocator(),
 		db.DB.TableProvider(),
+		query.WithPhysicalplanOptions(
+			physicalplan.WithOrderedAggregations(),
+		),
 	)
 	return queryEngine.ScanTable(name)
 }
