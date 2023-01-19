@@ -196,7 +196,7 @@ func (w *FileWAL) Run(ctx context.Context) {
 			err := w.log.WriteBatch(walBatch)
 			if err != nil {
 				w.metrics.failedLogs.Add(float64(len(batch)))
-				level.Error(w.logger).Log("msg", "failed to write WAL batch", "err", err)
+				level.Error(w.logger).Log("msg", "failed to write WAL batch", "err", err, "batch", walBatch)
 			} else {
 				w.metrics.recordsLogged.Add(float64(len(batch)))
 			}
