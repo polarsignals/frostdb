@@ -766,8 +766,9 @@ func (t *Table) Iterator(
 
 					switch t := rg.(type) {
 					case arrow.Record:
-						t.Retain()
-						if err := callback(ctx, t); err != nil {
+						err := callback(ctx, t)
+						t.Release()
+						if err != nil {
 							return err
 						}
 					case dynparquet.DynamicRowGroup:
@@ -851,15 +852,14 @@ func (t *Table) SchemaIterator(
 
 					switch t := rg.(type) {
 					case arrow.Record:
-						toRecord := func() error {
-							for _, f := range t.Schema().Fields() {
-								b.Field(0).(*array.StringBuilder).Append(f.Name)
-							}
-							record := b.NewRecord()
-							defer record.Release()
-							return callback(ctx, record)
+						for _, f := range t.Schema().Fields() {
+							b.Field(0).(*array.StringBuilder).Append(f.Name)
 						}
-						if err := toRecord(); err != nil {
+						record := b.NewRecord()
+						err := callback(ctx, record)
+						record.Release()
+						t.Release()
+						if err != nil {
 							return err
 						}
 					case dynparquet.DynamicRowGroup:
@@ -1060,39 +1060,7 @@ func (t *TableBlock) RowGroupIterator(
 	var err error
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
-
-		g.PartsForTx(tx, func(p *parts.Part) bool {
-			if record := p.Record(); record != nil {
-				rowGroups <- record
-				return true
-			}
-
-			var buf *dynparquet.SerializedBuffer
-			buf, err = p.AsSerializedBuffer(t.table.config.schema)
-			if err != nil {
-				return false
-			}
-			f := buf.ParquetFile()
-			for i := range f.RowGroups() {
-				rg := buf.DynamicRowGroup(i)
-				var mayContainUsefulData bool
-				mayContainUsefulData, err = filter.Eval(rg)
-				if err != nil {
-					return false
-				}
-				if mayContainUsefulData {
-					select {
-					case <-ctx.Done():
-						err = ctx.Err()
-						return false
-					case rowGroups <- rg:
-						span.AddEvent("row group")
-					}
-				}
-			}
-			return true
-		})
-
+		g.Collect(ctx, tx, filter, rowGroups)
 		return true
 	})
 
@@ -1110,18 +1078,7 @@ func (t *TableBlock) Index() *btree.BTree {
 }
 
 func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) error {
-	index := t.Index()
-	if index.Len() == 1 {
-		if _, err := index.Min().(*Granule).AddPart(parts.NewArrowPart(tx, record, t.table.config.schema)); err != nil {
-			return err
-		}
-		record.Retain()
-		t.table.metrics.numParts.Add(float64(1))
-		return nil
-	}
-
 	ps := t.table.config.schema
-
 	ri := int64(0)
 	row, err := pqarrow.RecordToDynamicRow(ps, record, int(ri))
 	if err != nil {
@@ -1134,15 +1091,14 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 
 	var prev *Granule
 	var ascendErr error
+	index := t.Index()
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
 		for {
-			least := g.Least()
-			isLess := t.table.config.schema.RowLessThan(row, least)
-			if isLess {
+			if t.table.config.schema.RowLessThan(row, g.Least()) {
 				if prev != nil {
-					if _, err := prev.AddPart(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), t.table.config.schema)); err != nil {
+					if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), t.table.config.schema)); err != nil {
 						ascendErr = err
 						return false
 					}
@@ -1154,7 +1110,10 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 						ascendErr = err
 						return false
 					}
+
+					continue
 				}
+				return true
 			}
 
 			// stop at the first granule where this is not the least
@@ -1170,7 +1129,30 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 		return ascendErr
 	}
 
-	if _, err := prev.AddPart(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema)); err != nil && err != io.EOF {
+	if prev == nil { // No suitable granule was found; insert new granule
+		g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema))
+		if err != nil {
+			return fmt.Errorf("new granule failed: %w", err)
+		}
+
+		for {
+			t.mtx.Lock()
+			newIdx := index.Clone() // NOTE: this needs to be an index swap to avoid losing the new granule during a compaction
+			t.mtx.Unlock()
+
+			newIdx.ReplaceOrInsert(g)
+
+			if t.index.CompareAndSwap(index, newIdx) {
+				t.table.metrics.numParts.Add(float64(1))
+				return nil
+			}
+
+			index = t.Index()
+		}
+	}
+
+	// Append to the last valid granule
+	if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema)); err != nil && err != io.EOF {
 		return err
 	}
 	t.table.metrics.numParts.Add(float64(1))

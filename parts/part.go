@@ -153,6 +153,16 @@ func (p *Part) most() (*dynparquet.DynamicRow, error) {
 		return p.maxRow, nil
 	}
 
+	if p.record != nil {
+		var err error
+		p.maxRow, err = pqarrow.RecordToDynamicRow(p.schema, p.record, int(p.record.NumRows()-1))
+		if err != nil {
+			return nil, err
+		}
+
+		return p.maxRow, nil
+	}
+
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
 	rg := p.buf.DynamicRowGroup(p.buf.NumRowGroups() - 1)
 	reader := rg.DynamicRows()

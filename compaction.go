@@ -134,7 +134,8 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 
 func (t *TableBlock) compact(cfg *CompactionConfig) error {
 	var compactionErrors errutil.MultiError
-	t.Index().Ascend(func(i btree.Item) bool {
+	index := t.Index()
+	index.Ascend(func(i btree.Item) bool {
 		granuleToCompact := i.(*Granule)
 		if granuleToCompact.metadata.size.Load() < uint64(t.table.db.columnStore.granuleSizeBytes) {
 			// Skip granule since its size is under the target size.
@@ -456,24 +457,24 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	}
 
 	for {
-		curIndex := t.Index()
+		index := t.Index()
 		t.mtx.Lock()
-		index := curIndex.Clone() // TODO(THOR): we can't clone concurrently
+		newIdx := index.Clone() // TODO(THOR): we can't clone concurrently
 		t.mtx.Unlock()
 
-		if index.Delete(granule) == nil {
+		if newIdx.Delete(granule) == nil {
 			level.Error(t.logger).Log("msg", "failed to delete granule during split")
-			continue
+			return false, fmt.Errorf("failed to delete granule")
 		}
 
 		for _, g := range newGranules {
-			if dupe := index.ReplaceOrInsert(g); dupe != nil {
+			if dupe := newIdx.ReplaceOrInsert(g); dupe != nil {
 				level.Error(t.logger).Log("duplicate insert performed")
 			}
 		}
 
 		// Point to the new index.
-		if t.index.CompareAndSwap(curIndex, index) {
+		if t.index.CompareAndSwap(index, newIdx) {
 			sizeDiff := int64(stats.level1SizeAfter) - (stats.level0SizeBefore + stats.level1SizeBefore)
 			t.size.Add(sizeDiff)
 
