@@ -399,17 +399,10 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	partsAfter := 0
 	for _, parts := range newParts {
 		partsAfter += len(parts)
-		newGranule, err := NewGranule(
-			t.table.metrics.granulesCreated, t.table.config, nil, /* firstPart */
-		)
+		newGranule, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, parts...)
 		if err != nil {
 			if err != nil {
 				return false, fmt.Errorf("failed to create new granule: %w", err)
-			}
-		}
-		for _, p := range parts {
-			if _, err := newGranule.AddPart(p); err != nil {
-				return false, fmt.Errorf("failed to add level1 part to granule: %w", err)
 			}
 		}
 		newGranules = append(newGranules, newGranule)
@@ -545,7 +538,7 @@ func compactLevel0IntoLevel1(
 		// All the row groups in a part are wrapped in a single row group given
 		// that all rows are sorted within a part. This reduces the number of
 		// cursors open when merging the row groups.
-		bufs = append(bufs, p.Buf.MultiDynamicRowGroup())
+		bufs = append(bufs, p.Buf().MultiDynamicRowGroup())
 	}
 
 	cursor := 0
@@ -604,7 +597,7 @@ func collectPartsForCompaction(tx uint64, list *parts.List) (
 			return true
 		}
 
-		f := p.Buf.ParquetFile()
+		f := p.Buf().ParquetFile()
 		switch cl := p.CompactionLevel(); cl {
 		case parts.CompactionLevel0:
 			level0Parts = append(level0Parts, p)
@@ -633,7 +626,7 @@ func divideLevel1PartsForGranule(t *TableBlock, tx uint64, level1 []*parts.Part,
 	var totalSize int64
 	sizes := make([]int64, len(level1))
 	for i, p := range level1 {
-		size := p.Buf.ParquetFile().Size()
+		size := p.Buf().ParquetFile().Size()
 		totalSize += size
 		sizes[i] = size
 	}

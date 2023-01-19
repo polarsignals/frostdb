@@ -862,7 +862,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 	index := atomic.Pointer[btree.BTree]{}
 	index.Store(btree.New(table.db.columnStore.indexDegree))
 
-	tb := &TableBlock{
+	return &TableBlock{
 		table:  table,
 		index:  &index,
 		mtx:    &sync.RWMutex{},
@@ -872,15 +872,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		tracer: table.tracer,
 		minTx:  tx,
 		prevTx: prevTx,
-	}
-
-	g, err := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)
-	if err != nil {
-		return nil, fmt.Errorf("new granule failed: %w", err)
-	}
-	tb.index.Load().ReplaceOrInsert(g)
-
-	return tb, nil
+	}, nil
 }
 
 // EnsureCompaction forces a TableBlock compaction.
@@ -951,7 +943,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 			}
 
 			part := parts.NewPart(tx, serBuf)
-			if _, err := granule.AddPart(part); err != nil {
+			if _, err := granule.Append(part); err != nil {
 				return fmt.Errorf("failed to add part to granule: %w", err)
 			}
 			list = append(list, part)
@@ -1129,18 +1121,19 @@ func addPartToGranule(granules []*Granule, p *parts.Part) error {
 	for _, g := range granules {
 		if g.tableConfig.schema.RowLessThan(row, g.Least()) {
 			if prev != nil {
-				if _, err := prev.addPart(p, row); err != nil {
+				if _, err := prev.Append(p); err != nil {
 					return err
 				}
 				return nil
 			}
+		} else {
+			prev = g
 		}
-		prev = g
 	}
 
 	if prev != nil {
 		// Save part to prev
-		if _, err := prev.addPart(p, row); err != nil {
+		if _, err := prev.Append(p); err != nil {
 			return err
 		}
 	}

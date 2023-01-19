@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/polarsignals/frostdb/pqarrow"
 )
 
 type CompactionLevel uint8
@@ -24,9 +22,7 @@ const (
 )
 
 type Part struct {
-	// One of Buf or Record may be set in a Part but not both.
 	buf    *dynparquet.SerializedBuffer
-	record arrow.Record
 	schema *dynparquet.Schema
 
 	// tx is the id of the transaction that created this part.
@@ -38,20 +34,8 @@ type Part struct {
 	maxRow *dynparquet.DynamicRow
 }
 
-func (p *Part) SerializeBuffer(schema *dynparquet.Schema, w *parquet.Writer) error {
-	if p.record == nil {
-		return fmt.Errorf("not a record part")
-	}
-
-	return pqarrow.RecordToFile(schema, w, p.record)
-}
-
 func (p *Part) Buf() *dynparquet.SerializedBuffer {
 	return p.buf
-}
-
-func (p *Part) Record() arrow.Record {
-	return p.record
 }
 
 type Option func(*Part)
@@ -60,21 +44,6 @@ func WithCompactionLevel(level CompactionLevel) Option {
 	return func(p *Part) {
 		p.compactionLevel = level
 	}
-}
-
-// NewArrowPart returns a new Arrow part
-func NewArrowPart(tx uint64, record arrow.Record, schema *dynparquet.Schema, options ...Option) *Part {
-	p := &Part{
-		tx:     tx,
-		record: record,
-		schema: schema,
-	}
-
-	for _, opt := range options {
-		opt(p)
-	}
-
-	return p
 }
 
 func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) *Part {
@@ -91,27 +60,11 @@ func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) *Pa
 }
 
 func (p *Part) NumRows() int64 {
-	if p.buf != nil {
-		return p.buf.NumRows()
-	}
-
-	return p.record.NumRows()
+	return p.buf.NumRows()
 }
 
 func (p *Part) Size() int64 {
-	if p.buf != nil {
-		return p.buf.ParquetFile().Size()
-	}
-
-	size := int64(0)
-	for _, col := range p.record.Columns() {
-		for _, buf := range col.Data().Buffers() { // NOTE: may need to get Children data instances for nested
-			if buf != nil {
-				size += int64(buf.Len())
-			}
-		}
-	}
-	return size
+	return p.buf.ParquetFile().Size()
 }
 
 func (p *Part) CompactionLevel() CompactionLevel {
@@ -124,16 +77,6 @@ func (p *Part) TX() uint64 { return p.tx }
 // Least returns the least row  in the part.
 func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	if p.minRow != nil {
-		return p.minRow, nil
-	}
-
-	if p.record != nil {
-		var err error
-		p.minRow, err = pqarrow.RecordToDynamicRow(p.schema, p.record, 0)
-		if err != nil {
-			return nil, err
-		}
-
 		return p.minRow, nil
 	}
 
@@ -155,16 +98,6 @@ func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 
 func (p *Part) most() (*dynparquet.DynamicRow, error) {
 	if p.maxRow != nil {
-		return p.maxRow, nil
-	}
-
-	if p.record != nil {
-		var err error
-		p.maxRow, err = pqarrow.RecordToDynamicRow(p.schema, p.record, int(p.record.NumRows()-1)) // TODO need the table schema
-		if err != nil {
-			return nil, err
-		}
-
 		return p.maxRow, nil
 	}
 

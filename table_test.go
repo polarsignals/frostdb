@@ -193,7 +193,7 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
-	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least.Load()).Row)
+	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least).Row)
 	require.Equal(t, 1, table.active.Index().Len())
 }
 

@@ -232,7 +232,7 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    2,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{1, 2, 3, 4},
 						},
 					},
@@ -241,7 +241,7 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    2,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{5, 6, 7, 8},
 						},
 					},
@@ -250,7 +250,7 @@ func TestCompaction(t *testing.T) {
 					[]expectedPart{
 						{
 							numRowGroups:    1,
-							compactionLevel: compactionLevel1,
+							compactionLevel: parts.CompactionLevel1,
 							data:            []int64{9},
 						},
 					},
@@ -343,7 +343,7 @@ func TestCompaction(t *testing.T) {
 				j := 0
 				g.parts.Iterate(func(p *parts.Part) bool {
 					expectedPart := expected.parts[j]
-					rgs := p.Buf.ParquetFile().RowGroups()
+					rgs := p.Buf().ParquetFile().RowGroups()
 					require.Equal(t, expectedPart.numRowGroups, len(rgs))
 					require.Equal(t, expectedPart.compactionLevel, p.CompactionLevel())
 					rowsRead := make([]parquet.Row, 0)
