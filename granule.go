@@ -137,7 +137,6 @@ func (g *Granule) Collect(ctx context.Context, tx uint64, filter TrueNegativeFil
 			if mayContainUsefulData {
 				select {
 				case <-ctx.Done():
-					err = ctx.Err()
 					return false
 				case collector <- rg:
 				}
