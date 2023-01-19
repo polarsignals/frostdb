@@ -1,8 +1,10 @@
 package frostdb
 
 import (
+	"context"
 	"sync/atomic"
 
+	"github.com/apache/arrow/go/v8/arrow"
 	"github.com/google/btree"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -106,4 +108,55 @@ func (g *Granule) Less(than btree.Item) bool {
 // Least returns the least row in a Granule.
 func (g *Granule) Least() *dynparquet.DynamicRow {
 	return g.metadata.least
+}
+
+// Collect will filter row groups or arrow records into the collector. Arrow records passed to the collector must be Released().
+func (g *Granule) Collect(ctx context.Context, tx uint64, filter TrueNegativeFilter, collector chan<- any) {
+	records := []arrow.Record{}
+	g.PartsForTx(tx, func(p *parts.Part) bool {
+		if r := p.Record(); r != nil {
+			r.Retain()
+			records = append(records, r)
+			return true
+		}
+
+		var buf *dynparquet.SerializedBuffer
+		var err error
+		buf, err = p.AsSerializedBuffer(g.tableConfig.schema)
+		if err != nil {
+			return false
+		}
+		f := buf.ParquetFile()
+		for i := range f.RowGroups() {
+			rg := buf.DynamicRowGroup(i)
+			var mayContainUsefulData bool
+			mayContainUsefulData, err = filter.Eval(rg)
+			if err != nil {
+				return false
+			}
+			if mayContainUsefulData {
+				select {
+				case <-ctx.Done():
+					err = ctx.Err()
+					return false
+				case collector <- rg:
+				}
+			}
+		}
+
+		return true
+	})
+
+	if len(g.newGranules) != 0 && len(records) != 0 { // This granule was pruned while we were retaining Records; it's not safe to use them anymore
+		for _, r := range records {
+			r.Release()
+		}
+		for _, newGran := range g.newGranules {
+			newGran.Collect(ctx, tx, filter, collector)
+		}
+	} else {
+		for _, r := range records {
+			collector <- r
+		}
+	}
 }
