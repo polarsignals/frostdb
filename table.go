@@ -1023,6 +1023,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 
 					newIndex.ReplaceOrInsert(g)
 					if t.index.CompareAndSwap(old, newIndex) {
+						t.table.metrics.numParts.Add(float64(1))
 						break
 					}
 				}
@@ -1130,10 +1131,11 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	}
 
 	if prev == nil { // No suitable granule was found; insert new granule
-		g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema))
+		g, err := NewGranule(t.table.config, parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema))
 		if err != nil {
 			return fmt.Errorf("new granule failed: %w", err)
 		}
+		t.table.metrics.granulesCreated.Inc()
 
 		for {
 			t.mtx.Lock()
