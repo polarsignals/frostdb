@@ -399,12 +399,13 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	partsAfter := 0
 	for _, parts := range newParts {
 		partsAfter += len(parts)
-		newGranule, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, parts...)
+		newGranule, err := NewGranule(t.table.config, parts...)
 		if err != nil {
 			if err != nil {
 				return false, fmt.Errorf("failed to create new granule: %w", err)
 			}
 		}
+		t.table.metrics.granulesCreated.Inc()
 		newGranules = append(newGranules, newGranule)
 	}
 

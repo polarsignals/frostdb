@@ -4,7 +4,6 @@ import (
 	"sync/atomic"
 
 	"github.com/google/btree"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
@@ -15,8 +14,6 @@ type Granule struct {
 
 	parts       *parts.List
 	tableConfig *TableConfig
-
-	granulesCreated prometheus.Counter
 
 	// newGranules are the granules that were created after a split
 	newGranules []*Granule
@@ -36,12 +33,11 @@ type GranuleMetadata struct {
 	pruned atomic.Uint64
 }
 
-func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, prts ...*parts.Part) (*Granule, error) {
+func NewGranule(tableConfig *TableConfig, prts ...*parts.Part) (*Granule, error) {
 	g := &Granule{
-		granulesCreated: granulesCreated,
-		parts:           parts.NewList(&atomic.Pointer[parts.Node]{}, parts.None),
-		tableConfig:     tableConfig,
-		metadata:        GranuleMetadata{},
+		parts:       parts.NewList(&atomic.Pointer[parts.Node]{}, parts.None),
+		tableConfig: tableConfig,
+		metadata:    GranuleMetadata{},
 	}
 
 	for _, p := range prts {
@@ -50,7 +46,6 @@ func NewGranule(granulesCreated prometheus.Counter, tableConfig *TableConfig, pr
 		}
 	}
 
-	granulesCreated.Inc()
 	return g, nil
 }
 

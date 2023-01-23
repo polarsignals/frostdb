@@ -944,10 +944,11 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 
 			part := parts.NewPart(tx, serBuf)
 			if granule == nil { // insert new granule with part
-				g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, part)
+				g, err := NewGranule(t.table.config, part)
 				if err != nil {
 					return fmt.Errorf("failed to create granule: %w", err)
 				}
+				t.table.metrics.granulesCreated.Inc()
 
 				for {
 					old := t.Index()
