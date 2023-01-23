@@ -3,9 +3,9 @@ package arrowutils
 import (
 	"fmt"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 )
 
 // GetValue returns the value at index i in arr. If the value is null, nil is
@@ -26,6 +26,13 @@ func GetValue(arr arrow.Array, i int) (any, error) {
 		return a.Value(i), nil
 	case *array.Boolean:
 		return a.Value(i), nil
+	case *array.Dictionary:
+		switch dict := a.Dictionary().(type) {
+		case *array.Binary:
+			return dict.Value(a.GetValueIndex(i)), nil
+		default:
+			return nil, fmt.Errorf("unsupported dictionary type for GetValue %T", dict)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported type for GetValue %T", a)
 	}

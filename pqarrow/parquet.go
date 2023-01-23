@@ -5,9 +5,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/scalar"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/bufutils"
@@ -46,6 +46,15 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
 	case *array.Uint64:
 		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
+	case *array.Dictionary:
+		switch dict := arr.Dictionary().(type) {
+		case *array.Binary:
+			row = append(row, parquet.ValueOf(dict.Value(arr.GetValueIndex(index))).Level(rep, def, col))
+		case *array.String:
+			row = append(row, parquet.ValueOf(dict.Value(arr.GetValueIndex(index))).Level(rep, def, col))
+		default:
+			return nil, fmt.Errorf("dictionary not of expected type: %T", dict)
+		}
 	default:
 		return nil, fmt.Errorf("column not of expected type: %v", c.DataType().ID())
 	}

@@ -32,15 +32,15 @@ value3  value1
 exec
 select distinct(labels.label1, labels.label2, labels.label3)
 ----
-value1  value1  
+value1  value1  null
 value2  value2  value3
-value3  value1  
+value3  value1  null
 
 exec
 select distinct(labels.label1, labels.label2, labels.label4)
 ----
-value1  value1  
-value2  value2  
+value1  value1  null
+value2  value2  null
 value3  value1  value4
 
 exec
@@ -53,17 +53,17 @@ value3  value1  value1
 exec
 select distinct(labels.label1, labels.label2, labels.label3, labels.label4)
 ----
-value1  value1          
-value2  value2  value3  
-value3  value1          value4
+value1  value1  null    null
+value2  value2  value3  null
+value3  value1  null    value4
 
 # Distinct on a dynamic column.
 exec
 select distinct(labels)
 ----
-value1  value1                  value1
-value2  value2  value3          value1
-value3  value1          value4  value1
+value1  value1  null    null    value1
+value2  value2  value3  null    value1
+value3  value1  null    value4  value1
 
 # Distinct with filter.
 exec

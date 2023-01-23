@@ -7,9 +7,9 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -1002,6 +1002,22 @@ func copyArrToBuilder(builder builder.ColumnBuilder, arr arrow.Array, toCopy int
 				b.UnsafeAppend(arr.Value(i))
 			}
 		}
+	case *array.Dictionary:
+		b := builder.(*array.BinaryDictionaryBuilder)
+		switch dict := arr.Dictionary().(type) {
+		case *array.Binary:
+			for i := 0; i < toCopy; i++ {
+				if arr.IsNull(i) {
+					b.AppendNull()
+				} else {
+					if err := b.Append(dict.Value(arr.GetValueIndex(i))); err != nil {
+						panic("failed to append to dictionary")
+					}
+				}
+			}
+		default:
+			panic(fmt.Sprintf("unsupported dictionary type: %T", dict))
+		}
 	default:
 		panic(fmt.Sprintf("unsupported array type: %T", arr))
 	}
@@ -1025,6 +1041,8 @@ func repeatLastValue(
 		repeatUint64Array(builder.(*array.Uint64Builder), arr, count)
 	case *array.Float64:
 		repeatFloat64Array(builder.(*array.Float64Builder), arr, count)
+	case *array.Dictionary:
+		repeatDictionaryArray(builder.(array.DictionaryBuilder), arr, count)
 	default:
 		panic(fmt.Sprintf("unsupported array type: %T", arr))
 	}
@@ -1094,6 +1112,31 @@ func repeatFloat64Array(
 		vals[i] = val
 	}
 	b.AppendValues(vals, nil)
+}
+
+func repeatDictionaryArray(b array.DictionaryBuilder, arr *array.Dictionary, count int) {
+	switch db := b.(type) {
+	case *array.BinaryDictionaryBuilder:
+		switch dict := arr.Dictionary().(type) {
+		case *array.Binary:
+			if arr.IsNull(arr.Len() - 1) {
+				for i := 0; i < count; i++ {
+					db.AppendNull()
+				}
+			} else {
+				val := dict.Value(arr.GetValueIndex(arr.Len() - 1))
+				for i := 0; i < count; i++ {
+					if err := db.Append(val); err != nil {
+						panic("failed to append value to dict")
+					}
+				}
+			}
+		default:
+			panic(fmt.Sprintf("unsuported dictionary array for builder %T", dict))
+		}
+	default:
+		panic(fmt.Sprintf("unsuported dictionary builder %T", db))
+	}
 }
 
 func mergeArrowSchemas(schemas []*arrow.Schema) *arrow.Schema {

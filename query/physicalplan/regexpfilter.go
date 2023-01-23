@@ -1,12 +1,11 @@
 package physicalplan
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
 )
 
 type RegExpFilter struct {
@@ -48,25 +47,39 @@ func (f *RegExpFilter) String() string {
 }
 
 func ArrayScalarRegexMatch(left arrow.Array, right *regexp.Regexp) (*Bitmap, error) {
-	switch left.(type) {
+	switch arr := left.(type) {
 	case *array.Binary:
-		return BinaryArrayScalarRegexMatch(left.(*array.Binary), right)
+		return BinaryArrayScalarRegexMatch(arr, right)
 	case *array.String:
-		return StringArrayScalarRegexMatch(left.(*array.String), right)
+		return StringArrayScalarRegexMatch(arr, right)
+	case *array.Dictionary:
+		switch dict := arr.Dictionary().(type) {
+		case *array.Binary:
+			return BinaryDictionaryArrayScalarRegexMatch(arr, dict, right)
+		default:
+			return nil, fmt.Errorf("ArrayScalarRegexMatch: unsupported dictionary type: %T", dict)
+		}
+	default:
+		return nil, fmt.Errorf("ArrayScalarRegexMatch: unsupported type: %T", arr)
 	}
-
-	return nil, errors.New("unsupported type")
 }
 
 func ArrayScalarRegexNotMatch(left arrow.Array, right *regexp.Regexp) (*Bitmap, error) {
-	switch left.(type) {
+	switch arr := left.(type) {
 	case *array.Binary:
-		return BinaryArrayScalarRegexNotMatch(left.(*array.Binary), right)
+		return BinaryArrayScalarRegexNotMatch(arr, right)
 	case *array.String:
-		return StringArrayScalarRegexNotMatch(left.(*array.String), right)
+		return StringArrayScalarRegexNotMatch(arr, right)
+	case *array.Dictionary:
+		switch dict := arr.Dictionary().(type) {
+		case *array.Binary:
+			return BinaryDictionaryArrayScalarRegexNotMatch(arr, dict, right)
+		default:
+			return nil, fmt.Errorf("ArrayScalarRegexNotMatch: unsupported dictionary type: %T", dict)
+		}
+	default:
+		return nil, fmt.Errorf("ArrayScalarRegexNotMatch: unsupported type: %T", arr)
 	}
-
-	return nil, errors.New("unsupported type")
 }
 
 func BinaryArrayScalarRegexMatch(left *array.Binary, right *regexp.Regexp) (*Bitmap, error) {
@@ -118,6 +131,33 @@ func StringArrayScalarRegexNotMatch(left *array.String, right *regexp.Regexp) (*
 			continue
 		}
 		if !right.MatchString(left.Value(i)) {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func BinaryDictionaryArrayScalarRegexMatch(dict *array.Dictionary, left *array.Binary, right *regexp.Regexp) (*Bitmap, error) {
+	res := NewBitmap()
+	for i := 0; i < dict.Len(); i++ {
+		if dict.IsNull(i) {
+			continue
+		}
+		if right.MatchString(string(left.Value(dict.GetValueIndex(i)))) {
+			res.Add(uint32(i))
+		}
+	}
+	return res, nil
+}
+
+func BinaryDictionaryArrayScalarRegexNotMatch(dict *array.Dictionary, left *array.Binary, right *regexp.Regexp) (*Bitmap, error) {
+	res := NewBitmap()
+	for i := 0; i < dict.Len(); i++ {
+		if dict.IsNull(i) {
+			continue
+		}
+		if !right.MatchString(string(left.Value(dict.GetValueIndex(i)))) {
 			res.Add(uint32(i))
 		}
 	}

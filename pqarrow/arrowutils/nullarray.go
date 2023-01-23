@@ -1,8 +1,8 @@
 package arrowutils
 
 import (
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
@@ -72,3 +72,5 @@ func (n VirtualNullArray) Len() int {
 func (n VirtualNullArray) Retain() {}
 
 func (n VirtualNullArray) Release() {}
+
+func (n VirtualNullArray) String() string { return "VirtualNullArray" }

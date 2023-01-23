@@ -7,11 +7,11 @@ import (
 	"hash/maphash"
 	"strings"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/math"
-	"github.com/apache/arrow/go/v8/arrow/memory"
-	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/math"
+	"github.com/apache/arrow/go/v10/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow/scalar"
 	"github.com/dgryski/go-metro"
 	"github.com/segmentio/parquet-go"
 	"go.opentelemetry.io/otel/trace"
@@ -252,18 +252,37 @@ func (d *durationHashCombine) hashCombine(rhs uint64) uint64 {
 }
 
 func hashArray(arr arrow.Array) []uint64 {
-	switch arr.(type) {
+	switch ar := arr.(type) {
 	case *array.String:
-		return hashStringArray(arr.(*array.String))
+		return hashStringArray(ar)
 	case *array.Binary:
-		return hashBinaryArray(arr.(*array.Binary))
+		return hashBinaryArray(ar)
 	case *array.Int64:
-		return hashInt64Array(arr.(*array.Int64))
+		return hashInt64Array(ar)
 	case *array.Boolean:
-		return hashBooleanArray(arr.(*array.Boolean))
+		return hashBooleanArray(ar)
+	case *array.Dictionary:
+		return hashDictionaryArray(ar)
 	default:
 		panic("unsupported array type " + fmt.Sprintf("%T", arr))
 	}
+}
+
+func hashDictionaryArray(arr *array.Dictionary) []uint64 {
+	res := make([]uint64, arr.Len())
+	for i := 0; i < arr.Len(); i++ {
+		if !arr.IsNull(i) {
+			switch dict := arr.Dictionary().(type) {
+			case *array.Binary:
+				res[i] = metro.Hash64(dict.Value(arr.GetValueIndex(i)), 0)
+			case *array.String:
+				res[i] = metro.Hash64([]byte(dict.Value(arr.GetValueIndex(i))), 0)
+			default:
+				panic("unsupported dictionary type " + fmt.Sprintf("%T", dict))
+			}
+		}
+	}
+	return res
 }
 
 func hashBinaryArray(arr *array.Binary) []uint64 {

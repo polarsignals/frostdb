@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
@@ -119,15 +119,20 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 	for j := 0; j < int(ar.NumCols()); j++ {
 		switch j {
 		case 0:
-			require.Equal(t, `["" "" "" "" ""]`, fmt.Sprintf("%v", ar.Column(j)))
+			require.Equal(t, `{ dictionary: []
+  indices: [(null) (null) (null) (null) (null)] }`, fmt.Sprintf("%v", ar.Column(j)))
 		case 1:
-			require.Equal(t, `["value1" "value2" "value3" "value1" "value1"]`, fmt.Sprintf("%v", ar.Column(j)))
+			require.Equal(t, `{ dictionary: ["value1" "value2" "value3"]
+  indices: [0 1 2 0 0] }`, fmt.Sprintf("%v", ar.Column(j)))
 		case 2:
-			require.Equal(t, `["value2" "value2" "value2" "value2" "value2"]`, fmt.Sprintf("%v", ar.Column(j)))
+			require.Equal(t, `{ dictionary: ["value2"]
+  indices: [0 0 0 0 0] }`, fmt.Sprintf("%v", ar.Column(j)))
 		case 3:
-			require.Equal(t, `[(null) "value3" (null) (null) "value3"]`, fmt.Sprintf("%v", ar.Column(j)))
+			require.Equal(t, `{ dictionary: ["value3"]
+  indices: [(null) 0 (null) (null) 0] }`, fmt.Sprintf("%v", ar.Column(j)))
 		case 4:
-			require.Equal(t, `[(null) (null) "value4" (null) (null)]`, fmt.Sprintf("%v", ar.Column(j)))
+			require.Equal(t, `{ dictionary: ["value4"]
+  indices: [(null) (null) 0 (null) (null)] }`, fmt.Sprintf("%v", ar.Column(j)))
 		case 6:
 			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", ar.Column(j)))
 		case 7:
@@ -220,12 +225,30 @@ func TestMergeToArrow(t *testing.T) {
 	as, err := ParquetRowGroupToArrowSchema(ctx, merge, logicalplan.IterOptions{})
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 8)
-	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
-	require.Equal(t, as.Field(1), arrow.Field{Name: "labels.label1", Type: &arrow.BinaryType{}, Nullable: true})
-	require.Equal(t, as.Field(2), arrow.Field{Name: "labels.label2", Type: &arrow.BinaryType{}, Nullable: true})
-	require.Equal(t, as.Field(3), arrow.Field{Name: "labels.label3", Type: &arrow.BinaryType{}, Nullable: true})
-	require.Equal(t, as.Field(4), arrow.Field{Name: "labels.label4", Type: &arrow.BinaryType{}, Nullable: true})
-	require.Equal(t, as.Field(5), arrow.Field{Name: "stacktrace", Type: &arrow.BinaryType{}})
+	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.DictionaryType{
+		IndexType: &arrow.Int16Type{},
+		ValueType: &arrow.BinaryType{},
+	}})
+	require.Equal(t, as.Field(1), arrow.Field{Name: "labels.label1", Type: &arrow.DictionaryType{
+		IndexType: &arrow.Int16Type{},
+		ValueType: &arrow.BinaryType{},
+	}, Nullable: true})
+	require.Equal(t, as.Field(2), arrow.Field{Name: "labels.label2", Type: &arrow.DictionaryType{
+		IndexType: &arrow.Int16Type{},
+		ValueType: &arrow.BinaryType{},
+	}, Nullable: true})
+	require.Equal(t, as.Field(3), arrow.Field{Name: "labels.label3", Type: &arrow.DictionaryType{
+		IndexType: &arrow.Int16Type{},
+		ValueType: &arrow.BinaryType{},
+	}, Nullable: true})
+	require.Equal(t, as.Field(4), arrow.Field{Name: "labels.label4", Type: &arrow.DictionaryType{
+		IndexType: &arrow.Int16Type{},
+		ValueType: &arrow.BinaryType{},
+	}, Nullable: true})
+	require.Equal(t, as.Field(5), arrow.Field{Name: "stacktrace", Type: &arrow.DictionaryType{
+		IndexType: &arrow.Int16Type{},
+		ValueType: &arrow.BinaryType{},
+	}})
 	require.Equal(t, as.Field(6), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(7), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
 
@@ -429,7 +452,10 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 3)
-	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
+	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.DictionaryType{
+		IndexType: &arrow.Int16Type{},
+		ValueType: &arrow.BinaryType{},
+	}})
 	require.Equal(t, as.Field(1), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(2), arrow.Field{Name: "timestamp > 0", Type: &arrow.BooleanType{}, Nullable: true})
 
@@ -521,7 +547,10 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 3)
-	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
+	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.DictionaryType{
+		IndexType: &arrow.Int16Type{},
+		ValueType: &arrow.BinaryType{},
+	}})
 	require.Equal(t, as.Field(1), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(2), arrow.Field{Name: "value > 0", Type: &arrow.BooleanType{}, Nullable: true})
 
@@ -612,13 +641,19 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 					Name: "labels",
 					Type: arrow.StructOf([]arrow.Field{
 						{
-							Name:     "label1",
-							Type:     &arrow.BinaryType{},
+							Name: "label1",
+							Type: &arrow.DictionaryType{
+								IndexType: &arrow.Int16Type{},
+								ValueType: &arrow.BinaryType{},
+							},
 							Nullable: true,
 						},
 						{
-							Name:     "label2",
-							Type:     &arrow.BinaryType{},
+							Name: "label2",
+							Type: &arrow.DictionaryType{
+								IndexType: &arrow.Int16Type{},
+								ValueType: &arrow.BinaryType{},
+							},
 							Nullable: true,
 						},
 					}...),
@@ -643,8 +678,11 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 					Name: "labels",
 					Type: arrow.StructOf([]arrow.Field{
 						{
-							Name:     "label1",
-							Type:     &arrow.BinaryType{},
+							Name: "label1",
+							Type: &arrow.DictionaryType{
+								IndexType: &arrow.Int16Type{},
+								ValueType: &arrow.BinaryType{},
+							},
 							Nullable: true,
 						},
 					}...),
@@ -665,8 +703,11 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 					Name: "labels",
 					Type: arrow.StructOf([]arrow.Field{
 						{
-							Name:     "label2",
-							Type:     &arrow.BinaryType{},
+							Name: "label2",
+							Type: &arrow.DictionaryType{
+								IndexType: &arrow.Int16Type{},
+								ValueType: &arrow.BinaryType{},
+							},
 							Nullable: true,
 						},
 					}...),
@@ -687,13 +728,19 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 					Name: "labels",
 					Type: arrow.StructOf([]arrow.Field{
 						{
-							Name:     "label1",
-							Type:     &arrow.BinaryType{},
+							Name: "label1",
+							Type: &arrow.DictionaryType{
+								IndexType: &arrow.Int16Type{},
+								ValueType: &arrow.BinaryType{},
+							},
 							Nullable: true,
 						},
 						{
-							Name:     "label2",
-							Type:     &arrow.BinaryType{},
+							Name: "label2",
+							Type: &arrow.DictionaryType{
+								IndexType: &arrow.Int16Type{},
+								ValueType: &arrow.BinaryType{},
+							},
 							Nullable: true,
 						},
 					}...),

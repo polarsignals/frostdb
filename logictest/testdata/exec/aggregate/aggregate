@@ -36,7 +36,7 @@ value2  3
 exec
 select avg(value) as value_avg group by labels.label4
 ----
-        3
+null    3
 value4  4
 
 exec

@@ -3,10 +3,11 @@ package physicalplan
 import (
 	"bytes"
 	"errors"
+	"fmt"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/scalar"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -132,12 +133,84 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 		}
 	}
 
+	switch arr := left.(type) {
+	case *array.Dictionary:
+		switch operator {
+		case logicalplan.OpEq:
+			return DictionaryArrayScalarEqual(arr, right)
+		case logicalplan.OpNotEq:
+			return DictionaryArrayScalarNotEqual(arr, right)
+		default:
+			return nil, fmt.Errorf("unsupported operator: %v", operator)
+		}
+	}
+
 	switch leftType.(type) {
 	case *arrow.ListType:
 		panic("TODO: list comparisons unimplemented")
 	}
 
 	return nil, ErrUnsupportedBinaryOperation
+}
+
+func DictionaryArrayScalarNotEqual(left *array.Dictionary, right scalar.Scalar) (*Bitmap, error) {
+	res := NewBitmap()
+	var data []byte
+	switch r := right.(type) {
+	case *scalar.Binary:
+		data = r.Data()
+	case *scalar.String:
+		data = r.Data()
+	}
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+
+		switch dict := left.Dictionary().(type) {
+		case *array.Binary:
+			if bytes.Compare(dict.Value(left.GetValueIndex(i)), data) != 0 {
+				res.Add(uint32(i))
+			}
+		case *array.String:
+			if dict.Value(left.GetValueIndex(i)) != string(data) {
+				res.Add(uint32(i))
+			}
+		}
+	}
+
+	return res, nil
+}
+
+func DictionaryArrayScalarEqual(left *array.Dictionary, right scalar.Scalar) (*Bitmap, error) {
+	res := NewBitmap()
+	var data []byte
+	switch r := right.(type) {
+	case *scalar.Binary:
+		data = r.Data()
+	case *scalar.String:
+		data = r.Data()
+	}
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+
+		switch dict := left.Dictionary().(type) {
+		case *array.Binary:
+			if bytes.Compare(dict.Value(left.GetValueIndex(i)), data) == 0 {
+				res.Add(uint32(i))
+			}
+		case *array.String:
+			if dict.Value(left.GetValueIndex(i)) == string(data) {
+				res.Add(uint32(i))
+			}
+		}
+	}
+
+	return res, nil
 }
 
 func FixedSizeBinaryArrayScalarEqual(left *array.FixedSizeBinary, right *scalar.FixedSizeBinary) (*Bitmap, error) {

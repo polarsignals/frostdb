@@ -11,8 +11,8 @@ value3  value2  null    value4  stack1  3   3
 exec
 select labels where timestamp >= 2
 ----
-value2  value2  value3  
-value3  value2          value4
+value2  value2  value3  null
+value3  value2  null    value4
 
 # projection with optimization
 exec
