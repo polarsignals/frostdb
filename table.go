@@ -961,7 +961,6 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 						break
 					}
 				}
-
 			} else {
 				if _, err := granule.Append(part); err != nil {
 					return fmt.Errorf("failed to add part to granule: %w", err)
@@ -1096,7 +1095,6 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 					continue
 				}
 			} else {
-
 				// stop at the first granule where this is not the least
 				// this might be the correct granule, but we need to check that it isn't the next granule
 				prev = g
