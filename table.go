@@ -943,8 +943,28 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 			}
 
 			part := parts.NewPart(tx, serBuf)
-			if _, err := granule.Append(part); err != nil {
-				return fmt.Errorf("failed to add part to granule: %w", err)
+			if granule == nil { // insert new granule with part
+				g, err := NewGranule(t.table.metrics.granulesCreated, t.table.config, part)
+				if err != nil {
+					return fmt.Errorf("failed to create granule: %w", err)
+				}
+
+				for {
+					old := t.Index()
+					t.mtx.Lock()
+					newIndex := old.Clone()
+					t.mtx.Unlock()
+
+					newIndex.ReplaceOrInsert(g)
+					if t.index.CompareAndSwap(old, newIndex) {
+						break
+					}
+				}
+
+			} else {
+				if _, err := granule.Append(part); err != nil {
+					return fmt.Errorf("failed to add part to granule: %w", err)
+				}
 			}
 			list = append(list, part)
 			t.size.Add(serBuf.ParquetFile().Size())
@@ -1016,14 +1036,14 @@ func (t *TableBlock) Index() *btree.BTree {
 
 func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*Granule]map[int]struct{}, error) {
 	index := t.Index()
-	if index.Len() == 1 {
+	if index.Len() == 0 {
 		rows := map[int]struct{}{}
 		for i := 0; i < int(buf.NumRows()); i++ {
 			rows[i] = struct{}{}
 		}
 
 		return map[*Granule]map[int]struct{}{
-			index.Min().(*Granule): rows,
+			nil: rows, // NOTE: nil pointer to a granule indicates a new granule must be greated for insertion
 		}, nil
 	}
 
@@ -1074,11 +1094,13 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 					idx++
 					continue
 				}
+			} else {
+
+				// stop at the first granule where this is not the least
+				// this might be the correct granule, but we need to check that it isn't the next granule
+				prev = g
 			}
 
-			// stop at the first granule where this is not the least
-			// this might be the correct granule, but we need to check that it isn't the next granule
-			prev = g
 			return true // continue btree iteration
 		}
 	})
@@ -1136,6 +1158,9 @@ func addPartToGranule(granules []*Granule, p *parts.Part) error {
 		if _, err := prev.Append(p); err != nil {
 			return err
 		}
+	} else {
+		// NOTE: this should never happen
+		panic("programming error; unable to find granule for part")
 	}
 
 	return nil
