@@ -3,7 +3,10 @@ package wal
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -99,7 +102,17 @@ func Open(
 ) (*FileWAL, error) {
 	log, err := wal.Open(path, wal.DefaultOptions)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, wal.ErrCorrupt) {
+			return nil, err
+		}
+		// Try to repair the corrupt WAL
+		if err := tryRepairWAL(path); err != nil {
+			return nil, fmt.Errorf("failed to repair corrupt WAL: %w", err)
+		}
+		log, err = wal.Open(path, wal.DefaultOptions)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	w := &FileWAL{
@@ -151,6 +164,29 @@ func Open(
 	}()
 
 	return w, nil
+}
+
+// tryRepairWAL operates on a corrupt WAL directory by removing the last file
+// in the directory. Corruption can occur when the recorded size of an entry in
+// the file does not correspond to its actual size. A better option would be to
+// read the last WAL file and remove the corrupted entry, but this is good
+// enough for now.
+func tryRepairWAL(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	path = absPath
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+
+	if err := os.Remove(filepath.Join(absPath, entries[len(entries)-1].Name())); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (w *FileWAL) Run(ctx context.Context) {
