@@ -3,6 +3,7 @@ package wal
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-kit/log"
@@ -83,4 +84,42 @@ func TestWAL(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestCorruptWAL(t *testing.T) {
+	path := t.TempDir()
+
+	w, err := Open(
+		log.NewNopLogger(),
+		prometheus.NewRegistry(),
+		path,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Log(1, &walpb.Record{
+		Entry: &walpb.Entry{
+			EntryType: &walpb.Entry_Write_{
+				Write: &walpb.Entry_Write{
+					Data:      []byte("test-data"),
+					TableName: "test-table",
+				},
+			},
+		},
+	}))
+	require.NoError(t, w.Close())
+
+	corruptFilePath := filepath.Join(path, "00000000000000003466")
+	// Write a file that has the correct WAL index format with some garbage.
+	require.NoError(t, os.WriteFile(corruptFilePath, []byte("garbage"), 0o644))
+
+	w, err = Open(
+		log.NewNopLogger(),
+		prometheus.NewRegistry(),
+		path,
+	)
+	require.NoError(t, err)
+
+	lastIdx, err := w.LastIndex()
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), lastIdx)
 }
