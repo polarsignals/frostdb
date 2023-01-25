@@ -4,6 +4,9 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
@@ -48,6 +51,36 @@ func (s Samples) ToBuffer(schema *Schema) (*Buffer, error) {
 	}
 
 	return pb, nil
+}
+
+func (s Samples) ToRecord(schema *arrow.Schema) (arrow.Record, error) {
+	bld := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
+	defer bld.Release()
+
+	numLabels := len(schema.Fields()) - 4
+
+	for _, sample := range s {
+		bld.Field(0).(*array.BinaryBuilder).Append([]byte(sample.ExampleType))
+		for i := 0; i < numLabels; i++ {
+			found := false
+			for _, lbl := range sample.Labels {
+				if "labels."+lbl.Name == schema.Field(i+1).Name {
+					bld.Field(i + 1).(*array.BinaryBuilder).Append([]byte(lbl.Value))
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				bld.Field(i + 1).AppendNull()
+			}
+		}
+		bld.Field(1 + numLabels).(*array.BinaryBuilder).Append(ExtractLocationIDs(sample.Stacktrace))
+		bld.Field(2 + numLabels).(*array.Int64Builder).Append(sample.Timestamp)
+		bld.Field(3 + numLabels).(*array.Int64Builder).Append(sample.Value)
+	}
+
+	return bld.NewRecord(), nil
 }
 
 func (s Samples) SampleLabelNames() []string {

@@ -20,6 +20,7 @@ import (
 	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 
@@ -1223,4 +1224,123 @@ func TestReplayBackwardsCompatibility(t *testing.T) {
 	defer c.Close()
 
 	require.NoError(t, c.ReplayWALs(ctx))
+}
+
+func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
+	ctx := context.Background()
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	c, err := New(WithLogger(newTestLogger(t)))
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(ctx, "sampleschema")
+	require.NoError(t, err)
+
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 10,
+			Value:     1,
+		},
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+				{Name: "label3", Value: "value3"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 11,
+			Value:     2,
+		},
+		{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 12,
+			Value:     3,
+		},
+	}
+
+	ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+		"labels": {"label1", "label2", "label3"},
+	})
+	require.NoError(t, err)
+
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+	require.NoError(t, err)
+
+	r, err := samples.ToRecord(sc)
+	require.NoError(t, err)
+
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	tests := map[string]struct {
+		filter   logicalplan.Expr
+		distinct logicalplan.Expr
+		rows     int64
+		cols     int64
+	}{
+		"none": {
+			rows: 3,
+			cols: 7,
+		},
+		"timestamp filter": {
+			filter: logicalplan.Col("timestamp").GtEq(logicalplan.Literal(12)),
+			rows:   1,
+			cols:   7,
+		},
+		"distinct": {
+			distinct: logicalplan.DynCol("labels"),
+			rows:     2,
+			cols:     3,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			bldr := engine.ScanTable("test")
+			if test.filter != nil {
+				bldr = bldr.Filter(test.filter)
+			}
+			if test.distinct != nil {
+				bldr = bldr.Distinct(test.distinct)
+			}
+			err = bldr.Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+				require.Equal(t, test.rows, ar.NumRows())
+				require.Equal(t, test.cols, ar.NumCols())
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
 }

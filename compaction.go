@@ -134,7 +134,8 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 
 func (t *TableBlock) compact(cfg *CompactionConfig) error {
 	var compactionErrors errutil.MultiError
-	t.Index().Ascend(func(i btree.Item) bool {
+	index := t.Index()
+	index.Ascend(func(i btree.Item) bool {
 		granuleToCompact := i.(*Granule)
 		if granuleToCompact.metadata.size.Load() < uint64(t.table.db.columnStore.granuleSizeBytes) {
 			// Skip granule since its size is under the target size.
@@ -456,24 +457,24 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	}
 
 	for {
-		curIndex := t.Index()
+		index := t.Index()
 		t.mtx.Lock()
-		index := curIndex.Clone() // TODO(THOR): we can't clone concurrently
+		newIdx := index.Clone() // TODO(THOR): we can't clone concurrently
 		t.mtx.Unlock()
 
-		if index.Delete(granule) == nil {
+		if newIdx.Delete(granule) == nil {
 			level.Error(t.logger).Log("msg", "failed to delete granule during split")
-			continue
+			return false, fmt.Errorf("failed to delete granule")
 		}
 
 		for _, g := range newGranules {
-			if dupe := index.ReplaceOrInsert(g); dupe != nil {
+			if dupe := newIdx.ReplaceOrInsert(g); dupe != nil {
 				level.Error(t.logger).Log("duplicate insert performed")
 			}
 		}
 
 		// Point to the new index.
-		if t.index.CompareAndSwap(curIndex, index) {
+		if t.index.CompareAndSwap(index, newIdx) {
 			sizeDiff := int64(stats.level1SizeAfter) - (stats.level0SizeBefore + stats.level1SizeBefore)
 			t.size.Add(sizeDiff)
 
@@ -483,6 +484,12 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	}
 	stats.totalDuration = time.Since(start)
 	stats.recordAndLog(t.table.metrics.compactionMetrics, t.logger)
+	// Release all records in L0 parts
+	for _, p := range level0Parts {
+		if r := p.Record(); r != nil {
+			r.Release()
+		}
+	}
 	return true, nil
 }
 
@@ -536,10 +543,15 @@ func compactLevel0IntoLevel1(
 
 	bufs := make([]dynparquet.DynamicRowGroup, 0, len(level0Parts))
 	for _, p := range partsToCompact {
+		buf, err := p.AsSerializedBuffer(t.table.config.schema)
+		if err != nil {
+			return nil, err
+		}
+
 		// All the row groups in a part are wrapped in a single row group given
 		// that all rows are sorted within a part. This reduces the number of
 		// cursors open when merging the row groups.
-		bufs = append(bufs, p.Buf().MultiDynamicRowGroup())
+		bufs = append(bufs, buf.MultiDynamicRowGroup())
 	}
 
 	cursor := 0
@@ -598,18 +610,17 @@ func collectPartsForCompaction(tx uint64, list *parts.List) (
 			return true
 		}
 
-		f := p.Buf().ParquetFile()
 		switch cl := p.CompactionLevel(); cl {
 		case parts.CompactionLevel0:
 			level0Parts = append(level0Parts, p)
 			stats.level0CountBefore++
-			stats.level0SizeBefore += f.Size()
-			stats.level0NumRowsBefore += f.NumRows()
+			stats.level0SizeBefore += p.Size()
+			stats.level0NumRowsBefore += p.NumRows()
 		case parts.CompactionLevel1:
 			level1Parts = append(level1Parts, p)
 			stats.level1CountBefore++
-			stats.level1SizeBefore += f.Size()
-			stats.level1NumRowsBefore += f.NumRows()
+			stats.level1SizeBefore += p.Size()
+			stats.level1NumRowsBefore += p.NumRows()
 		default:
 			err = fmt.Errorf("unexpected part compaction level %d", cl)
 			return false
@@ -627,7 +638,7 @@ func divideLevel1PartsForGranule(t *TableBlock, tx uint64, level1 []*parts.Part,
 	var totalSize int64
 	sizes := make([]int64, len(level1))
 	for i, p := range level1 {
-		size := p.Buf().ParquetFile().Size()
+		size := p.Size()
 		totalSize += size
 		sizes[i] = size
 	}

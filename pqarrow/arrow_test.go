@@ -217,7 +217,7 @@ func TestMergeToArrow(t *testing.T) {
 
 	ctx := context.Background()
 
-	as, err := ParquetRowGroupToArrowSchema(ctx, merge, nil, nil, nil, nil)
+	as, err := ParquetRowGroupToArrowSchema(ctx, merge, logicalplan.IterOptions{})
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 8)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.BinaryType{}})
@@ -418,13 +418,13 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 	as, err := ParquetRowGroupToArrowSchema(
 		ctx,
 		buf,
-		[]logicalplan.Expr{
-			logicalplan.Col("example_type"),
-			logicalplan.Col("timestamp"),
+		logicalplan.IterOptions{
+			PhysicalProjection: []logicalplan.Expr{
+				logicalplan.Col("example_type"),
+				logicalplan.Col("timestamp"),
+			},
+			DistinctColumns: distinctColumns,
 		},
-		nil,
-		nil,
-		distinctColumns,
 	)
 
 	require.NoError(t, err)
@@ -511,13 +511,13 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	as, err := ParquetRowGroupToArrowSchema(
 		ctx,
 		buf,
-		[]logicalplan.Expr{
-			logicalplan.Col("example_type"),
-			logicalplan.Col("value"),
+		logicalplan.IterOptions{
+			PhysicalProjection: []logicalplan.Expr{
+				logicalplan.Col("example_type"),
+				logicalplan.Col("value"),
+			},
+			DistinctColumns: distinctColumns,
 		},
-		nil,
-		nil,
-		distinctColumns,
 	)
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 3)
@@ -711,10 +711,9 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 			as, err := ParquetRowGroupToArrowSchema(
 				ctx,
 				buf,
-				test.physicalProjections,
-				nil,
-				nil,
-				nil,
+				logicalplan.IterOptions{
+					PhysicalProjection: test.physicalProjections,
+				},
 			)
 			require.NoError(t, err)
 			require.True(t, as.Equal(test.expectedSchema))
