@@ -231,7 +231,7 @@ func TestDBWithWAL(t *testing.T) {
 
 	// One granule with 3 parts
 	require.Equal(t, 1, table.active.Index().Len())
-	require.Equal(t, uint64(3), table.active.Index().Min().(*Granule).parts.total.Load())
+	require.Equal(t, 3, table.active.Index().Min().(*Granule).parts.Total())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
@@ -241,7 +241,7 @@ func TestDBWithWAL(t *testing.T) {
 		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
-	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least.Load()).Row)
+	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least).Row)
 	require.Equal(t, 1, table.active.Index().Len())
 }
 

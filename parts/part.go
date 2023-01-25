@@ -1,4 +1,4 @@
-package frostdb
+package parts
 
 import (
 	"fmt"
@@ -9,35 +9,66 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 )
 
-type compactionLevel uint8
+type CompactionLevel uint8
 
 const (
-	// compactionLevel0 is the default compaction level for new Parts. This
+	// CompactionLevel0 is the default compaction level for new Parts. This
 	// means that the Part contains multiple variable-length row groups.
-	compactionLevel0 compactionLevel = iota
-	// compactionLevel1 is the compaction level for Parts that are the result of
+	CompactionLevel0 CompactionLevel = iota
+	// CompactionLevel1 is the compaction level for Parts that are the result of
 	// a compaction. Parts with this compaction level contain multiple row
 	// groups with the row group size specified on table creation.
-	compactionLevel1
+	CompactionLevel1
 )
 
 type Part struct {
-	Buf *dynparquet.SerializedBuffer
+	buf    *dynparquet.SerializedBuffer
+	schema *dynparquet.Schema
 
 	// tx is the id of the transaction that created this part.
 	tx uint64
 
-	compactionLevel compactionLevel
+	compactionLevel CompactionLevel
 
 	minRow *dynparquet.DynamicRow
 	maxRow *dynparquet.DynamicRow
 }
 
-func NewPart(tx uint64, buf *dynparquet.SerializedBuffer) *Part {
-	return &Part{
-		tx:  tx,
-		Buf: buf,
+func (p *Part) Buf() *dynparquet.SerializedBuffer {
+	return p.buf
+}
+
+type Option func(*Part)
+
+func WithCompactionLevel(level CompactionLevel) Option {
+	return func(p *Part) {
+		p.compactionLevel = level
 	}
+}
+
+func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) *Part {
+	p := &Part{
+		tx:  tx,
+		buf: buf,
+	}
+
+	for _, opt := range options {
+		opt(p)
+	}
+
+	return p
+}
+
+func (p *Part) NumRows() int64 {
+	return p.buf.NumRows()
+}
+
+func (p *Part) Size() int64 {
+	return p.buf.ParquetFile().Size()
+}
+
+func (p *Part) CompactionLevel() CompactionLevel {
+	return p.compactionLevel
 }
 
 // TX returns the transaction id for the part.
@@ -50,7 +81,7 @@ func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	}
 
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	reader := p.Buf.DynamicRowGroup(0).DynamicRows()
+	reader := p.buf.DynamicRowGroup(0).DynamicRows()
 	defer reader.Close()
 
 	if n, err := reader.ReadRows(rowBuf); err != nil {
@@ -71,7 +102,7 @@ func (p *Part) most() (*dynparquet.DynamicRow, error) {
 	}
 
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	rg := p.Buf.DynamicRowGroup(p.Buf.NumRowGroups() - 1)
+	rg := p.buf.DynamicRowGroup(p.buf.NumRowGroups() - 1)
 	reader := rg.DynamicRows()
 	defer reader.Close()
 
@@ -91,7 +122,7 @@ func (p *Part) most() (*dynparquet.DynamicRow, error) {
 	return p.maxRow, nil
 }
 
-func (p Part) overlapsWith(schema *dynparquet.Schema, otherPart *Part) (bool, error) {
+func (p Part) OverlapsWith(schema *dynparquet.Schema, otherPart *Part) (bool, error) {
 	a, err := p.Least()
 	if err != nil {
 		return false, err
@@ -112,30 +143,37 @@ func (p Part) overlapsWith(schema *dynparquet.Schema, otherPart *Part) (bool, er
 	return schema.Cmp(a, d) <= 0 && schema.Cmp(c, b) <= 0, nil
 }
 
-// tombstone marks all the parts with the max tx id to ensure they aren't
+// Tombstone marks all the parts with the max tx id to ensure they aren't
 // included in reads. Tombstoned parts will be eventually be dropped from the
 // database during compaction.
-func tombstone(parts []*Part) {
+func Tombstone(parts []*Part) {
 	for _, part := range parts {
 		part.tx = math.MaxUint64
 	}
 }
 
-func (p Part) hasTombstone() bool {
+func (p Part) HasTombstone() bool {
 	return p.tx == math.MaxUint64
 }
 
-type partSorter struct {
+type PartSorter struct {
 	schema *dynparquet.Schema
 	parts  []*Part
 	err    error
 }
 
-func (p partSorter) Len() int {
+func NewPartSorter(schema *dynparquet.Schema, parts []*Part) *PartSorter {
+	return &PartSorter{
+		schema: schema,
+		parts:  parts,
+	}
+}
+
+func (p PartSorter) Len() int {
 	return len(p.parts)
 }
 
-func (p *partSorter) Less(i, j int) bool {
+func (p *PartSorter) Less(i, j int) bool {
 	a, err := p.parts[i].Least()
 	if err != nil {
 		p.err = err
@@ -149,6 +187,10 @@ func (p *partSorter) Less(i, j int) bool {
 	return p.schema.RowLessThan(a, b)
 }
 
-func (p *partSorter) Swap(i, j int) {
+func (p *PartSorter) Swap(i, j int) {
 	p.parts[i], p.parts[j] = p.parts[j], p.parts[i]
+}
+
+func (p *PartSorter) Err() error {
+	return p.err
 }

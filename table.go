@@ -36,6 +36,7 @@ import (
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
+	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -861,7 +862,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 	index := atomic.Pointer[btree.BTree]{}
 	index.Store(btree.New(table.db.columnStore.indexDegree))
 
-	tb := &TableBlock{
+	return &TableBlock{
 		table:  table,
 		index:  &index,
 		mtx:    &sync.RWMutex{},
@@ -871,15 +872,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		tracer: table.tracer,
 		minTx:  tx,
 		prevTx: prevTx,
-	}
-
-	g, err := NewGranule(tb.table.metrics.granulesCreated, tb.table.config, nil)
-	if err != nil {
-		return nil, fmt.Errorf("new granule failed: %w", err)
-	}
-	tb.index.Load().ReplaceOrInsert(g)
-
-	return tb, nil
+	}, nil
 }
 
 // EnsureCompaction forces a TableBlock compaction.
@@ -910,11 +903,11 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	}
 	defer t.table.config.schema.PutWriter(w)
 
-	parts := []*Part{}
+	list := []*parts.Part{}
 	for granule, indicies := range rowsToInsertPerGranule {
 		select {
 		case <-ctx.Done():
-			tombstone(parts)
+			parts.Tombstone(list)
 			return ctx.Err()
 		default:
 
@@ -949,11 +942,31 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 				return fmt.Errorf("failed to get reader from bytes: %w", err)
 			}
 
-			part := NewPart(tx, serBuf)
-			if _, err := granule.AddPart(part); err != nil {
-				return fmt.Errorf("failed to add part to granule: %w", err)
+			part := parts.NewPart(tx, serBuf)
+			if granule == nil { // insert new granule with part
+				g, err := NewGranule(t.table.config, part)
+				if err != nil {
+					return fmt.Errorf("failed to create granule: %w", err)
+				}
+				t.table.metrics.granulesCreated.Inc()
+
+				for {
+					old := t.Index()
+					t.mtx.Lock()
+					newIndex := old.Clone()
+					t.mtx.Unlock()
+
+					newIndex.ReplaceOrInsert(g)
+					if t.index.CompareAndSwap(old, newIndex) {
+						break
+					}
+				}
+			} else {
+				if _, err := granule.Append(part); err != nil {
+					return fmt.Errorf("failed to add part to granule: %w", err)
+				}
 			}
-			parts = append(parts, part)
+			list = append(list, part)
 			t.size.Add(serBuf.ParquetFile().Size())
 
 			b = bytes.NewBuffer(nil)
@@ -961,7 +974,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 		}
 	}
 
-	t.table.metrics.numParts.Add(float64(len(parts)))
+	t.table.metrics.numParts.Add(float64(len(list)))
 	return nil
 }
 
@@ -1023,14 +1036,14 @@ func (t *TableBlock) Index() *btree.BTree {
 
 func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*Granule]map[int]struct{}, error) {
 	index := t.Index()
-	if index.Len() == 1 {
+	if index.Len() == 0 {
 		rows := map[int]struct{}{}
 		for i := 0; i < int(buf.NumRows()); i++ {
 			rows[i] = struct{}{}
 		}
 
 		return map[*Granule]map[int]struct{}{
-			index.Min().(*Granule): rows,
+			nil: rows, // NOTE: nil pointer to a granule indicates a new granule must be greated for insertion
 		}, nil
 	}
 
@@ -1081,11 +1094,12 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 					idx++
 					continue
 				}
+			} else {
+				// stop at the first granule where this is not the least
+				// this might be the correct granule, but we need to check that it isn't the next granule
+				prev = g
 			}
 
-			// stop at the first granule where this is not the least
-			// this might be the correct granule, but we need to check that it isn't the next granule
-			prev = g
 			return true // continue btree iteration
 		}
 	})
@@ -1118,7 +1132,7 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
-func addPartToGranule(granules []*Granule, p *Part) error {
+func addPartToGranule(granules []*Granule, p *parts.Part) error {
 	row, err := p.Least()
 	if err != nil {
 		return err
@@ -1128,20 +1142,24 @@ func addPartToGranule(granules []*Granule, p *Part) error {
 	for _, g := range granules {
 		if g.tableConfig.schema.RowLessThan(row, g.Least()) {
 			if prev != nil {
-				if _, err := prev.addPart(p, row); err != nil {
+				if _, err := prev.Append(p); err != nil {
 					return err
 				}
 				return nil
 			}
+		} else {
+			prev = g
 		}
-		prev = g
 	}
 
 	if prev != nil {
 		// Save part to prev
-		if _, err := prev.addPart(p, row); err != nil {
+		if _, err := prev.Append(p); err != nil {
 			return err
 		}
+	} else {
+		// NOTE: this should never happen
+		panic("programming error; unable to find granule for part")
 	}
 
 	return nil

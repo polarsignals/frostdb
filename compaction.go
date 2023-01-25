@@ -19,6 +19,7 @@ import (
 	"github.com/thanos-io/objstore/errutil"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/parts"
 )
 
 type CompactionOption func(*CompactionConfig) error
@@ -339,7 +340,7 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	start := time.Now()
 	level0Parts, level1Parts, partsWithUncompletedTxns, stats, err := collectPartsForCompaction(
 		// Start compaction by adding a sentinel node to its parts list.
-		tx, granule.parts.Sentinel(Compacting),
+		tx, granule.parts.Sentinel(parts.Compacting),
 	)
 	if err != nil {
 		return false, err
@@ -373,10 +374,10 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	// granules). However, it seems like new parts are prepended so the sort
 	// order is inverted. Another option is to recursively split using
 	// addPartToGranule, which would be cheap in the general case.
-	sorter := &partSorter{schema: t.table.config.schema, parts: level1Parts}
+	sorter := parts.NewPartSorter(t.table.config.schema, level1Parts)
 	sort.Sort(sorter)
-	if sorter.err != nil {
-		return false, fmt.Errorf("error sorting level1: %w", sorter.err)
+	if sorter.Err() != nil {
+		return false, fmt.Errorf("error sorting level1: %w", sorter.Err())
 	}
 
 	newParts, err := divideLevel1PartsForGranule(
@@ -398,19 +399,13 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	partsAfter := 0
 	for _, parts := range newParts {
 		partsAfter += len(parts)
-		newGranule, err := NewGranule(
-			t.table.metrics.granulesCreated, t.table.config, nil, /* firstPart */
-		)
+		newGranule, err := NewGranule(t.table.config, parts...)
 		if err != nil {
 			if err != nil {
 				return false, fmt.Errorf("failed to create new granule: %w", err)
 			}
 		}
-		for _, p := range parts {
-			if _, err := newGranule.AddPart(p); err != nil {
-				return false, fmt.Errorf("failed to add level1 part to granule: %w", err)
-			}
-		}
+		t.table.metrics.granulesCreated.Inc()
 		newGranules = append(newGranules, newGranule)
 	}
 
@@ -449,7 +444,7 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	// start using the newGranules pointer. Iterate over the resulting part
 	// list to copy any new parts that were added while we were compacting.
 	var addPartErr error
-	granule.parts.Sentinel(Compacted).Iterate(func(p *Part) bool {
+	granule.parts.Sentinel(parts.Compacted).Iterate(func(p *parts.Part) bool {
 		if err := addPartToGranule(newGranules, p); err != nil {
 			addPartErr = err
 			return false
@@ -501,15 +496,15 @@ func compactLevel0IntoLevel1(
 	t *TableBlock,
 	tx uint64,
 	level0Parts,
-	level1Parts []*Part,
+	level1Parts []*parts.Part,
 	l1ToGranuleSizeRatio float64,
 	stats *compactionStats,
-) ([]*Part, error) {
+) ([]*parts.Part, error) {
 	// Verify whether the level0 parts overlap with level1 parts. If they do,
 	// we need to merge the overlapping parts. Not merging these parts could
 	// cause them to be split to different granules, rendering the index
 	// useless.
-	nonOverlapping := make([]*Part, 0, len(level1Parts))
+	nonOverlapping := make([]*parts.Part, 0, len(level1Parts))
 	partsToCompact := level0Parts
 	// size and numRows are used to estimate the number of bytes per row so that
 	// we can provide a maximum number of rows to write in writeRowGroups which
@@ -525,7 +520,7 @@ func compactLevel0IntoLevel1(
 	for _, p1 := range level1Parts {
 		overlapped := false
 		for _, p0 := range level0Parts {
-			if overlaps, err := p0.overlapsWith(t.table.config.schema, p1); err != nil {
+			if overlaps, err := p0.OverlapsWith(t.table.config.schema, p1); err != nil {
 				return nil, err
 			} else if overlaps {
 				stats.numPartsOverlap++
@@ -544,7 +539,7 @@ func compactLevel0IntoLevel1(
 		// All the row groups in a part are wrapped in a single row group given
 		// that all rows are sorted within a part. This reduces the number of
 		// cursors open when merging the row groups.
-		bufs = append(bufs, p.Buf.MultiDynamicRowGroup())
+		bufs = append(bufs, p.Buf().MultiDynamicRowGroup())
 	}
 
 	cursor := 0
@@ -578,8 +573,7 @@ func compactLevel0IntoLevel1(
 			if err != nil {
 				return err
 			}
-			compactedPart := NewPart(tx, serBuf)
-			compactedPart.compactionLevel = compactionLevel1
+			compactedPart := parts.NewPart(tx, serBuf, parts.WithCompactionLevel(parts.CompactionLevel1))
 			nonOverlapping = append(nonOverlapping, compactedPart)
 		}
 		return nil
@@ -590,13 +584,13 @@ func compactLevel0IntoLevel1(
 	return nonOverlapping, nil
 }
 
-func collectPartsForCompaction(tx uint64, parts *PartList) (
-	level0Parts, level1Parts, partsWithUncompletedTxns []*Part,
+func collectPartsForCompaction(tx uint64, list *parts.List) (
+	level0Parts, level1Parts, partsWithUncompletedTxns []*parts.Part,
 	stats compactionStats, err error,
 ) {
-	parts.Iterate(func(p *Part) bool {
-		if p.tx > tx {
-			if !p.hasTombstone() {
+	list.Iterate(func(p *parts.Part) bool {
+		if p.TX() > tx {
+			if !p.HasTombstone() {
 				partsWithUncompletedTxns = append(partsWithUncompletedTxns, p)
 				stats.uncompletedTxnPartCount++
 			}
@@ -604,22 +598,20 @@ func collectPartsForCompaction(tx uint64, parts *PartList) (
 			return true
 		}
 
-		f := p.Buf.ParquetFile()
-		switch p.compactionLevel {
-		case compactionLevel0:
+		f := p.Buf().ParquetFile()
+		switch cl := p.CompactionLevel(); cl {
+		case parts.CompactionLevel0:
 			level0Parts = append(level0Parts, p)
 			stats.level0CountBefore++
 			stats.level0SizeBefore += f.Size()
 			stats.level0NumRowsBefore += f.NumRows()
-		case compactionLevel1:
+		case parts.CompactionLevel1:
 			level1Parts = append(level1Parts, p)
 			stats.level1CountBefore++
 			stats.level1SizeBefore += f.Size()
 			stats.level1NumRowsBefore += f.NumRows()
 		default:
-			err = fmt.Errorf(
-				"unexpected part compaction level %d", p.compactionLevel,
-			)
+			err = fmt.Errorf("unexpected part compaction level %d", cl)
 			return false
 		}
 		return true
@@ -631,17 +623,17 @@ func collectPartsForCompaction(tx uint64, parts *PartList) (
 // each element is a slice of parts that all together have a sum of sizes less
 // than maxSize.
 // The global sort order of the input parts is maintained.
-func divideLevel1PartsForGranule(t *TableBlock, tx uint64, parts []*Part, maxSize int64) ([][]*Part, error) {
+func divideLevel1PartsForGranule(t *TableBlock, tx uint64, level1 []*parts.Part, maxSize int64) ([][]*parts.Part, error) {
 	var totalSize int64
-	sizes := make([]int64, len(parts))
-	for i, p := range parts {
-		size := p.Buf.ParquetFile().Size()
+	sizes := make([]int64, len(level1))
+	for i, p := range level1 {
+		size := p.Buf().ParquetFile().Size()
 		totalSize += size
 		sizes[i] = size
 	}
 	if totalSize <= maxSize {
 		// No splits needed.
-		return [][]*Part{parts}, nil
+		return [][]*parts.Part{level1}, nil
 	}
 
 	// We want to maximize the size of each split slice, so we follow a greedy
@@ -651,20 +643,20 @@ func divideLevel1PartsForGranule(t *TableBlock, tx uint64, parts []*Part, maxSiz
 	// up with a level1 part.
 	var (
 		runningSize int64
-		newParts    [][]*Part
+		newParts    [][]*parts.Part
 	)
 	for i, size := range sizes {
 		runningSize += size
 		if runningSize > maxSize {
 			// Close the current subslice and create a new one.
-			newParts = append(newParts, []*Part{parts[i]})
+			newParts = append(newParts, []*parts.Part{level1[i]})
 			runningSize = size
 			continue
 		}
 		if i == 0 {
-			newParts = append(newParts, []*Part{parts[i]})
+			newParts = append(newParts, []*parts.Part{level1[i]})
 		} else {
-			newParts[len(newParts)-1] = append(newParts[len(newParts)-1], parts[i])
+			newParts[len(newParts)-1] = append(newParts[len(newParts)-1], level1[i])
 		}
 	}
 	return newParts, nil
