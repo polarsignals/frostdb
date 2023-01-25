@@ -26,6 +26,7 @@ const (
 
 type Part struct {
 	buf    *dynparquet.SerializedBuffer
+	record arrow.Record
 	schema *dynparquet.Schema
 
 	// tx is the id of the transaction that created this part.
@@ -35,6 +36,10 @@ type Part struct {
 
 	minRow *dynparquet.DynamicRow
 	maxRow *dynparquet.DynamicRow
+}
+
+func (p *Part) Record() arrow.Record {
+	return p.record
 }
 
 func (p *Part) SerializeBuffer(schema *dynparquet.Schema, w *parquet.Writer) error {
@@ -53,7 +58,7 @@ func (p *Part) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.Serial
 	// If this is a Arrow record part, convert the record into a serialized buffer
 	b := &bytes.Buffer{}
 
-	w, err := schema.GetWriter(b, pqarrow.RecordDynamicCols(p.Record()))
+	w, err := schema.GetWriter(b, pqarrow.RecordDynamicCols(p.record))
 	if err != nil {
 		return nil, err
 	}
@@ -112,11 +117,27 @@ func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) *Pa
 }
 
 func (p *Part) NumRows() int64 {
-	return p.buf.NumRows()
+	if p.buf != nil {
+		return p.buf.NumRows()
+	}
+
+	return p.record.NumRows()
 }
 
 func (p *Part) Size() int64 {
-	return p.buf.ParquetFile().Size()
+	if p.buf != nil {
+		return p.buf.ParquetFile().Size()
+	}
+
+	size := int64(0)
+	for _, col := range p.record.Columns() {
+		for _, buf := range col.Data().Buffers() { // NOTE: may need to get Children data instances for nested
+			if buf != nil {
+				size += int64(buf.Len())
+			}
+		}
+	}
+	return size
 }
 
 func (p *Part) CompactionLevel() CompactionLevel {
@@ -129,6 +150,16 @@ func (p *Part) TX() uint64 { return p.tx }
 // Least returns the least row  in the part.
 func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	if p.minRow != nil {
+		return p.minRow, nil
+	}
+
+	if p.record != nil {
+		var err error
+		p.minRow, err = pqarrow.RecordToDynamicRow(p.schema, p.record, 0)
+		if err != nil {
+			return nil, err
+		}
+
 		return p.minRow, nil
 	}
 

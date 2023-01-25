@@ -551,7 +551,7 @@ func compactLevel0IntoLevel1(
 		// All the row groups in a part are wrapped in a single row group given
 		// that all rows are sorted within a part. This reduces the number of
 		// cursors open when merging the row groups.
-		bufs = append(bufs, p.Buf().MultiDynamicRowGroup())
+		bufs = append(bufs, buf.MultiDynamicRowGroup())
 	}
 
 	cursor := 0
