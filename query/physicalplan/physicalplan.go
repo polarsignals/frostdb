@@ -229,6 +229,7 @@ func (p *noopOperator) Draw() *Diagram {
 
 type execOptions struct {
 	orderedAggregations bool
+	overrideInput       []PhysicalPlan
 }
 
 type Option func(o *execOptions)
@@ -236,6 +237,14 @@ type Option func(o *execOptions)
 func WithOrderedAggregations() Option {
 	return func(o *execOptions) {
 		o.orderedAggregations = true
+	}
+}
+
+// WithOverrideInput can be used to provide an input stage on top of which the
+// Build function can build the physical plan.
+func WithOverrideInput(input []PhysicalPlan) Option {
+	return func(o *execOptions) {
+		o.overrideInput = input
 	}
 }
 
@@ -254,13 +263,9 @@ func Build(
 	for _, o := range options {
 		o(&execOpts)
 	}
+	prev := execOpts.overrideInput
 
 	outputPlan := &OutputPlan{}
-	var (
-		visitErr error
-		prev     []PhysicalPlan
-	)
-
 	oInfo := &planOrderingInfo{
 		state: planOrderingInfoStateInit,
 	}
@@ -270,6 +275,7 @@ func Build(
 		oInfo.sortingCols = s.SortingColumns()
 	}
 
+	var visitErr error
 	plan.Accept(PostPlanVisitorFunc(func(plan *logicalplan.LogicalPlan) bool {
 		oInfo.newNode()
 		switch {
@@ -402,7 +408,9 @@ func Build(
 		return nil, visitErr
 	}
 
-	span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
+	if execOpts.overrideInput == nil {
+		span.SetAttributes(attribute.String("plan", outputPlan.scan.Draw().String()))
+	}
 
 	// Synchronize the last stage if necessary.
 	var sync *Synchronizer
