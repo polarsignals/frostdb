@@ -519,6 +519,11 @@ func (db *DB) replayWAL(ctx context.Context) error {
 			if err := table.active.Insert(ctx, tx, serBuf); err != nil {
 				return fmt.Errorf("insert buffer into block: %w", err)
 			}
+
+			// After every insert we're setting the tx and highWatermark to the replayed tx.
+			// This allows the block's compaction to start working on the inserted data.
+			db.tx.Store(tx)
+			db.highWatermark.Store(tx)
 		case *walpb.Entry_TableBlockPersisted_:
 			return nil
 		default:
