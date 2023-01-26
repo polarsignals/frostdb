@@ -1,12 +1,13 @@
 package dynparquet
 
 import (
+	"fmt"
 	"sort"
 	"testing"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
@@ -60,12 +61,16 @@ func (s Samples) ToRecord(schema *arrow.Schema) (arrow.Record, error) {
 	numLabels := len(schema.Fields()) - 4
 
 	for _, sample := range s {
-		bld.Field(0).(*array.BinaryBuilder).Append([]byte(sample.ExampleType))
+		if err := bld.Field(0).(*array.BinaryDictionaryBuilder).Append([]byte(sample.ExampleType)); err != nil {
+			return nil, fmt.Errorf("failed to append example type: %v", err)
+		}
 		for i := 0; i < numLabels; i++ {
 			found := false
 			for _, lbl := range sample.Labels {
 				if "labels."+lbl.Name == schema.Field(i+1).Name {
-					bld.Field(i + 1).(*array.BinaryBuilder).Append([]byte(lbl.Value))
+					if err := bld.Field(i + 1).(*array.BinaryDictionaryBuilder).Append([]byte(lbl.Value)); err != nil {
+						return nil, fmt.Errorf("failed to append value: %v", err)
+					}
 					found = true
 					break
 				}
@@ -75,7 +80,9 @@ func (s Samples) ToRecord(schema *arrow.Schema) (arrow.Record, error) {
 				bld.Field(i + 1).AppendNull()
 			}
 		}
-		bld.Field(1 + numLabels).(*array.BinaryBuilder).Append(ExtractLocationIDs(sample.Stacktrace))
+		if err := bld.Field(1 + numLabels).(*array.BinaryDictionaryBuilder).Append(ExtractLocationIDs(sample.Stacktrace)); err != nil {
+			return nil, fmt.Errorf("failed to append stacktrace: %v", err)
+		}
 		bld.Field(2 + numLabels).(*array.Int64Builder).Append(sample.Timestamp)
 		bld.Field(3 + numLabels).(*array.Int64Builder).Append(sample.Value)
 	}

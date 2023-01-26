@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/array"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
@@ -421,6 +421,20 @@ func (s *structWriter) findLeafBuilder(searchIndex, currentIndex int, builder ar
 			}
 			return 1, true
 		}
+	case *array.BinaryDictionaryBuilder:
+		if searchIndex == currentIndex {
+			for _, v := range values {
+				switch v.IsNull() {
+				case true:
+					b.AppendNull()
+				default:
+					if err := b.Append(v.ByteArray()); err != nil {
+						panic("failed to append to dictionary")
+					}
+				}
+			}
+			return 1, true
+		}
 	default:
 		panic(fmt.Sprintf("unsuported value type: %v", b))
 	}
@@ -444,4 +458,42 @@ func (m *mapWriter) WritePage(p parquet.Page) error {
 
 func (m *mapWriter) Write(values []parquet.Value) {
 	panic("not implemented")
+}
+
+type dictionaryValueWriter struct {
+	b builder.ColumnBuilder
+}
+
+func NewDictionaryValueWriter(b builder.ColumnBuilder, _ int) ValueWriter {
+	res := &dictionaryValueWriter{
+		b: b,
+	}
+	return res
+}
+
+func (w *dictionaryValueWriter) Write(values []parquet.Value) {
+	switch db := w.b.(type) {
+	case *array.BinaryDictionaryBuilder:
+		for _, v := range values {
+			if v.IsNull() {
+				db.AppendNull()
+			} else {
+				if err := db.Append(v.Bytes()); err != nil {
+					panic("failed to append to dictionary")
+				}
+			}
+		}
+	}
+}
+
+func (w *dictionaryValueWriter) WritePage(p parquet.Page) error {
+	values := make([]parquet.Value, p.NumValues())
+	_, err := p.Values().ReadValues(values)
+	// We're reading all values in the page so we always expect an io.EOF.
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("read values: %w", err)
+	}
+
+	w.Write(values)
+	return nil
 }

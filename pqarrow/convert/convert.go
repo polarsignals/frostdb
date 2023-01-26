@@ -3,8 +3,9 @@ package convert
 import (
 	"errors"
 
-	"github.com/apache/arrow/go/v8/arrow"
+	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/segmentio/parquet-go"
+	"github.com/segmentio/parquet-go/format"
 
 	"github.com/polarsignals/frostdb/pqarrow/writer"
 )
@@ -51,7 +52,23 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 	case lt != nil:
 		switch {
 		case lt.UTF8 != nil:
-			dt = &arrow.BinaryType{}
+			enc := n.Encoding()
+			switch enc {
+			case nil:
+				dt = &arrow.BinaryType{}
+			default:
+				switch enc.Encoding() {
+				case format.PlainDictionary:
+					fallthrough
+				case format.RLEDictionary:
+					dt = &arrow.DictionaryType{
+						IndexType: &arrow.Int16Type{}, // TODO: do we need more width?
+						ValueType: &arrow.BinaryType{},
+					}
+				default:
+					dt = &arrow.BinaryType{}
+				}
+			}
 		case lt.Integer != nil:
 			switch lt.Integer.BitWidth {
 			case 64:
@@ -111,6 +128,8 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 		wr = writer.NewBooleanValueWriter
 	case *arrow.Float64Type:
 		wr = writer.NewFloat64ValueWriter
+	case *arrow.DictionaryType:
+		wr = writer.NewDictionaryValueWriter
 	default:
 		return nil, errors.New("unsupported type: " + n.Type().String())
 	}

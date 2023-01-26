@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
 )
 
 // GetGroupsAndOrderedSetRanges returns a min-heap of group ranges and ordered
@@ -161,8 +161,28 @@ func GetGroupsAndOrderedSetRanges(
 					return nil, nil, nil, err
 				}
 			}
+		case *array.Dictionary:
+			switch dict := t.Dictionary().(type) {
+			case *array.Binary:
+				for j := 0; j < arr.Len(); j++ {
+					var curGroupValue []byte
+					if curGroup[i] != nil {
+						curGroupValue = curGroup[i].([]byte)
+					}
+					vIsNull := t.IsNull(j)
+					cmp, ok := nullComparison(curGroupValue == nil, vIsNull)
+					if !ok {
+						cmp = bytes.Compare(curGroupValue, dict.Value(t.GetValueIndex(j)))
+					}
+					if err := handleCmpResult(cmp, i, t, j); err != nil {
+						return nil, nil, nil, err
+					}
+				}
+			default:
+				panic(fmt.Sprintf("unsupported dictionary type: %T", dict))
+			}
 		default:
-			panic("unsupported type")
+			panic(fmt.Sprintf("unsupported type: %T", t))
 		}
 	}
 	return groupRanges, setRanges, curGroup, nil

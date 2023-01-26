@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/RoaringBitmap/roaring v0.9.4
-	github.com/apache/arrow/go/v8 v8.0.1
+	github.com/apache/arrow/go/v10 v10.0.1
 	github.com/cockroachdb/datadriven v1.0.2
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140
 	github.com/dustin/go-humanize v1.0.0
@@ -17,7 +17,7 @@ require (
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
 	github.com/prometheus/client_golang v1.12.2
 	github.com/segmentio/parquet-go v0.0.0-20221209161419-3f277a904e0e
-	github.com/stretchr/testify v1.7.2
+	github.com/stretchr/testify v1.8.0
 	github.com/thanos-io/objstore v0.0.0-20220715165016-ce338803bc1e
 	github.com/tidwall/wal v1.1.7
 	go.opentelemetry.io/otel v0.20.0

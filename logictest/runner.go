@@ -9,8 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
 	"github.com/cockroachdb/datadriven"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
@@ -385,6 +385,19 @@ func arrayToStringVals(a arrow.Array) ([]string, error) {
 				continue
 			}
 			result[i] = fmt.Sprintf("%t", col.Value(i))
+		}
+	case *array.Dictionary:
+		switch dict := col.Dictionary().(type) {
+		case *array.Binary:
+			for i := range result {
+				if col.IsNull(i) {
+					result[i] = nullString
+					continue
+				}
+				result[i] = fmt.Sprintf("%s", dict.Value(col.GetValueIndex(i)))
+			}
+		default:
+			return nil, fmt.Errorf("unhandled dictionary type: %T", dict)
 		}
 	default:
 		return nil, fmt.Errorf("unhandled type %T", col)

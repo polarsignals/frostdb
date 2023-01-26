@@ -5,9 +5,9 @@ import (
 	"container/heap"
 	"fmt"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
@@ -95,6 +95,19 @@ func (h cursorHeap) Less(i, j int) bool {
 				continue
 			}
 			return v1 < v2
+		case *array.Dictionary:
+			switch dict := arr1.Dictionary().(type) {
+			case *array.Binary:
+				arr2 := c2.r.Column(i).(*array.Dictionary)
+				dict2 := arr2.Dictionary().(*array.Binary)
+				cmp := bytes.Compare(dict.Value(arr1.GetValueIndex(c1.curIdx)), dict2.Value(arr2.GetValueIndex(c2.curIdx)))
+				if cmp == 0 {
+					continue
+				}
+				return cmp < 0
+			default:
+				panic(fmt.Sprintf("unsupported dictionary type for record merging %T", dict))
+			}
 		default:
 			panic(fmt.Sprintf("unsupported type for record merging %T", arr1))
 		}

@@ -12,23 +12,23 @@ null    value2  stack1  3   3
 exec
 select sum(value) as value_sum group by labels.label2
 ----
-        1
+null    1
 value2  5
 
 exec
 select max(value) as value_max group by labels.label2
 ----
-        1
+null    1
 value2  3
 
 exec
 select count(value) as value_count group by labels.label2
 ----
-        1
+null    1
 value2  2
 
 exec
 select sum(value) as value_sum, count(value) as value_count group by labels.label2
 ----
-        1       1
+null    1       1
 value2  5       2

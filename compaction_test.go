@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/btree"
+	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 
@@ -41,8 +42,12 @@ func insertSampleRecords(ctx context.Context, t *testing.T, table *Table, timest
 	samples = make([]dynparquet.Sample, 0, len(timestamps))
 	for _, ts := range timestamps {
 		samples = append(samples, dynparquet.Sample{
+			ExampleType: "ex",
 			Labels: []dynparquet.Label{
 				{Name: "label1", Value: "value1"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 			},
 			Timestamp: ts,
 		})

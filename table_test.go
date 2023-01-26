@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
@@ -1040,7 +1040,9 @@ func Test_Table_NestedSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, records)
 
-	require.Equal(t, `{["value1"] ["value1"]}`, fmt.Sprintf("%v", r.Column(0)))
+	require.Equal(t, `{{ dictionary: ["value1"]
+  indices: [0] } { dictionary: ["value1"]
+  indices: [0] }}`, fmt.Sprintf("%v", r.Column(0)))
 	require.Equal(t, `[[1 2]]`, fmt.Sprintf("%v", r.Column(1)))
 	require.Equal(t, `[[2 3]]`, fmt.Sprintf("%v", r.Column(2)))
 }
@@ -1145,7 +1147,6 @@ func Test_L0Query(t *testing.T) {
 	_, err = table.InsertRecord(ctx, r)
 	require.NoError(t, err)
 
-	// TODO query the record back
 	pool := memory.NewGoAllocator()
 
 	records := 0

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/array"
-	"github.com/apache/arrow/go/v8/arrow/memory"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v10/arrow/memory"
 )
 
 func NewBuilder(mem memory.Allocator, t arrow.DataType) ColumnBuilder {
@@ -47,6 +47,24 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 		b.Append(arr.(*array.FixedSizeBinary).Value(i))
 	case *array.BooleanBuilder:
 		b.Append(arr.(*array.Boolean).Value(i))
+	case *array.BinaryDictionaryBuilder:
+		switch a := arr.(type) {
+		case *array.Dictionary:
+			switch dict := a.Dictionary().(type) {
+			case *array.Binary:
+				if err := b.Append(dict.Value(a.GetValueIndex(i))); err != nil {
+					return err
+				}
+			case *array.String:
+				if err := b.AppendString(dict.Value(a.GetValueIndex(i))); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("dictionary type %T unsupported", dict)
+			}
+		default:
+			return fmt.Errorf("non-dictionary array %T provided for dictionary builder", a)
+		}
 	// case *array.List:
 	//	// TODO: This seems horribly inefficient, we already have the whole
 	//	// array and are just doing an expensive copy, but arrow doesn't seem
@@ -121,6 +139,10 @@ func AppendGoValue(cb ColumnBuilder, v any) error {
 		b.Append(v.([]byte))
 	case *array.BooleanBuilder:
 		b.Append(v.(bool))
+	case *array.BinaryDictionaryBuilder:
+		if err := b.Append(v.([]byte)); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unsupported type for append go value %T", b)
 	}

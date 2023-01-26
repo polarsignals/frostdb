@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/scalar"
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/scalar"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/pqarrow/convert"
