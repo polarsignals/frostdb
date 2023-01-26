@@ -2,6 +2,9 @@ package frostdb
 
 import (
 	"context"
+	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,27 +96,125 @@ func getLatest15MinInterval(ctx context.Context, b testing.TB, engine *query.Loc
 	return start, end
 }
 
-// filterExpr returns a hardcoded filter expression to filter for cpu profiles
-// within a given timestamp range.
-func filterExprs(start, end int64) []logicalplan.Expr {
-	return []logicalplan.Expr{
-		logicalplan.Col("name").Eq(logicalplan.Literal("process_cpu")),
-		logicalplan.Col("sample_type").Eq(logicalplan.Literal("cpu")),
-		logicalplan.Col("sample_unit").Eq(logicalplan.Literal("nanoseconds")),
-		logicalplan.Col("period_type").Eq(logicalplan.Literal("cpu")),
-		logicalplan.Col("period_unit").Eq(logicalplan.Literal("nanoseconds")),
-		logicalplan.Col("labels.job").Eq(logicalplan.Literal("default")),
-		logicalplan.Col("timestamp").Gt(logicalplan.Literal(start)),
-		logicalplan.Col("timestamp").Lt(logicalplan.Literal(end)),
-	}
+var typeColumns = []logicalplan.Expr{
+	logicalplan.Col("name"),
+	logicalplan.Col("sample_type"),
+	logicalplan.Col("sample_unit"),
+	logicalplan.Col("period_type"),
+	logicalplan.Col("period_unit"),
 }
 
-// Remove unused warning.
-var (
-	_ = newDBForBenchmarks
-	_ = getLatest15MinInterval
-	_ = filterExprs
-)
+func getTypesQuery(engine *query.LocalEngine) query.Builder {
+	return engine.ScanTable(tableName).
+		Distinct(
+			append(
+				typeColumns,
+				logicalplan.Col("duration").Gt(logicalplan.Literal(0)),
+			)...,
+		)
+}
+
+func getLabelsQuery(engine *query.LocalEngine) query.Builder {
+	return engine.ScanSchema(tableName).
+		Distinct(logicalplan.Col("name")).
+		Filter(logicalplan.Col("name").RegexMatch("^labels\\..+$"))
+}
+
+func getValuesForLabelQuery(engine *query.LocalEngine, labelName string) query.Builder {
+	return engine.ScanTable(tableName).
+		Distinct(logicalplan.Col(labelName))
+}
+
+type typesResult [][]string
+
+func (t typesResult) Len() int {
+	return len(t)
+}
+
+func (t typesResult) Less(i, j int) bool {
+	for col := 0; col < len(t[0]); col++ {
+		if t[i][col] == t[j][col] {
+			continue
+		}
+		return t[i][col] < t[j][col]
+	}
+	return false
+}
+
+func (t *typesResult) Swap(i, j int) {
+	(*t)[i], (*t)[j] = (*t)[j], (*t)[i]
+}
+
+// getDeterministicTypeFilterExpr will always return a deterministic profile
+// type across benchmark runs, as well as a pretty string to print this type.
+func getDeterministicTypeFilterExpr(
+	ctx context.Context, engine *query.LocalEngine,
+) ([]logicalplan.Expr, string, error) {
+	results := make(typesResult, 0)
+	if err := getTypesQuery(engine).Execute(ctx, func(_ context.Context, r arrow.Record) error {
+		for i := 0; i < int(r.NumRows()); i++ {
+			row := make([]string, 0, len(typeColumns))
+			for j := range typeColumns {
+				row = append(row, string(r.Column(j).(*array.Binary).Value(i)))
+			}
+			results = append(results, row)
+		}
+		return nil
+	}); err != nil {
+		return nil, "", err
+	}
+
+	if len(results) == 0 {
+		return nil, "", errors.New("no types found")
+	}
+	sort.Sort(&results)
+
+	filterExpr := make([]logicalplan.Expr, 0, len(typeColumns))
+	for i, toMatch := range results[0] {
+		filterExpr = append(
+			filterExpr,
+			typeColumns[i].(*logicalplan.Column).Eq(logicalplan.Literal(toMatch)),
+		)
+	}
+	return filterExpr, strings.Join(results[0], ":"), nil
+}
+
+// getDeterministicLabel will always return a deterministic label/value pair
+// across benchmarks.
+func getDeterministicLabelValuePair(ctx context.Context, engine *query.LocalEngine) (string, string, error) {
+	labels := make([]string, 0)
+	if err := getLabelsQuery(engine).Execute(ctx, func(_ context.Context, r arrow.Record) error {
+		arr := r.Column(0)
+		for i := 0; i < arr.Len(); i++ {
+			labels = append(labels, arr.(*array.String).Value(i))
+		}
+		return nil
+	}); err != nil {
+		return "", "", err
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		values := make([]string, 0)
+		if err := getValuesForLabelQuery(engine, label).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+			arr := r.Column(0)
+			for i := 0; i < arr.Len(); i++ {
+				if arr.IsNull(i) {
+					continue
+				}
+				values = append(values, string(arr.(*array.Binary).Value(i)))
+			}
+			return nil
+		}); err != nil {
+			return "", "", err
+		}
+		if len(values) == 0 {
+			continue
+		}
+		sort.Strings(values)
+		return label, values[0], nil
+	}
+	return "", "", errors.New("no non-null values found")
+}
 
 func BenchmarkQuery(b *testing.B) {
 	b.Skip(skipReason)
@@ -128,18 +229,51 @@ func BenchmarkQuery(b *testing.B) {
 		db.TableProvider(),
 	)
 	start, end := getLatest15MinInterval(ctx, b, engine)
+	label, value, err := getDeterministicLabelValuePair(ctx, engine)
+	require.NoError(b, err)
+	typeFilter, filterPretty, err := getDeterministicTypeFilterExpr(ctx, engine)
+	require.NoError(b, err)
+
+	b.Logf("using label/value pair: (label=%s,value=%s)", label, value)
+	b.Logf("using types filter: %s", filterPretty)
+
+	fullFilter := append(
+		typeFilter,
+		logicalplan.Col(label).Eq(logicalplan.Literal(value)),
+		logicalplan.Col("timestamp").Gt(logicalplan.Literal(start)),
+		logicalplan.Col("timestamp").Lt(logicalplan.Literal(end)),
+	)
 
 	b.Run("Types", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			if err := engine.ScanTable(tableName).
-				Distinct(
-					logicalplan.Col("name"),
-					logicalplan.Col("sample_type"),
-					logicalplan.Col("sample_unit"),
-					logicalplan.Col("period_type"),
-					logicalplan.Col("period_unit"),
-					logicalplan.Col("duration").Gt(logicalplan.Literal(0)),
-				).
+			if err := getTypesQuery(engine).
+				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					if r.NumRows() == 0 {
+						b.Fatal("expected at least one row")
+					}
+					return nil
+				}); err != nil {
+				b.Fatalf("query returned error: %v", err)
+			}
+		}
+	})
+
+	b.Run("Labels", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if err := getLabelsQuery(engine).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				if r.NumRows() == 0 {
+					b.Fatal("expected at least one row")
+				}
+				return nil
+			}); err != nil {
+				b.Fatalf("query returned error: %v", err)
+			}
+		}
+	})
+
+	b.Run("Values", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if err := getValuesForLabelQuery(engine, label).
 				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {
 						b.Fatal("expected at least one row")
@@ -156,7 +290,7 @@ func BenchmarkQuery(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			if err := engine.ScanTable(tableName).
 				Filter(
-					logicalplan.And(filterExprs(start, end)...),
+					logicalplan.And(fullFilter...),
 				).
 				Aggregate(
 					[]logicalplan.Expr{
@@ -182,7 +316,7 @@ func BenchmarkQuery(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			if err := engine.ScanTable(tableName).
 				Filter(
-					logicalplan.And(filterExprs(start, end)...),
+					logicalplan.And(fullFilter...),
 				).
 				Aggregate(
 					[]logicalplan.Expr{
