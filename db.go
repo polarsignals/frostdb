@@ -242,7 +242,7 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 	for _, f := range files {
 		databaseName := f.Name()
 		g.Go(func() error {
-			db, err := s.DB(context.Background(), databaseName)
+			db, err := s.DB(ctx, databaseName)
 			if err != nil {
 				return err
 			}
