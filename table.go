@@ -130,6 +130,7 @@ type Table struct {
 type WAL interface {
 	Close() error
 	Log(tx uint64, record *walpb.Record) error
+	LogRecord(tx uint64, table string, record arrow.Record) error
 	Replay(handler func(tx uint64, record *walpb.Record) error) error
 	Truncate(tx uint64) error
 	FirstIndex() (uint64, error)
@@ -592,14 +593,11 @@ func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, 
 	tx, _, commit := t.db.begin()
 	defer commit()
 
-	/* TODO: implement arrow record WAL
-	if err := t.appendToLog(ctx, tx, buf); err != nil {
+	if err := t.wal.LogRecord(tx, t.name, record); err != nil {
 		return tx, fmt.Errorf("append to log: %w", err)
 	}
-	*/
 
-	err = block.InsertRecord(ctx, tx, record)
-	if err != nil {
+	if err := block.InsertRecord(ctx, tx, record); err != nil {
 		return tx, fmt.Errorf("insert buffer into block: %w", err)
 	}
 
