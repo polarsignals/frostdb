@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
@@ -26,6 +29,10 @@ func (w *NopWAL) Close() error {
 }
 
 func (w *NopWAL) Log(tx uint64, record *walpb.Record) error {
+	return nil
+}
+
+func (w *NopWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
 	return nil
 }
 
@@ -61,6 +68,7 @@ type FileWAL struct {
 	logRequestCh   chan *logRequest
 	queue          *logRequestQueue
 	logRequestPool *sync.Pool
+	arrowBufPool   *sync.Pool
 	mtx            *sync.Mutex
 
 	cancel     func()
@@ -127,6 +135,11 @@ func Open(
 				return &logRequest{
 					data: make([]byte, 1024),
 				}
+			},
+		},
+		arrowBufPool: &sync.Pool{
+			New: func() any {
+				return &bytes.Buffer{}
 			},
 		},
 		mtx:   &sync.Mutex{},
@@ -286,6 +299,63 @@ func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
 	}
 	r.data = r.data[:size]
 	_, err := record.MarshalToSizedBufferVT(r.data)
+	if err != nil {
+		return err
+	}
+
+	w.mtx.Lock()
+	heap.Push(w.queue, r)
+	w.mtx.Unlock()
+
+	return nil
+}
+
+func (w *FileWAL) getArrowBuf() *bytes.Buffer {
+	return w.arrowBufPool.Get().(*bytes.Buffer)
+}
+
+func (w *FileWAL) putArrowBuf(b *bytes.Buffer) {
+	b.Reset()
+	w.arrowBufPool.Put(b)
+}
+
+func (w *FileWAL) writeRecord(buf *bytes.Buffer, record arrow.Record) error {
+	writer := ipc.NewWriter(
+		buf,
+		ipc.WithSchema(record.Schema()),
+	)
+	defer writer.Close()
+
+	return writer.Write(record)
+}
+
+func (w *FileWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
+	buf := w.getArrowBuf()
+	defer w.putArrowBuf(buf)
+	if err := w.writeRecord(buf, record); err != nil {
+		return err
+	}
+
+	walrecord := &walpb.Record{
+		Entry: &walpb.Entry{
+			EntryType: &walpb.Entry_Write_{
+				Write: &walpb.Entry_Write{
+					Data:      buf.Bytes(),
+					TableName: table,
+					Arrow:     true,
+				},
+			},
+		},
+	}
+
+	r := w.logRequestPool.Get().(*logRequest)
+	r.tx = tx
+	size := walrecord.SizeVT()
+	if cap(r.data) < size {
+		r.data = make([]byte, size)
+	}
+	r.data = r.data[:size]
+	_, err := walrecord.MarshalToSizedBufferVT(r.data)
 	if err != nil {
 		return err
 	}
