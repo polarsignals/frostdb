@@ -1,6 +1,7 @@
 package frostdb
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
@@ -511,13 +513,29 @@ func (db *DB) replayWAL(ctx context.Context) error {
 				return fmt.Errorf("get table: %w", err)
 			}
 
-			serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
-			if err != nil {
-				return fmt.Errorf("deserialize buffer: %w", err)
-			}
+			switch e.Write.Arrow {
+			case true:
+				reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
+				if err != nil {
+					return fmt.Errorf("create ipc reader: %w", err)
+				}
+				record, err := reader.Read()
+				if err != nil {
+					return fmt.Errorf("read record: %w", err)
+				}
 
-			if err := table.active.Insert(ctx, tx, serBuf); err != nil {
-				return fmt.Errorf("insert buffer into block: %w", err)
+				if err := table.active.InsertRecord(ctx, tx, record); err != nil {
+					return fmt.Errorf("insert record into block: %w", err)
+				}
+			default:
+				serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
+				if err != nil {
+					return fmt.Errorf("deserialize buffer: %w", err)
+				}
+
+				if err := table.active.Insert(ctx, tx, serBuf); err != nil {
+					return fmt.Errorf("insert buffer into block: %w", err)
+				}
 			}
 		case *walpb.Entry_TableBlockPersisted_:
 			return nil
