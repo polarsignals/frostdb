@@ -21,6 +21,12 @@ value1
 value2
 
 exec
+select distinct(labels.label3)
+----
+null
+value3
+
+exec
 select distinct(labels.label1, labels.label2)
 ----
 value1  value1
