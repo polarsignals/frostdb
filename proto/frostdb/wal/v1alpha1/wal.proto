@@ -21,6 +21,8 @@ message Entry {
     string table_name = 1;
     // Data is the data of the write.
     bytes data = 2;
+    // Arrow indicates that data is stored in arrow record format.
+    bool arrow = 3;
   }
 
   // The new-table-block entry.
