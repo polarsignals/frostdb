@@ -6,6 +6,7 @@ import (
 
 	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/google/btree"
+	"github.com/pingcap/errors"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
@@ -75,6 +76,15 @@ func (g *Granule) addPart(p *parts.Part) error {
 func (g *Granule) Append(p *parts.Part) (uint64, error) {
 	node := g.parts.Prepend(p)
 	newSize := g.metadata.size.Add(uint64(p.Size()))
+
+	least, err := p.Least()
+	if err != nil {
+		return 0, err
+	}
+
+	if g.tableConfig.schema.RowLessThan(least, g.metadata.least) {
+		return 0, errors.New("added part to Granule that is less than least")
+	}
 
 	// If the prepend returned that we're adding to the compacted list; then we
 	// need to propagate the Part to the new granules.
