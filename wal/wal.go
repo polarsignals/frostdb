@@ -171,7 +171,7 @@ func Open(
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	go func() {
-		w.Run(ctx)
+		w.run(ctx)
 		close(w.shutdownCh)
 	}()
 
@@ -201,7 +201,7 @@ func tryRepairWAL(path string) error {
 	return nil
 }
 
-func (w *FileWAL) Run(ctx context.Context) {
+func (w *FileWAL) run(ctx context.Context) {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	walBatch := &wal.Batch{}
