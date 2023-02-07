@@ -44,6 +44,9 @@ func NewCompactionConfig(options ...CompactionOption) *CompactionConfig {
 		// the table.
 		l1ToGranuleSizeRatio: 0.5,
 	}
+	for _, o := range options {
+		o(c)
+	}
 	return c
 }
 
@@ -224,7 +227,13 @@ func newCompactionMetrics(reg prometheus.Registerer, granuleSize float64) *compa
 		// and times.
 		metricResolution = 25
 	)
-	sizeBuckets := prometheus.ExponentialBucketsRange(twoKiB, granuleSize, metricResolution)
+	minSize := float64(twoKiB)
+	if granuleSize < minSize {
+		// This should only happen in tests.
+		minSize = 1
+		granuleSize = twoKiB
+	}
+	sizeBuckets := prometheus.ExponentialBucketsRange(minSize, granuleSize, metricResolution)
 	timeBuckets := prometheus.ExponentialBuckets(0.5, 2, metricResolution)
 	countBuckets := prometheus.ExponentialBuckets(1, 2, 10)
 	return &compactionMetrics{
