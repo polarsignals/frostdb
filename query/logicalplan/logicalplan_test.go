@@ -26,8 +26,8 @@ func (m *mockTableReader) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	iterOpts IterOptions,
 	callbacks []Callback,
+	iterOpts ...Option,
 ) error {
 	return nil
 }
@@ -36,8 +36,8 @@ func (m *mockTableReader) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	iterOpts IterOptions,
 	callbacks []Callback,
+	iterOpts ...Option,
 ) error {
 	return nil
 }

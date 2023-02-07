@@ -276,7 +276,6 @@ func TestDBWithWAL(t *testing.T) {
 				ctx,
 				tx,
 				pool,
-				logicalplan.IterOptions{},
 				[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 					ar.Retain()
 					records = append(records, ar)
