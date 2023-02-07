@@ -210,9 +210,9 @@ func (w *FileWAL) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			w.mtx.Lock()
-			len := w.queue.Len()
+			n := w.queue.Len()
 			w.mtx.Unlock()
-			if len > 0 {
+			if n > 0 {
 				// Need to drain the queue before we can shutdown.
 				continue
 			}
@@ -223,8 +223,19 @@ func (w *FileWAL) Run(ctx context.Context) {
 			w.txmtx.Unlock()
 			batch := batch[:0]
 			w.mtx.Lock()
-			for {
-				if w.queue.Len() == 0 || (*w.queue)[0].tx != nextTx {
+			for w.queue.Len() > 0 {
+				if minTx := (*w.queue)[0].tx; minTx != nextTx {
+					if minTx < nextTx {
+						// The next entry must be dropped otherwise progress
+						// will never be made. Log a warning given this could
+						// lead to missing data.
+						level.Warn(w.logger).Log(
+							"msg", "WAL cannot log a txn id that has already been seen; dropping entry",
+							"expected", nextTx,
+							"found", minTx,
+						)
+						_ = heap.Pop(w.queue)
+					}
 					break
 				}
 				r := heap.Pop(w.queue).(*logRequest)

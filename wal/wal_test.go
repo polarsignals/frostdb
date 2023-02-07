@@ -1,7 +1,6 @@
 package wal
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,8 +16,6 @@ func TestWAL(t *testing.T) {
 	dir, err := os.MkdirTemp("", "frostdb-wal-test")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	w, err := Open(
 		log.NewNopLogger(),
@@ -26,7 +23,6 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
-	go w.Run(ctx)
 
 	require.NoError(t, w.Log(1, &walpb.Record{
 		Entry: &walpb.Entry{
@@ -47,7 +43,6 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
-	go w.Run(ctx)
 
 	err = w.Replay(func(tx uint64, r *walpb.Record) error {
 		require.Equal(t, uint64(1), tx)
@@ -78,7 +73,6 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
-	go w.Run(ctx)
 
 	err = w.Replay(func(tx uint64, r *walpb.Record) error {
 		return nil
@@ -122,4 +116,41 @@ func TestCorruptWAL(t *testing.T) {
 	lastIdx, err := w.LastIndex()
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), lastIdx)
+}
+
+// TestUnexpectedTxn verifies that the WAL can make progress when an unexpected
+// txn (one that has already been seen) is logged. This should never happen but
+// we should protect the WAL from getting into a deadlock. This test is likely
+// to fail due to timeout.
+func TestUnexpectedTxn(t *testing.T) {
+	walDir := t.TempDir()
+	func() {
+		w, err := Open(
+			log.NewNopLogger(),
+			prometheus.NewRegistry(),
+			walDir,
+		)
+		require.NoError(t, err)
+		defer w.Close()
+
+		emptyRecord := &walpb.Record{}
+		require.NoError(t, w.Log(1, emptyRecord))
+		require.NoError(t, w.Log(2, emptyRecord))
+
+		// Note that an error cannot be returned from Log because it is hard to make
+		// it aware of all txn ids that have already been seen (maintaining a map is
+		// too expensive). An alternative would be to require the txn id to be
+		// monotonically increasing.
+		require.NoError(t, w.Log(1, emptyRecord))
+	}()
+	w, err := Open(
+		log.NewNopLogger(),
+		prometheus.NewRegistry(),
+		walDir,
+	)
+	require.NoError(t, err)
+	defer w.Close()
+	lastIndex, err := w.LastIndex()
+	require.NoError(t, err)
+	require.Equal(t, lastIndex, uint64(2))
 }
