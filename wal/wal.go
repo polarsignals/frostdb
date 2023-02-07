@@ -248,7 +248,9 @@ func (w *FileWAL) Run(ctx context.Context) {
 				level.Error(w.logger).Log(
 					"msg", "failed to write WAL batch",
 					"err", err,
-					"batch", walBatch,
+					// Sprintf is used here because the logging package does not
+					// support logging arbitrary values.
+					"batch", fmt.Sprintf("%v", walBatch),
 					"lastIndex", lastIndex,
 					"lastIndexErr", lastIndexErr,
 				)
