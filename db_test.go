@@ -34,12 +34,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 
 	logger := newTestLogger(t)
 
-	dir, err := os.MkdirTemp("", "frostdb-with-wal-test")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer os.RemoveAll(dir) // clean up
-
+	dir := t.TempDir()
 	bucket, err := filesystem.NewBucket(dir)
 	require.NoError(t, err)
 
@@ -1399,5 +1394,52 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 			})
 			require.NoError(t, err)
 		})
+	}
+}
+
+func TestCompactionDuringReplay(t *testing.T) {
+	const tableName = "test"
+	var (
+		dir = t.TempDir()
+		ctx = context.Background()
+	)
+	func() {
+		c, err := New(
+			WithWAL(),
+			WithStoragePath(dir),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+		db, err := c.DB(ctx, tableName)
+		require.NoError(t, err)
+		table, err := db.Table(tableName, NewTableConfig(dynparquet.NewSampleSchema()))
+		require.NoError(t, err)
+
+		for i := 0; i < 100; i++ {
+			buf, err := dynparquet.NewTestSamples().ToBuffer(table.Schema())
+			require.NoError(t, err)
+			_, err = table.InsertBuffer(ctx, buf)
+			require.NoError(t, err)
+		}
+	}()
+
+	for i := 0; i < 10; i++ {
+		func() {
+			c, err := New(
+				WithWAL(),
+				WithStoragePath(dir),
+				WithCompactionConfig(
+					// Set a very low compaction interval to force compaction to
+					// race with the replay.
+					NewCompactionConfig(WithInterval(time.Nanosecond)),
+				),
+				// A low granule size is also necessary to force compaction.
+				WithGranuleSizeBytes(1),
+			)
+			require.NoError(t, err)
+			defer c.Close()
+
+			require.NoError(t, c.ReplayWALs(ctx))
+		}()
 	}
 }
