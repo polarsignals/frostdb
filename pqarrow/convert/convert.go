@@ -177,11 +177,7 @@ func hasListFields(n parquet.Node) bool {
 	}
 
 	element := list.Fields()[0]
-	if !(element.Required() || element.Optional()) {
-		return false
-	}
-
-	return true
+	return element.Required() || element.Optional()
 }
 
 func mapType(n parquet.Node) (arrow.DataType, error) {

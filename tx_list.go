@@ -16,34 +16,40 @@ type TxPool struct {
 	drain chan interface{}
 }
 
-/* NewTxPool returns a new TxPool and starts the pool cleaner routine.
-The transaction pool is used to keep track of completed transactions. It does this by inserting completed transactions into an ordered linked list
-
-Ex:
-insert: 12
-[9]->[10]->[13] => [9]->[10]->[12]->[13]
-
-Inserting a new node triggers the pool cleaner routine to run. The pool cleaners job is to increment a high-watermark counter when it encounters
-continguous transactions in the list, and then remove those elements in the pool.
-
-Ex:
-watermark: 7 insert: 8
-[9]->[10]->[13] => [8]->[9]->[10]->[13] (cleaner notified)
-
-[8]->[9]->[10]->[13]
- ^ watermark++; delete 8
-
-[9]->[10]->[13]
- ^ watermark++; delete 9
-
-[10]->[13]
- ^ watermark++; delete 9
-
-[13]
-watermak: 10
-
-TxPool is a sorted lockless linked-list described in https://timharris.uk/papers/2001-disc.pdf
-*/
+// NewTxPool returns a new TxPool and starts the pool cleaner routine.
+// The transaction pool is used to keep track of completed transactions. It does
+// this by inserting completed transactions into an ordered linked list.
+//
+// Ex:
+// insert: 12
+// [9]->[10]->[13] => [9]->[10]->[12]->[13]
+//
+// Inserting a new node triggers the pool cleaner routine to run. The pool
+// cleaner's job is to increment a high-watermark counter when it encounters
+// contiguous transactions in the list, and then remove those elements in the
+// pool.
+//
+// Ex:
+// watermark: 7 insert: 8
+// [9]->[10]->[13] => [8]->[9]->[10]->[13] (cleaner notified)
+//
+// [8]->[9]->[10]->[13]
+//
+//	^ watermark++; delete 8
+//
+// [9]->[10]->[13]
+//
+//	^ watermark++; delete 9
+//
+// [10]->[13]
+//
+//	^ watermark++; delete 9
+//
+// [13]
+// watermark: 10
+//
+// TxPool is a sorted lockless linked-list described in
+// https://timharris.uk/papers/2001-disc.pdf
 func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	tail := &TxNode{
 		next:     &atomic.Pointer[TxNode]{},
@@ -175,26 +181,19 @@ func getUnmarked(node *TxNode) *TxNode {
 // cleaner sweeps the pool periodically, and bubbles up the given watermark.
 // this function does not return.
 func (l *TxPool) cleaner(watermark *atomic.Uint64) {
-	for {
-		select { // sweep whenever notified or when ticker
-		case _, ok := <-l.drain:
-			if !ok {
-				// Channel closed.
-				return
+	for range l.drain {
+		l.delete(func(tx uint64) bool {
+			mark := watermark.Load()
+			switch {
+			case mark+1 == tx:
+				watermark.Add(1)
+				return true // return true to indicate that this node should be removed from the tx list.
+			case mark >= tx:
+				return true
+			default:
+				return false
 			}
-			l.delete(func(tx uint64) bool {
-				mark := watermark.Load()
-				switch {
-				case mark+1 == tx:
-					watermark.Add(1)
-					return true // return true to indicate that this node should be removed from the tx list.
-				case mark >= tx:
-					return true
-				default:
-					return false
-				}
-			})
-		}
+		})
 	}
 }
 

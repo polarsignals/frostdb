@@ -23,7 +23,7 @@ func (e *PlanValidationError) Error() string {
 	message := make([]string, 0)
 	message = append(message, e.message)
 	message = append(message, "\n")
-	message = append(message, fmt.Sprintf("%s", e.plan))
+	message = append(message, e.plan.String())
 
 	for _, child := range e.children {
 		message = append(message, "\n  -> invalid expression: ")

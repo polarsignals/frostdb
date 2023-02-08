@@ -316,9 +316,7 @@ func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []Expr) {
 			plan.TableScan.Distinct = distinctColumns
 		}
 	case plan.Distinct != nil:
-		for _, expr := range plan.Distinct.Exprs {
-			distinctColumns = append(distinctColumns, expr)
-		}
+		distinctColumns = append(distinctColumns, plan.Distinct.Exprs...)
 	}
 
 	if plan.Input != nil {
