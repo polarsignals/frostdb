@@ -16,7 +16,7 @@ import (
 )
 
 // TODO: Make this smarter.
-var concurrencyHardcoded = runtime.NumCPU()
+var concurrencyHardcoded = runtime.GOMAXPROCS(0)
 
 type PhysicalPlan interface {
 	Callback(ctx context.Context, r arrow.Record) error
