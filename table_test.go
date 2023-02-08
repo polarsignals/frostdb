@@ -594,6 +594,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	require.NoError(t, err)
 	defer c.Close()
 	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
 	require.NoError(t, err)
 }

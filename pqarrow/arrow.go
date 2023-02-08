@@ -630,6 +630,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 	rows := rg.Rows()
 	defer rows.Close()
 	rowBuf := rowBufPool.Get().([]parquet.Row)
+	//nolint:staticcheck
 	defer rowBufPool.Put(rowBuf[:cap(rowBuf)])
 
 	for {

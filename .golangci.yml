@@ -18,9 +18,8 @@ linters:
 
 issues:
   exclude-rules:
-    - path: _test.go
-      linters:
-        - errcheck
+    - path: bench_test.go
+      text: 'is unused'
 
 linters-settings:
   depguard:
@@ -40,3 +39,9 @@ linters-settings:
     extra-rules: true
   misspell:
     locale: US
+  staticcheck:
+    checks:
+      - all
+      # TODO: This ignores deprecated warnings. We should slowly transition to
+      # the new APIs for these warnings and remove this exclusion.
+      - '-SA1019'
