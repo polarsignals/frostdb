@@ -179,6 +179,26 @@ func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	return p.minRow, nil
 }
 
+func (p *Part) Row(i int64) (*dynparquet.DynamicRow, error) {
+	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
+	reader := p.buf.DynamicRowGroup(0).DynamicRows()
+	defer reader.Close()
+
+	if err := reader.SeekToRow(i); err != nil {
+		return nil, err
+	}
+
+	if n, err := reader.ReadRows(rowBuf); err != nil {
+		return nil, fmt.Errorf("read first row of part: %w", err)
+	} else if n != 1 {
+		return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
+	}
+
+	// Copy here so that this reference does not prevent the decompressed page
+	// from being GCed.
+	return rowBuf.GetCopy(0), nil
+}
+
 func (p *Part) most() (*dynparquet.DynamicRow, error) {
 	if p.maxRow != nil {
 		return p.maxRow, nil
@@ -287,3 +307,35 @@ func (p *PartSorter) Swap(i, j int) {
 func (p *PartSorter) Err() error {
 	return p.err
 }
+
+type SortablePart struct {
+	schema *dynparquet.Schema
+	part   *Part
+}
+
+func NewSortablePart(schema *dynparquet.Schema, part *Part) *SortablePart {
+	return &SortablePart{
+		schema: schema,
+		part:   part,
+	}
+}
+
+func (p *SortablePart) Len() int {
+	return int(p.part.NumRows())
+}
+
+func (p *SortablePart) Less(i, j int) bool {
+	ri, err := p.part.Row(int64(i))
+	if err != nil {
+		panic("whoops")
+	}
+
+	rj, err := p.part.Row(int64(j))
+	if err != nil {
+		panic("whoops_2")
+	}
+
+	return p.schema.RowLessThan(ri, rj)
+}
+
+func (p *SortablePart) Swap(i, j int) {}
