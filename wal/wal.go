@@ -76,9 +76,8 @@ type FileWAL struct {
 }
 
 type logRequest struct {
-	tx    uint64
-	data  []byte
-	errCh chan error
+	tx   uint64
+	data []byte
 }
 
 // min-heap based priority queue to synchronize log requests to be in order of

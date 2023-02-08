@@ -29,8 +29,8 @@ func (m *mockTableReader) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
+	iterOpts ...logicalplan.Option,
 ) error {
 	return nil
 }
@@ -39,8 +39,8 @@ func (m *mockTableReader) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
+	iterOpts ...logicalplan.Option,
 ) error {
 	return nil
 }

@@ -169,7 +169,6 @@ func TestTable(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				t.Log(ar)
 				defer ar.Release()
@@ -286,7 +285,6 @@ func Test_Table_Concurrency(t *testing.T) {
 					ctx,
 					tx,
 					pool,
-					logicalplan.IterOptions{},
 					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 						totalrows += ar.NumRows()
 						defer ar.Release()
@@ -415,7 +413,6 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 				ctx,
 				tx,
 				pool,
-				logicalplan.IterOptions{},
 				[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 					defer ar.Release()
 					totalrows += ar.NumRows()
@@ -515,7 +512,6 @@ func Test_Table_ReadIsolation(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
 				defer ar.Release()
@@ -539,7 +535,6 @@ func Test_Table_ReadIsolation(t *testing.T) {
 			ctx,
 			table.db.highWatermark.Load(),
 			pool,
-			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
 				defer ar.Release()
@@ -599,6 +594,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	require.NoError(t, err)
 	defer c.Close()
 	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
 	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
 	require.NoError(t, err)
 }
@@ -710,7 +706,6 @@ func Test_Table_Filter(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			logicalplan.IterOptions{Filter: filterExpr},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				defer ar.Release()
 
@@ -718,6 +713,7 @@ func Test_Table_Filter(t *testing.T) {
 
 				return nil
 			}},
+			logicalplan.WithFilter(filterExpr),
 		)
 		require.NoError(t, err)
 		require.False(t, iterated)
@@ -788,12 +784,12 @@ func Test_Table_Bloomfilter(t *testing.T) {
 			context.Background(),
 			tx,
 			pool,
-			logicalplan.IterOptions{Filter: logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				defer ar.Release()
 				iterations++
 				return nil
 			}},
+			logicalplan.WithFilter(logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))),
 		))
 		return nil
 	})
@@ -866,7 +862,6 @@ func Test_DoubleTable(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				defer ar.Release()
 				require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
@@ -958,16 +953,14 @@ func Test_Table_EmptyRowGroup(t *testing.T) {
 			tx,
 			pool,
 			// Select all distinct values for the label1 column.
-			logicalplan.IterOptions{
-				Projection:      []logicalplan.Expr{&logicalplan.DynamicColumn{ColumnName: "label1"}},
-				DistinctColumns: []logicalplan.Expr{&logicalplan.DynamicColumn{ColumnName: "label1"}},
-			},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
 				defer ar.Release()
 
 				return nil
 			}},
+			logicalplan.WithProjection(&logicalplan.DynamicColumn{ColumnName: "label1"}),
+			logicalplan.WithDistinctColumns(&logicalplan.DynamicColumn{ColumnName: "label1"}),
 		)
 		require.NoError(t, err)
 		require.Equal(t, int64(0), rows)
@@ -1022,7 +1015,6 @@ func Test_Table_NestedSchema(t *testing.T) {
 			tx,
 			pool,
 			// Select all distinct values for the label1 column.
-			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				records++
 				require.Equal(t, int64(1), ar.NumRows())
@@ -1155,7 +1147,6 @@ func Test_L0Query(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			logicalplan.IterOptions{},
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				records++
 				require.Equal(t, int64(3), ar.NumRows())

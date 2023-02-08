@@ -22,7 +22,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 )
 
-type CompactionOption func(*CompactionConfig) error
+type CompactionOption func(*CompactionConfig)
 
 type CompactionConfig struct {
 	concurrency          int
@@ -44,23 +44,24 @@ func NewCompactionConfig(options ...CompactionOption) *CompactionConfig {
 		// the table.
 		l1ToGranuleSizeRatio: 0.5,
 	}
+	for _, o := range options {
+		o(c)
+	}
 	return c
 }
 
 // WithConcurrency specifies the number of concurrent goroutines compacting data
 // for each database.
 func WithConcurrency(concurrency int) CompactionOption {
-	return func(c *CompactionConfig) error {
+	return func(c *CompactionConfig) {
 		c.concurrency = concurrency
-		return nil
 	}
 }
 
 // WithInterval specifies the compaction sweep interval.
 func WithInterval(i time.Duration) CompactionOption {
-	return func(c *CompactionConfig) error {
+	return func(c *CompactionConfig) {
 		c.interval = i
-		return nil
 	}
 }
 
@@ -68,9 +69,8 @@ func WithInterval(i time.Duration) CompactionOption {
 // granule size. The closer this value is to 1, the more compacted data becomes
 // with an expected rise in memory and CPU usage.
 func WithL1ToGranuleSizeRatio(r float64) CompactionOption {
-	return func(c *CompactionConfig) error {
+	return func(c *CompactionConfig) {
 		c.l1ToGranuleSizeRatio = r
-		return nil
 	}
 }
 
@@ -224,7 +224,13 @@ func newCompactionMetrics(reg prometheus.Registerer, granuleSize float64) *compa
 		// and times.
 		metricResolution = 25
 	)
-	sizeBuckets := prometheus.ExponentialBucketsRange(twoKiB, granuleSize, metricResolution)
+	minSize := float64(twoKiB)
+	if granuleSize < minSize {
+		// This should only happen in tests.
+		minSize = 1
+		granuleSize = twoKiB
+	}
+	sizeBuckets := prometheus.ExponentialBucketsRange(minSize, granuleSize, metricResolution)
 	timeBuckets := prometheus.ExponentialBuckets(0.5, 2, metricResolution)
 	countBuckets := prometheus.ExponentialBuckets(1, 2, 10)
 	return &compactionMetrics{

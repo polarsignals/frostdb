@@ -170,7 +170,7 @@ func DictionaryArrayScalarNotEqual(left *array.Dictionary, right scalar.Scalar) 
 
 		switch dict := left.Dictionary().(type) {
 		case *array.Binary:
-			if bytes.Compare(dict.Value(left.GetValueIndex(i)), data) != 0 {
+			if !bytes.Equal(dict.Value(left.GetValueIndex(i)), data) {
 				res.Add(uint32(i))
 			}
 		case *array.String:
@@ -200,7 +200,7 @@ func DictionaryArrayScalarEqual(left *array.Dictionary, right scalar.Scalar) (*B
 
 		switch dict := left.Dictionary().(type) {
 		case *array.Binary:
-			if bytes.Compare(dict.Value(left.GetValueIndex(i)), data) == 0 {
+			if bytes.Equal(dict.Value(left.GetValueIndex(i)), data) {
 				res.Add(uint32(i))
 			}
 		case *array.String:
@@ -219,7 +219,7 @@ func FixedSizeBinaryArrayScalarEqual(left *array.FixedSizeBinary, right *scalar.
 		if left.IsNull(i) {
 			continue
 		}
-		if bytes.Compare(left.Value(i), right.Data()) == 0 {
+		if bytes.Equal(left.Value(i), right.Data()) {
 			res.Add(uint32(i))
 		}
 	}
@@ -234,7 +234,7 @@ func FixedSizeBinaryArrayScalarNotEqual(left *array.FixedSizeBinary, right *scal
 			res.Add(uint32(i))
 			continue
 		}
-		if bytes.Compare(left.Value(i), right.Data()) != 0 {
+		if !bytes.Equal(left.Value(i), right.Data()) {
 			res.Add(uint32(i))
 		}
 	}

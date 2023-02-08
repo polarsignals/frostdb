@@ -711,9 +711,13 @@ func (t *Table) Iterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
+	options ...logicalplan.Option,
 ) error {
+	iterOpts := &logicalplan.IterOptions{}
+	for _, opt := range options {
+		opt(iterOpts)
+	}
 	ctx, span := t.tracer.Start(ctx, "Table/Iterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
 	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))
@@ -739,7 +743,7 @@ func (t *Table) Iterator(
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(func() error {
-			converter := pqarrow.NewParquetConverter(pool, iterOpts)
+			converter := pqarrow.NewParquetConverter(pool, *iterOpts)
 			defer converter.Close()
 
 			var rgSchema *parquet.Schema
@@ -811,9 +815,13 @@ func (t *Table) SchemaIterator(
 	ctx context.Context,
 	tx uint64,
 	pool memory.Allocator,
-	iterOpts logicalplan.IterOptions,
 	callbacks []logicalplan.Callback,
+	options ...logicalplan.Option,
 ) error {
+	iterOpts := &logicalplan.IterOptions{}
+	for _, opt := range options {
+		opt(iterOpts)
+	}
 	ctx, span := t.tracer.Start(ctx, "Table/SchemaIterator")
 	span.SetAttributes(attribute.Int("physicalProjections", len(iterOpts.PhysicalProjection)))
 	span.SetAttributes(attribute.Int("projections", len(iterOpts.Projection)))

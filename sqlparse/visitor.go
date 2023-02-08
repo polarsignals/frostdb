@@ -187,9 +187,7 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			// This is pretty hacky and only fine because it's in the test only.
 			left, right := pop(v.exprStack)
 			var exprStack []logicalplan.Expr
-			for _, expr := range right {
-				exprStack = append(exprStack, expr)
-			}
+			exprStack = append(exprStack, right...)
 			switch l := left.(type) {
 			case *logicalplan.LiteralExpr:
 				val := l.Value.(*scalar.Int64)

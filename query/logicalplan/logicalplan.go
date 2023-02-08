@@ -29,13 +29,44 @@ type LogicalPlan struct {
 // modifying the underlying data.
 type Callback func(ctx context.Context, r arrow.Record) error
 
-// IterOptions are a set of options for the TableReader Iterators
-// TODO: should we instead use the option pattern? Is that possible with the way the Iterator functions work?
+// IterOptions are a set of options for the TableReader Iterators.
 type IterOptions struct {
 	PhysicalProjection []Expr
 	Projection         []Expr
 	Filter             Expr
 	DistinctColumns    []Expr
+}
+
+type Option func(opts *IterOptions)
+
+func WithPhysicalProjection(e ...Expr) Option {
+	return func(opts *IterOptions) {
+		for _, expr := range e {
+			opts.PhysicalProjection = append(opts.PhysicalProjection, expr)
+		}
+	}
+}
+
+func WithProjection(e ...Expr) Option {
+	return func(opts *IterOptions) {
+		for _, expr := range e {
+			opts.Projection = append(opts.Projection, expr)
+		}
+	}
+}
+
+func WithFilter(e Expr) Option {
+	return func(opts *IterOptions) {
+		opts.Filter = e
+	}
+}
+
+func WithDistinctColumns(e ...Expr) Option {
+	return func(opts *IterOptions) {
+		for _, expr := range e {
+			opts.DistinctColumns = append(opts.DistinctColumns, expr)
+		}
+	}
 }
 
 func (plan *LogicalPlan) String() string {
@@ -119,15 +150,15 @@ type TableReader interface {
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		options IterOptions,
 		callbacks []Callback,
+		options ...Option,
 	) error
 	SchemaIterator(
 		ctx context.Context,
 		tx uint64,
 		pool memory.Allocator,
-		options IterOptions,
 		callbacks []Callback,
+		options ...Option,
 	) error
 	Schema() *dynparquet.Schema
 }

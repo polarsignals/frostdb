@@ -394,7 +394,7 @@ func arrayToStringVals(a arrow.Array) ([]string, error) {
 					result[i] = nullString
 					continue
 				}
-				result[i] = fmt.Sprintf("%s", dict.Value(col.GetValueIndex(i)))
+				result[i] = string(dict.Value(col.GetValueIndex(i)))
 			}
 		default:
 			return nil, fmt.Errorf("unhandled dictionary type: %T", dict)

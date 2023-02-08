@@ -355,9 +355,9 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 				groupByFields = append(groupByFields, field)
 				groupByArrays = append(groupByArrays, r.Column(i))
 
-				switch matcher.(type) {
+				switch v := matcher.(type) {
 				case *logicalplan.DurationExpr:
-					duration := matcher.(*logicalplan.DurationExpr).Value()
+					duration := v.Value()
 					groupByFieldHashes = append(groupByFieldHashes,
 						&durationHashCombine{milliseconds: uint64(duration.Milliseconds())},
 					)
