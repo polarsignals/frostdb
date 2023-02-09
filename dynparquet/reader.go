@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"text/tabwriter"
 
 	"github.com/segmentio/parquet-go"
 )
@@ -70,6 +71,63 @@ func (b *SerializedBuffer) DynamicRows() DynamicRowReader {
 		drg[i] = b.newDynamicRowGroup(rowGroup)
 	}
 	return Concat(b.fields, drg...).DynamicRows()
+}
+
+func (b *SerializedBuffer) String() string {
+	var buf bytes.Buffer
+	const (
+		minWidth = 15
+		tabWidth = 15
+		padding  = 2
+		padChar  = ' '
+		noFlags  = 0
+	)
+	w := tabwriter.NewWriter(&buf, minWidth, tabWidth, padding, padChar, noFlags)
+
+	truncateString := func(s string) string {
+		const ellipses = "..."
+		if len(s) > tabWidth {
+			return s[:tabWidth-len(ellipses)] + ellipses
+		}
+		return s
+	}
+
+	numRowGroups := b.NumRowGroups()
+	numRows := b.NumRows()
+	_, _ = w.Write([]byte(fmt.Sprintf("row groups: %d\ttotal rows: %d\n", numRowGroups, numRows)))
+	for i := 0; i < numRowGroups; i++ {
+		_, _ = w.Write([]byte("---\n"))
+		func() {
+			rg := b.DynamicRowGroup(i)
+			rows := rg.Rows()
+			defer rows.Close()
+
+			// Print sorting schema.
+			for _, col := range rg.SortingColumns() {
+				_, _ = w.Write([]byte(truncateString(fmt.Sprintf("%v", col.Path())) + "\t"))
+			}
+			_, _ = w.Write([]byte("\n"))
+
+			rBuf := make([]parquet.Row, rg.NumRows())
+			_, _ = rows.ReadRows(rBuf)
+
+			for i := 0; i < len(rBuf); i++ {
+				// Print only sorting columns.
+				for _, col := range rg.SortingColumns() {
+					leaf, ok := rg.Schema().Lookup(col.Path()...)
+					if !ok {
+						panic(fmt.Sprintf("sorting column not found: %v", col.Path()))
+					}
+
+					_, _ = w.Write([]byte(truncateString(rBuf[i][leaf.ColumnIndex].String()) + "\t"))
+				}
+				_, _ = w.Write([]byte("\n"))
+			}
+		}()
+	}
+	_ = w.Flush()
+
+	return buf.String()
 }
 
 type serializedRowGroup struct {
