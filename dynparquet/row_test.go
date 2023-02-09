@@ -174,6 +174,58 @@ func TestLess(t *testing.T) {
 		require.Equal(t, 1, n)
 		require.True(t, schema.RowLessThan(row1.Get(0), row4.Get(0)))
 	})
+
+	t.Run("CorrectMapping", func(t *testing.T) {
+		// This is a regression test that verifies that the parquet schema
+		// mapping is respected. It assumes that the timestamp column sorts
+		// before the stacktrace column but the parquet schema created for the
+		// sort rows (see schema.Cmp) puts the stacktrace column before the
+		// timestamp. If the rows in schema.Cmp are created using the sorting
+		// columns, the mapping will be incorrect and this test will fail since
+		// the stacktrace column will be compared as an int (comparison code
+		// thinks it's the timestamp column).
+		schema := NewSampleSchema()
+		sample := Sample{
+			ExampleType: "cpu",
+			Labels: []Label{{
+				Name:  "node",
+				Value: "test3",
+			}},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 2,
+			Value:     5,
+		}
+		rg, err := Samples{sample}.ToBuffer(schema)
+		require.NoError(t, err)
+		row1 := &DynamicRows{
+			Schema:         rg.Schema(),
+			DynamicColumns: rg.DynamicColumns(),
+			Rows:           make([]parquet.Row, 1),
+			fields:         rg.Schema().Fields(),
+		}
+		n, err := rg.Rows().ReadRows(row1.Rows)
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+
+		// Add 1 to the last stacktrace byte.
+		sample.Stacktrace[1][15] = 0x3
+		rg, err = Samples{sample}.ToBuffer(schema)
+		require.NoError(t, err)
+		row2 := &DynamicRows{
+			Schema:         rg.Schema(),
+			DynamicColumns: rg.DynamicColumns(),
+			Rows:           make([]parquet.Row, 1),
+			fields:         rg.Schema().Fields(),
+		}
+		n, err = rg.Rows().ReadRows(row2.Rows)
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+
+		require.True(t, schema.RowLessThan(row1.Get(0), row2.Get(0)))
+	})
 }
 
 func TestLessWithDynamicSchemas(t *testing.T) {
