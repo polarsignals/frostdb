@@ -261,8 +261,8 @@ github.com/rogpeppe/go-internal v1.9.0 h1:73kH8U+JUqXU8lRuOHeVHaa/SZPifC7BkcraZV
 github.com/segmentio/asm v1.1.3/go.mod h1:Ld3L4ZXGNcSLRg4JBsZ3//1+f/TjYl0Mzen/DQy1EJg=
 github.com/segmentio/encoding v0.3.5 h1:UZEiaZ55nlXGDL92scoVuw00RmiRCazIEmvPSbSvt8Y=
 github.com/segmentio/encoding v0.3.5/go.mod h1:n0JeuIqEQrQoPDGsjo8UNd1iA0U8d8+oHAA4E3G3OxM=
-github.com/segmentio/parquet-go v0.0.0-20221209161419-3f277a904e0e h1:oB6VqjFrx6HC1G736iZIe3xII1Zj/QCWInKdUw98AtU=
-github.com/segmentio/parquet-go v0.0.0-20221209161419-3f277a904e0e/go.mod h1:SclLlCfB7c7CH0YerV+OtYmZExyK5rhVOd6UT90erVw=
+github.com/segmentio/parquet-go v0.0.0-20230209224803-1d85e8136681 h1:wjC8jWN4Kt/Per2HczpJzs5xSS0SYBaFa6O9Bc4SkQ8=
+github.com/segmentio/parquet-go v0.0.0-20230209224803-1d85e8136681/go.mod h1:SclLlCfB7c7CH0YerV+OtYmZExyK5rhVOd6UT90erVw=
 github.com/sirupsen/logrus v1.2.0/go.mod h1:LxeOpSwHxABJmUn/MG1IvRgCAasNZTLOkJPxbbu5VWo=
 github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=
 github.com/sirupsen/logrus v1.6.0/go.mod h1:7uNnSEd1DgxDLC74fIahvMZmmYsHGZGEOFrfsX/uA88=
