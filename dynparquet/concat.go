@@ -21,6 +21,10 @@ func Concat(fields []parquet.Field, drg ...DynamicRowGroup) DynamicRowGroup {
 	}
 }
 
+func (c *concatenatedDynamicRowGroup) String() string {
+	return prettyRowGroup(c)
+}
+
 func (c *concatenatedDynamicRowGroup) DynamicColumns() map[string][]string {
 	return c.dynamicColumns
 }
