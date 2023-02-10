@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"testing"
@@ -34,12 +33,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 
 	logger := newTestLogger(t)
 
-	dir, err := os.MkdirTemp("", "frostdb-with-wal-test")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer os.RemoveAll(dir) // clean up
-
+	dir := t.TempDir()
 	bucket, err := filesystem.NewBucket(dir)
 	require.NoError(t, err)
 
@@ -89,12 +83,7 @@ func TestDBWithWAL(t *testing.T) {
 
 		logger := newTestLogger(t)
 
-		dir, err := os.MkdirTemp("", "frostdb-with-wal-test")
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer os.RemoveAll(dir) // clean up
-
+		dir := t.TempDir()
 		c, err := New(
 			WithLogger(logger),
 			WithWAL(),
@@ -307,7 +296,7 @@ func Test_DB_WithStorage(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	bucket, err := filesystem.NewBucket(".")
+	bucket, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 
 	logger := newTestLogger(t)
@@ -395,7 +384,7 @@ func Test_DB_ColdStart(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	bucket, err := filesystem.NewBucket(".")
+	bucket, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		os.RemoveAll(sanitize(t.Name()))
@@ -418,16 +407,11 @@ func Test_DB_ColdStart(t *testing.T) {
 		},
 		"cold start with storage and wal": {
 			newColumnstore: func(t *testing.T) *ColumnStore {
-				dir, err := os.MkdirTemp("", "cold-start-with-storage-and-wal")
-				require.NoError(t, err)
-				t.Cleanup(func() {
-					os.RemoveAll(dir) // clean up
-				})
 				c, err := New(
 					WithLogger(logger),
 					WithBucketStorage(bucket),
 					WithWAL(),
-					WithStoragePath(dir),
+					WithStoragePath(t.TempDir()),
 				)
 				require.NoError(t, err)
 				return c
@@ -576,7 +560,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 	require.NoError(t, err)
 	config := NewTableConfig(s)
 
-	bucket, err := filesystem.NewBucket(".")
+	bucket, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		os.RemoveAll(t.Name())
@@ -670,7 +654,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	bucket, err := filesystem.NewBucket(".")
+	bucket, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		os.RemoveAll(sanitize(t.Name()))
@@ -949,7 +933,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 		dynparquet.NewSampleSchema(),
 	)
 
-	bucket, err := filesystem.NewBucket(".")
+	bucket, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		os.RemoveAll(sanitize(t.Name()))
