@@ -63,14 +63,18 @@ func (s *Schema) Cmp(a, b *DynamicRow) int {
 	if err != nil {
 		panic(fmt.Sprintf("unexpected schema state: %v", err))
 	}
-	// Iterate over all the sorting columns to prepare the rows for comparison.
+
+	// Iterate over all the schema columns to prepare the rows for comparison.
 	// The main reason we can't directly pass in {a,b}.Row is that they might
 	// not have explicit values for dynamic columns we want to compare. These
 	// columns need to be populated with a NULL value.
-	rowA := make(parquet.Row, 0, len(a.fields))
-	rowB := make(parquet.Row, 0, len(b.fields))
-	for _, col := range cols {
-		name := col.Path()[0] // Currently we only support flat schemas.
+	// Additionally, parquet imposes its column indexes when creating the
+	// sorting schema, so these need to be respected.
+	schemaCols := sortingSchema.Columns()
+	rowA := make(parquet.Row, 0, len(schemaCols))
+	rowB := make(parquet.Row, 0, len(schemaCols))
+	for _, path := range schemaCols {
+		name := path[0] // Currently we only support flat schemas.
 
 		aIndex := FindChildIndex(a.fields, name)
 		bIndex := FindChildIndex(b.fields, name)
