@@ -58,6 +58,9 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 				dt = &arrow.BinaryType{}
 			default:
 				switch enc.Encoding() {
+				// TODO(asubiotto): Should we remove this check for a deprecated
+				// format?
+				//nolint:staticcheck
 				case format.PlainDictionary:
 					fallthrough
 				case format.RLEDictionary:
