@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow/go/v10/arrow/memory"
 	"github.com/stretchr/testify/require"
 
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -155,7 +156,11 @@ func getDeterministicTypeFilterExpr(
 		for i := 0; i < int(r.NumRows()); i++ {
 			row := make([]string, 0, len(typeColumns))
 			for j := range typeColumns {
-				row = append(row, string(r.Column(j).(*array.Binary).Value(i)))
+				v, err := arrowutils.GetValue(r.Column(j), i)
+				if err != nil {
+					return err
+				}
+				row = append(row, string(v.([]byte)))
 			}
 			results = append(results, row)
 		}
@@ -201,7 +206,11 @@ func getDeterministicLabelValuePair(ctx context.Context, engine *query.LocalEngi
 				if arr.IsNull(i) {
 					continue
 				}
-				values = append(values, string(arr.(*array.Binary).Value(i)))
+				v, err := arrowutils.GetValue(arr, i)
+				if err != nil {
+					return err
+				}
+				values = append(values, string(v.([]byte)))
 			}
 			return nil
 		}); err != nil {
