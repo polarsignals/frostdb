@@ -41,17 +41,13 @@ type Option func(opts *IterOptions)
 
 func WithPhysicalProjection(e ...Expr) Option {
 	return func(opts *IterOptions) {
-		for _, expr := range e {
-			opts.PhysicalProjection = append(opts.PhysicalProjection, expr)
-		}
+		opts.PhysicalProjection = append(opts.PhysicalProjection, e...)
 	}
 }
 
 func WithProjection(e ...Expr) Option {
 	return func(opts *IterOptions) {
-		for _, expr := range e {
-			opts.Projection = append(opts.Projection, expr)
-		}
+		opts.Projection = append(opts.Projection, e...)
 	}
 }
 
@@ -63,9 +59,7 @@ func WithFilter(e Expr) Option {
 
 func WithDistinctColumns(e ...Expr) Option {
 	return func(opts *IterOptions) {
-		for _, expr := range e {
-			opts.DistinctColumns = append(opts.DistinctColumns, expr)
-		}
+		opts.DistinctColumns = append(opts.DistinctColumns, e...)
 	}
 }
 
