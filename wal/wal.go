@@ -171,7 +171,7 @@ func Open(
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	go func() {
-		w.Run(ctx)
+		w.run(ctx)
 		close(w.shutdownCh)
 	}()
 
@@ -201,7 +201,7 @@ func tryRepairWAL(path string) error {
 	return nil
 }
 
-func (w *FileWAL) Run(ctx context.Context) {
+func (w *FileWAL) run(ctx context.Context) {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	walBatch := &wal.Batch{}
@@ -210,9 +210,9 @@ func (w *FileWAL) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			w.mtx.Lock()
-			len := w.queue.Len()
+			n := w.queue.Len()
 			w.mtx.Unlock()
-			if len > 0 {
+			if n > 0 {
 				// Need to drain the queue before we can shutdown.
 				continue
 			}
@@ -223,8 +223,19 @@ func (w *FileWAL) Run(ctx context.Context) {
 			w.txmtx.Unlock()
 			batch := batch[:0]
 			w.mtx.Lock()
-			for {
-				if w.queue.Len() == 0 || (*w.queue)[0].tx != nextTx {
+			for w.queue.Len() > 0 {
+				if minTx := (*w.queue)[0].tx; minTx != nextTx {
+					if minTx < nextTx {
+						// The next entry must be dropped otherwise progress
+						// will never be made. Log a warning given this could
+						// lead to missing data.
+						level.Warn(w.logger).Log(
+							"msg", "WAL cannot log a txn id that has already been seen; dropping entry",
+							"expected", nextTx,
+							"found", minTx,
+						)
+						_ = heap.Pop(w.queue)
+					}
 					break
 				}
 				r := heap.Pop(w.queue).(*logRequest)
@@ -248,7 +259,9 @@ func (w *FileWAL) Run(ctx context.Context) {
 				level.Error(w.logger).Log(
 					"msg", "failed to write WAL batch",
 					"err", err,
-					"batch", walBatch,
+					// Sprintf is used here because the logging package does not
+					// support logging arbitrary values.
+					"batch", fmt.Sprintf("%v", walBatch),
 					"lastIndex", lastIndex,
 					"lastIndexErr", lastIndexErr,
 				)
