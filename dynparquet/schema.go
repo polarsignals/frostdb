@@ -724,7 +724,7 @@ func (r *dynamicRowGroupReader) SeekToRow(i int64) error {
 	return r.rows.SeekToRow(i)
 }
 
-// Implements the DynamicRows interface.
+// ReadRows implements the DynamicRows interface.
 func (r *dynamicRowGroupReader) ReadRows(rows *DynamicRows) (int, error) {
 	if rows.DynamicColumns == nil {
 		rows.DynamicColumns = r.dynamicColumns
