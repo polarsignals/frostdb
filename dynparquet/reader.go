@@ -48,8 +48,8 @@ func NewSerializedBuffer(f *parquet.File) (*SerializedBuffer, error) {
 	}, nil
 }
 
-func (b *SerializedBuffer) Reader() *parquet.Reader {
-	return parquet.NewReader(b.ParquetFile())
+func (b *SerializedBuffer) Reader() *parquet.GenericReader[any] {
+	return parquet.NewGenericReader[any](b.ParquetFile())
 }
 
 func (b *SerializedBuffer) ParquetFile() *parquet.File {
