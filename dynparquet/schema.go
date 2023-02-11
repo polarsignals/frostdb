@@ -927,7 +927,7 @@ const bloomFilterBitsPerValue = 10
 
 // NewWriter returns a new parquet writer with a concrete parquet schema
 // generated using the given concrete dynamic column names.
-func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*parquet.Writer, error) {
+func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*parquet.GenericWriter[any], error) {
 	ps, err := s.DynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, err
@@ -951,7 +951,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 		)
 	}
 
-	return parquet.NewWriter(w,
+	return parquet.NewGenericWriter[any](w,
 		ps,
 		parquet.ColumnIndexSizeLimit(ColumnIndexSize),
 		parquet.BloomFilters(bloomFilterColumns...),
@@ -967,11 +967,11 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 
 type PooledWriter struct {
 	pool *sync.Pool
-	*parquet.Writer
+	*parquet.GenericWriter[any]
 }
 
-func (p PooledWriter) ParquetWriter() *parquet.Writer {
-	return p.Writer
+func (p PooledWriter) ParquetWriter() *parquet.GenericWriter[any] {
+	return p.GenericWriter
 }
 
 func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*PooledWriter, error) {
@@ -984,16 +984,16 @@ func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*Po
 			return nil, err
 		}
 		return &PooledWriter{
-			pool:   pool.(*sync.Pool),
-			Writer: new,
+			pool:          pool.(*sync.Pool),
+			GenericWriter: new,
 		}, nil
 	}
-	pooled.(*PooledWriter).Writer.Reset(w)
+	pooled.(*PooledWriter).GenericWriter.Reset(w)
 	return pooled.(*PooledWriter), nil
 }
 
 func (s *Schema) PutWriter(w *PooledWriter) {
-	w.Writer.Reset(bytes.NewBuffer(nil))
+	w.GenericWriter.Reset(bytes.NewBuffer(nil))
 	w.pool.Put(w)
 }
 

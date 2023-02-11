@@ -42,6 +42,3 @@ linters-settings:
   staticcheck:
     checks:
       - all
-      # TODO: This ignores deprecated warnings. We should slowly transition to
-      # the new APIs for these warnings and remove this exclusion.
-      - '-SA1019'

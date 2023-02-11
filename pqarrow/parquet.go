@@ -155,7 +155,7 @@ func RecordToDynamicRow(schema *dynparquet.Schema, record arrow.Record, index in
 	return dynparquet.NewDynamicRow(row, sch, dyncols, fields), nil
 }
 
-func RecordToFile(schema *dynparquet.Schema, w *parquet.Writer, r arrow.Record) error {
+func RecordToFile(schema *dynparquet.Schema, w *parquet.GenericWriter[any], r arrow.Record) error {
 	defer w.Close()
 
 	ps, err := schema.DynamicParquetSchema(RecordDynamicCols(r))

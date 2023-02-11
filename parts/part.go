@@ -42,7 +42,7 @@ func (p *Part) Record() arrow.Record {
 	return p.record
 }
 
-func (p *Part) SerializeBuffer(schema *dynparquet.Schema, w *parquet.Writer) error {
+func (p *Part) SerializeBuffer(schema *dynparquet.Schema, w *parquet.GenericWriter[any]) error {
 	if p.record == nil {
 		return fmt.Errorf("not a record part")
 	}

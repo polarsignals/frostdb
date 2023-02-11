@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/segmentio/parquet-go"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
@@ -74,14 +74,13 @@ func main() {
 }
 
 func readSchema(file string) (*dynparquet.Schema, error) {
-	f, err := os.Open(file)
+	contents, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 
 	schema := &schemapb.Schema{}
-	if err := (&jsonpb.Unmarshaler{}).Unmarshal(f, schema); err != nil {
+	if err := protojson.Unmarshal(contents, schema); err != nil {
 		return nil, err
 	}
 
