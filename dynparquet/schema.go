@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"text/tabwriter"
 
 	"github.com/segmentio/parquet-go"
 	"github.com/segmentio/parquet-go/compress"
@@ -686,10 +687,15 @@ func (b *Buffer) Reset() {
 	b.buffer.Reset()
 }
 
+func (b *Buffer) String() string {
+	return prettyRowGroup(b)
+}
+
 // DynamicRowGroup is a parquet.RowGroup that can describe the concrete dynamic
 // columns.
 type DynamicRowGroup interface {
 	parquet.RowGroup
+	fmt.Stringer
 	// DynamicColumns returns the concrete dynamic column names that were used
 	// create its concrete parquet schema with a dynamic parquet schema.
 	DynamicColumns() map[string][]string
@@ -697,7 +703,75 @@ type DynamicRowGroup interface {
 	DynamicRows() DynamicRowReader
 }
 
-// DynamicRowReaders is an iterator over the rows in a DynamicRowGroup.
+type prettyWriter struct {
+	*tabwriter.Writer
+
+	cellWidth int
+	b         bytes.Buffer
+}
+
+func newPrettyWriter() prettyWriter {
+	const (
+		tabWidth = 15
+		minWidth = tabWidth
+		padding  = 2
+		padChar  = ' '
+		noFlags  = 0
+	)
+	w := prettyWriter{
+		cellWidth: tabWidth,
+	}
+	w.Writer = tabwriter.NewWriter(&w.b, minWidth, tabWidth, padding, padChar, noFlags)
+	return w
+}
+
+func (w prettyWriter) String() string {
+	return w.b.String()
+}
+
+func (w prettyWriter) truncateString(s string) string {
+	const ellipses = "..."
+	if len(s) > w.cellWidth {
+		return s[:w.cellWidth-len(ellipses)] + ellipses
+	}
+	return s
+}
+
+func (w prettyWriter) writePrettyRowGroup(rg DynamicRowGroup) {
+	rows := rg.Rows()
+	defer rows.Close()
+
+	// Print sorting schema.
+	for _, col := range rg.SortingColumns() {
+		_, _ = w.Write([]byte(w.truncateString(fmt.Sprintf("%v", col.Path())) + "\t"))
+	}
+	_, _ = w.Write([]byte("\n"))
+
+	rBuf := make([]parquet.Row, rg.NumRows())
+	_, _ = rows.ReadRows(rBuf)
+
+	for i := 0; i < len(rBuf); i++ {
+		// Print only sorting columns.
+		for _, col := range rg.SortingColumns() {
+			leaf, ok := rg.Schema().Lookup(col.Path()...)
+			if !ok {
+				panic(fmt.Sprintf("sorting column not found: %v", col.Path()))
+			}
+
+			_, _ = w.Write([]byte(w.truncateString(rBuf[i][leaf.ColumnIndex].String()) + "\t"))
+		}
+		_, _ = w.Write([]byte("\n"))
+	}
+}
+
+func prettyRowGroup(rg DynamicRowGroup) string {
+	w := newPrettyWriter()
+	w.writePrettyRowGroup(rg)
+	_ = w.Flush()
+	return w.String()
+}
+
+// DynamicRowReader is an iterator over the rows in a DynamicRowGroup.
 type DynamicRowReader interface {
 	parquet.RowSeeker
 	ReadRows(*DynamicRows) (int, error)
@@ -1031,6 +1105,10 @@ type MergedRowGroup struct {
 	parquet.RowGroup
 	DynCols map[string][]string
 	fields  []parquet.Field
+}
+
+func (r *MergedRowGroup) String() string {
+	return prettyRowGroup(r)
 }
 
 // DynamicColumns returns the concrete dynamic column names that were used
