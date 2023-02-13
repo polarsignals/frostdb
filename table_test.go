@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -212,7 +211,6 @@ func Test_Table_Concurrency(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			c, table := basicTable(t, WithGranuleSizeBytes(test.granuleSize))
 			defer c.Close()
-			defer os.RemoveAll("test")
 
 			generateRows := func(n int) *dynparquet.Buffer {
 				rows := make(dynparquet.Samples, 0, n)
@@ -321,16 +319,12 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		config = NewTableConfig(schema)
 	)
 
-	dir, err := os.MkdirTemp("", "frostdb-benchmark")
-	require.NoError(b, err)
-	defer os.RemoveAll(dir) // clean up
-
 	logger := log.NewNopLogger()
 
 	c, err := New(
 		WithLogger(logger),
 		WithWAL(),
-		WithStoragePath(dir),
+		WithStoragePath(b.TempDir()),
 	)
 	require.NoError(b, err)
 	defer c.Close()
@@ -817,7 +811,7 @@ func Test_DoubleTable(t *testing.T) {
 	require.NoError(t, err)
 	config := NewTableConfig(schema)
 
-	bucket, err := filesystem.NewBucket(".")
+	bucket, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 
 	logger := newTestLogger(t)

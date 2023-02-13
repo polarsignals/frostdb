@@ -13,10 +13,7 @@ import (
 )
 
 func TestWAL(t *testing.T) {
-	dir, err := os.MkdirTemp("", "frostdb-wal-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
-
+	dir := t.TempDir()
 	w, err := Open(
 		log.NewNopLogger(),
 		prometheus.NewRegistry(),
