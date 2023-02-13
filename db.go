@@ -390,17 +390,13 @@ func (db *DB) walDir() string {
 }
 
 func (db *DB) replayWAL(ctx context.Context) error {
-	persistedBlocks := map[ulid.ULID]struct{}{}
+	// persistedTables is a map from a table name to the last transaction
+	// persisted.
+	persistedTables := map[string]uint64{}
 	if err := db.wal.Replay(func(tx uint64, record *walpb.Record) error {
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
-			entry := e.TableBlockPersisted
-			var id ulid.ULID
-			if err := id.UnmarshalBinary(entry.BlockId); err != nil {
-				return err
-			}
-
-			persistedBlocks[id] = struct{}{}
+			persistedTables[e.TableBlockPersisted.TableName] = tx
 		}
 		return nil
 	}); err != nil {
@@ -428,8 +424,9 @@ func (db *DB) replayWAL(ctx context.Context) error {
 				return err
 			}
 
-			if _, ok := persistedBlocks[id]; ok {
-				// This block has already been successfully persisted, so we can skip it.
+			if lastPersistedTx, ok := persistedTables[entry.TableName]; ok && tx < lastPersistedTx {
+				// This block has already been successfully persisted, so we can
+				// skip it.
 				return nil
 			}
 
@@ -501,6 +498,12 @@ func (db *DB) replayWAL(ctx context.Context) error {
 		case *walpb.Entry_Write_:
 			entry := e.Write
 			tableName := entry.TableName
+			if lastPersistedTx, ok := persistedTables[tableName]; ok && tx < lastPersistedTx {
+				// This write has already been successfully persisted, so we can
+				// skip it.
+				return nil
+			}
+
 			table, err := db.GetTable(tableName)
 			var tableErr ErrTableNotFound
 			if errors.As(err, &tableErr) {
