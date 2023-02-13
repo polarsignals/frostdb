@@ -312,6 +312,59 @@ func Benchmark_Table_Insert_100Rows_100Iters_100Writers(b *testing.B) {
 	benchmarkTableInserts(b, 100, 100, 100)
 }
 
+// BenchmarkInsertSimple is a benchmark used to measure the performance of the
+// core insert path without the additional complexity of Benchmark_Table_Insert.
+func BenchmarkInsertSimple(b *testing.B) {
+	var (
+		ctx    = context.Background()
+		schema = dynparquet.NewSampleSchema()
+		config = NewTableConfig(schema)
+	)
+
+	c, err := New()
+	require.NoError(b, err)
+	defer c.Close()
+
+	db, err := c.DB(ctx, "test")
+	require.NoError(b, err)
+
+	const (
+		numInserts = 100
+		// In production, we see anything from a couple of rows to 60 per
+		// insert at the time of writing this benchmark.
+		samplesPerInsert = 30
+	)
+	inserts := make([][]byte, 0, numInserts)
+	for i := 0; i < numInserts; i++ {
+		samples := make([]dynparquet.Sample, 0, samplesPerInsert)
+		for len(samples) < samplesPerInsert {
+			samples = append(samples, dynparquet.NewTestSamples()...)
+		}
+		for _, s := range samples {
+			s.Timestamp += int64(i)
+		}
+		buf, err := dynparquet.Samples(samples).ToBuffer(schema)
+		require.NoError(b, err)
+		var bytesBuf bytes.Buffer
+		require.NoError(b, schema.SerializeBuffer(&bytesBuf, buf))
+		inserts = append(inserts, bytesBuf.Bytes())
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		table, err := db.Table(fmt.Sprintf("test%d", i), config)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		for j := 0; j < numInserts; j++ {
+			if _, err := table.Insert(ctx, inserts[j]); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
 func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	var (
 		schema = dynparquet.NewSampleSchema()
