@@ -70,6 +70,7 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	defer w.Close()
 
 	err = w.Replay(func(tx uint64, r *walpb.Record) error {
 		return nil
@@ -109,6 +110,7 @@ func TestCorruptWAL(t *testing.T) {
 		path,
 	)
 	require.NoError(t, err)
+	defer w.Close()
 
 	lastIdx, err := w.LastIndex()
 	require.NoError(t, err)
