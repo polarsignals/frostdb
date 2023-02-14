@@ -347,3 +347,21 @@ func BenchmarkQuery(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkReplay(b *testing.B) {
+	b.Skip(skipReason)
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			col, err := New(
+				WithWAL(),
+				WithStoragePath(storagePath),
+			)
+			require.NoError(b, err)
+			defer col.Close()
+			if err := col.ReplayWALs(context.Background()); err != nil {
+				b.Fatal(err)
+			}
+		}()
+	}
+}

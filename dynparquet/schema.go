@@ -70,8 +70,9 @@ func (nf nullsFirst) NullsFirst() bool { return true }
 
 func makeDynamicSortingColumn(dynamicColumnName string, sortingColumn SortingColumn) SortingColumn {
 	return dynamicSortingColumn{
-		dynamicColumnName: dynamicColumnName,
 		SortingColumn:     sortingColumn,
+		dynamicColumnName: dynamicColumnName,
+		fullName:          sortingColumn.ColumnName() + "." + dynamicColumnName,
 	}
 }
 
@@ -79,6 +80,7 @@ func makeDynamicSortingColumn(dynamicColumnName string, sortingColumn SortingCol
 type dynamicSortingColumn struct {
 	SortingColumn
 	dynamicColumnName string
+	fullName          string
 }
 
 func (dyn dynamicSortingColumn) String() string {
@@ -86,7 +88,7 @@ func (dyn dynamicSortingColumn) String() string {
 }
 
 func (dyn dynamicSortingColumn) ColumnName() string {
-	return dyn.SortingColumn.ColumnName() + "." + dyn.dynamicColumnName
+	return dyn.fullName
 }
 
 func (dyn dynamicSortingColumn) Path() []string { return []string{dyn.ColumnName()} }
