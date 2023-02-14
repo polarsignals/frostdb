@@ -957,12 +957,37 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 		t.table.metrics.rowInsertSize.Observe(float64(buf.NumRows()))
 	}()
 
-	if buf.NumRows() == 0 {
+	numRows := buf.NumRows()
+	if numRows == 0 {
 		t.table.metrics.zeroRowsInserted.Add(float64(buf.NumRows()))
 		return nil
 	}
 
-	rowsToInsertPerGranule, err := t.splitRowsByGranule(buf)
+	rowBuf := make([]parquet.Row, numRows)
+	rows := buf.Reader()
+	defer rows.Close()
+
+	// TODO(asubiotto): Add utility method to read all rows.
+	n := 0
+	for int64(n) < numRows {
+		readN, err := rows.ReadRows(rowBuf[n:])
+		n += readN
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+	}
+
+	rowsToInsertPerGranule, err := t.splitRowsByGranule(
+		dynparquet.NewDynamicRows(
+			rowBuf,
+			buf.ParquetFile().Schema(),
+			buf.DynamicColumns(),
+			buf.ParquetFile().Schema().Fields(),
+		),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to split rows by granule: %w", err)
 	}
@@ -974,33 +999,21 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	}
 	defer t.table.config.schema.PutWriter(w)
 
-	list := []*parts.Part{}
-	for granule, indicies := range rowsToInsertPerGranule {
+	list := make([]*parts.Part, 0)
+	for granule, indices := range rowsToInsertPerGranule {
 		select {
 		case <-ctx.Done():
 			parts.Tombstone(list)
 			return ctx.Err()
 		default:
 
-			rowBuf := make([]parquet.Row, 1)
-			rows := buf.Reader()
-			defer rows.Close()
-			for index := 0; ; index++ {
-				_, err := rows.ReadRows(rowBuf)
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					return err
-				}
-
+			for idx := range rowBuf {
 				// Check if this index belongs in this granule
-				if _, ok := indicies[index]; !ok {
+				if _, ok := indices[idx]; !ok {
 					continue
 				}
 
-				_, err = w.WriteRows(rowBuf)
-				if err != nil {
+				if _, err = w.WriteRows(rowBuf[idx : idx+1]); err != nil {
 					return fmt.Errorf("failed to write rows: %w", err)
 				}
 			}
@@ -1167,11 +1180,11 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	return nil
 }
 
-func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*Granule]map[int]struct{}, error) {
+func (t *TableBlock) splitRowsByGranule(parquetRows *dynparquet.DynamicRows) (map[*Granule]map[int]struct{}, error) {
 	index := t.Index()
 	if index.Len() == 0 {
 		rows := map[int]struct{}{}
-		for i := 0; i < int(buf.NumRows()); i++ {
+		for i := 0; i < len(parquetRows.Rows); i++ {
 			rows[i] = struct{}{}
 		}
 
@@ -1183,18 +1196,11 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 	rowsByGranule := map[*Granule]map[int]struct{}{}
 
 	// TODO: we might be able to do ascend less than or ascend greater than here?
-	rows := buf.DynamicRows()
-	defer rows.Close()
 	var prev *Granule
 	exhaustedAllRows := false
 
-	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	_, err := rows.ReadRows(rowBuf)
-	if err != nil {
-		return nil, ErrReadRow{err}
-	}
 	idx := 0
-	row := rowBuf.Get(0)
+	row := parquetRows.Get(0)
 
 	var ascendErr error
 
@@ -1213,17 +1219,11 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 						rowsByGranule[prev][idx] = struct{}{}
 					}
 
-					n, err := rows.ReadRows(rowBuf)
-					if err == io.EOF && n == 0 {
-						// All rows accounted for
+					if idx >= len(parquetRows.Rows) {
 						exhaustedAllRows = true
 						return false
 					}
-					if err != nil && err != io.EOF {
-						ascendErr = ErrReadRow{err}
-						return false
-					}
-					row = rowBuf.Get(0)
+					row = parquetRows.Get(idx)
 					idx++
 					continue
 				}
@@ -1247,17 +1247,8 @@ func (t *TableBlock) splitRowsByGranule(buf *dynparquet.SerializedBuffer) (map[*
 		}
 
 		// Save any remaining rows that belong into prev
-		for {
+		for ; idx < len(parquetRows.Rows); idx++ {
 			rowsByGranule[prev][idx] = struct{}{}
-			n, err := rows.ReadRows(rowBuf)
-			if err == io.EOF && n == 0 {
-				break
-			}
-			if err != nil && err != io.EOF {
-				return nil, ErrReadRow{err}
-			}
-			row = rowBuf.Get(0)
-			idx++
 		}
 	}
 

@@ -13,6 +13,17 @@ type DynamicRows struct {
 	fields         []parquet.Field
 }
 
+func NewDynamicRows(
+	rows []parquet.Row, schema *parquet.Schema, dynamicColumns map[string][]string, fields []parquet.Field,
+) *DynamicRows {
+	return &DynamicRows{
+		Schema:         schema,
+		DynamicColumns: dynamicColumns,
+		Rows:           rows,
+		fields:         fields,
+	}
+}
+
 func (r *DynamicRows) Get(i int) *DynamicRow {
 	return &DynamicRow{
 		Schema:         r.Schema,
