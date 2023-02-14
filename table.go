@@ -164,6 +164,7 @@ type tableMetrics struct {
 	rowInsertSize             prometheus.Histogram
 	lastCompletedBlockTx      prometheus.Gauge
 	numParts                  prometheus.Gauge
+	unsortedInserts           prometheus.Counter
 	compactionMetrics         *compactionMetrics
 }
 
@@ -237,6 +238,10 @@ func newTable(
 			lastCompletedBlockTx: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
 				Name: "last_completed_block_tx",
 				Help: "Last completed block transaction.",
+			}),
+			unsortedInserts: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "unsorted_inserts_total",
+				Help: "The number of times a buffer to insert was not in sorted order.",
 			}),
 			compactionMetrics: newCompactionMetrics(reg, float64(db.columnStore.granuleSizeBytes)),
 		},
@@ -983,14 +988,24 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 		}
 	}
 
-	rowsToInsertPerGranule, err := t.splitRowsByGranule(
-		dynparquet.NewDynamicRows(
-			rowBuf,
-			buf.ParquetFile().Schema(),
-			buf.DynamicColumns(),
-			buf.ParquetFile().Schema().Fields(),
-		),
+	dynRows := dynparquet.NewDynamicRows(
+		rowBuf,
+		buf.ParquetFile().Schema(),
+		buf.DynamicColumns(),
+		buf.ParquetFile().Schema().Fields(),
 	)
+
+	if !dynRows.IsSorted(t.table.config.schema) {
+		// Input rows should be sorted. Eventually, we should return an error.
+		// However, for caution, we just increment a metric and sort the rows.
+		t.table.metrics.unsortedInserts.Inc()
+		sorter := dynparquet.NewDynamicRowSorter(t.table.config.schema, dynRows)
+		sort.Sort(sorter)
+		// This assignment is probably unnecessary, but it makes it explicit.
+		rowBuf = dynRows.Rows
+	}
+
+	rowsToInsertPerGranule, err := t.splitRowsByGranule(dynRows)
 	if err != nil {
 		return fmt.Errorf("failed to split rows by granule: %w", err)
 	}

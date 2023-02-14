@@ -47,6 +47,15 @@ func (r *DynamicRows) GetCopy(i int) *DynamicRow {
 	}
 }
 
+func (r *DynamicRows) IsSorted(schema *Schema) bool {
+	for i := 1; i < len(r.Rows); i++ {
+		if schema.RowLessThan(r.Get(i), r.Get(i-1)) {
+			return false
+		}
+	}
+	return true
+}
+
 func NewDynamicRow(row parquet.Row, schema *parquet.Schema, dyncols map[string][]string, fields []parquet.Field) *DynamicRow {
 	return &DynamicRow{
 		Row:            row,
@@ -106,6 +115,30 @@ func (s *Schema) Cmp(a, b *DynamicRow) int {
 	}
 
 	return sortingSchema.Comparator(cols...)(rowA, rowB)
+}
+
+type DynamicRowSorter struct {
+	schema *Schema
+	rows   *DynamicRows
+}
+
+func NewDynamicRowSorter(schema *Schema, rows *DynamicRows) *DynamicRowSorter {
+	return &DynamicRowSorter{
+		schema: schema,
+		rows:   rows,
+	}
+}
+
+func (d *DynamicRowSorter) Len() int {
+	return len(d.rows.Rows)
+}
+
+func (d *DynamicRowSorter) Less(i, j int) bool {
+	return d.schema.RowLessThan(d.rows.Get(i), d.rows.Get(j))
+}
+
+func (d *DynamicRowSorter) Swap(i, j int) {
+	d.rows.Rows[i], d.rows.Rows[j] = d.rows.Rows[j], d.rows.Rows[i]
 }
 
 func extractValues(a, b *DynamicRow, aIndex, bIndex int) ([]parquet.Value, []parquet.Value) {
