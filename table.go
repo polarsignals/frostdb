@@ -968,41 +968,42 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 		return nil
 	}
 
-	rowBuf := make([]parquet.Row, numRows)
-	rows := buf.Reader()
-	defer rows.Close()
+	var dynRows *dynparquet.DynamicRows
+	{
+		rowBuf := make([]parquet.Row, numRows)
+		rows := buf.Reader()
+		defer rows.Close()
 
-	// TODO(asubiotto): Add utility method to read all rows.
-	n := 0
-	for int64(n) < numRows {
-		readN, err := rows.ReadRows(rowBuf[n:])
-		for i := n; i < n+readN; i++ {
-			rowBuf[i] = rowBuf[i].Clone()
-		}
-		n += readN
-		if err != nil {
-			if err == io.EOF {
-				break
+		// TODO(asubiotto): Add utility method to read all rows.
+		n := 0
+		for int64(n) < numRows {
+			readN, err := rows.ReadRows(rowBuf[n:])
+			for i := n; i < n+readN; i++ {
+				rowBuf[i] = rowBuf[i].Clone()
 			}
-			return err
+			n += readN
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				return err
+			}
 		}
-	}
 
-	dynRows := dynparquet.NewDynamicRows(
-		rowBuf,
-		buf.ParquetFile().Schema(),
-		buf.DynamicColumns(),
-		buf.ParquetFile().Schema().Fields(),
-	)
+		dynRows = dynparquet.NewDynamicRows(
+			rowBuf,
+			buf.ParquetFile().Schema(),
+			buf.DynamicColumns(),
+			buf.ParquetFile().Schema().Fields(),
+		)
 
-	if !dynRows.IsSorted(t.table.config.schema) {
-		// Input rows should be sorted. Eventually, we should return an error.
-		// However, for caution, we just increment a metric and sort the rows.
-		t.table.metrics.unsortedInserts.Inc()
-		sorter := dynparquet.NewDynamicRowSorter(t.table.config.schema, dynRows)
-		sort.Sort(sorter)
-		// This assignment is probably unnecessary, but it makes it explicit.
-		rowBuf = dynRows.Rows
+		if !dynRows.IsSorted(t.table.config.schema) {
+			// Input rows should be sorted. Eventually, we should return an error.
+			// However, for caution, we just increment a metric and sort the rows.
+			t.table.metrics.unsortedInserts.Inc()
+			sorter := dynparquet.NewDynamicRowSorter(t.table.config.schema, dynRows)
+			sort.Sort(sorter)
+		}
 	}
 
 	rowsToInsertPerGranule, err := t.splitRowsByGranule(dynRows)
@@ -1025,13 +1026,13 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 			return ctx.Err()
 		default:
 
-			for idx := range rowBuf {
+			for idx := range dynRows.Rows {
 				// Check if this index belongs in this granule
 				if _, ok := indices[idx]; !ok {
 					continue
 				}
 
-				if _, err = w.WriteRows(rowBuf[idx : idx+1]); err != nil {
+				if _, err = w.WriteRows(dynRows.Rows[idx : idx+1]); err != nil {
 					return fmt.Errorf("failed to write rows: %w", err)
 				}
 			}
@@ -1198,6 +1199,15 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	return nil
 }
 
+type btreeComparableDynamicRow struct {
+	schema *dynparquet.Schema
+	*dynparquet.DynamicRow
+}
+
+func (r btreeComparableDynamicRow) Less(than btree.Item) bool {
+	return r.schema.RowLessThan(r.DynamicRow, than.(*Granule).Least())
+}
+
 func (t *TableBlock) splitRowsByGranule(parquetRows *dynparquet.DynamicRows) (map[*Granule]map[int]struct{}, error) {
 	index := t.Index()
 	if index.Len() == 0 {
@@ -1211,63 +1221,58 @@ func (t *TableBlock) splitRowsByGranule(parquetRows *dynparquet.DynamicRows) (ma
 		}, nil
 	}
 
-	rowsByGranule := map[*Granule]map[int]struct{}{}
+	var (
+		rowsByGranule = map[*Granule]map[int]struct{}{}
+		idx           = len(parquetRows.Rows) - 1
+	)
 
-	// TODO: we might be able to do ascend less than or ascend greater than here?
-	var prev *Granule
-	exhaustedAllRows := false
-
-	idx := 0
-	row := parquetRows.Get(0)
-
-	var ascendErr error
-
-	index.Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-
-		for {
-			least := g.Least()
-			isLess := t.table.config.schema.RowLessThan(row, least)
-			if isLess {
-				if prev != nil {
-					_, ok := rowsByGranule[prev]
-					if !ok {
-						rowsByGranule[prev] = map[int]struct{}{idx: {}}
-					} else {
-						rowsByGranule[prev][idx] = struct{}{}
-					}
-
-					if idx >= len(parquetRows.Rows) {
-						exhaustedAllRows = true
-						return false
-					}
-					row = parquetRows.Get(idx)
-					idx++
-					continue
+	// Imagine our index looks like (in sorted order):
+	// [a, c) [c, h) [h, inf)
+	// Note that the "end" range bounds are implicit and defined by the least
+	// row of the next granule.
+	// If we insert 2 rows, [d, k], the DescendLessOrEqual call will return
+	// granule [h, inf) as a starting point for our descent. The rows to insert
+	// are iterated in reverse order until a row is found that does not belong
+	// to the current granule (e.g. d, since it's less than h). At this point,
+	// the iteration is continued to granule [c, h) into which d is inserted.
+	index.DescendLessOrEqual(
+		btreeComparableDynamicRow{
+			schema:     t.table.config.schema,
+			DynamicRow: parquetRows.Get(idx),
+		},
+		func(i btree.Item) bool {
+			g := i.(*Granule)
+			// Descend the rows to insert until we find a row that does not belong
+			// in this granule.
+			for ; idx >= 0; idx-- {
+				if t.table.config.schema.RowLessThan(parquetRows.Get(idx), g.Least()) {
+					// Go on to the next granule.
+					return true
 				}
-			} else {
-				// stop at the first granule where this is not the least
-				// this might be the correct granule, but we need to check that it isn't the next granule
-				prev = g
+				if _, ok := rowsByGranule[g]; !ok {
+					rowsByGranule[g] = map[int]struct{}{}
+				}
+				rowsByGranule[g][idx] = struct{}{}
 			}
+			// If we got here, all rows were exhausted in the loop above.
+			return false
+		})
 
-			return true // continue btree iteration
-		}
-	})
-	if ascendErr != nil {
-		return nil, ascendErr
+	if idx < 0 {
+		// All rows exhausted.
+		return rowsByGranule, nil
 	}
 
-	if !exhaustedAllRows {
-		_, ok := rowsByGranule[prev]
-		if !ok {
-			rowsByGranule[prev] = map[int]struct{}{}
-		}
+	if _, ok := rowsByGranule[nil]; ok {
+		return nil, errors.New(
+			"unexpectedly found rows that do not belong to any granule before exhausting search",
+		)
+	}
 
-		// Save any remaining rows that belong into prev
-		for ; idx < len(parquetRows.Rows); idx++ {
-			rowsByGranule[prev][idx] = struct{}{}
-		}
+	// Add remaining rows to a new granule.
+	rowsByGranule[nil] = map[int]struct{}{}
+	for ; idx >= 0; idx-- {
+		rowsByGranule[nil][idx] = struct{}{}
 	}
 
 	return rowsByGranule, nil

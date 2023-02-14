@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/apache/arrow/go/v10/arrow"
@@ -102,7 +103,16 @@ func (g *Granule) PartsForTx(watermark uint64, iterator func(*parts.Part) bool) 
 
 // Less implements the btree.Item interface.
 func (g *Granule) Less(than btree.Item) bool {
-	return g.tableConfig.schema.RowLessThan(g.Least(), than.(*Granule).Least())
+	var otherRow *dynparquet.DynamicRow
+	switch v := than.(type) {
+	case *Granule:
+		otherRow = v.Least()
+	case btreeComparableDynamicRow:
+		otherRow = v.DynamicRow
+	default:
+		panic(fmt.Sprintf("cannot compare against %T", v))
+	}
+	return g.tableConfig.schema.RowLessThan(g.Least(), otherRow)
 }
 
 // Least returns the least row in a Granule.
