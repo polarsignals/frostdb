@@ -2,6 +2,7 @@ package dynparquet
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -751,29 +752,26 @@ func (w prettyWriter) writePrettyRowGroup(rg DynamicRowGroup) {
 	_, _ = w.Write([]byte("\n"))
 
 	rBuf := make([]parquet.Row, rg.NumRows())
-	n := 0
-	for n < len(rBuf) {
-		readN, err := rows.ReadRows(rBuf[n:])
-		n += readN
+	for {
+		n, err := rows.ReadRows(rBuf)
+		for _, row := range rBuf[:n] {
+			// Print only sorting columns.
+			for _, col := range rg.SortingColumns() {
+				leaf, ok := rg.Schema().Lookup(col.Path()...)
+				if !ok {
+					panic(fmt.Sprintf("sorting column not found: %v", col.Path()))
+				}
+
+				_, _ = w.Write([]byte(w.truncateString(row[leaf.ColumnIndex].String()) + "\t"))
+			}
+			_, _ = w.Write([]byte("\n"))
+		}
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			panic(err)
 		}
-	}
-
-	for i := 0; i < len(rBuf); i++ {
-		// Print only sorting columns.
-		for _, col := range rg.SortingColumns() {
-			leaf, ok := rg.Schema().Lookup(col.Path()...)
-			if !ok {
-				panic(fmt.Sprintf("sorting column not found: %v", col.Path()))
-			}
-
-			_, _ = w.Write([]byte(w.truncateString(rBuf[i][leaf.ColumnIndex].String()) + "\t"))
-		}
-		_, _ = w.Write([]byte("\n"))
 	}
 }
 
