@@ -59,7 +59,8 @@ func (b *FileReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	for total < len(p) { // Read does not guarantee the buffer will be full, but ReadAt does
 		n, err = rc.Read(p[total:])
 		total += n
-		if err != nil {
+		// If io.EOF is returned it means we read the end of the file and simply return the total
+		if err != nil && err != io.EOF {
 			return total, err
 		}
 	}
