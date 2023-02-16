@@ -7,6 +7,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 
@@ -60,10 +61,10 @@ func (b *FileReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 		n, err = rc.Read(p[total:])
 		total += n
 		if err != nil {
-		    if errors.Is(err, io.EOF) {
-		        // If io.EOF is returned it means we read the end of the file and simply return the total.
-		        break
-		    }
+			if errors.Is(err, io.EOF) {
+				// If io.EOF is returned it means we read the end of the file and simply return the total.
+				break
+			}
 			return total, err
 		}
 	}
