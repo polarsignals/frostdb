@@ -163,6 +163,16 @@ func DictionaryArrayScalarNotEqual(left *array.Dictionary, right scalar.Scalar) 
 		data = r.Data()
 	}
 
+	// This is a special case for where the left side should not equal NULL
+	if right == scalar.ScalarNull {
+		for i := 0; i < left.Len(); i++ {
+			if !left.IsNull(i) {
+				res.Add(uint32(i))
+			}
+		}
+		return res, nil
+	}
+
 	for i := 0; i < left.Len(); i++ {
 		if left.IsNull(i) {
 			continue
@@ -191,6 +201,16 @@ func DictionaryArrayScalarEqual(left *array.Dictionary, right scalar.Scalar) (*B
 		data = r.Data()
 	case *scalar.String:
 		data = r.Data()
+	}
+
+	// This is a special case for where the left side should equal NULL
+	if right == scalar.ScalarNull {
+		for i := 0; i < left.Len(); i++ {
+			if left.IsNull(i) {
+				res.Add(uint32(i))
+			}
+		}
+		return res, nil
 	}
 
 	for i := 0; i < left.Len(); i++ {
