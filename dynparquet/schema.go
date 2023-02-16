@@ -709,7 +709,7 @@ type prettyWriter struct {
 	*tabwriter.Writer
 
 	cellWidth int
-	b         bytes.Buffer
+	b         *bytes.Buffer
 }
 
 func newPrettyWriter() prettyWriter {
@@ -722,8 +722,9 @@ func newPrettyWriter() prettyWriter {
 	)
 	w := prettyWriter{
 		cellWidth: tabWidth,
+		b:         bytes.NewBuffer(nil),
 	}
-	w.Writer = tabwriter.NewWriter(&w.b, minWidth, tabWidth, padding, padChar, noFlags)
+	w.Writer = tabwriter.NewWriter(w.b, minWidth, tabWidth, padding, padChar, noFlags)
 	return w
 }
 
@@ -750,7 +751,17 @@ func (w prettyWriter) writePrettyRowGroup(rg DynamicRowGroup) {
 	_, _ = w.Write([]byte("\n"))
 
 	rBuf := make([]parquet.Row, rg.NumRows())
-	_, _ = rows.ReadRows(rBuf)
+	n := 0
+	for n < len(rBuf) {
+		readN, err := rows.ReadRows(rBuf[n:])
+		n += readN
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			panic(err)
+		}
+	}
 
 	for i := 0; i < len(rBuf); i++ {
 		// Print only sorting columns.
