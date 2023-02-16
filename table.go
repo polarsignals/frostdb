@@ -971,6 +971,9 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	n := 0
 	for int64(n) < numRows {
 		readN, err := rows.ReadRows(rowBuf[n:])
+		for i := n; i < n+readN; i++ {
+			rowBuf[i] = rowBuf[i].Clone()
+		}
 		n += readN
 		if err != nil {
 			if err == io.EOF {
