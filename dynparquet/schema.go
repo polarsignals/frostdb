@@ -1082,6 +1082,10 @@ func (s *Schema) PutWriter(w *PooledWriter) {
 	w.pool.Put(w)
 }
 
+func (s *Schema) ResetWriters() {
+	s.writers = &sync.Map{}
+}
+
 type PooledBuffer struct {
 	pool *sync.Pool
 	*Buffer
@@ -1107,6 +1111,10 @@ func (s *Schema) GetBuffer(dynamicColumns map[string][]string) (*PooledBuffer, e
 func (s *Schema) PutBuffer(b *PooledBuffer) {
 	b.Buffer.Reset()
 	b.pool.Put(b)
+}
+
+func (s *Schema) ResetBuffers() {
+	s.buffers = &sync.Map{}
 }
 
 // MergedRowGroup allows wrapping any parquet.RowGroup to implement the

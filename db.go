@@ -389,6 +389,10 @@ func (db *DB) walDir() string {
 	return filepath.Join(db.storagePath, "wal")
 }
 
+func (db *DB) snapshotsDir() string {
+	return filepath.Join(db.storagePath, "snapshots")
+}
+
 func (db *DB) replayWAL(ctx context.Context) error {
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
