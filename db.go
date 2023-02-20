@@ -690,11 +690,11 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 }
 
 type ErrTableNotFound struct {
-	tableName string
+	TableName string
 }
 
 func (e ErrTableNotFound) Error() string {
-	return fmt.Sprintf("table %q not found", e.tableName)
+	return fmt.Sprintf("table %s not found", e.TableName)
 }
 
 func (db *DB) GetTable(name string) (*Table, error) {
@@ -702,7 +702,7 @@ func (db *DB) GetTable(name string) (*Table, error) {
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
 	if !ok {
-		return nil, ErrTableNotFound{tableName: name}
+		return nil, ErrTableNotFound{TableName: name}
 	}
 	return table, nil
 }
