@@ -69,6 +69,13 @@ var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Op) (bool, error) {
 	switch operator {
 	case logicalplan.OpEq:
+		if right == parquet.NullValue() {
+			// Assume all ColumnChunk have NULLs for now.
+			// They will be read and added to a bitmap later on.
+			// TODO: Maybe there's a nice way of reading the NumNulls from the Pages, for me they always return 0
+			return true, nil
+		}
+
 		bloomFilter := left.BloomFilter()
 		if bloomFilter == nil {
 			// If there is no bloom filter then we cannot make a statement about true negative, instead check the min max values of the column chunk

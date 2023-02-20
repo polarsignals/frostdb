@@ -101,3 +101,14 @@ select labels, stacktrace, timestamp, value where labels.label4 = 'value4' or (l
 ----
 value2  value2  value3  null    stack1  2       2
 value3  value2  null    value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where labels.label4 = null
+----
+value1  value2  null    null    stack1  1       1
+value2  value2  value3  null    stack1  2       2
+
+exec
+select labels, stacktrace, timestamp, value where labels.label4 != null
+----
+value3  value2  null    value4  stack1  3       3

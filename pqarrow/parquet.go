@@ -27,6 +27,8 @@ func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 		return parquet.ValueOf(v), nil
 	case *scalar.Boolean:
 		return parquet.ValueOf(s.Value), nil
+	case *scalar.Null:
+		return parquet.NullValue(), nil
 	case nil:
 		return parquet.Value{}, nil
 	default:
