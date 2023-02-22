@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"sync"
 	"time"
 
@@ -410,8 +409,7 @@ func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) er
 		// recover the panic to print more context. Exit afterwards regardless.
 		if err := recover(); err != nil {
 			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", firstIndex, "last_index", lastIndex, "err", err)
-			debug.PrintStack()
-			os.Exit(2)
+			panic(err)
 		}
 	}()
 
