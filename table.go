@@ -40,6 +40,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	walpkg "github.com/polarsignals/frostdb/wal"
 )
 
 var (
@@ -66,6 +67,7 @@ type TableConfig struct {
 	// rowGroupSize is the desired number of rows in each row group.
 	rowGroupSize     int
 	blockReaderLimit int
+	disableWAL       bool
 }
 
 type TableOption func(*TableConfig) error
@@ -82,6 +84,14 @@ func WithRowGroupSize(numRows int) TableOption {
 func WithBlockReaderLimit(n int) TableOption {
 	return func(config *TableConfig) error {
 		config.blockReaderLimit = n
+		return nil
+	}
+}
+
+// WithoutWAL disables the WAL for this table.
+func WithoutWAL() TableOption {
+	return func(config *TableConfig) error {
+		config.disableWAL = true
 		return nil
 	}
 }
@@ -245,6 +255,11 @@ func newTable(
 			}),
 			compactionMetrics: newCompactionMetrics(reg, float64(db.columnStore.granuleSizeBytes)),
 		},
+	}
+
+	// Disable the WAL for this table by replacing any given WAL with a nop wal
+	if tableConfig.disableWAL {
+		t.wal = &walpkg.NopWAL{}
 	}
 
 	t.pendingBlocks = make(map[*TableBlock]struct{})
