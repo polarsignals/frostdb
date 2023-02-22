@@ -405,6 +405,14 @@ func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) er
 
 	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", firstIndex, "last_index", lastIndex)
 
+	defer func() {
+		// recover the panic to print more context. Exit afterwards regardless.
+		if err := recover(); err != nil {
+			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", firstIndex, "last_index", lastIndex, "err", err)
+			panic(err)
+		}
+	}()
+
 	for tx := firstIndex; tx <= lastIndex; tx++ {
 		level.Debug(w.logger).Log("msg", "replaying WAL record", "tx", tx)
 		data, err := w.log.Read(tx)
