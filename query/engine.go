@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/apache/arrow/go/v10/arrow/memory"
@@ -160,16 +159,11 @@ func (b LocalQueryBuilder) buildPhysical(ctx context.Context) (*physicalplan.Out
 		logicalPlan = optimizer.Optimize(logicalPlan)
 	}
 
-	schema := logicalPlan.InputSchema()
-	if schema == nil {
-		return nil, fmt.Errorf("logical plan schema is nil")
-	}
-
 	return physicalplan.Build(
 		ctx,
 		b.pool,
 		b.tracer,
-		schema,
+		logicalPlan.InputSchema(),
 		logicalPlan,
 		b.execOpts...,
 	)
