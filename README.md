@@ -12,24 +12,24 @@
 
 > This project is still in its infancy, consider it not production-ready, probably has various consistency and correctness problems and all API will change!
 
-FrostDB is an embeddable columnar database written in Go. It features semi-structured schemas (could also be described as typed wide-columns), and uses [Apache Parquet](https://parquet.apache.org/) for storage, and [Apache Arrow](https://arrow.apache.org/) at query time. Building on top of Apache Arrow, FrostDB provides a query builder and various optimizers (it reminds of DataFrame-like APIs).
+FrostDB is an embeddable wide-column columnar database written in Go. It features semi-structured schemas, uses [Apache Parquet](https://parquet.apache.org/) for storage, and [Apache Arrow](https://arrow.apache.org/) at query time. Building on top of Apache Arrow, FrostDB provides a query builder and various optimizers (using DataFrame-like APIs).
 
-FrostDB is optimized for use cases where the majority of interactions are writes, and when data is queried, a lot of data is queried at once (our use case at Polar Signals can be broadly described as Observability and specifically for [Parca](https://parca.dev/)). It could also be described as a wide-column columnar database.
+FrostDB is optimized for use cases where the majority of interactions are writes, with occasional analytical queries over this data. FrostDB was built specifically for [Parca](https://parca.dev/) for Observability use cases.
 
-Read the annoucement blog post to learn about what made us create it: https://www.polarsignals.com/blog/posts/2022/05/04/introducing-arcticdb/ (FrostDB was originally called ArcticDB)
+Read the announcement blog post to learn about what made us create it: https://www.polarsignals.com/blog/posts/2022/05/04/introducing-arcticdb/ (FrostDB was originally called ArcticDB)
 
 ## Why you should use FrostDB
 
-Columnar data stores have become incredibly popular for analytics data. Structuring data in columns instead of rows leverages the architecture of modern hardware, allowing for efficient processing of data.
+Columnar data stores have become incredibly popular for analytics. Structuring data in columns instead of rows leverages the architecture of modern hardware, allowing for efficient processing of data.
 A columnar data store might be right for you if you have workloads where you write a lot of data and need to perform analytics on that data.
 
 FrostDB is similar to many other in-memory columnar databases such as [DuckDB](https://duckdb.org/) or [InfluxDB IOx](https://github.com/influxdata/influxdb_iox). 
 
 FrostDB may be a better fit for you if:
 - Are developing a Go program
-- Want to embed a columnar database in your program instead of running a separate server
+- Want to embed a columnar database in your program instead of running a separate database server
 - Have immutable datasets that don't require updating or deleting
-- Your data contains dynamic columns, where a column may expand during runtime
+- Your data contains dynamic columns, where the number of columns in the schema may increase at runtime
 
 FrostDB is likely not suitable for your needs if:
 - You aren't developing in Go
@@ -41,69 +41,11 @@ FrostDB is likely not suitable for your needs if:
 
 You can explore the [examples](https://github.com/polarsignals/frostdb/tree/main/examples) directory for sample code using FrostDB. Below is a snippet from the simple database example. It creates a database with a dynamic column schema, inserts some data, and queries it back out.
 
-```go
-// Create a new column store
-columnstore, _ := frostdb.New()
-
-// Open up a database in the column store
-database, _ := columnstore.DB(context.Background(), "simple_db")
-
-// Define our simple schema of labels and values
-schema, _ := simpleSchema()
-
-// Create a table named simple in our database
-table, _ := database.Table(
-    "simple_table",
-    frostdb.NewTableConfig(schema),
-)
-
-// Create values to insert into the database these first rows have dynamic label names of 'firstname' and 'surname'
-buf, _ := schema.NewBuffer(map[string][]string{
-    "names": {"firstname", "surname"},
-})
-
-// firstname:Frederic surname:Brancz 100
-buf.WriteRows([]parquet.Row{{
-    parquet.ValueOf("Frederic").Level(0, 1, 0),
-    parquet.ValueOf("Brancz").Level(0, 1, 1),
-    parquet.ValueOf(100).Level(0, 0, 2),
-}})
-
-// firstname:Thor surname:Hansen 10
-buf.WriteRows([]parquet.Row{{
-    parquet.ValueOf("Thor").Level(0, 1, 0),
-    parquet.ValueOf("Hansen").Level(0, 1, 1),
-    parquet.ValueOf(10).Level(0, 0, 2),
-}})
-table.InsertBuffer(context.Background(), buf)
-
-// Now we can insert rows that have middle names into our dynamic column
-buf, _ = schema.NewBuffer(map[string][]string{
-    "names": {"firstname", "middlename", "surname"},
-})
-// firstname:Matthias middlename:Oliver surname:Loibl 1
-buf.WriteRows([]parquet.Row{{
-    parquet.ValueOf("Matthias").Level(0, 1, 0),
-    parquet.ValueOf("Oliver").Level(0, 1, 1),
-    parquet.ValueOf("Loibl").Level(0, 1, 2),
-    parquet.ValueOf(1).Level(0, 0, 3),
-}})
-table.InsertBuffer(context.Background(), buf)
-
-// Create a new query engine to retrieve data and print the results
-engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
-engine.ScanTable("simple_table").
-    Filter(
-        logicalplan.Col("names.firstname").Eq(logicalplan.Literal("Frederic")),
-    ).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-    fmt.Println(r)
-    return nil
-})
-```
+https://github.com/polarsignals/frostdb/blob/d0eea82a3fcbd3e7275c9ed6c89546370516448c/examples/simple.go#L20-L94
 
 ## Design choices
 
-FrostDB was specifically built for Observability workloads. This resulted in several characteristics that make it unique in its combination.
+FrostDB was specifically built for Observability workloads. This resulted in several characteristics that make it unique.
 
 Table Of Contents:
 
@@ -114,11 +56,11 @@ Table Of Contents:
 
 ### Columnar layout
 
-Observability data is most useful when highly dimensional and those dimensions can be searched and aggregated by efficiently. Contrary to many relational databases like (MySQL, PostgreSQL, CockroachDB, TiDB, etc.) that store data all data belonging to a single row together, in a columnar layout all data of the same column in a table is available in one contiguous chunk of data, making it very efficient to scan and more importantly, only the data truly necessary for a query is loaded in the first place. FrostDB uses [Apache Parquet](https://parquet.apache.org/) for storage, and [Apache Arrow](https://arrow.apache.org/) at query time. Apache Parquet is used for storage to make use of its efficient encodings to save on memory and disk space. Apache Arrow is used at query time as a foundation to vectorize the query execution.
+Observability data is most useful when it is highly dimensional and those dimensions can be searched and aggregated by efficiently. Contrary to many relational databases (MySQL, PostgreSQL, CockroachDB, TiDB, etc.) that store data all data belonging to a single row together, a columnar layout stores all data of the same column in one contiguous chunk of data, making it very efficient to scan and aggregate data for any column. FrostDB uses [Apache Parquet](https://parquet.apache.org/) for storage, and [Apache Arrow](https://arrow.apache.org/) at query time. Apache Parquet is used for storage to make use of its efficient encodings to save on memory and disk space. Apache Arrow is used at query time as a foundation to vectorize the query execution.
 
 ### Dynamic Columns
 
-While columnar databases already exist, most require a static schema, however, Observability workloads differ in that their schemas are not static, meaning not all columns are pre-defined. On the other hand, wide column databases also already exist, but typically are not strictly typed, and most wide-column databases are row-based databases, not columnar databases.
+While columnar databases already exist, most require a static schema. However, Observability workloads differ in that data their schemas are not static, meaning not all columns are pre-defined. Wide column databases already exist, but typically are not strictly typed (e.g. document databases), and most wide-column databases are row-based databases, not columnar databases.
 
 Take a [Prometheus](https://prometheus.io/) time-series for example. Prometheus time-series are uniquely identified by the combination of their label-sets:
 
@@ -126,12 +68,12 @@ Take a [Prometheus](https://prometheus.io/) time-series for example. Prometheus 
 http_requests_total{path="/api/v1/users", code="200"} 12
 ```
 
-This model does not map well into a static schema, as label-names cannot be known upfront. The most suitable data-type some columnar databases have to offer is a map, however, maps have the same problems as row-based databases, where all values of a map in a row are stored together, unable to exploit the advantages of a columnar layout. An FrostDB schema can define a column to be dynamic, causing a column to be created on the fly when a new label-name is seen.
+This model does not map well into a static schema, as label-names cannot be known upfront. The most suitable data-type some columnar databases have to offer is a map, however, maps have the same problems as row-based databases, where all values of a map in a row are stored together, resulting in an inability to exploit the advantages of a columnar layout. A FrostDB schema can define a column to be dynamic, causing a column to be created on the fly when a new label-name is seen.
 
-An FrostDB schema for Prometheus could look like this:
+A FrostDB schema for Prometheus could look like this:
 
 ```go
-package arcticprometheus
+package frostprometheus
 
 import (
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -163,12 +105,12 @@ func Schema() (*dynparquet.Schema, error) {
 			Dynamic: false,
 		}},
 		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "timestamp",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
 			Name:       "labels",
 			NullsFirst: true,
 			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}, {
-			Name:      "timestamp",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 		}},
 	})
 }
@@ -182,11 +124,11 @@ With this schema, all rows are expected to have a `timestamp` and a `value` but 
 
 There are only writes and reads. All data is immutable and sorted. Having all data sorted allows FrostDB to avoid maintaining an index per column, and still serve queries with low latency.
 
-To maintain global sorting FrostDB requires all inserts to be sorted if they contain multiple rows. Combined with immutability, global sorting of all data can be maintained at a reasonable cost. To optimize throughput, it is preferable to perform inserts in as large batches as possible. FrostDB maintains inserted data in batches of a configurable amount of rows (by default 8192), called a _Granule_. To directly jump to data needed for a query, FrostDB maintains a sparse index of Granules. The sparse index is small enough to fully reside in memory, it is currently implemented as a [b-tree](https://github.com/google/btree) of Granules.
+To maintain global sorting FrostDB requires all inserts to be sorted if they contain multiple rows. Combined with immutability, global sorting of all data can be maintained at a reasonable cost. To optimize throughput, it is preferable to perform inserts in as large batches as possible. FrostDB maintains inserted data in batches of a configurable amount of bytes (1MB by default), called a _Granule_. To directly jump to data needed for a query, FrostDB maintains a sparse index of Granules. The sparse index is small enough to fully reside in memory. It is currently implemented as a [b-tree](https://github.com/google/btree) of Granules.
 
 ![Sparse index of Granules](https://docs.google.com/drawings/d/1DbGqLKsloKAEG7ydJ5n5-Vr03j4jQMqdipJyEu0goIE/export/svg)
 
-At insert time, FrostDB splits the inserted rows into the appropriate Granule according to their lower and upper bound, to maintain global sorting. Once a Granule exceeds the configured amount, the Granule is split into `N` new Granules depending.
+At insert time, FrostDB splits the inserted rows into the appropriate Granule according to their lower and upper bound, to maintain global sorting. Once a Granule exceeds the configured size, the Granule is split into 2 new Granules.
 
 ![Split of Granule](https://docs.google.com/drawings/d/1c38HQfpTPVtzatGenQaqF7oA_7NiEDbfeudxiUV5lSg/export/svg)
 
@@ -200,13 +142,9 @@ FrostDB has snapshot isolation, however, it comes with a few caveats that should
 
 More concretely, FrostDB maintains a watermark indicating that all transactions equal and lower to the watermark are safe to be read. Only write transactions obtain a _new_ transaction ID, while reads use the transaction ID of the watermark to identify data that is safe to be read. The watermark is only increased when strictly monotonic, consecutive transactions have finished. This means that a low write transaction can block higher write transactions to become available to be read. To ensure progress is made, write transactions have a timeout.
 
-This mechanism inspired by a mix of [Google Spanner](https://research.google/pubs/pub39966/), [Google Percolator](https://research.google/pubs/pub36726/) and [Highly Available Transactions](https://www.vldb.org/pvldb/vol7/p181-bailis.pdf).
+This mechanism is inspired by a mix of [Google Spanner](https://research.google/pubs/pub39966/), [Google Percolator](https://research.google/pubs/pub36726/) and [Highly Available Transactions](https://www.vldb.org/pvldb/vol7/p181-bailis.pdf).
 
 ![Transactions are released in batches indicated by the watermark](https://docs.google.com/drawings/d/1qmcMg9sXnDZix9eWSvOtWJD06yHsLpgho8M-DGF84bU/export/svg)
-
-## Roadmap
-
-* Persistence: FrostDB is currently fully in-memory.
 
 ## Acknowledgments
 
