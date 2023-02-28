@@ -1,0 +1,28 @@
+name: golangci-lint
+# This job is run when the golangci-lint job is not triggered (e.g. no go files
+# were modified). The reason this no-op job is required is to report success,
+# otherwise the lint job will be perpetually stuck in a "pending" state,
+# resulting in an inability to merge given that the lint check is required to
+# pass.
+on:
+  push:
+    tags:
+      - v*
+    branches: [ main ]
+    paths-ignore:
+      - '**.go'
+      - .golangci.yml
+      - .github/workflows/golangci-lint.yml
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**.go'
+      - .golangci.yml
+      - .github/workflows/golangci-lint.yml
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "no golangci-lint required"'
