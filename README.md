@@ -41,65 +41,7 @@ FrostDB is likely not suitable for your needs if:
 
 You can explore the [examples](https://github.com/polarsignals/frostdb/tree/main/examples) directory for sample code using FrostDB. Below is a snippet from the simple database example. It creates a database with a dynamic column schema, inserts some data, and queries it back out.
 
-```go
-// Create a new column store
-columnstore, _ := frostdb.New()
-
-// Open up a database in the column store
-database, _ := columnstore.DB(context.Background(), "simple_db")
-
-// Define our simple schema of labels and values
-schema, _ := simpleSchema()
-
-// Create a table named simple in our database
-table, _ := database.Table(
-    "simple_table",
-    frostdb.NewTableConfig(schema),
-)
-
-// Create values to insert into the database these first rows have dynamic label names of 'firstname' and 'surname'
-buf, _ := schema.NewBuffer(map[string][]string{
-    "names": {"firstname", "surname"},
-})
-
-// firstname:Frederic surname:Brancz 100
-buf.WriteRows([]parquet.Row{{
-    parquet.ValueOf("Frederic").Level(0, 1, 0),
-    parquet.ValueOf("Brancz").Level(0, 1, 1),
-    parquet.ValueOf(100).Level(0, 0, 2),
-}})
-
-// firstname:Thor surname:Hansen 10
-buf.WriteRows([]parquet.Row{{
-    parquet.ValueOf("Thor").Level(0, 1, 0),
-    parquet.ValueOf("Hansen").Level(0, 1, 1),
-    parquet.ValueOf(10).Level(0, 0, 2),
-}})
-table.InsertBuffer(context.Background(), buf)
-
-// Now we can insert rows that have middle names into our dynamic column
-buf, _ = schema.NewBuffer(map[string][]string{
-    "names": {"firstname", "middlename", "surname"},
-})
-// firstname:Matthias middlename:Oliver surname:Loibl 1
-buf.WriteRows([]parquet.Row{{
-    parquet.ValueOf("Matthias").Level(0, 1, 0),
-    parquet.ValueOf("Oliver").Level(0, 1, 1),
-    parquet.ValueOf("Loibl").Level(0, 1, 2),
-    parquet.ValueOf(1).Level(0, 0, 3),
-}})
-table.InsertBuffer(context.Background(), buf)
-
-// Create a new query engine to retrieve data and print the results
-engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
-engine.ScanTable("simple_table").
-    Filter(
-        logicalplan.Col("names.firstname").Eq(logicalplan.Literal("Frederic")),
-    ).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-    fmt.Println(r)
-    return nil
-})
-```
+https://github.com/polarsignals/frostdb/blob/d0eea82a3fcbd3e7275c9ed6c89546370516448c/examples/simple.go#L20-L94
 
 ## Design choices
 
