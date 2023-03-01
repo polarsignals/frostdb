@@ -88,7 +88,8 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 		}
 	}
 
-	if expr, ok := b.boolExpr.(*AvgExpr); ok {
+	// TODO: It probably makes sense to create arithmetics outside binaryExprProjection?
+	if expr, ok := b.boolExpr.(*ArithmeticExpr); ok {
 		return expr.Project(mem, ar)
 	}
 

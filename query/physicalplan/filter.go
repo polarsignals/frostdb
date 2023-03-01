@@ -142,40 +142,47 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Left:  left,
 			Right: right,
 		}, nil
-	case logicalplan.OpAvg:
-		var name string
+	case logicalplan.OpMul, logicalplan.OpAdd:
 		var leftColumnRef *ArrayRef
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
 			case *logicalplan.Column:
-				name = e.ColumnName
 				leftColumnRef = &ArrayRef{
-					ColumnName: "sum(" + e.ColumnName + ")",
+					ColumnName: e.ColumnName,
 				}
 				return false
 			}
 			return true
 		}))
 		if leftColumnRef == nil {
-			return nil, errors.New("left side of average expression must be a column")
+			return nil, errors.New("left side of binary expression must be a column")
 		}
 
 		var rightColumnRef *ArrayRef
+		var rightScalar scalar.Scalar
 		expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
+			case *logicalplan.LiteralExpr:
+				rightScalar = e.Value
+				return false
 			case *logicalplan.Column:
 				rightColumnRef = &ArrayRef{
-					ColumnName: "count(" + e.ColumnName + ")",
+					ColumnName: e.ColumnName,
 				}
 				return false
 			}
 			return true
 		}))
-		if rightColumnRef == nil {
-			return nil, errors.New("right side of average expression must be a column")
+		if rightColumnRef == nil && rightScalar == nil {
+			return nil, errors.New("right side of arithmetic expression must be a column or a scalar")
 		}
 
-		return &AvgExpr{name: name, left: leftColumnRef, right: rightColumnRef}, nil
+		return &ArithmeticExpr{
+			left:        leftColumnRef,
+			right:       rightColumnRef,
+			rightScalar: rightScalar,
+			operation:   expr.Op.String(), // TODO: pass the operation as constant instead of string
+		}, nil
 	default:
 		panic("unsupported binary boolean expression")
 	}
@@ -231,63 +238,130 @@ func (a *OrExpr) String() string {
 	return "(" + a.Left.String() + " OR " + a.Right.String() + ")"
 }
 
-type AvgExpr struct {
-	name  string
-	left  *ArrayRef
-	right *ArrayRef
+type ArithmeticExpr struct {
+	operation   string
+	left        *ArrayRef
+	right       *ArrayRef
+	rightScalar scalar.Scalar
 }
 
-func (a *AvgExpr) Eval(r arrow.Record) (*Bitmap, error) {
+func (m *ArithmeticExpr) Eval(r arrow.Record) (*Bitmap, error) {
 	return nil, fmt.Errorf("not used")
 }
 
-func (a *AvgExpr) String() string {
-	return "avg(" + a.left.ColumnName + ")"
-}
-
-func (a *AvgExpr) Project(mem memory.Allocator, r arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+func (m *ArithmeticExpr) Project(mem memory.Allocator, r arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	schema := r.Schema()
-
-	sumIndex := schema.FieldIndices(a.left.ColumnName)
-	if len(sumIndex) != 1 {
-		return nil, nil, fmt.Errorf("sum column for average projection for column %s not found", a.left.ColumnName)
-	}
-	countIndex := schema.FieldIndices(a.right.ColumnName)
-	if len(countIndex) != 1 {
-		return nil, nil, fmt.Errorf("count column for average projection for column %s not found", a.right.ColumnName)
-	}
-
-	sums := r.Column(sumIndex[0])
-	counts := r.Column(countIndex[0])
 
 	fields := make([]arrow.Field, 0, len(schema.Fields())-1)
 	columns := make([]arrow.Array, 0, len(schema.Fields())-1)
 
-	// Only add the fields and columns that aren't the average's underlying sum and count columns.
-	for i, field := range schema.Fields() {
-		if i != sumIndex[0] && i != countIndex[0] {
-			fields = append(fields, field)
-			columns = append(columns, r.Column(i))
+	if m.left != nil && m.rightScalar != nil {
+		leftIndex := schema.FieldIndices(m.left.ColumnName)
+		if len(leftIndex) != 1 {
+			return nil, nil, fmt.Errorf("%s column for %s expression not found", m.left.ColumnName, m.operation)
+		}
+
+		left := r.Column(leftIndex[0])
+
+		// Exclude the left column from the projection.
+		for i, field := range schema.Fields() {
+			if i != leftIndex[0] {
+				fields = append(fields, field)
+				columns = append(columns, r.Column(i))
+			}
+		}
+
+		s := m.rightScalar.(*scalar.Int64).Value
+
+		fields = append(fields, arrow.Field{Name: m.String(), Type: left.DataType()})
+		columns = append(columns, arithmeticInt64ArraysScalar(mem, left, s, m.operation))
+
+		return fields, columns, nil
+	}
+
+	if m.left != nil && m.right != nil {
+		leftIndex := schema.FieldIndices(m.left.ColumnName)
+		rightIndex := schema.FieldIndices(m.right.ColumnName)
+		if len(leftIndex) != 1 {
+			return nil, nil, fmt.Errorf("%s column for %s expression not found", m.left.ColumnName, m.operation)
+		}
+		if len(rightIndex) != 1 {
+			return nil, nil, fmt.Errorf("%s column for %s expression not found", m.right.ColumnName, m.operation)
+		}
+
+		left := r.Column(leftIndex[0])
+		right := r.Column(rightIndex[0])
+
+		// Only add the fields and columns that aren't the average's underlying sum and count columns.
+		for i, field := range schema.Fields() {
+			if i != leftIndex[0] && i != rightIndex[0] {
+				fields = append(fields, field)
+				columns = append(columns, r.Column(i))
+			}
+		}
+
+		// Add the field and column for the projected average aggregation.
+		fields = append(fields, arrow.Field{
+			Name: m.String(),
+			Type: &arrow.Int64Type{},
+		})
+		columns = append(columns, arithmeticInt64arrays(mem, left, right, m.operation))
+
+		return fields, columns, nil
+	}
+
+	return nil, nil, fmt.Errorf("unsupported arithmetic expression: %s", m)
+}
+
+func (m *ArithmeticExpr) String() string {
+	leftString := ""
+	if m.left != nil {
+		leftString = m.left.ColumnName
+	}
+	rightString := ""
+	if m.right != nil {
+		rightString = m.right.ColumnName
+	}
+	if m.rightScalar != nil {
+		rightString = m.rightScalar.String()
+	}
+
+	return leftString + m.operation + rightString
+}
+
+func arithmeticInt64arrays(pool memory.Allocator, left, right arrow.Array, operation string) arrow.Array {
+	leftInts := left.(*array.Int64)
+	rightInts := right.(*array.Int64)
+
+	res := array.NewInt64Builder(pool)
+
+	switch operation {
+	case "+":
+		for i := 0; i < leftInts.Len(); i++ {
+			res.Append(leftInts.Value(i) + rightInts.Value(i))
+		}
+	case "*":
+		for i := 0; i < leftInts.Len(); i++ {
+			res.Append(leftInts.Value(i) * rightInts.Value(i))
 		}
 	}
 
-	// Add the field and column for the projected average aggregation.
-	fields = append(fields, arrow.Field{
-		Name: "avg(" + a.name + ")",
-		Type: &arrow.Int64Type{},
-	})
-	columns = append(columns, avgInt64arrays(mem, sums, counts))
-
-	return fields, columns, nil
+	return res.NewArray()
 }
 
-func avgInt64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array {
-	sumsInts := sums.(*array.Int64)
-	countsInts := counts.(*array.Int64)
+func arithmeticInt64ArraysScalar(mem memory.Allocator, arr arrow.Array, scalar int64, operation string) arrow.Array {
+	ints := arr.(*array.Int64)
+	res := array.NewInt64Builder(mem)
 
-	res := array.NewInt64Builder(pool)
-	for i := 0; i < sumsInts.Len(); i++ {
-		res.Append(sumsInts.Value(i) / countsInts.Value(i))
+	switch operation {
+	case "+":
+		for i := 0; i < ints.Len(); i++ {
+			res.Append(ints.Value(i) + scalar)
+		}
+	case "*":
+		for i := 0; i < ints.Len(); i++ {
+			res.Append(ints.Value(i) * scalar)
+		}
 	}
 
 	return res.NewArray()

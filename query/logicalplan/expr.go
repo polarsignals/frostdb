@@ -26,6 +26,8 @@ const (
 	OpRegexNotMatch
 	OpAnd
 	OpOr
+	OpAdd
+	OpMul
 	OpAvg
 )
 
@@ -51,6 +53,10 @@ func (o Op) String() string {
 		return "&&"
 	case OpOr:
 		return "||"
+	case OpAdd:
+		return "+"
+	case OpMul:
+		return "*"
 	default:
 		panic("unknown operator")
 	}
