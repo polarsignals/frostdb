@@ -111,7 +111,13 @@ func Min(chunk parquet.ColumnChunk) parquet.Value {
 	columnIndex := chunk.ColumnIndex()
 	min := columnIndex.MinValue(0)
 	for i := 1; i < columnIndex.NumPages(); i++ {
-		if v := columnIndex.MinValue(i); compare(min, v) == 1 {
+		v := columnIndex.MinValue(i)
+		if min.IsNull() {
+			min = v
+			continue
+		}
+
+		if compare(min, v) == 1 {
 			min = v
 		}
 	}
@@ -124,7 +130,13 @@ func Max(chunk parquet.ColumnChunk) parquet.Value {
 	columnIndex := chunk.ColumnIndex()
 	max := columnIndex.MaxValue(0)
 	for i := 1; i < columnIndex.NumPages(); i++ {
-		if v := columnIndex.MaxValue(i); compare(max, v) == -1 {
+		v := columnIndex.MaxValue(i)
+		if max.IsNull() {
+			max = v
+			continue
+		}
+
+		if compare(max, v) == -1 {
 			max = v
 		}
 	}
