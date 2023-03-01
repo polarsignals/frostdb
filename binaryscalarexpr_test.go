@@ -41,7 +41,6 @@ func (f *FakeColumnIndex) IsDescending() bool         { return false }
 	should they be passed a column chunk that only has null values.
 */
 func Test_MinMax_EmptyColumnChunk(t *testing.T) {
-
 	fakeChunk := &FakeColumnChunk{
 		index: &FakeColumnIndex{
 			numpages: func() int {
