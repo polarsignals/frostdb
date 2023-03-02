@@ -142,7 +142,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Left:  left,
 			Right: right,
 		}, nil
-	case logicalplan.OpMul, logicalplan.OpAdd:
+	case logicalplan.OpAdd, logicalplan.OpSub, logicalplan.OpMul, logicalplan.OpDiv:
 		var leftColumnRef *ArrayRef
 		var leftScalar scalar.Scalar
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
@@ -272,11 +272,23 @@ func (m *ArithmeticExpr) Project(mem memory.Allocator, r arrow.Record) ([]arrow.
 			for i := int64(0); i < r.NumRows(); i++ {
 				res.Append(left + right)
 			}
+		case "-":
+			// Subtract the two scalars and return a single value as often as the number of rows.
+			for i := int64(0); i < r.NumRows(); i++ {
+				res.Append(left - right)
+			}
 		case "*":
 			// Multiply the two scalars and return a single value as often as the number of rows.
 			for i := int64(0); i < r.NumRows(); i++ {
 				res.Append(left * right)
 			}
+		case "/":
+			// Divide the two scalars and return a single value as often as the number of rows.
+			for i := int64(0); i < r.NumRows(); i++ {
+				res.Append(left / right)
+			}
+		default:
+			return nil, nil, fmt.Errorf("unsupported operation %s", m.operation)
 		}
 
 		fields = append(fields, arrow.Field{Name: m.String(), Type: arrow.PrimitiveTypes.Int64})
@@ -309,15 +321,22 @@ func (m *ArithmeticExpr) Project(mem memory.Allocator, r arrow.Record) ([]arrow.
 		}
 
 		var s int64
+		var side scalarSide
 		if m.leftScalar != nil {
+			side = left
 			s = m.leftScalar.(*scalar.Int64).Value
 		}
 		if m.rightScalar != nil {
+			side = right
 			s = m.rightScalar.(*scalar.Int64).Value
 		}
 
+		if m.operation == "/" && side == right && s == 0 {
+			return nil, nil, fmt.Errorf("division by zero")
+		}
+
 		fields = append(fields, arrow.Field{Name: m.String(), Type: arr.DataType()})
-		columns = append(columns, arithmeticInt64ArraysScalar(mem, arr, s, m.operation))
+		columns = append(columns, arithmeticInt64ArraysScalar(mem, arr, s, m.operation, side))
 
 		return fields, columns, nil
 	}
@@ -386,16 +405,33 @@ func arithmeticInt64arrays(pool memory.Allocator, left, right arrow.Array, opera
 		for i := 0; i < leftInts.Len(); i++ {
 			res.Append(leftInts.Value(i) + rightInts.Value(i))
 		}
+	case "-":
+		for i := 0; i < leftInts.Len(); i++ {
+			res.Append(leftInts.Value(i) - rightInts.Value(i))
+		}
 	case "*":
 		for i := 0; i < leftInts.Len(); i++ {
 			res.Append(leftInts.Value(i) * rightInts.Value(i))
 		}
+	case "/":
+		for i := 0; i < leftInts.Len(); i++ {
+			res.Append(leftInts.Value(i) / rightInts.Value(i))
+		}
+	default:
+		panic(fmt.Sprintf("unsupported operation %s", operation))
 	}
 
 	return res.NewArray()
 }
 
-func arithmeticInt64ArraysScalar(mem memory.Allocator, arr arrow.Array, scalar int64, operation string) arrow.Array {
+type scalarSide bool
+
+const (
+	left  scalarSide = false
+	right scalarSide = true
+)
+
+func arithmeticInt64ArraysScalar(mem memory.Allocator, arr arrow.Array, scalar int64, operation string, side scalarSide) arrow.Array {
 	ints := arr.(*array.Int64)
 	res := array.NewInt64Builder(mem)
 
@@ -404,10 +440,35 @@ func arithmeticInt64ArraysScalar(mem memory.Allocator, arr arrow.Array, scalar i
 		for i := 0; i < ints.Len(); i++ {
 			res.Append(ints.Value(i) + scalar)
 		}
+	case "-":
+		// For subtraction, we need to know which side of the expression is the scalar.
+		if side == left {
+			for i := 0; i < ints.Len(); i++ {
+				res.Append(scalar - ints.Value(i))
+			}
+		} else {
+			for i := 0; i < ints.Len(); i++ {
+				res.Append(ints.Value(i) - scalar)
+			}
+		}
 	case "*":
 		for i := 0; i < ints.Len(); i++ {
 			res.Append(ints.Value(i) * scalar)
 		}
+	case "/":
+		// For division, we need to know which side of the expression is the scalar.
+		if side == left {
+			for i := 0; i < ints.Len(); i++ {
+				res.Append(scalar / ints.Value(i))
+			}
+		} else {
+			for i := 0; i < ints.Len(); i++ {
+				res.Append(ints.Value(i) / scalar)
+			}
+		}
+	default:
+		panic(fmt.Sprintf("unsupported operation %s", operation))
+
 	}
 
 	return res.NewArray()

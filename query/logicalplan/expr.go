@@ -27,7 +27,9 @@ const (
 	OpAnd
 	OpOr
 	OpAdd
+	OpSub
 	OpMul
+	OpDiv
 	OpAvg
 )
 
@@ -55,8 +57,12 @@ func (o Op) String() string {
 		return "||"
 	case OpAdd:
 		return "+"
+	case OpSub:
+		return "-"
 	case OpMul:
 		return "*"
+	case OpDiv:
+		return "/"
 	default:
 		panic("unknown operator")
 	}

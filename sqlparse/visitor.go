@@ -129,18 +129,23 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			frostDBOp = logicalplan.OpEq
 		case opcode.NE:
 			frostDBOp = logicalplan.OpNotEq
-		case opcode.Plus:
+		case opcode.Plus, opcode.Minus, opcode.Mul, opcode.Div:
+			op := logicalplan.OpUnknown
+			switch expr.Op {
+			case opcode.Plus:
+				op = logicalplan.OpAdd
+			case opcode.Minus:
+				op = logicalplan.OpSub
+			case opcode.Mul:
+				op = logicalplan.OpMul
+			case opcode.Div:
+				op = logicalplan.OpDiv
+			}
+
 			v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
 				Left:  leftExpr,
 				Right: rightExpr,
-				Op:    logicalplan.OpAdd,
-			})
-			return nil
-		case opcode.Mul:
-			v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
-				Left:  leftExpr,
-				Right: rightExpr,
-				Op:    logicalplan.OpMul,
+				Op:    op,
 			})
 			return nil
 		case opcode.LogicAnd:

@@ -1,0 +1,55 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, timestamp, value)
+test 1   1
+test 2   2
+test 3   3
+test 4   4
+test 5   5
+----
+
+exec
+select 8 / 4
+----
+2
+2
+2
+2
+2
+
+exec
+select timestamp, 6 / 3
+----
+1       2
+2       2
+3       2
+4       2
+5       2
+
+exec
+select value / 2
+----
+0
+1
+1
+2
+2
+
+exec
+select 2 / value
+----
+2
+1
+0
+0
+0
+
+exec
+select timestamp / value
+----
+1
+1
+1
+1
+1
