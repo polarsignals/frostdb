@@ -353,11 +353,6 @@ func Build(
 			oInfo.applyFilter(plan.Filter.Expr)
 			oInfo.nodeMaintainsOrdering()
 		case plan.Aggregation != nil:
-			schema := s.ParquetSchema()
-			if schema == nil {
-				visitErr = fmt.Errorf("aggregation got empty schema")
-				return false
-			}
 			ordered, err := shouldPlanOrderedAggregate(execOpts, oInfo, plan.Aggregation)
 			if err != nil {
 				// TODO(asubiotto): Log the error.

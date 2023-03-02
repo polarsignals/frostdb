@@ -1435,7 +1435,7 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 	// Query with an aggregat query
 	pool := memory.NewGoAllocator()
 	engine := query.NewEngine(pool, db.TableProvider())
-	err = engine.ScanTable(t.Name()).
+	err = engine.ScanTable("test").
 		Aggregate(
 			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.label2")},
