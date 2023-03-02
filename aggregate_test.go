@@ -207,42 +207,88 @@ func TestAggregationProjection(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	records := []arrow.Record{}
-	err = engine.ScanTable("test").
-		Aggregate(
-			[]logicalplan.Expr{
-				logicalplan.Sum(logicalplan.Col("value")),
-				logicalplan.Max(logicalplan.Col("value")),
-			},
-			[]logicalplan.Expr{
+	t.Run("simple", func(t *testing.T) {
+		records := []arrow.Record{}
+		err = engine.ScanTable("test").
+			Aggregate(
+				[]logicalplan.Expr{
+					logicalplan.Sum(logicalplan.Col("value")),
+					logicalplan.Max(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.DynCol("labels"),
+					logicalplan.Col("timestamp"),
+				},
+			).
+			Project(
+				logicalplan.Col(logicalplan.Sum(logicalplan.Col("value")).Name()),
+				logicalplan.Col(logicalplan.Max(logicalplan.Col("value")).Name()),
 				logicalplan.DynCol("labels"),
-				logicalplan.Col("timestamp"),
-			},
-		).
-		Project(
-			logicalplan.Col(logicalplan.Sum(logicalplan.Col("value")).Name()),
-			logicalplan.Col(logicalplan.Max(logicalplan.Col("value")).Name()),
-			logicalplan.DynCol("labels"),
-			logicalplan.Col("timestamp").Gt(logicalplan.Literal(1)).Alias("timestamp"),
-		).
-		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
-			records = append(records, ar)
-			ar.Retain()
-			return nil
-		})
-	require.NoError(t, err)
-	require.Equal(t, 1, len(records))
-	record := records[0]
-	require.Equal(t, int64(7), record.NumCols())
-	require.Equal(t, int64(3), record.NumRows())
+				logicalplan.Col("timestamp").Gt(logicalplan.Literal(1)).Alias("timestamp"),
+			).
+			Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+				records = append(records, ar)
+				ar.Retain()
+				return nil
+			})
+		require.NoError(t, err)
+		require.Equal(t, 1, len(records))
+		record := records[0]
+		require.Equal(t, int64(7), record.NumCols())
+		require.Equal(t, int64(3), record.NumRows())
 
-	require.True(t, record.Schema().HasField("timestamp"))
-	require.True(t, record.Schema().HasField("labels.label1"))
-	require.True(t, record.Schema().HasField("labels.label2"))
-	require.True(t, record.Schema().HasField("labels.label3"))
-	require.True(t, record.Schema().HasField("labels.label4"))
-	require.True(t, record.Schema().HasField("sum(value)"))
-	require.True(t, record.Schema().HasField("max(value)"))
+		require.True(t, record.Schema().HasField("timestamp"))
+		require.True(t, record.Schema().HasField("labels.label1"))
+		require.True(t, record.Schema().HasField("labels.label2"))
+		require.True(t, record.Schema().HasField("labels.label3"))
+		require.True(t, record.Schema().HasField("labels.label4"))
+		require.True(t, record.Schema().HasField("sum(value)"))
+		require.True(t, record.Schema().HasField("max(value)"))
+	})
+
+	// This test aggregates the values column with a sum and count
+	// and then uses projection to run the division to get the average.
+	t.Run("average", func(t *testing.T) {
+		records := []arrow.Record{}
+		err = engine.ScanTable("test").
+			Aggregate(
+				[]logicalplan.Expr{
+					logicalplan.Sum(logicalplan.Col("value")).Alias("value_sum"),
+					logicalplan.Count(logicalplan.Col("value")).Alias("value_count"),
+				},
+				[]logicalplan.Expr{
+					logicalplan.DynCol("labels"),
+					logicalplan.Col("timestamp"),
+				},
+			).
+			Project(
+				logicalplan.Col("value_sum").Div(
+					logicalplan.Col("value_count"),
+				).Alias("avg(value)"),
+			).
+			Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+				records = append(records, ar)
+				ar.Retain()
+				return nil
+			})
+
+		require.NoError(t, err)
+		require.Equal(t, 1, len(records))
+		record := records[0]
+		require.Equal(t, int64(6), record.NumCols())
+		require.Equal(t, int64(3), record.NumRows())
+
+		// require.True(t, record.Schema().HasField("avg(value)"))
+		require.True(t, record.Schema().HasField("value_sum/value_count"))
+		index := record.Schema().FieldIndices("value_sum/value_count")[0]
+		values := record.Column(index).(*array.Int64).Int64Values()
+
+		sort.Slice(values, func(i, j int) bool {
+			return values[i] < values[j]
+		})
+
+		require.Equal(t, []int64{1, 2, 3}, values)
+	})
 }
 
 // go test -bench=BenchmarkAggregation -benchmem -count=10 . | tee BenchmarkAggregation
