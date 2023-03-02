@@ -647,6 +647,10 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 // the set of values. It is aware of the final stage and chooses the aggregation
 // function appropriately.
 func runAggregation(finalStage bool, fn logicalplan.AggFunc, pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	if len(arrs) == 0 {
+		return array.NewInt64Builder(pool).NewArray(), nil
+	}
+
 	aggFunc, err := chooseAggregationFunction(fn, arrs[0].DataType())
 	if err != nil {
 		return nil, err
