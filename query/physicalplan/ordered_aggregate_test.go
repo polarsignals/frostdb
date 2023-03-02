@@ -169,7 +169,7 @@ func TestOrderedAggregate(t *testing.T) {
 				Aggregation{
 					expr:       logicalplan.Col(valColName),
 					resultName: "result",
-					function:   &Int64SumAggregation{},
+					function:   logicalplan.AggFuncSum,
 				},
 				groupCols,
 				true,
@@ -275,7 +275,7 @@ func TestOrderedAggregateDynCols(t *testing.T) {
 		trace.NewNoopTracerProvider().Tracer(""),
 		Aggregation{
 			expr:     logicalplan.Col(valColName),
-			function: &Int64SumAggregation{},
+			function: logicalplan.AggFuncSum,
 		},
 		[]logicalplan.Expr{
 			logicalplan.DynCol(dynColName),

@@ -46,7 +46,7 @@ type OrderedAggregate struct {
 	tracer                trace.Tracer
 	resultColumnName      string
 	groupByColumnMatchers []logicalplan.Expr
-	aggregationFunction   AggregationFunction
+	aggregationFunction   logicalplan.AggFunc
 	next                  PhysicalPlan
 	columnToAggregate     logicalplan.Expr
 	// Indicate is this is the last aggregation or if this is an aggregation
