@@ -10,13 +10,22 @@ test 5   5
 ----
 
 exec
-select timestamp * value
+select 3 * 3
 ----
-1
-4
 9
-16
-25
+9
+9
+9
+9
+
+exec
+select timestamp, 3 * 3
+----
+1       9
+2       9
+3       9
+4       9
+5       9
 
 exec
 select value * 2
@@ -26,3 +35,21 @@ select value * 2
 6
 8
 10
+
+exec
+select 2 * value
+----
+2
+4
+6
+8
+10
+
+exec
+select timestamp * value
+----
+1
+4
+9
+16
+25

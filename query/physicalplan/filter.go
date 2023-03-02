@@ -144,8 +144,12 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 		}, nil
 	case logicalplan.OpMul, logicalplan.OpAdd:
 		var leftColumnRef *ArrayRef
+		var leftScalar scalar.Scalar
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
+			case *logicalplan.LiteralExpr:
+				leftScalar = e.Value
+				return false
 			case *logicalplan.Column:
 				leftColumnRef = &ArrayRef{
 					ColumnName: e.ColumnName,
@@ -154,8 +158,8 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			}
 			return true
 		}))
-		if leftColumnRef == nil {
-			return nil, errors.New("left side of binary expression must be a column")
+		if leftColumnRef == nil && leftScalar == nil {
+			return nil, errors.New("left side of arithmetic expression must be a column or a scalar")
 		}
 
 		var rightColumnRef *ArrayRef
@@ -179,6 +183,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 
 		return &ArithmeticExpr{
 			left:        leftColumnRef,
+			leftScalar:  leftScalar,
 			right:       rightColumnRef,
 			rightScalar: rightScalar,
 			operation:   expr.Op.String(), // TODO: pass the operation as constant instead of string
@@ -241,6 +246,7 @@ func (a *OrExpr) String() string {
 type ArithmeticExpr struct {
 	operation   string
 	left        *ArrayRef
+	leftScalar  scalar.Scalar
 	right       *ArrayRef
 	rightScalar scalar.Scalar
 }
@@ -255,26 +261,63 @@ func (m *ArithmeticExpr) Project(mem memory.Allocator, r arrow.Record) ([]arrow.
 	fields := make([]arrow.Field, 0, len(schema.Fields())-1)
 	columns := make([]arrow.Array, 0, len(schema.Fields())-1)
 
-	if m.left != nil && m.rightScalar != nil {
-		leftIndex := schema.FieldIndices(m.left.ColumnName)
-		if len(leftIndex) != 1 {
-			return nil, nil, fmt.Errorf("%s column for %s expression not found", m.left.ColumnName, m.operation)
+	if m.leftScalar != nil && m.rightScalar != nil {
+		left := m.leftScalar.(*scalar.Int64).Value
+		right := m.rightScalar.(*scalar.Int64).Value
+
+		res := array.NewInt64Builder(mem)
+		switch m.operation {
+		case "+":
+			// Add the two scalars and return a single value as often as the number of rows.
+			for i := int64(0); i < r.NumRows(); i++ {
+				res.Append(left + right)
+			}
+		case "*":
+			// Multiply the two scalars and return a single value as often as the number of rows.
+			for i := int64(0); i < r.NumRows(); i++ {
+				res.Append(left * right)
+			}
 		}
 
-		left := r.Column(leftIndex[0])
+		fields = append(fields, arrow.Field{Name: m.String(), Type: arrow.PrimitiveTypes.Int64})
+		columns = append(columns, res.NewArray())
 
-		// Exclude the left column from the projection.
+		return fields, columns, nil
+	}
+
+	if (m.left != nil && m.rightScalar != nil) || (m.right != nil && m.leftScalar != nil) {
+		columnName := ""
+		if m.left != nil {
+			columnName = m.left.ColumnName
+		}
+		if m.right != nil {
+			columnName = m.right.ColumnName
+		}
+		arrIndex := schema.FieldIndices(columnName)
+		if len(arrIndex) != 1 {
+			return nil, nil, fmt.Errorf("%s column for %s expression not found", columnName, m.operation)
+		}
+
+		arr := r.Column(arrIndex[0])
+
+		// Exclude the arr column from the projection.
 		for i, field := range schema.Fields() {
-			if i != leftIndex[0] {
+			if i != arrIndex[0] {
 				fields = append(fields, field)
 				columns = append(columns, r.Column(i))
 			}
 		}
 
-		s := m.rightScalar.(*scalar.Int64).Value
+		var s int64
+		if m.leftScalar != nil {
+			s = m.leftScalar.(*scalar.Int64).Value
+		}
+		if m.rightScalar != nil {
+			s = m.rightScalar.(*scalar.Int64).Value
+		}
 
-		fields = append(fields, arrow.Field{Name: m.String(), Type: left.DataType()})
-		columns = append(columns, arithmeticInt64ArraysScalar(mem, left, s, m.operation))
+		fields = append(fields, arrow.Field{Name: m.String(), Type: arr.DataType()})
+		columns = append(columns, arithmeticInt64ArraysScalar(mem, arr, s, m.operation))
 
 		return fields, columns, nil
 	}
@@ -317,6 +360,9 @@ func (m *ArithmeticExpr) String() string {
 	leftString := ""
 	if m.left != nil {
 		leftString = m.left.ColumnName
+	}
+	if m.leftScalar != nil {
+		leftString = m.leftScalar.String()
 	}
 	rightString := ""
 	if m.right != nil {

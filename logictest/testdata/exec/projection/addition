@@ -10,13 +10,22 @@ test 5   5
 ----
 
 exec
-select timestamp + value
+select 2 + 2
 ----
-2
 4
-6
-8
-10
+4
+4
+4
+4
+
+exec
+select timestamp, 3 + 3
+----
+1       6
+2       6
+3       6
+4       6
+5       6
 
 exec
 select value + 2
@@ -26,3 +35,21 @@ select value + 2
 5
 6
 7
+
+exec
+select 2 + value
+----
+3
+4
+5
+6
+7
+
+exec
+select timestamp + value
+----
+2
+4
+6
+8
+10
