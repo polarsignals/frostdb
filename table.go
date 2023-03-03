@@ -1339,63 +1339,121 @@ func (t *TableBlock) abortCompaction(granule *Granule) {
 	}
 }
 
+func mergeDynCols(a, b map[string][]string) map[string][]string {
+	for key, vals := range b {
+		a[key] = append(a[key], vals...)
+	}
+
+	return bufutils.Dedupe(a)
+}
+
+/*
+	Serialize the table block into a single Parquet file.
+	The Serialize function will walk all Granules in the block, compact each Granule into a sorted set of Row groups, then write those
+	row groups to the final Parquet file, repeating for each Granule. This leverages the fact that the index has alreayd sorted the Granules
+	so no need to sort them further than the intra-granule parts.
+*/
 func (t *TableBlock) Serialize(writer io.Writer) error {
-	ctx := context.Background()
+	dynCols := map[string][]string{} // NOTE: it would be nice if we didn't have to go back and find all the dynamic columns...
+	t.Index().Ascend(func(i btree.Item) bool {
+		g := i.(*Granule)
 
-	// Read all row groups
-	rowGroups := []dynparquet.DynamicRowGroup{}
-
-	rowGroupsChan := make(chan any)
-
-	errg := &errgroup.Group{}
-	errg.Go(func() error {
-		for rg := range rowGroupsChan {
-			switch p := rg.(type) {
-			case arrow.Record:
-				b := &bytes.Buffer{}
-				w, err := t.table.config.schema.GetWriter(b, pqarrow.RecordDynamicCols(p))
-				if err != nil {
-					return err
-				}
-
-				if err := pqarrow.RecordToFile(t.table.config.schema, w.ParquetWriter(), p); err != nil {
-					return err
-				}
-
-				f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
-				if err != nil {
-					return err
-				}
-
-				buf, err := dynparquet.NewSerializedBuffer(f)
-				if err != nil {
-					return err
-				}
-
-				rowGroups = append(rowGroups, buf.MultiDynamicRowGroup())
-
-			case dynparquet.DynamicRowGroup:
-				rowGroups = append(rowGroups, p)
-			default:
-				return fmt.Errorf("unknown part type: %T", p)
+		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
+			buf, err := p.AsSerializedBuffer(t.table.config.schema)
+			if err != nil {
+				panic("fuck")
 			}
-		}
-		return nil
-	})
 
-	// Collect all the row groups just to determine the dynamic cols
-	err := t.RowGroupIterator(ctx, math.MaxUint64, &AlwaysTrueFilter{}, rowGroupsChan)
+			for key, vals := range buf.DynamicColumns() {
+				dynCols[key] = append(dynCols[key], vals...)
+			}
+			return true
+		})
+
+		return true
+	})
+	dynCols = bufutils.Dedupe(dynCols)
+	w, err := t.table.config.schema.GetWriter(writer, dynCols)
 	if err != nil {
 		return err
 	}
+	defer t.table.config.schema.PutWriter(w)
+	defer w.Close()
 
-	close(rowGroupsChan)
-	if err := errg.Wait(); err != nil {
-		return err
+	buffSize := 256
+	if t.table.config.rowGroupSize > 0 {
+		buffSize = t.table.config.rowGroupSize
+	}
+	rowGroupRowsWritten := 0
+
+	// Merge all parts in a Granule and write that granule to the file
+	rowsBuf := make([]parquet.Row, buffSize)
+	var ascendErr error
+	t.Index().Ascend(func(i btree.Item) bool {
+		g := i.(*Granule)
+
+		// Collect all row groups in each part in granule
+		rgs := []dynparquet.DynamicRowGroup{}
+		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
+			buf, err := p.AsSerializedBuffer(t.table.config.schema)
+			if err != nil {
+				ascendErr = err
+				return false
+			}
+
+			f := buf.ParquetFile()
+			for i := range f.RowGroups() {
+				rgs = append(rgs, buf.DynamicRowGroup(i))
+			}
+
+			return true
+		})
+		if ascendErr != nil {
+			return false
+		}
+
+		// Merge the Granule row groups
+		merged, err := t.table.config.schema.MergeRowGroups(dynCols, rgs)
+		if err != nil {
+			ascendErr = err
+			return false
+		}
+		rows := merged.Rows()
+		defer rows.Close()
+
+		// Write the merged row groups to the writer
+		for i, n := 0, 0; i < int(merged.NumRows()); i += n {
+			n, err = rows.ReadRows(rowsBuf)
+			if err != nil && err != io.EOF {
+				ascendErr = err
+				return false
+			}
+			if n == 0 {
+				return true
+			}
+
+			if _, err = w.WriteRows(rowsBuf[:n]); err != nil {
+				ascendErr = err
+				return false
+			}
+
+			rowGroupRowsWritten += n
+			if t.table.config.rowGroupSize > 0 && rowGroupRowsWritten >= t.table.config.rowGroupSize {
+				if err := w.Flush(); err != nil {
+					ascendErr = err
+					return false
+				}
+				rowGroupRowsWritten = 0
+			}
+		}
+
+		return true
+	})
+	if ascendErr != nil {
+		return ascendErr
 	}
 
-	// Iterate over all the row groups, and write them to storage
-	return t.writeRowGroups(writer, rowGroups)
+	return nil
 }
 
 // writeRowGroups writes a set of dynamic row groups to a writer.

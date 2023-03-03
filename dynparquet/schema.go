@@ -1187,6 +1187,45 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowG
 	}, nil
 }
 
+func (s *Schema) MergeRowGroups(dynamicColumns map[string][]string, rowGroups []DynamicRowGroup) (DynamicRowGroup, error) {
+	if len(rowGroups) == 1 {
+		return rowGroups[0], nil
+	}
+
+	ps, err := s.DynamicParquetSchema(dynamicColumns)
+	if err != nil {
+		return nil, fmt.Errorf("create merged parquet schema merging %d row groups: %w", len(rowGroups), err)
+	}
+
+	cols := s.parquetSortingColumns(dynamicColumns)
+
+	adapters := make([]parquet.RowGroup, 0, len(rowGroups))
+	for _, rowGroup := range rowGroups {
+		adapters = append(adapters, NewDynamicRowGroupMergeAdapter(
+			ps,
+			cols,
+			dynamicColumns,
+			rowGroup,
+		))
+	}
+
+	merge, err := parquet.MergeRowGroups(
+		adapters,
+		parquet.SortingRowGroupConfig(
+			parquet.SortingColumns(cols...),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create merge row groups: %w", err)
+	}
+
+	return &MergedRowGroup{
+		RowGroup: merge,
+		DynCols:  dynamicColumns,
+		fields:   ps.Fields(),
+	}, nil
+}
+
 // mergeDynamicRowGroupDynamicColumns merges the concrete dynamic column names
 // of multiple DynamicRowGroups into a single, merged, superset of dynamic
 // column names.
