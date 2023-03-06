@@ -1143,55 +1143,37 @@ func (r *MergedRowGroup) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(r, r.fields)
 }
 
+type mergeOption struct {
+	dynamicColumns map[string][]string
+}
+
+type MergeOption func(m *mergeOption)
+
+func WithDynamicCols(cols map[string][]string) MergeOption {
+	return func(m *mergeOption) {
+		m.dynamicColumns = cols
+	}
+}
+
 // MergeDynamicRowGroups merges the given dynamic row groups into a single
 // dynamic row group. It merges the parquet schema in a non-conflicting way by
 // merging all the concrete dynamic column names and generating a superset
 // parquet schema that all given dynamic row groups are compatible with.
-func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowGroup, error) {
+func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup, options ...MergeOption) (DynamicRowGroup, error) {
 	if len(rowGroups) == 1 {
 		return rowGroups[0], nil
 	}
 
-	dynamicColumns := mergeDynamicRowGroupDynamicColumns(rowGroups)
-	ps, err := s.DynamicParquetSchema(dynamicColumns)
-	if err != nil {
-		return nil, fmt.Errorf("create merged parquet schema merging %d row groups: %w", len(rowGroups), err)
+	// Apply options
+	m := &mergeOption{}
+	for _, option := range options {
+		option(m)
 	}
 
-	cols := s.parquetSortingColumns(dynamicColumns)
-
-	adapters := make([]parquet.RowGroup, 0, len(rowGroups))
-	for _, rowGroup := range rowGroups {
-		adapters = append(adapters, NewDynamicRowGroupMergeAdapter(
-			ps,
-			cols,
-			dynamicColumns,
-			rowGroup,
-		))
+	dynamicColumns := m.dynamicColumns
+	if dynamicColumns == nil {
+		dynamicColumns = mergeDynamicRowGroupDynamicColumns(rowGroups)
 	}
-
-	merge, err := parquet.MergeRowGroups(
-		adapters,
-		parquet.SortingRowGroupConfig(
-			parquet.SortingColumns(cols...),
-		),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create merge row groups: %w", err)
-	}
-
-	return &MergedRowGroup{
-		RowGroup: merge,
-		DynCols:  dynamicColumns,
-		fields:   ps.Fields(),
-	}, nil
-}
-
-func (s *Schema) MergeRowGroups(dynamicColumns map[string][]string, rowGroups []DynamicRowGroup) (DynamicRowGroup, error) {
-	if len(rowGroups) == 1 {
-		return rowGroups[0], nil
-	}
-
 	ps, err := s.DynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, fmt.Errorf("create merged parquet schema merging %d row groups: %w", len(rowGroups), err)

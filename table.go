@@ -1416,7 +1416,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 		}
 
 		// Merge the Granule row groups
-		merged, err := t.table.config.schema.MergeRowGroups(dynCols, rgs)
+		merged, err := t.table.config.schema.MergeDynamicRowGroups(rgs, dynparquet.WithDynamicCols(dynCols))
 		if err != nil {
 			ascendErr = err
 			return false
