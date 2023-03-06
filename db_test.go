@@ -1384,3 +1384,64 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 		})
 	}
 }
+
+func Test_DB_ReadOnlyQuery(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.NewSampleSchema(),
+	)
+
+	logger := newTestLogger(t)
+
+	dir := t.TempDir()
+	bucket, err := filesystem.NewBucket(dir)
+	require.NoError(t, err)
+
+	c, err := New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithBucketStorage(bucket),
+		WithActiveMemorySize(100*1024),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(t, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+	}
+	require.NoError(t, table.EnsureCompaction())
+	require.NoError(t, c.Close())
+
+	c, err = New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithBucketStorage(bucket),
+		WithActiveMemorySize(100*1024),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+	require.NoError(t, c.ReplayWALs(context.Background()))
+
+	// Query with an aggregat query
+	pool := memory.NewGoAllocator()
+	engine := query.NewEngine(pool, db.TableProvider())
+	err = engine.ScanTable("test").
+		Aggregate(
+			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]logicalplan.Expr{logicalplan.Col("labels.label2")},
+		).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			return nil
+		})
+	require.NoError(t, err)
+}

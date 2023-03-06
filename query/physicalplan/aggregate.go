@@ -13,7 +13,6 @@ import (
 	"github.com/apache/arrow/go/v10/arrow/memory"
 	"github.com/apache/arrow/go/v10/arrow/scalar"
 	"github.com/dgryski/go-metro"
-	"github.com/segmentio/parquet-go"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
@@ -23,7 +22,6 @@ import (
 func Aggregate(
 	pool memory.Allocator,
 	tracer trace.Tracer,
-	s *parquet.Schema,
 	agg *logicalplan.Aggregation,
 	final bool,
 	ordered bool,
@@ -58,18 +56,8 @@ func Aggregate(
 			return nil, errors.New("aggregation column not found")
 		}
 
-		dataType, err := expr.DataType(s)
-		if err != nil {
-			return nil, err
-		}
-
-		f, err := chooseAggregationFunction(aggFunc, dataType)
-		if err != nil {
-			return nil, err
-		}
-
 		aggregation.resultName = expr.Name()
-		aggregation.function = f
+		aggregation.function = aggFunc
 
 		aggregations = append(aggregations, aggregation)
 	}
@@ -137,7 +125,7 @@ func chooseAggregationFunction(
 type Aggregation struct {
 	expr       logicalplan.Expr
 	resultName string
-	function   AggregationFunction
+	function   logicalplan.AggFunc
 	arrays     []builder.ColumnBuilder // TODO: These can actually live outside this struct and be shared. Only at the very end will they be read by each column and then aggregated separately.
 }
 
@@ -658,16 +646,20 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 // runAggregation is a helper to run the given aggregation function given
 // the set of values. It is aware of the final stage and chooses the aggregation
 // function appropriately.
-func runAggregation(
-	finalStage bool,
-	fn AggregationFunction,
-	pool memory.Allocator,
-	arrs []arrow.Array,
-) (arrow.Array, error) {
-	if _, ok := fn.(*CountAggregation); ok && finalStage {
+func runAggregation(finalStage bool, fn logicalplan.AggFunc, pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	if len(arrs) == 0 {
+		return array.NewInt64Builder(pool).NewArray(), nil
+	}
+
+	aggFunc, err := chooseAggregationFunction(fn, arrs[0].DataType())
+	if err != nil {
+		return nil, err
+	}
+
+	if _, ok := aggFunc.(*CountAggregation); ok && finalStage {
 		// The final stage of aggregation needs to sum up all the counts of the
 		// previous steps, instead of counting the previous counts.
 		return (&Int64SumAggregation{}).Aggregate(pool, arrs)
 	}
-	return fn.Aggregate(pool, arrs)
+	return aggFunc.Aggregate(pool, arrs)
 }

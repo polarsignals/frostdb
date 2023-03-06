@@ -353,11 +353,6 @@ func Build(
 			oInfo.applyFilter(plan.Filter.Expr)
 			oInfo.nodeMaintainsOrdering()
 		case plan.Aggregation != nil:
-			schema := s.ParquetSchema()
-			if schema == nil {
-				visitErr = fmt.Errorf("aggregation got empty schema")
-				return false
-			}
 			ordered, err := shouldPlanOrderedAggregate(execOpts, oInfo, plan.Aggregation)
 			if err != nil {
 				// TODO(asubiotto): Log the error.
@@ -373,7 +368,7 @@ func Build(
 				}
 			}
 			for i := 0; i < len(prev); i++ {
-				a, err := Aggregate(pool, tracer, schema, plan.Aggregation, sync == nil, ordered)
+				a, err := Aggregate(pool, tracer, plan.Aggregation, sync == nil, ordered)
 				if err != nil {
 					visitErr = err
 					return false
@@ -387,7 +382,7 @@ func Build(
 			if sync != nil {
 				// Plan an aggregate operator to run an aggregation on all the
 				// aggregations.
-				a, err := Aggregate(pool, tracer, schema, plan.Aggregation, true, ordered)
+				a, err := Aggregate(pool, tracer, plan.Aggregation, true, ordered)
 				if err != nil {
 					visitErr = err
 					return false
