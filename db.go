@@ -84,15 +84,15 @@ func New(
 
 	s.metrics = metrics{
 		shutdownDuration: promauto.With(s.reg).NewHistogram(prometheus.HistogramOpts{
-			Name: "shutdown_duration",
+			Name: "frostdb_shutdown_duration",
 			Help: "time it takes for the columnarstore to complete a full shutdown.",
 		}),
 		shutdownStarted: promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
-			Name: "shutdown_started",
+			Name: "frostdb_shutdown_started",
 			Help: "Indicates a shutdown of the columnarstore has started.",
 		}),
 		shutdownCompleted: promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
-			Name: "shutdown_completed",
+			Name: "frostdb_shutdown_completed",
 			Help: "Indicates a shutdown of the columnarstore has completed.",
 		}),
 	}
@@ -359,7 +359,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
 		db.metrics = &dbMetrics{
 			txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-				Name: "tx_high_watermark",
+				Name: "frostdb_tx_high_watermark",
 				Help: "The highest transaction number that has been released to be read",
 			}, func() float64 {
 				return float64(db.highWatermark.Load())

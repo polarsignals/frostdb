@@ -209,48 +209,48 @@ func newTable(
 		wal:    wal,
 		metrics: &tableMetrics{
 			numParts: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "num_parts",
+				Name: "frostdb_table_num_parts",
 				Help: "Number of parts currently active.",
 			}),
 			blockRotated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "blocks_rotated_total",
+				Name: "frostdb_table_blocks_rotated_total",
 				Help: "Number of table blocks that have been rotated.",
 			}),
 			granulesCreated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "granules_created_total",
+				Name: "frostdb_table_granules_created_total",
 				Help: "Number of granules created.",
 			}),
 			compactions: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "granules_compactions_total",
+				Name: "frostdb_table_granules_compactions_total",
 				Help: "Number of granule compactions.",
 			}),
 			granulesSplits: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "granules_splits_total",
+				Name: "frostdb_table_granules_splits_total",
 				Help: "Number of granules splits executed.",
 			}),
 			granulesCompactionAborted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "granules_compaction_aborted_total",
+				Name: "frostdb_table_granules_compaction_aborted_total",
 				Help: "Number of aborted granules compaction.",
 			}),
 			rowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "rows_inserted_total",
+				Name: "frostdb_table_rows_inserted_total",
 				Help: "Number of rows inserted into table.",
 			}),
 			zeroRowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "zero_rows_inserted_total",
+				Name: "frostdb_table_zero_rows_inserted_total",
 				Help: "Number of times it was attempted to insert zero rows into the table.",
 			}),
 			rowInsertSize: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-				Name:    "row_insert_size",
+				Name:    "frostdb_table_row_insert_size",
 				Help:    "Size of batch inserts into table.",
 				Buckets: prometheus.ExponentialBuckets(1, 2, 10),
 			}),
 			lastCompletedBlockTx: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "last_completed_block_tx",
+				Name: "frostdb_table_last_completed_block_tx",
 				Help: "Last completed block transaction.",
 			}),
 			unsortedInserts: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "unsorted_inserts_total",
+				Name: "frostdb_table_unsorted_inserts_total",
 				Help: "The number of times a buffer to insert was not in sorted order.",
 			}),
 			compactionMetrics: newCompactionMetrics(reg, float64(db.columnStore.granuleSizeBytes)),
@@ -265,7 +265,7 @@ func newTable(
 	t.pendingBlocks = make(map[*TableBlock]struct{})
 
 	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "index_size",
+		Name: "frostdb_table_index_size",
 		Help: "Number of granules in the table index currently.",
 	}, func() float64 {
 		if active := t.ActiveBlock(); active != nil {
@@ -275,7 +275,7 @@ func newTable(
 	})
 
 	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "active_table_block_size",
+		Name: "frostdb_table_active_block_size",
 		Help: "Size of the active table block in bytes.",
 	}, func() float64 {
 		if active := t.ActiveBlock(); active != nil {

@@ -145,23 +145,23 @@ func Open(
 		queue: &logRequestQueue{},
 		metrics: &fileWALMetrics{
 			recordsLogged: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "wal_records_logged_total",
+				Name: "frostdb_wal_records_logged_total",
 				Help: "Number of records logged to WAL",
 			}),
 			failedLogs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "wal_failed_logs_total",
+				Name: "frostdb_wal_failed_logs_total",
 				Help: "Number of failed WAL logs",
 			}),
 			lastTruncationAt: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "last_truncation_at",
+				Name: "frostdb_last_truncation_at",
 				Help: "The last transaction the WAL was truncated to",
 			}),
 			walTruncations: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "wal_truncations_total",
+				Name: "frostdb_wal_truncations_total",
 				Help: "The number of WAL truncations",
 			}),
 			walTruncationsFailed: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "wal_truncations_failed_total",
+				Name: "frostdb_wal_truncations_failed_total",
 				Help: "The number of WAL truncations",
 			}),
 		},
