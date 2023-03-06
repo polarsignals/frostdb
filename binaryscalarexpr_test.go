@@ -36,10 +36,9 @@ func (f *FakeColumnIndex) MaxValue(int) parquet.Value { return parquet.ValueOf(n
 func (f *FakeColumnIndex) IsAscending() bool          { return false }
 func (f *FakeColumnIndex) IsDescending() bool         { return false }
 
-/*
-	This is a regression test that ensures the Min/Max functions return a null value (instead of panicing)
-	should they be passed a column chunk that only has null values.
-*/
+// This is a regression test that ensures the Min/Max functions return a null
+// value (instead of panicing) should they be passed a column chunk that only
+// has null values.
 func Test_MinMax_EmptyColumnChunk(t *testing.T) {
 	fakeChunk := &FakeColumnChunk{
 		index: &FakeColumnIndex{
