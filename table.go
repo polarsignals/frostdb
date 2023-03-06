@@ -1369,11 +1369,11 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	}
 
 	dynCols = bufutils.Dedupe(dynCols)
-	rowWriter, err := t.RowWriter(writer, dynCols)
+	rowWriter, err := t.rowWriter(writer, dynCols)
 	if err != nil {
 		return fmt.Errorf("create row writer: %w", err)
 	}
-	defer rowWriter.Close()
+	defer rowWriter.close()
 
 	// Merge all parts in a Granule and write that granule to the file
 	t.Index().Ascend(func(i btree.Item) bool {
@@ -1409,7 +1409,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 		defer rows.Close()
 
 		// Write the merged row groups to the writer
-		if _, err := rowWriter.WriteRows(rows); err != nil {
+		if _, err := rowWriter.writeRows(rows); err != nil {
 			ascendErr = err
 			return false
 		}
@@ -1438,14 +1438,14 @@ type parquetRowWriter struct {
 
 type parquetRowWriterOption func(p *parquetRowWriter)
 
-func WithMaxRows(max int) parquetRowWriterOption {
+func withMaxRows(max int) parquetRowWriterOption {
 	return func(p *parquetRowWriter) {
 		p.maxNumRows = max
 	}
 }
 
-// RowWriter returns a new Parquet row writer with the given dynamic columns.
-func (t *TableBlock) RowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
+// rowWriter returns a new Parquet row writer with the given dynamic columns.
+func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
 	w, err := t.table.config.schema.GetWriter(writer, dynCols)
 	if err != nil {
 		return nil, err
@@ -1471,7 +1471,7 @@ func (t *TableBlock) RowWriter(writer io.Writer, dynCols map[string][]string, op
 }
 
 // WriteRows will write the given rows to the underlying Parquet writer. It returns the number of rows written.
-func (p *parquetRowWriter) WriteRows(rows parquet.Rows) (int, error) {
+func (p *parquetRowWriter) writeRows(rows parquet.Rows) (int, error) {
 	written := 0
 	for p.maxNumRows == 0 || p.totalRowsWritten < p.maxNumRows {
 		if p.maxNumRows != 0 && p.totalRowsWritten+len(p.rowsBuf) > p.maxNumRows {
@@ -1504,7 +1504,7 @@ func (p *parquetRowWriter) WriteRows(rows parquet.Rows) (int, error) {
 	return written, nil
 }
 
-func (p *parquetRowWriter) Close() error {
+func (p *parquetRowWriter) close() error {
 	defer p.schema.PutWriter(p.w)
 	return p.w.Close()
 }

@@ -593,12 +593,12 @@ func compactLevel0IntoLevel1(
 		for {
 			var mergedBytes bytes.Buffer
 			n, err := func() (int, error) {
-				writer, err := t.RowWriter(&mergedBytes, merged.DynamicColumns(), WithMaxRows(estimatedRowsPerPart))
+				writer, err := t.rowWriter(&mergedBytes, merged.DynamicColumns(), withMaxRows(estimatedRowsPerPart))
 				if err != nil {
 					return 0, err
 				}
-				defer writer.Close()
-				n, err := writer.WriteRows(rows)
+				defer writer.close()
+				n, err := writer.writeRows(rows)
 				if err != nil {
 					return 0, err
 				}
