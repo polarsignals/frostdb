@@ -290,6 +290,38 @@ func or(exprs []Expr) Expr {
 	return computeBinaryExpr(exprs, OpOr)
 }
 
+func (c *Column) Add(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
+		Op:    OpAdd,
+		Right: e,
+	}
+}
+
+func (c *Column) Sub(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
+		Op:    OpSub,
+		Right: e,
+	}
+}
+
+func (c *Column) Mul(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
+		Op:    OpMul,
+		Right: e,
+	}
+}
+
+func (c *Column) Div(e Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
+		Op:    OpDiv,
+		Right: e,
+	}
+}
+
 func computeBinaryExpr(exprs []Expr, op Op) Expr {
 	nonNilExprs := make([]Expr, 0, len(exprs))
 	for _, expr := range exprs {
