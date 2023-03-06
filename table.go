@@ -1369,21 +1369,13 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	}
 
 	dynCols = bufutils.Dedupe(dynCols)
-	w, err := t.table.config.schema.GetWriter(writer, dynCols)
+	rowWriter, err := t.RowWriter(writer, dynCols)
 	if err != nil {
-		return err
+		return fmt.Errorf("create row writer: %w", err)
 	}
-	defer t.table.config.schema.PutWriter(w)
-	defer w.Close()
-
-	buffSize := 256
-	if t.table.config.rowGroupSize > 0 {
-		buffSize = t.table.config.rowGroupSize
-	}
-	rowGroupRowsWritten := 0
+	defer rowWriter.Close()
 
 	// Merge all parts in a Granule and write that granule to the file
-	rowsBuf := make([]parquet.Row, buffSize)
 	t.Index().Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
@@ -1417,29 +1409,9 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 		defer rows.Close()
 
 		// Write the merged row groups to the writer
-		for i, n := 0, 0; i < int(merged.NumRows()); i += n {
-			n, err = rows.ReadRows(rowsBuf)
-			if err != nil && err != io.EOF {
-				ascendErr = err
-				return false
-			}
-			if n == 0 {
-				return true
-			}
-
-			if _, err = w.WriteRows(rowsBuf[:n]); err != nil {
-				ascendErr = err
-				return false
-			}
-
-			rowGroupRowsWritten += n
-			if t.table.config.rowGroupSize > 0 && rowGroupRowsWritten >= t.table.config.rowGroupSize {
-				if err := w.Flush(); err != nil {
-					ascendErr = err
-					return false
-				}
-				rowGroupRowsWritten = 0
-			}
+		if _, err := rowWriter.WriteRows(rows); err != nil {
+			ascendErr = err
+			return false
 		}
 
 		return true
@@ -1451,34 +1423,63 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	return nil
 }
 
-// writeRows writes the given rows to a writer. Up to maxNumRows will be
-// written. If 0, all rows will be written. The number of rows written is
-// returned.
-func (t *TableBlock) writeRows(
-	writer io.Writer, rows parquet.Rows, dynCols map[string][]string, maxNumRows int,
-) (int, error) {
+// parquetRowWriter is a stateful parquet row group writer.
+type parquetRowWriter struct {
+	schema *dynparquet.Schema
+	w      *dynparquet.PooledWriter
+
+	rowGroupSize int
+	maxNumRows   int
+
+	rowGroupRowsWritten int
+	totalRowsWritten    int
+	rowsBuf             []parquet.Row
+}
+
+type parquetRowWriterOption func(p *parquetRowWriter)
+
+func WithMaxRows(max int) parquetRowWriterOption {
+	return func(p *parquetRowWriter) {
+		p.maxNumRows = max
+	}
+}
+
+// RowWriter returns a new Parquet row writer with the given dynamic columns.
+func (t *TableBlock) RowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
 	w, err := t.table.config.schema.GetWriter(writer, dynCols)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer t.table.config.schema.PutWriter(w)
-	defer w.Close()
 
 	buffSize := 256
 	if t.table.config.rowGroupSize > 0 {
 		buffSize = t.table.config.rowGroupSize
 	}
 
-	rowGroupRowsWritten := 0
-	totalRowsWritten := 0
-	for maxNumRows == 0 || totalRowsWritten < maxNumRows {
-		rowsBuf := make([]parquet.Row, buffSize)
-		if maxNumRows != 0 && totalRowsWritten+len(rowsBuf) > maxNumRows {
+	p := &parquetRowWriter{
+		w:            w,
+		schema:       t.table.config.schema,
+		rowsBuf:      make([]parquet.Row, buffSize),
+		rowGroupSize: t.table.config.rowGroupSize,
+	}
+
+	for _, option := range options {
+		option(p)
+	}
+
+	return p, nil
+}
+
+// WriteRows will write the given rows to the underlying Parquet writer. It returns the number of rows written.
+func (p *parquetRowWriter) WriteRows(rows parquet.Rows) (int, error) {
+	written := 0
+	for p.maxNumRows == 0 || p.totalRowsWritten < p.maxNumRows {
+		if p.maxNumRows != 0 && p.totalRowsWritten+len(p.rowsBuf) > p.maxNumRows {
 			// Read only as many rows as we need to write if they would bring
 			// us over the limit.
-			rowsBuf = rowsBuf[:maxNumRows-totalRowsWritten]
+			p.rowsBuf = p.rowsBuf[:p.maxNumRows-p.totalRowsWritten]
 		}
-		n, err := rows.ReadRows(rowsBuf)
+		n, err := rows.ReadRows(p.rowsBuf)
 		if err != nil && err != io.EOF {
 			return 0, err
 		}
@@ -1486,20 +1487,26 @@ func (t *TableBlock) writeRows(
 			break
 		}
 
-		if _, err = w.WriteRows(rowsBuf[:n]); err != nil {
+		if _, err = p.w.WriteRows(p.rowsBuf[:n]); err != nil {
 			return 0, err
 		}
-		rowGroupRowsWritten += n
-		totalRowsWritten += n
-		if t.table.config.rowGroupSize > 0 && rowGroupRowsWritten >= t.table.config.rowGroupSize {
-			if err := w.Flush(); err != nil {
+		written += n
+		p.rowGroupRowsWritten += n
+		p.totalRowsWritten += n
+		if p.rowGroupSize > 0 && p.rowGroupRowsWritten >= p.rowGroupSize {
+			if err := p.w.Flush(); err != nil {
 				return 0, err
 			}
-			rowGroupRowsWritten = 0
+			p.rowGroupRowsWritten = 0
 		}
 	}
 
-	return totalRowsWritten, nil
+	return written, nil
+}
+
+func (p *parquetRowWriter) Close() error {
+	defer p.schema.PutWriter(p.w)
+	return p.w.Close()
 }
 
 func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
