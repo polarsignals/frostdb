@@ -48,6 +48,8 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
 	case *array.Uint64:
 		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
+	case *array.Float64:
+		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
 	case *array.Dictionary:
 		switch dict := arr.Dictionary().(type) {
 		case *array.Binary:
