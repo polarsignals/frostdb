@@ -1347,13 +1347,12 @@ func mergeDynCols(a, b map[string][]string) map[string][]string {
 	return bufutils.Dedupe(a)
 }
 
-/*
-	Serialize the table block into a single Parquet file.
-	The Serialize function will walk all Granules in the block, compact each Granule into a sorted set of Row groups, then write those
-	row groups to the final Parquet file, repeating for each Granule. This leverages the fact that the index has alreayd sorted the Granules
-	so no need to sort them further than the intra-granule parts.
-*/
+// Serialize the table block into a single Parquet file.
+// The Serialize function will walk all Granules in the block, compact each Granule into a sorted set of Row groups, then write those
+// row groups to the final Parquet file, repeating for each Granule. This leverages the fact that the index has alreayd sorted the Granules
+// so no need to sort them further than the intra-granule parts.
 func (t *TableBlock) Serialize(writer io.Writer) error {
+	var ascendErr error
 	dynCols := map[string][]string{} // NOTE: it would be nice if we didn't have to go back and find all the dynamic columns...
 	t.Index().Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
@@ -1361,7 +1360,8 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
 			buf, err := p.AsSerializedBuffer(t.table.config.schema)
 			if err != nil {
-				panic("fuck")
+				ascendErr = err
+				return false
 			}
 
 			for key, vals := range buf.DynamicColumns() {
@@ -1372,6 +1372,10 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 
 		return true
 	})
+	if ascendErr != nil {
+		return ascendErr
+	}
+
 	dynCols = bufutils.Dedupe(dynCols)
 	w, err := t.table.config.schema.GetWriter(writer, dynCols)
 	if err != nil {
@@ -1388,7 +1392,6 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 
 	// Merge all parts in a Granule and write that granule to the file
 	rowsBuf := make([]parquet.Row, buffSize)
-	var ascendErr error
 	t.Index().Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
