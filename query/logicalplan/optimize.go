@@ -1,84 +1,14 @@
 package logicalplan
 
-import (
-	"golang.org/x/exp/slices"
-)
-
 type Optimizer interface {
 	Optimize(plan *LogicalPlan) *LogicalPlan
 }
 
 var DefaultOptimizers = []Optimizer{
-	&AverageAggregationPushDown{},
 	&PhysicalProjectionPushDown{},
 	&FilterPushDown{},
 	&DistinctPushDown{},
 	&ProjectionPushDown{},
-}
-
-type AverageAggregationPushDown struct{}
-
-func (p *AverageAggregationPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
-	if plan.Aggregation == nil {
-		return plan
-	}
-
-	for i, aggExpr := range plan.Aggregation.AggExprs {
-		var aggFunc *AggregationFunction
-		var alias *AliasExpr
-		var column Expr
-
-		// In case the aggregation contains an alias
-		if aliasExpr, ok := aggExpr.(*AliasExpr); ok {
-			alias = aliasExpr
-			if af, ok := aliasExpr.Expr.(*AggregationFunction); ok {
-				if af.Func == AggFuncAvg {
-					column = af.Expr
-					aggFunc = af
-				}
-			}
-		}
-		if ae, ok := aggExpr.(*AggregationFunction); ok {
-			if ae.Func == AggFuncAvg {
-				column = ae.Expr
-				aggFunc = ae
-			}
-		}
-
-		if aggFunc == nil {
-			// no aggregation func found, skipping
-			continue
-		}
-
-		// Delete this average aggregation from the logicalplan.
-		plan.Aggregation.AggExprs = slices.Delete(plan.Aggregation.AggExprs, i, i+1)
-		// Add sum and count aggregation for the column to the logicalplan.
-		plan.Aggregation.AggExprs = append(plan.Aggregation.AggExprs,
-			Sum(aggFunc.Expr),
-			Count(aggFunc.Expr),
-		)
-
-		projection := &BinaryExpr{
-			Op:    OpAvg,
-			Left:  column,
-			Right: column,
-		}
-
-		if alias != nil {
-			alias.Expr = column
-			// projection.Expr = alias
-		}
-
-		// Wrap the aggregations with the average projection to always call it after aggregating.
-		plan = &LogicalPlan{
-			Input: plan,
-			Projection: &Projection{
-				Exprs: []Expr{projection},
-			},
-		}
-	}
-
-	return plan
 }
 
 // The PhysicalProjectionPushDown optimizer tries to push down the actual

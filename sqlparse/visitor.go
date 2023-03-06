@@ -103,8 +103,6 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			v.exprStack[lastExpr] = logicalplan.Min(v.exprStack[lastExpr])
 		case "max":
 			v.exprStack[lastExpr] = logicalplan.Max(v.exprStack[lastExpr])
-		case "avg":
-			v.exprStack[lastExpr] = logicalplan.Avg(v.exprStack[lastExpr])
 		default:
 			return fmt.Errorf("unhandled aggregate function %s", expr.F)
 		}

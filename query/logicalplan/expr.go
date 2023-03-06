@@ -30,7 +30,6 @@ const (
 	OpSub
 	OpMul
 	OpDiv
-	OpAvg
 )
 
 func (o Op) String() string {
@@ -495,7 +494,6 @@ const (
 	AggFuncMin
 	AggFuncMax
 	AggFuncCount
-	AggFuncAvg
 )
 
 func (f AggFunc) String() string {
@@ -508,8 +506,6 @@ func (f AggFunc) String() string {
 		return "max"
 	case AggFuncCount:
 		return "count"
-	case AggFuncAvg:
-		return "avg"
 	default:
 		panic("unknown aggregation function")
 	}
@@ -539,13 +535,6 @@ func Max(expr Expr) *AggregationFunction {
 func Count(expr Expr) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncCount,
-		Expr: expr,
-	}
-}
-
-func Avg(expr Expr) *AggregationFunction {
-	return &AggregationFunction{
-		Func: AggFuncAvg,
 		Expr: expr,
 	}
 }

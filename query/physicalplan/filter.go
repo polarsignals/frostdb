@@ -186,7 +186,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			leftScalar:  leftScalar,
 			right:       rightColumnRef,
 			rightScalar: rightScalar,
-			operation:   expr.Op.String(), // TODO: pass the operation as constant instead of string
+			operation:   expr.Op.String(),
 		}, nil
 	default:
 		panic("unsupported binary boolean expression")
