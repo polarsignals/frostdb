@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package frostdb.snapshot.v1alpha1;
+
+import "frostdb/schema/v1alpha1/schema.proto";
+import "frostdb/schema/v1alpha2/schema.proto";
+
+// FooterData is a message stored in the footer of a snapshot file that encodes
+// data about the rest of the file.
+message FooterData {
+  repeated Table table_metadata = 1;
+}
+
+message Table {
+  string name = 1;
+  message TableConfig {
+    oneof schema {
+      frostdb.schema.v1alpha1.Schema deprecated_schema = 1;
+      frostdb.schema.v1alpha2.Schema schema_v2 = 2;
+    }
+    int64 row_group_size = 3;
+    int64 block_reader_limit = 4;
+    bool disable_wal = 5;
+  }
+  TableConfig config = 2;
+  repeated Granule granule_metadata = 3;
+}
+
+message Granule {
+  repeated Part part_metadata = 1;
+}
+
+message Part {
+  int64 start_offset = 1;
+  int64 end_offset = 2;
+  uint64 tx = 3;
+  uint64 compaction_level = 4;
+  enum Encoding {
+    ENCODING_UNKNOWN = 0;
+    ENCODING_PARQUET = 1;
+    ENCODING_ARROW = 2;
+  };
+  Encoding encoding = 5;
+}

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -80,6 +81,7 @@ type compactorPool struct {
 	cfg    *CompactionConfig
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
+	paused atomic.Bool
 }
 
 func newCompactorPool(db *DB, cfg *CompactionConfig) *compactorPool {
@@ -101,6 +103,14 @@ func (c *compactorPool) start() {
 	}
 }
 
+func (c *compactorPool) pause() {
+	c.paused.Store(true)
+}
+
+func (c *compactorPool) resume() {
+	c.paused.Store(false)
+}
+
 func (c *compactorPool) stop() {
 	if c.cancel == nil {
 		// Pool was not started.
@@ -116,6 +126,9 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(c.cfg.interval):
+			if c.paused.Load() {
+				continue
+			}
 			c.db.mtx.RLock()
 			tablesToCompact := make([]*Table, 0, len(c.db.tables))
 			for _, table := range c.db.tables {
