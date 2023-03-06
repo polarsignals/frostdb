@@ -1339,14 +1339,6 @@ func (t *TableBlock) abortCompaction(granule *Granule) {
 	}
 }
 
-func mergeDynCols(a, b map[string][]string) map[string][]string {
-	for key, vals := range b {
-		a[key] = append(a[key], vals...)
-	}
-
-	return bufutils.Dedupe(a)
-}
-
 // Serialize the table block into a single Parquet file.
 // The Serialize function will walk all Granules in the block, compact each Granule into a sorted set of Row groups, then write those
 // row groups to the final Parquet file, repeating for each Granule. This leverages the fact that the index has alreayd sorted the Granules
@@ -1457,21 +1449,6 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	}
 
 	return nil
-}
-
-// writeRowGroups writes a set of dynamic row groups to a writer.
-func (t *TableBlock) writeRowGroups(writer io.Writer, rowGroups []dynparquet.DynamicRowGroup) error {
-	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
-	if err != nil {
-		return err
-	}
-
-	cols := merged.DynamicColumns()
-	rows := merged.Rows()
-	defer rows.Close()
-
-	_, err = t.writeRows(writer, rows, cols, 0)
-	return err
 }
 
 // writeRows writes the given rows to a writer. Up to maxNumRows will be

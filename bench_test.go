@@ -409,6 +409,7 @@ func Benchmark_Serialize(b *testing.B) {
 	// Insert 10k rows
 	samples := NewTestSamples(10000)
 	buf, err := samples.ToBuffer(schema)
+	require.NoError(b, err)
 
 	_, err = tbl.InsertBuffer(ctx, buf)
 	require.NoError(b, err)
