@@ -394,6 +394,8 @@ func (db *DB) snapshotsDir() string {
 }
 
 func (db *DB) replayWAL(ctx context.Context) error {
+	level.Info(db.logger).Log("msg", "replaying WAL")
+	start := time.Now()
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
 	persistedTables := map[string]uint64{}
@@ -558,6 +560,8 @@ func (db *DB) replayWAL(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("second WAL replay: %w", err)
 	}
+
+	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
 
 	db.tx.Store(lastTx)
 	db.highWatermark.Store(lastTx)
