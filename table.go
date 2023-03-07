@@ -1339,108 +1339,153 @@ func (t *TableBlock) abortCompaction(granule *Granule) {
 	}
 }
 
+// Serialize the table block into a single Parquet file.
+// The Serialize function will walk all Granules in the block, compact each Granule into a sorted set of Row groups, then write those
+// row groups to the final Parquet file, repeating for each Granule. This leverages the fact that the index has alreayd sorted the Granules
+// so no need to sort them further than the intra-granule parts.
 func (t *TableBlock) Serialize(writer io.Writer) error {
-	ctx := context.Background()
+	var ascendErr error
+	dynCols := map[string][]string{} // NOTE: it would be nice if we didn't have to go back and find all the dynamic columns...
+	t.Index().Ascend(func(i btree.Item) bool {
+		g := i.(*Granule)
 
-	// Read all row groups
-	rowGroups := []dynparquet.DynamicRowGroup{}
+		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
+			buf, err := p.AsSerializedBuffer(t.table.config.schema)
+			if err != nil {
+				ascendErr = err
+				return false
+			}
 
-	rowGroupsChan := make(chan any)
+			for key, vals := range buf.DynamicColumns() {
+				dynCols[key] = append(dynCols[key], vals...)
+			}
+			return true
+		})
 
-	errg := &errgroup.Group{}
-	errg.Go(func() error {
-		for rg := range rowGroupsChan {
-			switch p := rg.(type) {
-			case arrow.Record:
-				b := &bytes.Buffer{}
-				w, err := t.table.config.schema.GetWriter(b, pqarrow.RecordDynamicCols(p))
-				if err != nil {
-					return err
-				}
+		return true
+	})
+	if ascendErr != nil {
+		return ascendErr
+	}
 
-				if err := pqarrow.RecordToFile(t.table.config.schema, w.ParquetWriter(), p); err != nil {
-					return err
-				}
+	dynCols = bufutils.Dedupe(dynCols)
+	rowWriter, err := t.rowWriter(writer, dynCols)
+	if err != nil {
+		return fmt.Errorf("create row writer: %w", err)
+	}
+	defer rowWriter.close()
 
-				f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
-				if err != nil {
-					return err
-				}
+	// Merge all parts in a Granule and write that granule to the file
+	t.Index().Ascend(func(i btree.Item) bool {
+		g := i.(*Granule)
 
-				buf, err := dynparquet.NewSerializedBuffer(f)
-				if err != nil {
-					return err
-				}
+		// collect parts based on compaction level; we do this because level1 parts are already non-overlapping.
+		lvl0, lvl1, _, stats, err := collectPartsForCompaction(math.MaxUint64, g.parts)
+		if err != nil {
+			ascendErr = err
+			return false
+		}
 
-				rowGroups = append(rowGroups, buf.MultiDynamicRowGroup())
-
-			case dynparquet.DynamicRowGroup:
-				rowGroups = append(rowGroups, p)
-			default:
-				return fmt.Errorf("unknown part type: %T", p)
+		// Compact the level 0 parts
+		if len(lvl0) > 0 {
+			lvl1, err = compactLevel0IntoLevel1(t, math.MaxUint64, lvl0, lvl1, 1.0, &stats)
+			if err != nil {
+				ascendErr = err
+				return false
 			}
 		}
-		return nil
+
+		sorter := parts.NewPartSorter(t.table.config.schema, lvl1)
+		sort.Sort(sorter)
+		if err := sorter.Err(); err != nil {
+			ascendErr = err
+			return false
+		}
+
+		// Write the sorted parts
+		for _, p := range lvl1 {
+			buf, err := p.AsSerializedBuffer(t.table.config.schema)
+			if err != nil {
+				ascendErr = err
+				return false
+			}
+
+			rows := buf.Reader()
+			defer rows.Close()
+
+			// Write the merged row groups to the writer
+			if _, err := rowWriter.writeRows(rows); err != nil {
+				ascendErr = err
+				return false
+			}
+		}
+
+		return true
 	})
-
-	// Collect all the row groups just to determine the dynamic cols
-	err := t.RowGroupIterator(ctx, math.MaxUint64, &AlwaysTrueFilter{}, rowGroupsChan)
-	if err != nil {
-		return err
+	if ascendErr != nil {
+		return ascendErr
 	}
 
-	close(rowGroupsChan)
-	if err := errg.Wait(); err != nil {
-		return err
-	}
-
-	// Iterate over all the row groups, and write them to storage
-	return t.writeRowGroups(writer, rowGroups)
+	return nil
 }
 
-// writeRowGroups writes a set of dynamic row groups to a writer.
-func (t *TableBlock) writeRowGroups(writer io.Writer, rowGroups []dynparquet.DynamicRowGroup) error {
-	merged, err := t.table.config.schema.MergeDynamicRowGroups(rowGroups)
-	if err != nil {
-		return err
-	}
+// parquetRowWriter is a stateful parquet row group writer.
+type parquetRowWriter struct {
+	schema *dynparquet.Schema
+	w      *dynparquet.PooledWriter
 
-	cols := merged.DynamicColumns()
-	rows := merged.Rows()
-	defer rows.Close()
+	rowGroupSize int
+	maxNumRows   int
 
-	_, err = t.writeRows(writer, rows, cols, 0)
-	return err
+	rowGroupRowsWritten int
+	totalRowsWritten    int
+	rowsBuf             []parquet.Row
 }
 
-// writeRows writes the given rows to a writer. Up to maxNumRows will be
-// written. If 0, all rows will be written. The number of rows written is
-// returned.
-func (t *TableBlock) writeRows(
-	writer io.Writer, rows parquet.Rows, dynCols map[string][]string, maxNumRows int,
-) (int, error) {
+type parquetRowWriterOption func(p *parquetRowWriter)
+
+func withMaxRows(max int) parquetRowWriterOption {
+	return func(p *parquetRowWriter) {
+		p.maxNumRows = max
+	}
+}
+
+// rowWriter returns a new Parquet row writer with the given dynamic columns.
+func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
 	w, err := t.table.config.schema.GetWriter(writer, dynCols)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer t.table.config.schema.PutWriter(w)
-	defer w.Close()
 
 	buffSize := 256
 	if t.table.config.rowGroupSize > 0 {
 		buffSize = t.table.config.rowGroupSize
 	}
 
-	rowGroupRowsWritten := 0
-	totalRowsWritten := 0
-	for maxNumRows == 0 || totalRowsWritten < maxNumRows {
-		rowsBuf := make([]parquet.Row, buffSize)
-		if maxNumRows != 0 && totalRowsWritten+len(rowsBuf) > maxNumRows {
+	p := &parquetRowWriter{
+		w:            w,
+		schema:       t.table.config.schema,
+		rowsBuf:      make([]parquet.Row, buffSize),
+		rowGroupSize: t.table.config.rowGroupSize,
+	}
+
+	for _, option := range options {
+		option(p)
+	}
+
+	return p, nil
+}
+
+// WriteRows will write the given rows to the underlying Parquet writer. It returns the number of rows written.
+func (p *parquetRowWriter) writeRows(rows parquet.Rows) (int, error) {
+	written := 0
+	for p.maxNumRows == 0 || p.totalRowsWritten < p.maxNumRows {
+		if p.maxNumRows != 0 && p.totalRowsWritten+len(p.rowsBuf) > p.maxNumRows {
 			// Read only as many rows as we need to write if they would bring
 			// us over the limit.
-			rowsBuf = rowsBuf[:maxNumRows-totalRowsWritten]
+			p.rowsBuf = p.rowsBuf[:p.maxNumRows-p.totalRowsWritten]
 		}
-		n, err := rows.ReadRows(rowsBuf)
+		n, err := rows.ReadRows(p.rowsBuf)
 		if err != nil && err != io.EOF {
 			return 0, err
 		}
@@ -1448,20 +1493,26 @@ func (t *TableBlock) writeRows(
 			break
 		}
 
-		if _, err = w.WriteRows(rowsBuf[:n]); err != nil {
+		if _, err = p.w.WriteRows(p.rowsBuf[:n]); err != nil {
 			return 0, err
 		}
-		rowGroupRowsWritten += n
-		totalRowsWritten += n
-		if t.table.config.rowGroupSize > 0 && rowGroupRowsWritten >= t.table.config.rowGroupSize {
-			if err := w.Flush(); err != nil {
+		written += n
+		p.rowGroupRowsWritten += n
+		p.totalRowsWritten += n
+		if p.rowGroupSize > 0 && p.rowGroupRowsWritten >= p.rowGroupSize {
+			if err := p.w.Flush(); err != nil {
 				return 0, err
 			}
-			rowGroupRowsWritten = 0
+			p.rowGroupRowsWritten = 0
 		}
 	}
 
-	return totalRowsWritten, nil
+	return written, nil
+}
+
+func (p *parquetRowWriter) close() error {
+	defer p.schema.PutWriter(p.w)
+	return p.w.Close()
 }
 
 func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
