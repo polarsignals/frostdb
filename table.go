@@ -1379,39 +1379,45 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	t.Index().Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
-		// Collect all row groups in each part in granule
-		rgs := []dynparquet.DynamicRowGroup{}
-		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
+		// collect parts based on compaction level; we do this because level1 parts are already non-overlapping.
+		lvl0, lvl1, _, stats, err := collectPartsForCompaction(math.MaxUint64, g.parts)
+		if err != nil {
+			ascendErr = err
+			return false
+		}
+
+		// Compact the level 0 parts
+		if len(lvl0) > 0 {
+			lvl1, err = compactLevel0IntoLevel1(t, math.MaxUint64, lvl0, lvl1, 1.0, &stats)
+			if err != nil {
+				ascendErr = err
+				return false
+			}
+		}
+
+		sorter := parts.NewPartSorter(t.table.config.schema, lvl1)
+		sort.Sort(sorter)
+		if err := sorter.Err(); err != nil {
+			ascendErr = err
+			return false
+		}
+
+		// Write the sorted parts
+		for _, p := range lvl1 {
 			buf, err := p.AsSerializedBuffer(t.table.config.schema)
 			if err != nil {
 				ascendErr = err
 				return false
 			}
 
-			f := buf.ParquetFile()
-			for i := range f.RowGroups() {
-				rgs = append(rgs, buf.DynamicRowGroup(i))
+			rows := buf.Reader()
+			defer rows.Close()
+
+			// Write the merged row groups to the writer
+			if _, err := rowWriter.writeRows(rows); err != nil {
+				ascendErr = err
+				return false
 			}
-
-			return true
-		})
-		if ascendErr != nil {
-			return false
-		}
-
-		// Merge the Granule row groups
-		merged, err := t.table.config.schema.MergeDynamicRowGroups(rgs, dynparquet.WithDynamicCols(dynCols))
-		if err != nil {
-			ascendErr = err
-			return false
-		}
-		rows := merged.Rows()
-		defer rows.Close()
-
-		// Write the merged row groups to the writer
-		if _, err := rowWriter.writeRows(rows); err != nil {
-			ascendErr = err
-			return false
 		}
 
 		return true
