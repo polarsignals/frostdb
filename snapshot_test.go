@@ -2,9 +2,12 @@ package frostdb
 
 import (
 	"context"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/apache/arrow/go/v10/arrow/array"
@@ -253,4 +256,116 @@ func TestSnapshotVerifyFields(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSnapshotWithWAL verifies that the interaction between snapshots and WAL
+// entries works as expected. In general, snapshots should occur when a table
+// block is rotated out.
+func TestSnapshotWithWAL(t *testing.T) {
+	const dbAndTableName = "test"
+	var (
+		ctx                 = context.Background()
+		dir                 = t.TempDir()
+		snapshotTx          uint64
+		firstWriteTimestamp int64
+	)
+	func() {
+		c, err := New(
+			WithWAL(),
+			WithStoragePath(dir),
+			WithSnapshotTriggerSize(1),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+
+		schema := dynparquet.NewSampleSchema()
+		table, err := db.Table(dbAndTableName, NewTableConfig(schema))
+		require.NoError(t, err)
+
+		samples := dynparquet.NewTestSamples()
+		firstWriteTimestamp = samples[0].Timestamp
+		for i := range samples {
+			samples[i].Timestamp = firstWriteTimestamp
+		}
+		ctx := context.Background()
+
+		buf, err := samples.ToBuffer(schema)
+		require.NoError(t, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+
+		// No snapshots should have happened yet.
+		_, err = os.ReadDir(db.snapshotsDir())
+		require.ErrorIs(t, err, os.ErrNotExist)
+
+		for i := range samples {
+			samples[i].Timestamp = firstWriteTimestamp + 1
+		}
+		buf, err = samples.ToBuffer(schema)
+		require.NoError(t, err)
+		// With this new insert, a snapshot should be triggered.
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool {
+			files, err := os.ReadDir(db.snapshotsDir())
+			require.NoError(t, err)
+			if len(files) != 1 {
+				return false
+			}
+			snapshotTx, err = strconv.ParseUint(files[0].Name()[:20], 10, 64)
+			require.NoError(t, err)
+			return true
+		}, 1*time.Second, 10*time.Millisecond, "expected a snapshot on disk")
+	}()
+
+	verifyC, err := New(
+		WithWAL(),
+		WithStoragePath(dir),
+		// Snapshot trigger size is not needed here, we only want to use this
+		// column store to verify correctness.
+	)
+	require.NoError(t, err)
+	defer verifyC.Close()
+
+	verifyDB, err := verifyC.DB(ctx, dbAndTableName)
+	require.NoError(t, err)
+
+	// Truncate all entries from the WAL up to but not including the second
+	// insert.
+	require.NoError(t, verifyDB.wal.Truncate(snapshotTx+1))
+
+	require.NoError(t, verifyC.ReplayWALs(ctx))
+
+	engine := query.NewEngine(memory.DefaultAllocator, verifyDB.TableProvider())
+	require.NoError(
+		t,
+		engine.ScanTable(dbAndTableName).
+			Aggregate(
+				[]logicalplan.Expr{logicalplan.Min(logicalplan.Col("timestamp"))},
+				nil,
+			).Execute(ctx, func(_ context.Context, r arrow.Record) error {
+			// This check verifies that the snapshot data (i.e. the first
+			// write) is correctly loaded.
+			require.Equal(t, firstWriteTimestamp, r.Column(0).(*array.Int64).Value(0))
+			return nil
+		}),
+	)
+	require.NoError(
+		t,
+		engine.ScanTable(dbAndTableName).
+			Aggregate(
+				[]logicalplan.Expr{logicalplan.Max(logicalplan.Col("timestamp"))},
+				nil,
+			).Execute(ctx, func(_ context.Context, r arrow.Record) error {
+			// This check verifies that the write that is only represented in
+			// WAL entries is still replayed (i.e. the second write) in the
+			// presence of a snapshot.
+			require.Equal(t, firstWriteTimestamp+1, r.Column(0).(*array.Int64).Value(0))
+			return nil
+		}),
+	)
 }

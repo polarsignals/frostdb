@@ -36,7 +36,7 @@ func (w *NopWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
 	return nil
 }
 
-func (w *NopWAL) Replay(handler func(tx uint64, record *walpb.Record) error) error {
+func (w *NopWAL) Replay(firstIndex uint64, handler func(tx uint64, record *walpb.Record) error) error {
 	return nil
 }
 
@@ -387,10 +387,13 @@ func (w *FileWAL) LastIndex() (uint64, error) {
 	return w.log.LastIndex()
 }
 
-func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) error {
-	firstIndex, err := w.log.FirstIndex()
+func (w *FileWAL) Replay(firstIndex uint64, handler func(tx uint64, record *walpb.Record) error) error {
+	logFirstIndex, err := w.log.FirstIndex()
 	if err != nil {
 		return fmt.Errorf("read first index: %w", err)
+	}
+	if firstIndex == 0 || firstIndex < logFirstIndex {
+		firstIndex = logFirstIndex
 	}
 
 	lastIndex, err := w.log.LastIndex()

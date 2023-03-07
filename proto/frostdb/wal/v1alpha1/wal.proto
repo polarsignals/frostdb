@@ -49,6 +49,11 @@ message Entry {
     bytes block_id = 2;
   }
 
+  message Snapshot {
+    // The tx the snapshot was taken at.
+    uint64 tx = 1;
+  }
+
   // The new-table entry.
   oneof entry_type {
     // Write is set if the entry describes a write.
@@ -57,5 +62,7 @@ message Entry {
     NewTableBlock new_table_block = 2;
     // TableBlockPersisted is set if the entry describes a table-block-persisted.
     TableBlockPersisted table_block_persisted = 3;
+    // Snapshot is set if the entry describes a snapshot.
+    Snapshot snapshot = 4;
   }
 }
