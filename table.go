@@ -1375,6 +1375,12 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	}
 	defer rowWriter.close()
 
+	cols := t.table.config.schema.ParquetSortingColumns(dynCols)
+	ps, err := t.table.config.schema.DynamicParquetSchema(dynCols)
+	if err != nil {
+		return err
+	}
+
 	// Merge all parts in a Granule and write that granule to the file
 	t.Index().Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
@@ -1410,13 +1416,16 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 				return false
 			}
 
-			rows := buf.Reader()
-			defer rows.Close()
+			// Use the dynamic row group merge adapter for each row group to ensure the missing dynamic columns are written
+			for i := 0; i < buf.NumRowGroups(); i++ {
+				rows := dynparquet.NewDynamicRowGroupMergeAdapter(ps, cols, dynCols, buf.DynamicRowGroup(i)).Rows()
+				defer rows.Close()
 
-			// Write the merged row groups to the writer
-			if _, err := rowWriter.writeRows(rows); err != nil {
-				ascendErr = err
-				return false
+				// Write the merged row groups to the writer
+				if _, err := rowWriter.writeRows(rows); err != nil {
+					ascendErr = err
+					return false
+				}
 			}
 		}
 

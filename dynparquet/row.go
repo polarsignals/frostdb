@@ -78,7 +78,7 @@ func (s *Schema) RowLessThan(a, b *DynamicRow) bool {
 
 func (s *Schema) Cmp(a, b *DynamicRow) int {
 	dynamicColumns := mergeDynamicColumnSets([]map[string][]string{a.DynamicColumns, b.DynamicColumns})
-	cols := s.parquetSortingColumns(dynamicColumns)
+	cols := s.ParquetSortingColumns(dynamicColumns)
 	sortingSchema, err := s.parquetSortingSchema(dynamicColumns)
 	if err != nil {
 		panic(fmt.Sprintf("unexpected schema state: %v", err))
