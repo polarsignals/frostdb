@@ -16,6 +16,7 @@ import (
 	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
+	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 	"google.golang.org/protobuf/proto"
 
@@ -272,12 +273,23 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 
 	metadata := &snapshotpb.FooterData{}
 	for _, t := range tables {
+		block := t.ActiveBlock()
+		blockUlid, err := block.ulid.MarshalBinary()
+		if err != nil {
+			return err
+		}
 		tableMeta := &snapshotpb.Table{
 			Name: t.name,
 			Config: &snapshotpb.Table_TableConfig{
 				RowGroupSize:     int64(t.config.rowGroupSize),
 				BlockReaderLimit: int64(t.config.blockReaderLimit),
 				DisableWal:       t.config.disableWAL,
+			},
+			ActiveBlock: &snapshotpb.Table_TableBlock{
+				Ulid:   blockUlid,
+				Size:   block.Size(),
+				MinTx:  block.minTx,
+				PrevTx: block.prevTx,
 			},
 		}
 		switch v := t.config.schema.Definition().(type) {
@@ -470,9 +482,23 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				return err
 			}
 
+			var blockUlid ulid.ULID
+			if err := blockUlid.UnmarshalBinary(tableMeta.ActiveBlock.Ulid); err != nil {
+				return err
+			}
+
 			table.mtx.Lock()
 			block := table.active
+			block.mtx.Lock()
+			block.ulid = blockUlid
+			block.size.Store(tableMeta.ActiveBlock.Size)
+			// Store the last snapshot size so a snapshot is not triggered right
+			// after loading this snapshot.
+			block.lastSnapshotSize.Store(tableMeta.ActiveBlock.Size)
+			block.minTx = tableMeta.ActiveBlock.MinTx
+			block.prevTx = tableMeta.ActiveBlock.PrevTx
 			newIdx := block.Index().Clone()
+			block.mtx.Unlock()
 			table.mtx.Unlock()
 
 			for _, granuleMeta := range tableMeta.GranuleMetadata {

@@ -218,6 +218,24 @@ func TestSnapshotVerifyFields(t *testing.T) {
 			protobufStruct: snapshotpb.Table_TableConfig{},
 		},
 		{
+			name:           "TableBlock",
+			goStruct:       TableBlock{},
+			protobufStruct: snapshotpb.Table_TableBlock{},
+			ignore: map[string]struct{}{
+				// table is serialized separately.
+				"table":  {},
+				"logger": {},
+				"tracer": {},
+				// lastSnapshotSize is set to the block size after a snapshot is
+				// loaded.
+				"lastSnapshotSize": {},
+				// index is recreated from the serialized granules/parts.
+				"index":            {},
+				"pendingWritersWg": {},
+				"mtx":              {},
+			},
+		},
+		{
 			name:           "Part",
 			goStruct:       parts.Part{},
 			protobufStruct: snapshotpb.Part{},
