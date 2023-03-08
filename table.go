@@ -142,11 +142,6 @@ type WAL interface {
 	Close() error
 	Log(tx uint64, record *walpb.Record) error
 	LogRecord(tx uint64, table string, record arrow.Record) error
-	// Replay replays WAL records from the given first index. If firstIndex is
-	// 0, the first index read from the WAL is used (i.e. given a truncation,
-	// using 0 is still valid). If the given firstIndex is less than the WAL's
-	// first index on disk, the replay happens from the first index on disk.
-	Replay(firstIndex uint64, handler func(tx uint64, record *walpb.Record) error) error
 	Truncate(tx uint64) error
 	FirstIndex() (uint64, error)
 }
