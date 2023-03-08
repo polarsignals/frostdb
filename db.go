@@ -420,6 +420,9 @@ func (db *DB) openWAL(ctx context.Context, firstIndex uint64) (WAL, error) {
 		db.reg,
 		db.walDir(),
 		wal.WithFirstIndex(firstIndex),
+		// NOTE: 2 is passed here because we require 2 passes through the WAL.
+		// Once to establish all the storage blocks that have rotated out, and a second pass to replay all the writes.
+		// This prevents us from replaying writes that have already been persisted/dropped by a block rotation.
 		wal.WithReplayFunc(2, db.recover(ctx, persistedTables, &lastTx)),
 	)
 	if err != nil {
