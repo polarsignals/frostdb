@@ -387,7 +387,7 @@ func (w *FileWAL) LastIndex() (uint64, error) {
 	return w.log.LastIndex()
 }
 
-func (w *FileWAL) Replay(firstIndex uint64, handler func(tx uint64, record *walpb.Record) error) error {
+func (w *FileWAL) Replay(firstIndex uint64, handler func(tx uint64, record *walpb.Record) error) (err error) {
 	logFirstIndex, err := w.log.FirstIndex()
 	if err != nil {
 		return fmt.Errorf("read first index: %w", err)
@@ -408,15 +408,21 @@ func (w *FileWAL) Replay(firstIndex uint64, handler func(tx uint64, record *walp
 
 	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", firstIndex, "last_index", lastIndex)
 
+	tx := firstIndex
 	defer func() {
-		// recover the panic to print more context. Exit afterwards regardless.
-		if err := recover(); err != nil {
+		// recover a panic of reading a transaction. Truncate the wal to the last valid transaction.
+		if r := recover(); r != nil {
 			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", firstIndex, "last_index", lastIndex, "err", err)
-			panic(err)
+			if err = w.log.TruncateBack(tx - 1); err != nil {
+				return
+			}
+			w.txmtx.Lock()
+			w.nextTx = tx
+			w.txmtx.Unlock()
 		}
 	}()
 
-	for tx := firstIndex; tx <= lastIndex; tx++ {
+	for ; tx <= lastIndex; tx++ {
 		level.Debug(w.logger).Log("msg", "replaying WAL record", "tx", tx)
 		data, err := w.log.Read(tx)
 		if err != nil {
