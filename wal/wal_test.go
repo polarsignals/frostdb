@@ -38,15 +38,13 @@ func TestWAL(t *testing.T) {
 		log.NewNopLogger(),
 		prometheus.NewRegistry(),
 		dir,
+		WithReplayFunc(1, func(i int, tx uint64, r *walpb.Record) error {
+			require.Equal(t, uint64(1), tx)
+			require.Equal(t, []byte("test-data"), r.Entry.GetWrite().Data)
+			require.Equal(t, "test-table", r.Entry.GetWrite().TableName)
+			return nil
+		}),
 	)
-	require.NoError(t, err)
-
-	err = w.Replay(0, func(tx uint64, r *walpb.Record) error {
-		require.Equal(t, uint64(1), tx)
-		require.Equal(t, []byte("test-data"), r.Entry.GetWrite().Data)
-		require.Equal(t, "test-table", r.Entry.GetWrite().TableName)
-		return nil
-	})
 	require.NoError(t, err)
 
 	require.NoError(t, w.Log(2, &walpb.Record{
@@ -71,11 +69,6 @@ func TestWAL(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer w.Close()
-
-	err = w.Replay(0, func(tx uint64, r *walpb.Record) error {
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func TestCorruptWAL(t *testing.T) {
