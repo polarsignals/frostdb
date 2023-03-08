@@ -72,8 +72,6 @@ func snapshotFileName(tx uint64) string {
 // snapshot takes a snapshot of the state of the database at transaction tx.
 func (db *DB) snapshot(ctx context.Context, tx uint64) error {
 	if !db.columnStore.enableWAL {
-		// TODO(asubiotto): Should we allow snapshots to be enabled
-		// independently?
 		return nil
 	}
 
@@ -116,6 +114,10 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, err
+	}
+
+	if len(files) == 0 {
+		return 0, nil
 	}
 
 	var lastErr error

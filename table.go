@@ -141,7 +141,11 @@ type WAL interface {
 	Close() error
 	Log(tx uint64, record *walpb.Record) error
 	LogRecord(tx uint64, table string, record arrow.Record) error
-	Replay(handler func(tx uint64, record *walpb.Record) error) error
+	// Replay replays WAL records from the given first index. If firstIndex is
+	// 0, the first index read from the WAL is used (i.e. given a truncation,
+	// using 0 is still valid). If the given firstIndex is less than the WAL's
+	// first index on disk, the replay happens from the first index on disk.
+	Replay(firstIndex uint64, handler func(tx uint64, record *walpb.Record) error) error
 	Truncate(tx uint64) error
 	FirstIndex() (uint64, error)
 }
@@ -155,8 +159,11 @@ type TableBlock struct {
 	minTx  uint64
 	prevTx uint64
 
-	size  *atomic.Int64
-	index *atomic.Pointer[btree.BTree] // *btree.BTree
+	size *atomic.Int64
+	// lastSnapshotSize keeps track of the size of the block when it last
+	// triggered a snapshot.
+	lastSnapshotSize atomic.Int64
+	index            *atomic.Pointer[btree.BTree] // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
 
@@ -345,7 +352,7 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	delete(t.pendingBlocks, block)
 }
 
-func (t *Table) writeBlock(block *TableBlock) {
+func (t *Table) writeBlock(ctx context.Context, block *TableBlock) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 	block.pendingWritersWg.Wait()
 
@@ -406,7 +413,7 @@ func (t *Table) writeBlock(block *TableBlock) {
 	t.db.maintainWAL()
 }
 
-func (t *Table) RotateBlock(block *TableBlock) error {
+func (t *Table) RotateBlock(ctx context.Context, block *TableBlock) error {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
@@ -431,7 +438,8 @@ func (t *Table) RotateBlock(block *TableBlock) error {
 	t.metrics.numParts.Set(float64(0))
 
 	t.pendingBlocks[block] = struct{}{}
-	go t.writeBlock(block)
+	go t.writeBlock(ctx, block)
+
 	return nil
 }
 
@@ -604,7 +612,7 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 }
 
 func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, error) {
-	block, close, err := t.appender()
+	block, close, err := t.appender(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("get appender: %w", err)
 	}
@@ -654,7 +662,7 @@ func (t *Table) appendToLog(ctx context.Context, tx uint64, buf []byte) error {
 	return nil
 }
 
-func (t *Table) appender() (*TableBlock, func(), error) {
+func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 	for {
 		// Using active write block is important because it ensures that we don't
 		// miss pending writers when synchronizing the block.
@@ -663,14 +671,50 @@ func (t *Table) appender() (*TableBlock, func(), error) {
 			return nil, nil, err
 		}
 
-		if block.Size() < t.db.columnStore.activeMemorySize {
+		blockSize := block.Size()
+		if t.db.columnStore.snapshotTriggerSize != 0 &&
+			// If size-lastSnapshotSize > snapshotTriggerSize (a column store
+			// option), a new snapshot is triggered. This is basically the size
+			// of the new data in this block since the last snapshot.
+			blockSize-block.lastSnapshotSize.Load() > t.db.columnStore.snapshotTriggerSize {
+			tx, _, commit := t.db.begin()
+			go func() {
+				defer commit()
+				if err := t.db.snapshot(ctx, tx); err != nil {
+					level.Error(t.logger).Log(
+						"msg", "failed to snapshot database on block size trigger", "err", err,
+					)
+					return
+				}
+				block.lastSnapshotSize.Store(blockSize)
+				if t.db.columnStore.enableWAL {
+					// Appending a snapshot record to the WAL is necessary,
+					// since the WAL expects a 1:1 relationship between txn ids
+					// and record indexes.
+					if err := t.db.wal.Log(
+						tx,
+						&walpb.Record{
+							Entry: &walpb.Entry{
+								EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
+							},
+						},
+					); err != nil {
+						level.Error(t.logger).Log(
+							"msg", "failed to append snapshot record to WAL", "err", err,
+						)
+						return
+					}
+				}
+			}()
+		}
+		if blockSize < t.db.columnStore.activeMemorySize {
 			return block, close, nil
 		}
 
 		// We need to rotate the block and the writer won't actually be used.
 		close()
 
-		err = t.RotateBlock(block)
+		err = t.RotateBlock(ctx, block)
 		if err != nil {
 			return nil, nil, fmt.Errorf("rotate block: %w", err)
 		}
@@ -678,7 +722,7 @@ func (t *Table) appender() (*TableBlock, func(), error) {
 }
 
 func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
-	block, close, err := t.appender()
+	block, close, err := t.appender(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("get appender: %w", err)
 	}

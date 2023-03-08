@@ -41,7 +41,7 @@ func TestWAL(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	err = w.Replay(func(tx uint64, r *walpb.Record) error {
+	err = w.Replay(0, func(tx uint64, r *walpb.Record) error {
 		require.Equal(t, uint64(1), tx)
 		require.Equal(t, []byte("test-data"), r.Entry.GetWrite().Data)
 		require.Equal(t, "test-table", r.Entry.GetWrite().TableName)
@@ -72,7 +72,7 @@ func TestWAL(t *testing.T) {
 	require.NoError(t, err)
 	defer w.Close()
 
-	err = w.Replay(func(tx uint64, r *walpb.Record) error {
+	err = w.Replay(0, func(tx uint64, r *walpb.Record) error {
 		return nil
 	})
 	require.NoError(t, err)

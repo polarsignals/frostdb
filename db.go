@@ -44,6 +44,7 @@ type ColumnStore struct {
 	ignoreStorageOnQuery bool
 	enableWAL            bool
 	compactionConfig     *CompactionConfig
+	snapshotTriggerSize  int64
 	metrics              metrics
 
 	// indexDegree is the degree of the btree index (default = 2)
@@ -196,6 +197,19 @@ func WithCompactionConfig(c *CompactionConfig) Option {
 	}
 }
 
+// WithSnapshotTriggerSize specifies a table block size in bytes that will
+// trigger a snapshot of the whole database. This should be less than the active
+// memory size. If 0, snapshots are disabled. Note that snapshots (if enabled)
+// are also triggered on block rotation of any database table.
+// Snapshots are complementary to the WAL and will also be disabled if the WAL
+// is disabled.
+func WithSnapshotTriggerSize(size int64) Option {
+	return func(s *ColumnStore) error {
+		s.snapshotTriggerSize = size
+		return nil
+	}
+}
+
 // Close persists all data from the columnstore to storage.
 // It is no longer valid to use the coumnstore for reads or writes, and the object should not longer be reused.
 func (s *ColumnStore) Close() error {
@@ -248,7 +262,14 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			return db.replayWAL(ctx)
+			snapshotTx, err := db.loadLatestSnapshot(ctx)
+			if err != nil {
+				level.Debug(s.logger).Log(
+					"msg", "failed to load latest snapshot", "db", db.name, "err", err,
+				)
+				snapshotTx = 0
+			}
+			return db.replayWAL(ctx, snapshotTx)
 		})
 	}
 
@@ -393,13 +414,13 @@ func (db *DB) snapshotsDir() string {
 	return filepath.Join(db.storagePath, "snapshots")
 }
 
-func (db *DB) replayWAL(ctx context.Context) error {
+func (db *DB) replayWAL(ctx context.Context, firstIndex uint64) error {
 	level.Info(db.logger).Log("msg", "replaying WAL")
 	start := time.Now()
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
 	persistedTables := map[string]uint64{}
-	if err := db.wal.Replay(func(tx uint64, record *walpb.Record) error {
+	if err := db.wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
 			persistedTables[e.TableBlockPersisted.TableName] = tx
@@ -410,7 +431,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 	}
 
 	lastTx := uint64(0)
-	if err := db.wal.Replay(func(tx uint64, record *walpb.Record) error {
+	if err := db.wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
 		lastTx = tx
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
@@ -483,7 +504,7 @@ func (db *DB) replayWAL(ctx context.Context) error {
 			// If we get to this point it means a block was finished but did
 			// not get persisted.
 			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(table.active)
+			go table.writeBlock(ctx, table.active)
 
 			if !proto.Equal(schema, table.config.schema.Definition()) {
 				// If schemas are identical from block to block we should we
@@ -553,6 +574,8 @@ func (db *DB) replayWAL(ctx context.Context) error {
 			db.highWatermark.Store(tx)
 		case *walpb.Entry_TableBlockPersisted_:
 			return nil
+		case *walpb.Entry_Snapshot_:
+			return nil
 		default:
 			return fmt.Errorf("unexpected WAL entry type: %t", e)
 		}
@@ -573,7 +596,7 @@ func (db *DB) Close() error {
 	for _, table := range db.tables {
 		table.close()
 		if db.bucket != nil {
-			table.writeBlock(table.ActiveBlock())
+			table.writeBlock(context.TODO(), table.ActiveBlock())
 		}
 	}
 
