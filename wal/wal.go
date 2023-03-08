@@ -449,7 +449,7 @@ func (w *FileWAL) replay(count int, firstIndex uint64, handler ReplayHandlerFunc
 		defer func() {
 			// recover a panic of reading a transaction. Truncate the wal to the last valid transaction.
 			if r := recover(); r != nil {
-				level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", firstIndex, "last_index", lastIndex, "err", err)
+				level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", firstIndex, "last_index", lastIndex, "offending_index", tx, "err", err)
 				if err = w.log.TruncateBack(tx - 1); err != nil {
 					return
 				}
