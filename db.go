@@ -264,10 +264,15 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 			}
 			snapshotTx, err := db.loadLatestSnapshot(ctx)
 			if err != nil {
-				level.Debug(s.logger).Log(
+				level.Info(s.logger).Log(
 					"msg", "failed to load latest snapshot", "db", db.name, "err", err,
 				)
 				snapshotTx = 0
+			} else {
+				level.Info(s.logger).Log(
+					"msg", "successfully loaded snapshot",
+					"tx", snapshotTx,
+				)
 			}
 			return db.replayWAL(ctx, snapshotTx)
 		})
@@ -277,7 +282,9 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 }
 
 type dbMetrics struct {
-	txHighWatermark prometheus.GaugeFunc
+	txHighWatermark    prometheus.GaugeFunc
+	snapshotsStarted   prometheus.Counter
+	snapshotsCompleted prometheus.Counter
 }
 
 type DB struct {
@@ -305,6 +312,8 @@ type DB struct {
 
 	// highWatermark maintains the highest consecutively completed tx number
 	highWatermark *atomic.Uint64
+
+	snapshotInProgress atomic.Bool
 
 	metrics *dbMetrics
 }
@@ -385,6 +394,14 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 			}, func() float64 {
 				return float64(db.highWatermark.Load())
 			}),
+			snapshotsStarted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "snapshots_started",
+				Help: "Number of snapshots started",
+			}),
+			snapshotsCompleted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "snapshots_completed",
+				Help: "Number of snapshots completed",
+			}),
 		}
 		return nil
 	}(); dbSetupErr != nil {
@@ -415,7 +432,7 @@ func (db *DB) snapshotsDir() string {
 }
 
 func (db *DB) replayWAL(ctx context.Context, firstIndex uint64) error {
-	level.Info(db.logger).Log("msg", "replaying WAL")
+	level.Info(db.logger).Log("msg", "replaying WAL", "first_index", firstIndex)
 	start := time.Now()
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
