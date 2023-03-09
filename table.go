@@ -412,6 +412,27 @@ func (t *Table) writeBlock(ctx context.Context, block *TableBlock) {
 	}
 	t.mtx.Unlock()
 	t.db.maintainWAL()
+	if t.db.columnStore.snapshotTriggerSize != 0 && t.db.columnStore.enableWAL {
+		func() {
+			if !t.db.snapshotInProgress.CompareAndSwap(false, true) {
+				// Snapshot already in progress. This could lead to duplicate
+				// data when replaying (refer to the snapshot design document),
+				// but discarding this data on recovery is better than a
+				// potential additional CPU spike caused by another snapshot.
+				return
+			}
+			defer t.db.snapshotInProgress.Store(false)
+			// This snapshot snapshots the new, active, table block. Refer to
+			// the snapshot design document for more details as to why this
+			// snapshot is necessary.
+			if err := t.db.snapshotAtTX(ctx, tx); err != nil {
+				level.Error(t.logger).Log(
+					"msg", "failed to write snapshot on block rotation",
+					"err", err,
+				)
+			}
+		}()
+	}
 }
 
 func (t *Table) RotateBlock(ctx context.Context, block *TableBlock) error {
