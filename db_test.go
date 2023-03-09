@@ -72,7 +72,6 @@ func TestDBWithWALAndBucket(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer c.Close()
-	require.NoError(t, c.ReplayWALs(context.Background()))
 }
 
 func TestDBWithWAL(t *testing.T) {
@@ -251,8 +250,6 @@ func TestDBWithWAL(t *testing.T) {
 		)
 		require.NoError(t, err)
 		defer c.Close()
-
-		require.NoError(t, c.ReplayWALs(context.Background()))
 
 		db, err = c.DB(context.Background(), "test")
 		require.NoError(t, err)
@@ -1258,13 +1255,10 @@ func Test_DB_TableNotExist(t *testing.T) {
 }
 
 func TestReplayBackwardsCompatibility(t *testing.T) {
-	ctx := context.Background()
 	const storagePath = "testdata/oldwal"
 	c, err := New(WithWAL(), WithStoragePath(storagePath))
 	require.NoError(t, err)
 	defer c.Close()
-
-	require.NoError(t, c.ReplayWALs(ctx))
 }
 
 func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
@@ -1431,7 +1425,6 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer c.Close()
-	require.NoError(t, c.ReplayWALs(context.Background()))
 
 	// Query with an aggregat query
 	pool := memory.NewGoAllocator()

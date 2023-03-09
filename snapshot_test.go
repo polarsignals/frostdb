@@ -356,8 +356,6 @@ func TestSnapshotWithWAL(t *testing.T) {
 	// insert.
 	require.NoError(t, verifyDB.wal.Truncate(snapshotTx+1))
 
-	require.NoError(t, verifyC.ReplayWALs(ctx))
-
 	engine := query.NewEngine(memory.DefaultAllocator, verifyDB.TableProvider())
 	require.NoError(
 		t,

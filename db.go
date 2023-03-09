@@ -103,6 +103,10 @@ func New(
 		return nil, fmt.Errorf("storage path must be configured if WAL is enabled")
 	}
 
+	if err := s.replayWALs(context.Background()); err != nil {
+		return nil, err
+	}
+
 	return s, nil
 }
 
@@ -236,7 +240,7 @@ func (s *ColumnStore) DatabasesDir() string {
 }
 
 // ReplayWALs replays the write-ahead log for each database.
-func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
+func (s *ColumnStore) replayWALs(ctx context.Context) error {
 	if !s.enableWAL {
 		return nil
 	}
