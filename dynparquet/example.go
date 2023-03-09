@@ -264,6 +264,27 @@ func NewTestSamples() Samples {
 	}
 }
 
+func GenerateTestSamples(n int) Samples {
+	s := Samples{}
+	for i := 0; i < n; i++ {
+		s = append(s,
+			Sample{
+				ExampleType: "cpu",
+				Labels: []Label{{
+					Name:  "node",
+					Value: "test3",
+				}},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+				},
+				Timestamp: int64(i),
+				Value:     int64(i),
+			})
+	}
+	return s
+}
+
 func NestedListDef(name string, layout *schemav2pb.StorageLayout) *schemav2pb.Node_Group {
 	return &schemav2pb.Node_Group{
 		Group: &schemav2pb.Group{
