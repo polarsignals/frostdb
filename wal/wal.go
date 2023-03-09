@@ -385,7 +385,7 @@ func (w *FileWAL) LastIndex() (uint64, error) {
 	return w.log.LastIndex()
 }
 
-func (w *FileWAL) Replay(firstIndex uint64, handler ReplayHandlerFunc) (err error) {
+func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 	if handler == nil { // no handler provided
 		return nil
 	}
@@ -394,8 +394,8 @@ func (w *FileWAL) Replay(firstIndex uint64, handler ReplayHandlerFunc) (err erro
 	if err != nil {
 		return fmt.Errorf("read first index: %w", err)
 	}
-	if firstIndex == 0 || firstIndex < logFirstIndex {
-		firstIndex = logFirstIndex
+	if tx == 0 || tx < logFirstIndex {
+		tx = logFirstIndex
 	}
 
 	lastIndex, err := w.log.LastIndex()
@@ -404,17 +404,16 @@ func (w *FileWAL) Replay(firstIndex uint64, handler ReplayHandlerFunc) (err erro
 	}
 
 	// FirstIndex and LastIndex returns zero when there is no WAL files.
-	if firstIndex == 0 || lastIndex == 0 {
+	if tx == 0 || lastIndex == 0 {
 		return nil
 	}
 
-	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", firstIndex, "last_index", lastIndex)
+	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", tx, "last_index", lastIndex)
 
-	tx := firstIndex
 	defer func() {
 		// recover a panic of reading a transaction. Truncate the wal to the last valid transaction.
 		if r := recover(); r != nil {
-			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", firstIndex, "last_index", lastIndex, "offending_index", tx, "err", err)
+			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", tx, "last_index", lastIndex, "offending_index", tx, "err", err)
 			if err = w.log.TruncateBack(tx - 1); err != nil {
 				return
 			}

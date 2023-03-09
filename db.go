@@ -103,7 +103,7 @@ func New(
 		return nil, fmt.Errorf("storage path must be configured if WAL is enabled")
 	}
 
-	if err := s.replayWALs(context.Background()); err != nil {
+	if err := s.recoverDBsFromStorage(context.Background()); err != nil {
 		return nil, err
 	}
 
@@ -239,8 +239,8 @@ func (s *ColumnStore) DatabasesDir() string {
 	return filepath.Join(s.storagePath, "databases")
 }
 
-// ReplayWALs replays the write-ahead log for each database.
-func (s *ColumnStore) replayWALs(ctx context.Context) error {
+// recoverDBsFromStorage replays the snapshots and write-ahead logs for each database.
+func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 	if !s.enableWAL {
 		return nil
 	}
@@ -263,11 +263,9 @@ func (s *ColumnStore) replayWALs(ctx context.Context) error {
 	for _, f := range files {
 		databaseName := f.Name()
 		g.Go(func() error {
+			// Open the DB for the side effect of the snapshot and WALs being loaded as part of the open operation.
 			_, err := s.DB(ctx, databaseName)
-			if err != nil {
-				return err
-			}
-			return nil
+			return err
 		})
 	}
 
