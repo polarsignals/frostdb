@@ -672,7 +672,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			return fmt.Errorf("unexpected WAL entry type: %t", e)
 		}
 		return nil
-
 	}); err != nil {
 		return err
 	}
