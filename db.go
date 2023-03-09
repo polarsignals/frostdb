@@ -413,6 +413,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 func (db *DB) openWAL(ctx context.Context, firstIndex uint64) (WAL, error) {
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
+	start := time.Now()
 	persistedTables := map[string]uint64{}
 	lastTx := uint64(0)
 	wal, err := wal.Open(
@@ -428,6 +429,7 @@ func (db *DB) openWAL(ctx context.Context, firstIndex uint64) (WAL, error) {
 	if err != nil {
 		return nil, err
 	}
+	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
 
 	db.tx.Store(lastTx)
 	db.highWatermark.Store(lastTx)
