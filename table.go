@@ -20,6 +20,7 @@ import (
 	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/apache/arrow/go/v10/arrow/array"
 	"github.com/apache/arrow/go/v10/arrow/memory"
+	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
@@ -677,35 +678,14 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 			// option), a new snapshot is triggered. This is basically the size
 			// of the new data in this block since the last snapshot.
 			blockSize-block.lastSnapshotSize.Load() > t.db.columnStore.snapshotTriggerSize {
-			tx, _, commit := t.db.begin()
-			go func() {
-				defer commit()
-				if err := t.db.snapshot(ctx, tx); err != nil {
-					level.Error(t.logger).Log(
-						"msg", "failed to snapshot database on block size trigger", "err", err,
-					)
-					return
-				}
+			t.db.asyncSnapshot(ctx, func() {
+				level.Debug(t.logger).Log(
+					"msg", "successful snapshot on block size trigger",
+					"block_size", humanize.IBytes(uint64(blockSize)),
+					"last_snapshot_size", humanize.IBytes(uint64(block.lastSnapshotSize.Load())),
+				)
 				block.lastSnapshotSize.Store(blockSize)
-				if t.db.columnStore.enableWAL {
-					// Appending a snapshot record to the WAL is necessary,
-					// since the WAL expects a 1:1 relationship between txn ids
-					// and record indexes.
-					if err := t.db.wal.Log(
-						tx,
-						&walpb.Record{
-							Entry: &walpb.Entry{
-								EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
-							},
-						},
-					); err != nil {
-						level.Error(t.logger).Log(
-							"msg", "failed to append snapshot record to WAL", "err", err,
-						)
-						return
-					}
-				}
-			}()
+			})
 		}
 		if blockSize < t.db.columnStore.activeMemorySize {
 			return block, close, nil

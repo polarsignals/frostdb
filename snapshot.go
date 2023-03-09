@@ -11,10 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
+	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 	"google.golang.org/protobuf/proto"
 
@@ -22,6 +24,7 @@ import (
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
+	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
 )
 
@@ -69,12 +72,67 @@ func snapshotFileName(tx uint64) string {
 	return fmt.Sprintf("%020d.fdbs", tx)
 }
 
-// snapshot takes a snapshot of the state of the database at transaction tx.
-func (db *DB) snapshot(ctx context.Context, tx uint64) error {
+// asyncSnapshot begins a new transaction and takes a snapshot of the
+// database in a new goroutine at that txn. It returns whether a snapshot was
+// started (i.e. no other snapshot was in progress). When the snapshot
+// goroutine successfully completes a snapshot, onSuccess is called.
+func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 	if !db.columnStore.enableWAL {
-		return nil
+		return
+	}
+	if !db.snapshotInProgress.CompareAndSwap(false, true) {
+		// Snapshot already in progress.
+		return
 	}
 
+	tx, _, commit := db.begin()
+	level.Debug(db.logger).Log(
+		"msg", "starting a new snapshot",
+		"tx", tx,
+	)
+	go func() {
+		start := time.Now()
+		defer db.snapshotInProgress.Store(false)
+		defer commit()
+		if db.columnStore.enableWAL {
+			// Appending a snapshot record to the WAL is necessary,
+			// since the WAL expects a 1:1 relationship between txn ids
+			// and record indexes. This is done before the actual snapshot so
+			// that a failure to snapshot still appends a record to the WAL,
+			// avoiding a WAL deadlock.
+			if err := db.wal.Log(
+				tx,
+				&walpb.Record{
+					Entry: &walpb.Entry{
+						EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
+					},
+				},
+			); err != nil {
+				level.Error(db.logger).Log(
+					"msg", "failed to append snapshot record to WAL", "err", err,
+				)
+				return
+			}
+		}
+
+		if err := db.snapshotAtTX(ctx, tx); err != nil {
+			level.Error(db.logger).Log(
+				"msg", "failed to snapshot database", "err", err,
+			)
+			return
+		}
+		level.Debug(db.logger).Log(
+			"msg", "snapshot complete",
+			"tx", tx,
+			"duration", time.Since(start),
+		)
+		onSuccess()
+	}()
+}
+
+// snapshotAtTX takes a snapshot of the state of the database at transaction tx.
+func (db *DB) snapshotAtTX(ctx context.Context, tx uint64) error {
+	db.metrics.snapshotsStarted.Inc()
 	snapshotsDir := db.snapshotsDir()
 	if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
 		return err
@@ -101,6 +159,7 @@ func (db *DB) snapshot(ctx context.Context, tx uint64) error {
 	}
 	// TODO(asubiotto): If snapshot file sizes become too large, investigate
 	// adding compression.
+	db.metrics.snapshotsCompleted.Inc()
 	return nil
 }
 
@@ -214,12 +273,23 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 
 	metadata := &snapshotpb.FooterData{}
 	for _, t := range tables {
+		block := t.ActiveBlock()
+		blockUlid, err := block.ulid.MarshalBinary()
+		if err != nil {
+			return err
+		}
 		tableMeta := &snapshotpb.Table{
 			Name: t.name,
 			Config: &snapshotpb.Table_TableConfig{
 				RowGroupSize:     int64(t.config.rowGroupSize),
 				BlockReaderLimit: int64(t.config.blockReaderLimit),
 				DisableWal:       t.config.disableWAL,
+			},
+			ActiveBlock: &snapshotpb.Table_TableBlock{
+				Ulid:   blockUlid,
+				Size:   block.Size(),
+				MinTx:  block.minTx,
+				PrevTx: block.prevTx,
 			},
 		}
 		switch v := t.config.schema.Definition().(type) {
@@ -412,9 +482,23 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				return err
 			}
 
+			var blockUlid ulid.ULID
+			if err := blockUlid.UnmarshalBinary(tableMeta.ActiveBlock.Ulid); err != nil {
+				return err
+			}
+
 			table.mtx.Lock()
 			block := table.active
+			block.mtx.Lock()
+			block.ulid = blockUlid
+			block.size.Store(tableMeta.ActiveBlock.Size)
+			// Store the last snapshot size so a snapshot is not triggered right
+			// after loading this snapshot.
+			block.lastSnapshotSize.Store(tableMeta.ActiveBlock.Size)
+			block.minTx = tableMeta.ActiveBlock.MinTx
+			block.prevTx = tableMeta.ActiveBlock.PrevTx
 			newIdx := block.Index().Clone()
+			block.mtx.Unlock()
 			table.mtx.Unlock()
 
 			for _, granuleMeta := range tableMeta.GranuleMetadata {

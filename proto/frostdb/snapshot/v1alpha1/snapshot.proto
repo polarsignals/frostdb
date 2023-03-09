@@ -23,7 +23,14 @@ message Table {
     bool disable_wal = 5;
   }
   TableConfig config = 2;
-  repeated Granule granule_metadata = 3;
+  message TableBlock {
+    bytes ulid = 1;
+    int64 size = 2;
+    uint64 min_tx = 3;
+    uint64 prev_tx = 4;
+  }
+  TableBlock active_block = 3;
+  repeated Granule granule_metadata = 4;
 }
 
 message Granule {
