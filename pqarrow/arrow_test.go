@@ -263,8 +263,10 @@ func TestMergeToArrow(t *testing.T) {
 
 func BenchmarkNestedParquetToArrow(b *testing.B) {
 	dynSchema := dynparquet.NewNestedSampleSchema(b)
+	schema, err := dynparquet.SchemaFromDefinition(dynSchema)
+	require.NoError(b, err)
 
-	pb, err := dynSchema.NewBuffer(map[string][]string{})
+	pb, err := schema.NewBuffer(map[string][]string{})
 	require.NoError(b, err)
 
 	for i := 0; i < 1000; i++ {
@@ -610,7 +612,9 @@ func TestList(t *testing.T) {
 }
 
 func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
-	schema := dynparquet.NewNestedSampleSchema(t)
+	dynSchema := dynparquet.NewNestedSampleSchema(t)
+	schema, err := dynparquet.SchemaFromDefinition(dynSchema)
+	require.NoError(t, err)
 	buf, err := schema.NewBufferV2(
 		dynparquet.LabelColumn("label1"),
 		dynparquet.LabelColumn("label2"),
@@ -770,6 +774,8 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 
 func Test_ParquetToArrowV2(t *testing.T) {
 	dynSchema := dynparquet.NewNestedSampleSchema(t)
+	schema, err := dynparquet.SchemaFromDefinition(dynSchema)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
@@ -777,7 +783,7 @@ func Test_ParquetToArrowV2(t *testing.T) {
 
 	n := 10
 	for i := 0; i < n; i++ {
-		pb, err := dynSchema.NewBufferV2(
+		pb, err := schema.NewBufferV2(
 			dynparquet.LabelColumn("label1"),
 			dynparquet.LabelColumn("label2"),
 		)

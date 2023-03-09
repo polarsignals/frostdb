@@ -19,7 +19,7 @@ import (
 
 func TestAggregateInconsistentSchema(t *testing.T) {
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	logger := newTestLogger(t)
@@ -142,7 +142,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 
 func TestAggregationProjection(t *testing.T) {
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	logger := newTestLogger(t)
@@ -259,7 +259,7 @@ func BenchmarkAggregation(b *testing.B) {
 
 	// Insert sample data
 	{
-		config := NewTableConfig(dynparquet.NewSampleSchema())
+		config := NewTableConfig(dynparquet.SampleDefinition())
 		table, err := db.Table("test", config)
 		require.NoError(b, err)
 

@@ -26,6 +26,9 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
+	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/storage"
@@ -357,6 +360,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
 		// If bucket storage is configured; scan for existing tables in the database
 		if db.bucket != nil {
+			fmt.Println("scanning for read only tables")
 			if err := db.bucket.Iter(ctx, "", func(tableName string) error {
 				_, err := db.readOnlyTable(strings.TrimSuffix(tableName, "/"))
 				if err != nil {
@@ -531,10 +535,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		case *walpb.Entry_NewTableBlock_:
 			entry := e.NewTableBlock
 			var schema proto.Message
-			switch v := entry.Schema.(type) {
-			case *walpb.Entry_NewTableBlock_DeprecatedSchema:
+			switch v := entry.Config.Schema.(type) {
+			case *tablepb.TableConfig_DeprecatedSchema:
 				schema = v.DeprecatedSchema
-			case *walpb.Entry_NewTableBlock_SchemaV2:
+			case *tablepb.TableConfig_SchemaV2:
 				schema = v.SchemaV2
 			default:
 				return fmt.Errorf("unhandled schema type: %T", v)
@@ -555,11 +559,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			table, err := db.GetTable(tableName)
 			var tableErr ErrTableNotFound
 			if errors.As(err, &tableErr) {
-				schema, err := dynparquet.SchemaFromDefinition(schema)
-				if err != nil {
-					return fmt.Errorf("initialize schema: %w", err)
-				}
-				config := NewTableConfig(schema)
+				config := NewTableConfig(schema, FromConfig(entry.Config))
 				// TODO: May be we should acquire mutux lock when mutating d.roTables and d.tables?
 				// s.DB creates read only Table instance when BucketStore is configured.
 				// Make sure to use the existing Table instace instead of creating new one to avoid dangling instance.
@@ -600,7 +600,14 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			table.pendingBlocks[table.active] = struct{}{}
 			go table.writeBlock(ctx, table.active)
 
-			if !proto.Equal(schema, table.config.schema.Definition()) {
+			protoEqual := false
+			switch schema.(type) {
+			case *schemav2pb.Schema:
+				protoEqual = proto.Equal(schema, table.config.GetSchemaV2())
+			case *schemapb.Schema:
+				protoEqual = proto.Equal(schema, table.config.GetDeprecatedSchema())
+			}
+			if !protoEqual {
 				// If schemas are identical from block to block we should we
 				// reuse the previous schema in order to retain pooled memory
 				// for it.
@@ -609,7 +616,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 					return fmt.Errorf("initialize schema: %w", err)
 				}
 
-				table.config.schema = schema
+				table.schema = schema
 			}
 
 			table.active, err = newTableBlock(table, table.active.minTx, tx, id)
@@ -744,7 +751,7 @@ func (db *DB) readOnlyTable(name string) (*Table, error) {
 	table, err := newTable(
 		db,
 		name,
-		NewTableConfig(nil),
+		nil,
 		db.reg,
 		db.logger,
 		db.tracer,
@@ -758,7 +765,7 @@ func (db *DB) readOnlyTable(name string) (*Table, error) {
 	return table, nil
 }
 
-func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
+func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	if !validateName(name) {
 		return nil, errors.New("invalid table name")
 	}
@@ -782,7 +789,12 @@ func (db *DB) Table(name string, config *TableConfig) (*Table, error) {
 	// Check if this table exists as a read only table
 	table, ok = db.roTables[name]
 	if ok {
+		var err error
 		table.config = config
+		table.schema, err = schemaFromTableConfig(config)
+		if err != nil {
+			return nil, err
+		}
 		delete(db.roTables, name)
 	} else {
 		var err error

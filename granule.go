@@ -15,8 +15,8 @@ import (
 type Granule struct {
 	metadata GranuleMetadata
 
-	parts       *parts.List
-	tableConfig *TableConfig
+	parts  *parts.List
+	schema *dynparquet.Schema
 
 	// newGranules are the granules that were created after a split
 	newGranules []*Granule
@@ -36,11 +36,11 @@ type GranuleMetadata struct {
 	pruned atomic.Uint64
 }
 
-func NewGranule(tableConfig *TableConfig, prts ...*parts.Part) (*Granule, error) {
+func NewGranule(schema *dynparquet.Schema, prts ...*parts.Part) (*Granule, error) {
 	g := &Granule{
-		parts:       parts.NewList(&atomic.Pointer[parts.Node]{}, parts.None),
-		tableConfig: tableConfig,
-		metadata:    GranuleMetadata{},
+		parts:    parts.NewList(&atomic.Pointer[parts.Node]{}, parts.None),
+		schema:   schema,
+		metadata: GranuleMetadata{},
 	}
 
 	for _, p := range prts {
@@ -65,7 +65,7 @@ func (g *Granule) addPart(p *parts.Part) error {
 	_ = g.parts.Prepend(p)
 	g.metadata.size.Add(uint64(p.Size()))
 
-	if g.metadata.least == nil || g.tableConfig.schema.RowLessThan(r, g.metadata.least) {
+	if g.metadata.least == nil || g.schema.RowLessThan(r, g.metadata.least) {
 		g.metadata.least = r
 	}
 
@@ -112,7 +112,7 @@ func (g *Granule) Less(than btree.Item) bool {
 	default:
 		panic(fmt.Sprintf("cannot compare against %T", v))
 	}
-	return g.tableConfig.schema.RowLessThan(g.Least(), otherRow)
+	return g.schema.RowLessThan(g.Least(), otherRow)
 }
 
 // Least returns the least row in a Granule.
@@ -132,7 +132,7 @@ func (g *Granule) Collect(ctx context.Context, tx uint64, filter TrueNegativeFil
 
 		var buf *dynparquet.SerializedBuffer
 		var err error
-		buf, err = p.AsSerializedBuffer(g.tableConfig.schema)
+		buf, err = p.AsSerializedBuffer(g.schema)
 		if err != nil {
 			return false
 		}

@@ -394,7 +394,7 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	// granules). However, it seems like new parts are prepended so the sort
 	// order is inverted. Another option is to recursively split using
 	// addPartToGranule, which would be cheap in the general case.
-	sorter := parts.NewPartSorter(t.table.config.schema, level1Parts)
+	sorter := parts.NewPartSorter(t.table.schema, level1Parts)
 	sort.Sort(sorter)
 	if sorter.Err() != nil {
 		return false, fmt.Errorf("error sorting level1: %w", sorter.Err())
@@ -419,7 +419,7 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 	partsAfter := 0
 	for _, parts := range newParts {
 		partsAfter += len(parts)
-		newGranule, err := NewGranule(t.table.config, parts...)
+		newGranule, err := NewGranule(t.table.schema, parts...)
 		if err != nil {
 			if err != nil {
 				return false, fmt.Errorf("failed to create new granule: %w", err)
@@ -546,7 +546,7 @@ func compactLevel0IntoLevel1(
 	for _, p1 := range level1Parts {
 		overlapped := false
 		for _, p0 := range level0Parts {
-			if overlaps, err := p0.OverlapsWith(t.table.config.schema, p1); err != nil {
+			if overlaps, err := p0.OverlapsWith(t.table.schema, p1); err != nil {
 				return nil, err
 			} else if overlaps {
 				stats.numPartsOverlap++
@@ -562,7 +562,7 @@ func compactLevel0IntoLevel1(
 
 	bufs := make([]dynparquet.DynamicRowGroup, 0, len(level0Parts))
 	for _, p := range partsToCompact {
-		buf, err := p.AsSerializedBuffer(t.table.config.schema)
+		buf, err := p.AsSerializedBuffer(t.table.schema)
 		if err != nil {
 			return nil, err
 		}
@@ -574,7 +574,7 @@ func compactLevel0IntoLevel1(
 	}
 
 	cursor := 0
-	merged, err := t.table.config.schema.MergeDynamicRowGroups(bufs)
+	merged, err := t.table.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
 		return nil, err
 	}

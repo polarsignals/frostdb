@@ -57,7 +57,7 @@ func (t *Table) IterateBucketBlocks(
 
 	n := 0
 	errg := &errgroup.Group{}
-	errg.SetLimit(t.config.blockReaderLimit)
+	errg.SetLimit(int(t.config.BlockReaderLimit))
 	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
 		n++
 		errg.Go(func() error { return t.ProcessFile(ctx, blockDir, lastBlockTimestamp, filter, rowGroups) })

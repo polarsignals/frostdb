@@ -316,9 +316,9 @@ func TestCompaction(t *testing.T) {
 				table.db.compactorPool.stop()
 				table.db.compactorPool = nil
 
-				table.config.rowGroupSize = 2
+				table.config.RowGroupSize = 2
 				if tc.rgSize != 0 {
-					table.config.rowGroupSize = tc.rgSize
+					table.config.RowGroupSize = uint64(tc.rgSize)
 				}
 
 				var (

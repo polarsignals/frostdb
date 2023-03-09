@@ -6,9 +6,9 @@ import (
 
 	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/apache/arrow/go/v10/arrow/memory"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb"
-	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -25,7 +25,7 @@ func main() {
 	database, _ := columnstore.DB(context.Background(), "simple_db")
 
 	// Define our simple schema of labels and values
-	schema, _ := simpleSchema()
+	schema := simpleSchema()
 
 	// Create a table named simple in our database
 	table, _ := database.Table(
@@ -94,8 +94,8 @@ func main() {
 	})
 }
 
-func simpleSchema() (*dynparquet.Schema, error) {
-	return dynparquet.SchemaFromDefinition(&schemapb.Schema{
+func simpleSchema() proto.Message {
+	return &schemapb.Schema{
 		Name: "simple_schema",
 		Columns: []*schemapb.Column{{
 			Name: "names",
@@ -116,5 +116,5 @@ func simpleSchema() (*dynparquet.Schema, error) {
 			Name:      "names",
 			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 		}},
-	})
+	}
 }

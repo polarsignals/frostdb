@@ -10,7 +10,7 @@ import (
 	"github.com/apache/arrow/go/v10/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
-	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
@@ -337,9 +337,9 @@ func LabelColumn(name string) *schemav2pb.Node {
 	}
 }
 
-func NewNestedSampleSchema(t testing.TB) *Schema {
+func NewNestedSampleSchema(t testing.TB) proto.Message {
 	t.Helper()
-	def := &schemav2pb.Schema{
+	return &schemav2pb.Schema{
 		Root: &schemav2pb.Group{
 			Name: "nested",
 			Nodes: []*schemav2pb.Node{
@@ -379,9 +379,4 @@ func NewNestedSampleSchema(t testing.TB) *Schema {
 			},
 		},
 	}
-
-	schema, err := SchemaFromDefinition(def)
-	require.NoError(t, err)
-
-	return schema
 }

@@ -21,9 +21,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
+	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
 )
@@ -287,30 +286,14 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 			return err
 		}
 		tableMeta := &snapshotpb.Table{
-			Name: t.name,
-			Config: &snapshotpb.Table_TableConfig{
-				RowGroupSize:     int64(t.config.rowGroupSize),
-				BlockReaderLimit: int64(t.config.blockReaderLimit),
-				DisableWal:       t.config.disableWAL,
-			},
+			Name:   t.name,
+			Config: t.config,
 			ActiveBlock: &snapshotpb.Table_TableBlock{
 				Ulid:   blockUlid,
 				Size:   block.Size(),
 				MinTx:  block.minTx,
 				PrevTx: block.prevTx,
 			},
-		}
-		switch v := t.config.schema.Definition().(type) {
-		case *schemapb.Schema:
-			tableMeta.Config.Schema = &snapshotpb.Table_TableConfig_DeprecatedSchema{
-				DeprecatedSchema: v,
-			}
-		case *schemav2pb.Schema:
-			tableMeta.Config.Schema = &snapshotpb.Table_TableConfig_SchemaV2{
-				SchemaV2: v,
-			}
-		default:
-			return fmt.Errorf("unknown schema type: %t", v)
 		}
 
 		var ascendErr error
@@ -326,7 +309,7 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 					if err := ctx.Err(); err != nil {
 						return err
 					}
-					schema := t.config.schema
+					schema := t.schema
 
 					if record := p.Record(); record != nil {
 						partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
@@ -462,16 +445,12 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 		if err := func() error {
 			var schemaMsg proto.Message
 			switch v := tableMeta.Config.Schema.(type) {
-			case *snapshotpb.Table_TableConfig_DeprecatedSchema:
+			case *tablepb.TableConfig_DeprecatedSchema:
 				schemaMsg = v.DeprecatedSchema
-			case *snapshotpb.Table_TableConfig_SchemaV2:
+			case *tablepb.TableConfig_SchemaV2:
 				schemaMsg = v.SchemaV2
 			default:
 				return fmt.Errorf("unhandled schema type: %T", v)
-			}
-			schema, err := dynparquet.SchemaFromDefinition(schemaMsg)
-			if err != nil {
-				return err
 			}
 
 			options := []TableOption{
@@ -482,7 +461,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				options = append(options, WithoutWAL())
 			}
 			tableConfig := NewTableConfig(
-				schema,
+				schemaMsg,
 				options...,
 			)
 			table, err := db.Table(tableMeta.Name, tableConfig)
@@ -540,13 +519,13 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 							return err
 						}
 
-						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, schema, partOptions))
+						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, table.schema, partOptions))
 					default:
 						return fmt.Errorf("unknown part encoding: %s", partMeta.Encoding)
 					}
 				}
 
-				granule, err := NewGranule(tableConfig, resultParts...)
+				granule, err := NewGranule(table.schema, resultParts...)
 				if err != nil {
 					return err
 				}
