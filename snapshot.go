@@ -86,12 +86,10 @@ func getTxFromSnapshotFileName(fileName string) (uint64, error) {
 // goroutine successfully completes a snapshot, onSuccess is called.
 func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 	if !db.columnStore.enableWAL {
-		fmt.Println("wal not enabled")
 		return
 	}
 	if !db.snapshotInProgress.CompareAndSwap(false, true) {
 		// Snapshot already in progress.
-		fmt.Println("snap in progress")
 		return
 	}
 
