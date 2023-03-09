@@ -34,6 +34,10 @@ func (w *NopWAL) Log(tx uint64, record *walpb.Record) error {
 	return nil
 }
 
+func (w *NopWAL) Replay(tx uint64, handler ReplayHandlerFunc) error {
+	return nil
+}
+
 func (w *NopWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
 	return nil
 }
@@ -444,8 +448,8 @@ func (w *FileWAL) Replay(firstIndex uint64, handler ReplayHandlerFunc) (err erro
 	return nil
 }
 
-func (w *FileWAL) RunAsync(ctx context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
+func (w *FileWAL) RunAsync() {
+	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	go func() {
 		w.run(ctx)

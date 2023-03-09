@@ -411,29 +411,20 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 }
 
 func (db *DB) openWAL(ctx context.Context, firstIndex uint64) (WAL, error) {
-	// persistedTables is a map from a table name to the last transaction
-	// persisted.
-	start := time.Now()
-	persistedTables := map[string]uint64{}
-	lastTx := uint64(0)
 	wal, err := wal.Open(
 		db.logger,
 		db.reg,
 		db.walDir(),
-		wal.WithFirstIndex(firstIndex),
-		// NOTE: 2 is passed here because we require 2 passes through the WAL.
-		// Once to establish all the storage blocks that have rotated out, and a second pass to replay all the writes.
-		// This prevents us from replaying writes that have already been persisted/dropped by a block rotation.
-		wal.WithReplayFunc(2, db.recover(ctx, persistedTables, &lastTx)),
 	)
 	if err != nil {
 		return nil, err
 	}
-	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
 
-	db.tx.Store(lastTx)
-	db.highWatermark.Store(lastTx)
+	if err := db.recover(ctx, wal); err != nil {
+		return nil, err
+	}
 
+	wal.RunAsync()
 	return wal, nil
 }
 
@@ -447,7 +438,7 @@ func (db *DB) snapshotsDir() string {
 
 // recover attempts to recover database state from a combination of snapshots
 // and the WAL.
-func (db *DB) recover(ctx context.Context, persistedTables map[string]uint64, lastTx *uint64) wal.ReplayHandlerFunc {
+func (db *DB) recover(ctx context.Context, wal WAL) error {
 	level.Info(db.logger).Log("msg", "recovering db")
 	snapshotLoadStart := time.Now()
 	snapshotTx, err := db.loadLatestSnapshot(ctx)
@@ -479,7 +470,7 @@ func (db *DB) recover(ctx context.Context, persistedTables map[string]uint64, la
 	}
 	level.Info(db.logger).Log("msg", "replaying WAL", "snapshot_tx", snapshotTx)
 
-	firstIndex, err := db.wal.FirstIndex()
+	firstIndex, err := wal.FirstIndex()
 	if err != nil {
 		level.Info(db.logger).Log(
 			"msg", "failed to get WAL first index",
@@ -487,7 +478,7 @@ func (db *DB) recover(ctx context.Context, persistedTables map[string]uint64, la
 	}
 
 	if snapshotTx > firstIndex {
-		if err := db.wal.Truncate(snapshotTx); err != nil {
+		if err := wal.Truncate(snapshotTx); err != nil {
 			// Since this is a best-effort truncation, move on if there is an
 			// error.
 			level.Info(db.logger).Log(
@@ -504,177 +495,192 @@ func (db *DB) recover(ctx context.Context, persistedTables map[string]uint64, la
 		}
 	}
 
-	return func(i int, tx uint64, record *walpb.Record) error {
-		switch i {
-		case 0:
-			switch e := record.Entry.EntryType.(type) {
-			case *walpb.Entry_TableBlockPersisted_:
-				persistedTables[e.TableBlockPersisted.TableName] = tx
-				if tx > snapshotTx {
-					// The loaded snapshot has data in a table that has been
-					// persisted. Delete all data in this table, since it has
-					// already been persisted.
-					db.mtx.Lock()
-					if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-						table.ActiveBlock().index.Store(btree.New(table.db.columnStore.indexDegree))
-					}
-					db.mtx.Unlock()
+	// persistedTables is a map from a table name to the last transaction
+	// persisted.
+	persistedTables := map[string]uint64{}
+	lastTx := uint64(0)
+
+	start := time.Now()
+	if err := wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
+		switch e := record.Entry.EntryType.(type) {
+		case *walpb.Entry_TableBlockPersisted_:
+			persistedTables[e.TableBlockPersisted.TableName] = tx
+			if tx > snapshotTx {
+				// The loaded snapshot has data in a table that has been
+				// persisted. Delete all data in this table, since it has
+				// already been persisted.
+				db.mtx.Lock()
+				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
+					table.ActiveBlock().index.Store(btree.New(table.db.columnStore.indexDegree))
 				}
-			}
-			return nil
-		case 1:
-			*lastTx = tx
-			switch e := record.Entry.EntryType.(type) {
-			case *walpb.Entry_NewTableBlock_:
-				entry := e.NewTableBlock
-				var schema proto.Message
-				switch v := entry.Schema.(type) {
-				case *walpb.Entry_NewTableBlock_DeprecatedSchema:
-					schema = v.DeprecatedSchema
-				case *walpb.Entry_NewTableBlock_SchemaV2:
-					schema = v.SchemaV2
-				default:
-					return fmt.Errorf("unhandled schema type: %T", v)
-				}
-
-				var id ulid.ULID
-				if err := id.UnmarshalBinary(entry.BlockId); err != nil {
-					return err
-				}
-
-				if lastPersistedTx, ok := persistedTables[entry.TableName]; ok && tx < lastPersistedTx {
-					// This block has already been successfully persisted, so we can
-					// skip it.
-					return nil
-				}
-
-				tableName := entry.TableName
-				table, err := db.GetTable(tableName)
-				var tableErr ErrTableNotFound
-				if errors.As(err, &tableErr) {
-					schema, err := dynparquet.SchemaFromDefinition(schema)
-					if err != nil {
-						return fmt.Errorf("initialize schema: %w", err)
-					}
-					config := NewTableConfig(schema)
-					// TODO: May be we should acquire mutux lock when mutating d.roTables and d.tables?
-					// s.DB creates read only Table instance when BucketStore is configured.
-					// Make sure to use the existing Table instace instead of creating new one to avoid dangling instance.
-					table, ok := db.roTables[tableName]
-					if ok {
-						delete(db.roTables, tableName)
-						table.config = config
-					} else {
-						table, err = newTable(
-							db,
-							tableName,
-							config,
-							db.reg,
-							db.logger,
-							db.tracer,
-							db.wal,
-						)
-					}
-					if err != nil {
-						return fmt.Errorf("instantiate table: %w", err)
-					}
-
-					table.active, err = newTableBlock(table, 0, tx, id)
-					if err != nil {
-						return err
-					}
-					db.mtx.Lock()
-					db.tables[tableName] = table
-					db.mtx.Unlock()
-					return nil
-				}
-				if err != nil {
-					return fmt.Errorf("get table: %w", err)
-				}
-
-				// If we get to this point it means a block was finished but did
-				// not get persisted.
-				table.pendingBlocks[table.active] = struct{}{}
-				go table.writeBlock(ctx, table.active)
-
-				if !proto.Equal(schema, table.config.schema.Definition()) {
-					// If schemas are identical from block to block we should we
-					// reuse the previous schema in order to retain pooled memory
-					// for it.
-					schema, err := dynparquet.SchemaFromDefinition(schema)
-					if err != nil {
-						return fmt.Errorf("initialize schema: %w", err)
-					}
-
-					table.config.schema = schema
-				}
-
-				table.active, err = newTableBlock(table, table.active.minTx, tx, id)
-				if err != nil {
-					return err
-				}
-			case *walpb.Entry_Write_:
-				entry := e.Write
-				tableName := entry.TableName
-				if lastPersistedTx, ok := persistedTables[tableName]; ok && tx < lastPersistedTx {
-					// This write has already been successfully persisted, so we can
-					// skip it.
-					return nil
-				}
-
-				table, err := db.GetTable(tableName)
-				var tableErr ErrTableNotFound
-				if errors.As(err, &tableErr) {
-					// This means the WAL was truncated at a point where this write
-					// was already successfully persisted to disk in more optimized
-					// form than the WAL.
-					return nil
-				}
-				if err != nil {
-					return fmt.Errorf("get table: %w", err)
-				}
-
-				switch e.Write.Arrow {
-				case true:
-					reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
-					if err != nil {
-						return fmt.Errorf("create ipc reader: %w", err)
-					}
-					record, err := reader.Read()
-					if err != nil {
-						return fmt.Errorf("read record: %w", err)
-					}
-
-					if err := table.active.InsertRecord(ctx, tx, record); err != nil {
-						return fmt.Errorf("insert record into block: %w", err)
-					}
-				default:
-					serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
-					if err != nil {
-						return fmt.Errorf("deserialize buffer: %w", err)
-					}
-
-					if err := table.active.Insert(ctx, tx, serBuf); err != nil {
-						return fmt.Errorf("insert buffer into block: %w", err)
-					}
-				}
-
-				// After every insert we're setting the tx and highWatermark to the replayed tx.
-				// This allows the block's compaction to start working on the inserted data.
-				db.tx.Store(tx)
-				db.highWatermark.Store(tx)
-			case *walpb.Entry_TableBlockPersisted_:
-				return nil
-			case *walpb.Entry_Snapshot_:
-				return nil
-			default:
-				return fmt.Errorf("unexpected WAL entry type: %t", e)
+				db.mtx.Unlock()
 			}
 			return nil
 		default:
-			return fmt.Errorf("unexpected number of replay counts; expected 2, got %v", i)
+			return nil
 		}
+	}); err != nil {
+		return err
 	}
+
+	if err := wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
+		lastTx = tx
+		switch e := record.Entry.EntryType.(type) {
+		case *walpb.Entry_NewTableBlock_:
+			entry := e.NewTableBlock
+			var schema proto.Message
+			switch v := entry.Schema.(type) {
+			case *walpb.Entry_NewTableBlock_DeprecatedSchema:
+				schema = v.DeprecatedSchema
+			case *walpb.Entry_NewTableBlock_SchemaV2:
+				schema = v.SchemaV2
+			default:
+				return fmt.Errorf("unhandled schema type: %T", v)
+			}
+
+			var id ulid.ULID
+			if err := id.UnmarshalBinary(entry.BlockId); err != nil {
+				return err
+			}
+
+			if lastPersistedTx, ok := persistedTables[entry.TableName]; ok && tx < lastPersistedTx {
+				// This block has already been successfully persisted, so we can
+				// skip it.
+				return nil
+			}
+
+			tableName := entry.TableName
+			table, err := db.GetTable(tableName)
+			var tableErr ErrTableNotFound
+			if errors.As(err, &tableErr) {
+				schema, err := dynparquet.SchemaFromDefinition(schema)
+				if err != nil {
+					return fmt.Errorf("initialize schema: %w", err)
+				}
+				config := NewTableConfig(schema)
+				// TODO: May be we should acquire mutux lock when mutating d.roTables and d.tables?
+				// s.DB creates read only Table instance when BucketStore is configured.
+				// Make sure to use the existing Table instace instead of creating new one to avoid dangling instance.
+				table, ok := db.roTables[tableName]
+				if ok {
+					delete(db.roTables, tableName)
+					table.config = config
+				} else {
+					table, err = newTable(
+						db,
+						tableName,
+						config,
+						db.reg,
+						db.logger,
+						db.tracer,
+						wal,
+					)
+				}
+				if err != nil {
+					return fmt.Errorf("instantiate table: %w", err)
+				}
+
+				table.active, err = newTableBlock(table, 0, tx, id)
+				if err != nil {
+					return err
+				}
+				db.mtx.Lock()
+				db.tables[tableName] = table
+				db.mtx.Unlock()
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("get table: %w", err)
+			}
+
+			// If we get to this point it means a block was finished but did
+			// not get persisted.
+			table.pendingBlocks[table.active] = struct{}{}
+			go table.writeBlock(ctx, table.active)
+
+			if !proto.Equal(schema, table.config.schema.Definition()) {
+				// If schemas are identical from block to block we should we
+				// reuse the previous schema in order to retain pooled memory
+				// for it.
+				schema, err := dynparquet.SchemaFromDefinition(schema)
+				if err != nil {
+					return fmt.Errorf("initialize schema: %w", err)
+				}
+
+				table.config.schema = schema
+			}
+
+			table.active, err = newTableBlock(table, table.active.minTx, tx, id)
+			if err != nil {
+				return err
+			}
+		case *walpb.Entry_Write_:
+			entry := e.Write
+			tableName := entry.TableName
+			if lastPersistedTx, ok := persistedTables[tableName]; ok && tx < lastPersistedTx {
+				// This write has already been successfully persisted, so we can
+				// skip it.
+				return nil
+			}
+
+			table, err := db.GetTable(tableName)
+			var tableErr ErrTableNotFound
+			if errors.As(err, &tableErr) {
+				// This means the WAL was truncated at a point where this write
+				// was already successfully persisted to disk in more optimized
+				// form than the WAL.
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("get table: %w", err)
+			}
+
+			switch e.Write.Arrow {
+			case true:
+				reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
+				if err != nil {
+					return fmt.Errorf("create ipc reader: %w", err)
+				}
+				record, err := reader.Read()
+				if err != nil {
+					return fmt.Errorf("read record: %w", err)
+				}
+
+				if err := table.active.InsertRecord(ctx, tx, record); err != nil {
+					return fmt.Errorf("insert record into block: %w", err)
+				}
+			default:
+				serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
+				if err != nil {
+					return fmt.Errorf("deserialize buffer: %w", err)
+				}
+
+				if err := table.active.Insert(ctx, tx, serBuf); err != nil {
+					return fmt.Errorf("insert buffer into block: %w", err)
+				}
+			}
+
+			// After every insert we're setting the tx and highWatermark to the replayed tx.
+			// This allows the block's compaction to start working on the inserted data.
+			db.tx.Store(tx)
+			db.highWatermark.Store(tx)
+		case *walpb.Entry_TableBlockPersisted_:
+			return nil
+		case *walpb.Entry_Snapshot_:
+			return nil
+		default:
+			return fmt.Errorf("unexpected WAL entry type: %t", e)
+		}
+		return nil
+
+	}); err != nil {
+		return err
+	}
+
+	db.tx.Store(lastTx)
+	db.highWatermark.Store(lastTx)
+	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
+	return nil
 }
 
 func (db *DB) Close() error {

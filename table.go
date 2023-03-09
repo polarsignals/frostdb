@@ -41,6 +41,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
 )
 
@@ -142,6 +143,7 @@ type WAL interface {
 	Close() error
 	Log(tx uint64, record *walpb.Record) error
 	LogRecord(tx uint64, table string, record arrow.Record) error
+	Replay(tx uint64, handler wal.ReplayHandlerFunc) error
 	Truncate(tx uint64) error
 	FirstIndex() (uint64, error)
 }
