@@ -2,8 +2,7 @@ syntax = "proto3";
 
 package frostdb.wal.v1alpha1;
 
-import "frostdb/schema/v1alpha1/schema.proto";
-import "frostdb/schema/v1alpha2/schema.proto";
+import "frostdb/table/v1alpha1/config.proto";
 
 // Record describes a single entry into the WAL.
 message Record {
@@ -31,14 +30,8 @@ message Entry {
     string table_name = 1;
     // Block ID of the new-table-block.
     bytes block_id = 2;
-    // Schema of the new-table-block.
-    oneof schema {
-      // Deprecated schema of the new-table-block. Only used for reading for
-      // backwards compatibility.
-      frostdb.schema.v1alpha1.Schema deprecated_schema = 3;
-      // Schema of the new-table-block. Use this field.
-      frostdb.schema.v1alpha2.Schema schema_v2 = 4;
-    }
+    // Config of the new-table-block.
+    frostdb.table.v1alpha1.TableConfig config = 5;
   }
 
   // The table-block persisted entry.
