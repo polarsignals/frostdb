@@ -1567,7 +1567,6 @@ func Test_DB_WalReplayTableConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer c.Close()
-	require.NoError(t, c.ReplayWALs(context.Background()))
 
 	db, err = c.DB(ctx, "test")
 	require.NoError(t, err)
