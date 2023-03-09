@@ -16,6 +16,7 @@ import (
 	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/google/btree"
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -262,19 +263,7 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			snapshotTx, err := db.loadLatestSnapshot(ctx)
-			if err != nil {
-				level.Info(s.logger).Log(
-					"msg", "failed to load latest snapshot", "db", db.name, "err", err,
-				)
-				snapshotTx = 0
-			} else {
-				level.Info(s.logger).Log(
-					"msg", "successfully loaded snapshot",
-					"tx", snapshotTx,
-				)
-			}
-			return db.replayWAL(ctx, snapshotTx)
+			return db.recover(ctx)
 		})
 	}
 
@@ -431,16 +420,81 @@ func (db *DB) snapshotsDir() string {
 	return filepath.Join(db.storagePath, "snapshots")
 }
 
-func (db *DB) replayWAL(ctx context.Context, firstIndex uint64) error {
-	level.Info(db.logger).Log("msg", "replaying WAL", "first_index", firstIndex)
+// recover attempts to recover database state from a combination of snapshots
+// and the WAL.
+func (db *DB) recover(ctx context.Context) error {
+	level.Info(db.logger).Log("msg", "recovering db")
+	snapshotLoadStart := time.Now()
+	snapshotTx, err := db.loadLatestSnapshot(ctx)
+	if err != nil {
+		level.Info(db.logger).Log(
+			"msg", "failed to load latest snapshot", "db", db.name, "err", err,
+		)
+		snapshotTx = 0
+	}
+	if snapshotTx != 0 {
+		level.Info(db.logger).Log(
+			"msg", "successfully loaded snapshot",
+			"tx", snapshotTx,
+			"duration", time.Since(snapshotLoadStart),
+		)
+		if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx); err != nil {
+			// Truncation is best-effort. If it fails, move on.
+			level.Info(db.logger).Log(
+				"msg", "failed to truncate snapshots less than loaded snapshot",
+				"err", err,
+				"snapshot_tx", snapshotTx,
+			)
+		} else {
+			level.Info(db.logger).Log(
+				"msg", "truncated snapshots less than loaded snapshot",
+				"snapshot_tx", snapshotTx,
+			)
+		}
+	}
+	level.Info(db.logger).Log("msg", "replaying WAL", "snapshot_tx", snapshotTx)
+
+	firstIndex, err := db.wal.FirstIndex()
+	if err != nil {
+		return err
+	}
+
+	if snapshotTx > firstIndex {
+		if err := db.wal.Truncate(snapshotTx); err != nil {
+			// Since this is a best-effort truncation, move on if there is an
+			// error.
+			level.Info(db.logger).Log(
+				"msg", "WAL truncation after successful snapshot load encountered error",
+				"err", err,
+				"first_index", firstIndex,
+				"snapshot_tx", snapshotTx,
+			)
+		} else {
+			level.Info(db.logger).Log(
+				"msg", "WAL truncated at snapshot tx",
+				"snapshot_tx", snapshotTx,
+			)
+		}
+	}
+
 	start := time.Now()
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
 	persistedTables := map[string]uint64{}
-	if err := db.wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
+	if err := db.wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
 			persistedTables[e.TableBlockPersisted.TableName] = tx
+			if tx > snapshotTx {
+				// The loaded snapshot has data in a table that has been
+				// persisted. Delete all data in this table, since it has
+				// already been persisted.
+				db.mtx.Lock()
+				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
+					table.ActiveBlock().index.Store(btree.New(table.db.columnStore.indexDegree))
+				}
+				db.mtx.Unlock()
+			}
 		}
 		return nil
 	}); err != nil {

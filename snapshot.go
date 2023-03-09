@@ -72,16 +72,26 @@ func snapshotFileName(tx uint64) string {
 	return fmt.Sprintf("%020d.fdbs", tx)
 }
 
+func getTxFromSnapshotFileName(fileName string) (uint64, error) {
+	parsedTx, err := strconv.ParseUint(fileName[:20], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return parsedTx, nil
+}
+
 // asyncSnapshot begins a new transaction and takes a snapshot of the
 // database in a new goroutine at that txn. It returns whether a snapshot was
 // started (i.e. no other snapshot was in progress). When the snapshot
 // goroutine successfully completes a snapshot, onSuccess is called.
 func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 	if !db.columnStore.enableWAL {
+		fmt.Println("wal not enabled")
 		return
 	}
 	if !db.snapshotInProgress.CompareAndSwap(false, true) {
 		// Snapshot already in progress.
+		fmt.Println("snap in progress")
 		return
 	}
 
@@ -187,7 +197,7 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 		if entry.IsDir() || len(name) < 20 {
 			continue
 		}
-		parsedTx, err := strconv.ParseUint(name[:20], 10, 64)
+		parsedTx, err := getTxFromSnapshotFileName(name)
 		if err != nil {
 			continue
 		}
@@ -561,5 +571,36 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 		}
 	}
 
+	return nil
+}
+
+// truncateSnapshotsLessThanTX deletes all snapshots taken at a transaction less
+// than the given tx.
+func (db *DB) truncateSnapshotsLessThanTX(ctx context.Context, tx uint64) error {
+	dir := db.snapshotsDir()
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range files {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		name := entry.Name()
+		if entry.IsDir() || len(name) < 20 {
+			continue
+		}
+		parsedTx, err := getTxFromSnapshotFileName(name)
+		if err != nil {
+			continue
+		}
+		if parsedTx >= tx {
+			// All interesting files have been processed.
+			return nil
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			return err
+		}
+	}
 	return nil
 }

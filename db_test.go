@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1444,4 +1445,117 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 			return nil
 		})
 	require.NoError(t, err)
+}
+
+// TestDBRecover verifies correct DB recovery with both a WAL and snapshots as
+// well as a block rotation (in which case no duplicate data should be in the
+// database).
+func TestDBRecover(t *testing.T) {
+	ctx := context.Background()
+	const (
+		dbAndTableName = "test"
+		numInserts     = 3
+	)
+	dir := t.TempDir()
+	func() {
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+			WithSnapshotTriggerSize(1),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+		schema := dynparquet.NewSampleSchema()
+		table, err := db.Table(dbAndTableName, NewTableConfig(schema))
+		require.NoError(t, err)
+
+		// Insert 3 txns.
+		var lastWriteTx uint64
+		for i := 0; i < numInserts; i++ {
+			samples := dynparquet.NewTestSamples()
+			for i := range samples {
+				samples[i].Timestamp = int64(i)
+			}
+			buf, err := samples.ToBuffer(schema)
+			require.NoError(t, err)
+			writeTx, err := table.InsertBuffer(ctx, buf)
+			require.NoError(t, err)
+			if i > 0 {
+				// Wait until a snapshot is written for each write (it is the txn
+				// immediately preceding the write). This has to be done in a loop,
+				// otherwise writes may not cause a snapshot given that there
+				// might be a snapshot in progress.
+				db.Wait(writeTx - 1)
+				lastWriteTx = writeTx
+			}
+		}
+		// At this point, there should be 2 snapshots. One was triggered before
+		// the second write, and the second was triggered before the third write.
+		// A block rotation should trigger the third snapshot.
+		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
+		// Wait for both the new block txn, and the old block rotation txn.
+		db.Wait(lastWriteTx + 2)
+
+		files, err := os.ReadDir(db.snapshotsDir())
+		require.NoError(t, err)
+		snapshotTxns := make([]uint64, 0, len(files))
+		for _, f := range files {
+			tx, err := getTxFromSnapshotFileName(f.Name())
+			require.NoError(t, err)
+			snapshotTxns = append(snapshotTxns, tx)
+		}
+		// Verify that there are now 3 snapshots and their txns.
+		require.Equal(t, []uint64{3, 5, 8}, snapshotTxns)
+	}()
+
+	c, err := New(
+		WithLogger(newTestLogger(t)),
+		WithStoragePath(dir),
+		WithWAL(),
+		WithSnapshotTriggerSize(1),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+	db, err := c.DB(ctx, dbAndTableName)
+	require.NoError(t, err)
+	// Simulate corruption of the snapshot taken during block rotation. This
+	// will cause recovery to use the snapshot with all the data before block
+	// rotation. However, the WAL replay should notice that this data has
+	// already been persisted.
+	require.NoError(t, os.Remove(filepath.Join(db.snapshotsDir(), snapshotFileName(8))))
+
+	numDistinctTimestamps := func(t *testing.T, db *DB) int {
+		t.Helper()
+		engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
+		nrows := 0
+		require.NoError(t, engine.ScanTable(dbAndTableName).
+			Distinct(logicalplan.Col("timestamp")).
+			Execute(
+				ctx,
+				func(_ context.Context, r arrow.Record) error {
+					nrows += int(r.NumRows())
+					return nil
+				}))
+		return nrows
+	}
+
+	// Before we check there is no data when recovering our expected state,
+	// manually load the previous snapshot (without WAL) to verify that
+	// there is indeed some data.
+	verifyDB, err := c.DB(ctx, "verifyDB")
+	require.NoError(t, err)
+	snapshotTx, err := verifyDB.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), snapshotTx)
+	require.Equal(t, numInserts, numDistinctTimestamps(t, verifyDB))
+
+	// Recover the full expected state.
+	require.NoError(t, db.recover(ctx))
+	// No more timestamps if querying in-memory only, since the data has
+	// been rotated.
+	require.Equal(t, 0, numDistinctTimestamps(t, db))
 }
