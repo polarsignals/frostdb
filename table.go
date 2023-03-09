@@ -1534,6 +1534,10 @@ func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, op
 func (p *parquetRowWriter) writeRows(rows parquet.Rows) (int, error) {
 	written := 0
 	for p.maxNumRows == 0 || p.totalRowsWritten < p.maxNumRows {
+		if p.rowGroupSize > 0 && p.rowGroupRowsWritten+len(p.rowsBuf) > p.rowGroupSize {
+			// Read only as many rows as we need to complete the row group size limit.
+			p.rowsBuf = p.rowsBuf[:p.rowGroupSize-p.rowGroupRowsWritten]
+		}
 		if p.maxNumRows != 0 && p.totalRowsWritten+len(p.rowsBuf) > p.maxNumRows {
 			// Read only as many rows as we need to write if they would bring
 			// us over the limit.
