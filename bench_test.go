@@ -38,17 +38,13 @@ const (
 func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, error) {
 	b.Helper()
 
+	b.Logf("replaying WAL")
+	start := time.Now()
 	col, err := New(
 		WithWAL(),
 		WithStoragePath(storagePath),
 	)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	b.Logf("replaying WAL")
-	start := time.Now()
-	if err := col.ReplayWALs(ctx); err != nil {
 		return nil, nil, err
 	}
 	b.Logf("replayed WAL in %s", time.Since(start))
@@ -363,9 +359,6 @@ func BenchmarkReplay(b *testing.B) {
 			)
 			require.NoError(b, err)
 			defer col.Close()
-			if err := col.ReplayWALs(context.Background()); err != nil {
-				b.Fatal(err)
-			}
 		}()
 	}
 }

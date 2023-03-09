@@ -41,6 +41,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
 )
 
@@ -146,7 +147,7 @@ type WAL interface {
 	// 0, the first index read from the WAL is used (i.e. given a truncation,
 	// using 0 is still valid). If the given firstIndex is less than the WAL's
 	// first index on disk, the replay happens from the first index on disk.
-	Replay(firstIndex uint64, handler func(tx uint64, record *walpb.Record) error) error
+	Replay(tx uint64, handler wal.ReplayHandlerFunc) error
 	Truncate(tx uint64) error
 	FirstIndex() (uint64, error)
 }

@@ -72,7 +72,6 @@ func TestDBWithWALAndBucket(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer c.Close()
-	require.NoError(t, c.ReplayWALs(context.Background()))
 }
 
 func TestDBWithWAL(t *testing.T) {
@@ -251,8 +250,6 @@ func TestDBWithWAL(t *testing.T) {
 		)
 		require.NoError(t, err)
 		defer c.Close()
-
-		require.NoError(t, c.ReplayWALs(context.Background()))
 
 		db, err = c.DB(context.Background(), "test")
 		require.NoError(t, err)
@@ -1258,13 +1255,10 @@ func Test_DB_TableNotExist(t *testing.T) {
 }
 
 func TestReplayBackwardsCompatibility(t *testing.T) {
-	ctx := context.Background()
 	const storagePath = "testdata/oldwal"
 	c, err := New(WithWAL(), WithStoragePath(storagePath))
 	require.NoError(t, err)
 	defer c.Close()
-
-	require.NoError(t, c.ReplayWALs(ctx))
 }
 
 func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
@@ -1431,7 +1425,6 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer c.Close()
-	require.NoError(t, c.ReplayWALs(context.Background()))
 
 	// Query with an aggregat query
 	pool := memory.NewGoAllocator()
@@ -1528,34 +1521,17 @@ func TestDBRecover(t *testing.T) {
 	// already been persisted.
 	require.NoError(t, os.Remove(filepath.Join(db.snapshotsDir(), snapshotFileName(8))))
 
-	numDistinctTimestamps := func(t *testing.T, db *DB) int {
-		t.Helper()
-		engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
-		nrows := 0
-		require.NoError(t, engine.ScanTable(dbAndTableName).
-			Distinct(logicalplan.Col("timestamp")).
-			Execute(
-				ctx,
-				func(_ context.Context, r arrow.Record) error {
-					nrows += int(r.NumRows())
-					return nil
-				}))
-		return nrows
-	}
-
-	// Before we check there is no data when recovering our expected state,
-	// manually load the previous snapshot (without WAL) to verify that
-	// there is indeed some data.
-	verifyDB, err := c.DB(ctx, "verifyDB")
-	require.NoError(t, err)
-	snapshotTx, err := verifyDB.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
-	require.NoError(t, err)
-	require.Equal(t, uint64(5), snapshotTx)
-	require.Equal(t, numInserts, numDistinctTimestamps(t, verifyDB))
-
-	// Recover the full expected state.
-	require.NoError(t, db.recover(ctx))
+	engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
+	nrows := 0
+	require.NoError(t, engine.ScanTable(dbAndTableName).
+		Distinct(logicalplan.Col("timestamp")).
+		Execute(
+			ctx,
+			func(_ context.Context, r arrow.Record) error {
+				nrows += int(r.NumRows())
+				return nil
+			}))
 	// No more timestamps if querying in-memory only, since the data has
 	// been rotated.
-	require.Equal(t, 0, numDistinctTimestamps(t, db))
+	require.Equal(t, 0, nrows)
 }

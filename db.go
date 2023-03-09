@@ -103,6 +103,10 @@ func New(
 		return nil, fmt.Errorf("storage path must be configured if WAL is enabled")
 	}
 
+	if err := s.recoverDBsFromStorage(context.Background()); err != nil {
+		return nil, err
+	}
+
 	return s, nil
 }
 
@@ -235,8 +239,8 @@ func (s *ColumnStore) DatabasesDir() string {
 	return filepath.Join(s.storagePath, "databases")
 }
 
-// ReplayWALs replays the write-ahead log for each database.
-func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
+// recoverDBsFromStorage replays the snapshots and write-ahead logs for each database.
+func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 	if !s.enableWAL {
 		return nil
 	}
@@ -259,11 +263,9 @@ func (s *ColumnStore) ReplayWALs(ctx context.Context) error {
 	for _, f := range files {
 		databaseName := f.Name()
 		g.Go(func() error {
-			db, err := s.DB(ctx, databaseName)
-			if err != nil {
-				return err
-			}
-			return db.recover(ctx)
+			// Open the DB for the side effect of the snapshot and WALs being loaded as part of the open operation.
+			_, err := s.DB(ctx, databaseName)
+			return err
 		})
 	}
 
@@ -350,14 +352,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		db.bucket = storage.NewPrefixedBucket(s.bucket, db.name)
 	}
 
-	if s.enableWAL {
-		var err error
-		db.wal, err = db.openWAL()
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	if dbSetupErr := func() error {
 		db.txPool = NewTxPool(db.highWatermark)
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
@@ -372,6 +366,20 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 				return nil
 			}); err != nil {
 				return fmt.Errorf("bucket iter on database open: %w", err)
+			}
+		}
+
+		if s.enableWAL {
+			snapshotTx, err := db.loadLatestSnapshot(ctx)
+			if err != nil {
+				level.Debug(s.logger).Log(
+					"msg", "failed to load latest snapshot", "db", db.name, "err", err,
+				)
+				snapshotTx = 0
+			}
+			db.wal, err = db.openWAL(ctx, snapshotTx)
+			if err != nil {
+				return err
 			}
 		}
 
@@ -404,12 +412,22 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 	return db, nil
 }
 
-func (db *DB) openWAL() (WAL, error) {
-	return wal.Open(
+func (db *DB) openWAL(ctx context.Context, firstIndex uint64) (WAL, error) {
+	wal, err := wal.Open(
 		db.logger,
 		db.reg,
 		db.walDir(),
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := db.recover(ctx, wal); err != nil {
+		return nil, err
+	}
+
+	wal.RunAsync()
+	return wal, nil
 }
 
 func (db *DB) walDir() string {
@@ -422,7 +440,7 @@ func (db *DB) snapshotsDir() string {
 
 // recover attempts to recover database state from a combination of snapshots
 // and the WAL.
-func (db *DB) recover(ctx context.Context) error {
+func (db *DB) recover(ctx context.Context, wal WAL) error {
 	level.Info(db.logger).Log("msg", "recovering db")
 	snapshotLoadStart := time.Now()
 	snapshotTx, err := db.loadLatestSnapshot(ctx)
@@ -454,13 +472,15 @@ func (db *DB) recover(ctx context.Context) error {
 	}
 	level.Info(db.logger).Log("msg", "replaying WAL", "snapshot_tx", snapshotTx)
 
-	firstIndex, err := db.wal.FirstIndex()
+	firstIndex, err := wal.FirstIndex()
 	if err != nil {
-		return err
+		level.Info(db.logger).Log(
+			"msg", "failed to get WAL first index",
+			"err", err)
 	}
 
 	if snapshotTx > firstIndex {
-		if err := db.wal.Truncate(snapshotTx); err != nil {
+		if err := wal.Truncate(snapshotTx); err != nil {
 			// Since this is a best-effort truncation, move on if there is an
 			// error.
 			level.Info(db.logger).Log(
@@ -477,11 +497,13 @@ func (db *DB) recover(ctx context.Context) error {
 		}
 	}
 
-	start := time.Now()
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
 	persistedTables := map[string]uint64{}
-	if err := db.wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+	lastTx := uint64(0)
+
+	start := time.Now()
+	if err := wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
 			persistedTables[e.TableBlockPersisted.TableName] = tx
@@ -495,14 +517,15 @@ func (db *DB) recover(ctx context.Context) error {
 				}
 				db.mtx.Unlock()
 			}
+			return nil
+		default:
+			return nil
 		}
-		return nil
 	}); err != nil {
-		return fmt.Errorf("first WAL replay: %w", err)
+		return err
 	}
 
-	lastTx := uint64(0)
-	if err := db.wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
 		lastTx = tx
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
@@ -552,7 +575,7 @@ func (db *DB) recover(ctx context.Context) error {
 						db.reg,
 						db.logger,
 						db.tracer,
-						db.wal,
+						wal,
 					)
 				}
 				if err != nil {
@@ -652,14 +675,12 @@ func (db *DB) recover(ctx context.Context) error {
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("second WAL replay: %w", err)
+		return err
 	}
-
-	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
 
 	db.tx.Store(lastTx)
 	db.highWatermark.Store(lastTx)
-
+	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
 	return nil
 }
 
