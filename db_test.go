@@ -494,9 +494,6 @@ func Test_DB_ColdStart(t *testing.T) {
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
 			require.NoError(t, err)
 
-			fmt.Println("tables: ", db.tables)
-			fmt.Println("ro tables: ", db.roTables)
-
 			pool := memory.NewGoAllocator()
 			engine := query.NewEngine(pool, db.TableProvider())
 			require.NoError(t, engine.ScanTable(sanitize(t.Name())).Execute(
@@ -1528,4 +1525,54 @@ func TestDBRecover(t *testing.T) {
 	// No more timestamps if querying in-memory only, since the data has
 	// been rotated.
 	require.Equal(t, 0, nrows)
+}
+
+func Test_DB_WalReplayTableConfig(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+		WithRowGroupSize(10),
+	)
+
+	logger := newTestLogger(t)
+
+	dir := t.TempDir()
+
+	c, err := New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+	require.Equal(t, uint64(10), table.config.RowGroupSize)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(t, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+	}
+	require.NoError(t, c.Close())
+
+	c, err = New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+	require.NoError(t, c.ReplayWALs(context.Background()))
+
+	db, err = c.DB(ctx, "test")
+	require.NoError(t, err)
+
+	table, err = db.Table("test", nil) // Pass nil because we expect the table to already exist because of wal replay
+	require.NoError(t, err)
+	require.Equal(t, uint64(10), table.config.RowGroupSize)
 }

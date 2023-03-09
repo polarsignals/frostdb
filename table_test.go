@@ -1366,7 +1366,7 @@ func Test_Serialize_DisparateDynamicColumns(t *testing.T) {
 
 func Test_RowWriter(t *testing.T) {
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 		WithRowGroupSize(5),
 	)
 

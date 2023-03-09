@@ -360,7 +360,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
 		// If bucket storage is configured; scan for existing tables in the database
 		if db.bucket != nil {
-			fmt.Println("scanning for read only tables")
 			if err := db.bucket.Iter(ctx, "", func(tableName string) error {
 				_, err := db.readOnlyTable(strings.TrimSuffix(tableName, "/"))
 				if err != nil {
