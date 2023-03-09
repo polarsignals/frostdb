@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,7 @@ import (
 )
 
 func TestWAL(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	w, err := Open(
 		log.NewNopLogger(),
@@ -20,6 +22,7 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	w.RunAsync(ctx)
 
 	require.NoError(t, w.Log(1, &walpb.Record{
 		Entry: &walpb.Entry{
@@ -38,13 +41,16 @@ func TestWAL(t *testing.T) {
 		log.NewNopLogger(),
 		prometheus.NewRegistry(),
 		dir,
-		WithReplayFunc(1, func(i int, tx uint64, r *walpb.Record) error {
-			require.Equal(t, uint64(1), tx)
-			require.Equal(t, []byte("test-data"), r.Entry.GetWrite().Data)
-			require.Equal(t, "test-table", r.Entry.GetWrite().TableName)
-			return nil
-		}),
 	)
+	require.NoError(t, err)
+	w.RunAsync(ctx)
+
+	w.Replay(0, func(tx uint64, r *walpb.Record) error {
+		require.Equal(t, uint64(1), tx)
+		require.Equal(t, []byte("test-data"), r.Entry.GetWrite().Data)
+		require.Equal(t, "test-table", r.Entry.GetWrite().TableName)
+		return nil
+	})
 	require.NoError(t, err)
 
 	require.NoError(t, w.Log(2, &walpb.Record{
@@ -68,10 +74,12 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	w.RunAsync(ctx)
 	defer w.Close()
 }
 
 func TestCorruptWAL(t *testing.T) {
+	ctx := context.Background()
 	path := t.TempDir()
 
 	w, err := Open(
@@ -80,6 +88,7 @@ func TestCorruptWAL(t *testing.T) {
 		path,
 	)
 	require.NoError(t, err)
+	w.RunAsync(ctx)
 
 	require.NoError(t, w.Log(1, &walpb.Record{
 		Entry: &walpb.Entry{
@@ -103,6 +112,7 @@ func TestCorruptWAL(t *testing.T) {
 		path,
 	)
 	require.NoError(t, err)
+	w.RunAsync(ctx)
 	defer w.Close()
 
 	lastIdx, err := w.LastIndex()
@@ -115,6 +125,7 @@ func TestCorruptWAL(t *testing.T) {
 // we should protect the WAL from getting into a deadlock. This test is likely
 // to fail due to timeout.
 func TestUnexpectedTxn(t *testing.T) {
+	ctx := context.Background()
 	walDir := t.TempDir()
 	func() {
 		w, err := Open(
@@ -123,6 +134,7 @@ func TestUnexpectedTxn(t *testing.T) {
 			walDir,
 		)
 		require.NoError(t, err)
+		w.RunAsync(ctx)
 		defer w.Close()
 
 		emptyRecord := &walpb.Record{}
@@ -141,6 +153,7 @@ func TestUnexpectedTxn(t *testing.T) {
 		walDir,
 	)
 	require.NoError(t, err)
+	w.RunAsync(ctx)
 	defer w.Close()
 	lastIndex, err := w.LastIndex()
 	require.NoError(t, err)
