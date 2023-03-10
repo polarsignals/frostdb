@@ -387,7 +387,7 @@ func NewTestSamples(num int) dynparquet.Samples {
 
 func Benchmark_Serialize(b *testing.B) {
 	ctx := context.Background()
-	schema := dynparquet.NewSampleSchema()
+	schema := dynparquet.SampleDefinition()
 
 	col, err := New()
 	require.NoError(b, err)
@@ -401,7 +401,7 @@ func Benchmark_Serialize(b *testing.B) {
 
 	// Insert 10k rows
 	samples := NewTestSamples(10000)
-	buf, err := samples.ToBuffer(schema)
+	buf, err := samples.ToBuffer(tbl.schema)
 	require.NoError(b, err)
 
 	_, err = tbl.InsertBuffer(ctx, buf)

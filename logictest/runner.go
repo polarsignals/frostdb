@@ -16,6 +16,7 @@ import (
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/sqlparse"
 )
@@ -52,7 +53,7 @@ const (
 )
 
 type DB interface {
-	CreateTable(name string, schema *dynparquet.Schema) (Table, error)
+	CreateTable(name string, schema *schemapb.Schema) (Table, error)
 	// ScanTable returns a query.Builder prepared to scan the given table.
 	ScanTable(name string) query.Builder
 }
@@ -64,14 +65,14 @@ type Table interface {
 
 type Runner struct {
 	db                        DB
-	schemas                   map[string]*dynparquet.Schema
+	schemas                   map[string]*schemapb.Schema
 	activeTable               Table
 	activeTableName           string
 	activeTableDynamicColumns []string
 	sqlParser                 *sqlparse.Parser
 }
 
-func NewRunner(db DB, schemas map[string]*dynparquet.Schema) *Runner {
+func NewRunner(db DB, schemas map[string]*schemapb.Schema) *Runner {
 	return &Runner{
 		db:        db,
 		schemas:   schemas,
@@ -102,7 +103,7 @@ func (r *Runner) handleCmd(ctx context.Context, c *datadriven.TestData) (string,
 }
 
 func (r *Runner) handleCreateTable(ctx context.Context, c *datadriven.TestData) (string, error) {
-	var schema *dynparquet.Schema
+	var schema *schemapb.Schema
 	for _, arg := range c.CmdArgs {
 		if arg.Key == "schema" {
 			if len(arg.Vals) != 1 {
@@ -123,7 +124,7 @@ func (r *Runner) handleCreateTable(ctx context.Context, c *datadriven.TestData) 
 	}
 	r.activeTable = table
 	r.activeTableName = name
-	for _, c := range schema.Columns() {
+	for _, c := range table.Schema().Columns() {
 		if c.Dynamic {
 			r.activeTableDynamicColumns = append(r.activeTableDynamicColumns, c.Name)
 		}

@@ -32,11 +32,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/bufutils"
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
+	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
@@ -64,47 +66,68 @@ func (e ErrCreateSchemaWriter) Error() string {
 	return "failed to create schema write: " + e.err.Error()
 }
 
-type TableConfig struct {
-	schema *dynparquet.Schema
-	// rowGroupSize is the desired number of rows in each row group.
-	rowGroupSize     int
-	blockReaderLimit int
-	disableWAL       bool
-}
-
-type TableOption func(*TableConfig) error
+type TableOption func(*tablepb.TableConfig) error
 
 // WithRowGroupSize sets the size in number of rows for each row group for parquet files. A <= 0 value indicates no limit.
 func WithRowGroupSize(numRows int) TableOption {
-	return func(config *TableConfig) error {
-		config.rowGroupSize = numRows
+	return func(config *tablepb.TableConfig) error {
+		config.RowGroupSize = uint64(numRows)
 		return nil
 	}
 }
 
 // WithBlockReaderLimit sets the limit of go routines that will be used to read persisted block files. A negative number indicates no limit.
 func WithBlockReaderLimit(n int) TableOption {
-	return func(config *TableConfig) error {
-		config.blockReaderLimit = n
+	return func(config *tablepb.TableConfig) error {
+		config.BlockReaderLimit = uint64(n)
 		return nil
 	}
 }
 
 // WithoutWAL disables the WAL for this table.
 func WithoutWAL() TableOption {
-	return func(config *TableConfig) error {
-		config.disableWAL = true
+	return func(config *tablepb.TableConfig) error {
+		config.DisableWal = true
 		return nil
 	}
 }
 
+// FromConfig sets the table configuration from the given config.
+// NOTE: that this does not override the schema even though that is included in the passed in config.
+func FromConfig(config *tablepb.TableConfig) TableOption {
+	return func(cfg *tablepb.TableConfig) error {
+		if config.BlockReaderLimit != 0 { // the zero value is not a valid block reader limit
+			cfg.BlockReaderLimit = config.BlockReaderLimit
+		}
+		cfg.DisableWal = config.DisableWal
+		cfg.RowGroupSize = config.RowGroupSize
+		return nil
+	}
+}
+
+func defaultTableConfig() *tablepb.TableConfig {
+	return &tablepb.TableConfig{
+		BlockReaderLimit: uint64(runtime.GOMAXPROCS(0)),
+	}
+}
+
 func NewTableConfig(
-	schema *dynparquet.Schema,
+	schema proto.Message,
 	options ...TableOption,
-) *TableConfig {
-	t := &TableConfig{
-		schema:           schema,
-		blockReaderLimit: runtime.GOMAXPROCS(0),
+) *tablepb.TableConfig {
+	t := defaultTableConfig()
+
+	switch v := schema.(type) {
+	case *schemapb.Schema:
+		t.Schema = &tablepb.TableConfig_DeprecatedSchema{
+			DeprecatedSchema: v,
+		}
+	case *schemav2pb.Schema:
+		t.Schema = &tablepb.TableConfig_SchemaV2{
+			SchemaV2: v,
+		}
+	default:
+		panic(fmt.Sprintf("unsupported schema type: %T", v))
 	}
 
 	for _, opt := range options {
@@ -126,7 +149,8 @@ type Table struct {
 	logger  log.Logger
 	tracer  trace.Tracer
 
-	config *TableConfig
+	config *tablepb.TableConfig
+	schema *dynparquet.Schema
 
 	pendingBlocks   map[*TableBlock]struct{}
 	completedBlocks []completedBlock
@@ -187,10 +211,22 @@ type tableMetrics struct {
 	compactionMetrics         *compactionMetrics
 }
 
+func schemaFromTableConfig(tableConfig *tablepb.TableConfig) (*dynparquet.Schema, error) {
+	switch schema := tableConfig.Schema.(type) {
+	case *tablepb.TableConfig_DeprecatedSchema:
+		return dynparquet.SchemaFromDefinition(schema.DeprecatedSchema)
+	case *tablepb.TableConfig_SchemaV2:
+		return dynparquet.SchemaFromDefinition(schema.SchemaV2)
+	default:
+		// No schema defined for table; read/only table
+		return nil, nil
+	}
+}
+
 func newTable(
 	db *DB,
 	name string,
-	tableConfig *TableConfig,
+	tableConfig *tablepb.TableConfig,
 	reg prometheus.Registerer,
 	logger log.Logger,
 	tracer trace.Tracer,
@@ -208,6 +244,15 @@ func newTable(
 
 	reg = prometheus.WrapRegistererWith(prometheus.Labels{"table": name}, reg)
 
+	if tableConfig == nil {
+		tableConfig = defaultTableConfig()
+	}
+
+	s, err := schemaFromTableConfig(tableConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	t := &Table{
 		db:     db,
 		config: tableConfig,
@@ -216,6 +261,7 @@ func newTable(
 		tracer: tracer,
 		mtx:    &sync.RWMutex{},
 		wal:    wal,
+		schema: s,
 		metrics: &tableMetrics{
 			numParts: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
 				Name: "num_parts",
@@ -267,7 +313,7 @@ func newTable(
 	}
 
 	// Disable the WAL for this table by replacing any given WAL with a nop wal
-	if tableConfig.disableWAL {
+	if tableConfig.DisableWal {
 		t.wal = &walpkg.NopWAL{}
 	}
 
@@ -302,28 +348,14 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 		return err
 	}
 
-	walTableBlock := &walpb.Entry_NewTableBlock{
-		TableName: t.name,
-		BlockId:   b,
-	}
-
-	switch v := t.config.schema.Definition().(type) {
-	case *schemapb.Schema:
-		walTableBlock.Schema = &walpb.Entry_NewTableBlock_DeprecatedSchema{
-			DeprecatedSchema: v,
-		}
-	case *schemav2pb.Schema:
-		walTableBlock.Schema = &walpb.Entry_NewTableBlock_SchemaV2{
-			SchemaV2: v,
-		}
-	default:
-		return fmt.Errorf("unknown schema type: %t", v)
-	}
-
 	if err := t.wal.Log(tx, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_NewTableBlock_{
-				NewTableBlock: walTableBlock,
+				NewTableBlock: &walpb.Entry_NewTableBlock{
+					TableName: t.name,
+					BlockId:   b,
+					Config:    t.config,
+				},
 			},
 		},
 	}); err != nil {
@@ -489,7 +521,7 @@ func (t *Table) Schema() *dynparquet.Schema {
 	if t.config == nil {
 		return nil
 	}
-	return t.config.schema
+	return t.schema
 }
 
 func (t *Table) EnsureCompaction() error {
@@ -657,7 +689,7 @@ func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, 
 
 func (t *Table) InsertBuffer(ctx context.Context, buf *dynparquet.Buffer) (uint64, error) {
 	b := bytes.NewBuffer(nil)
-	err := t.config.schema.SerializeBuffer(b, buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
+	err := t.schema.SerializeBuffer(b, buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
 	if err != nil {
 		return 0, fmt.Errorf("serialize buffer: %w", err)
 	}
@@ -1058,11 +1090,11 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 			buf.ParquetFile().Schema().Fields(),
 		)
 
-		if !dynRows.IsSorted(t.table.config.schema) {
+		if !dynRows.IsSorted(t.table.schema) {
 			// Input rows should be sorted. Eventually, we should return an error.
 			// However, for caution, we just increment a metric and sort the rows.
 			t.table.metrics.unsortedInserts.Inc()
-			sorter := dynparquet.NewDynamicRowSorter(t.table.config.schema, dynRows)
+			sorter := dynparquet.NewDynamicRowSorter(t.table.schema, dynRows)
 			sort.Sort(sorter)
 		}
 	}
@@ -1073,11 +1105,11 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	}
 
 	b := bytes.NewBuffer(nil)
-	w, err := t.table.config.schema.GetWriter(b, buf.DynamicColumns())
+	w, err := t.table.schema.GetWriter(b, buf.DynamicColumns())
 	if err != nil {
 		return fmt.Errorf("failed to get writer: %w", err)
 	}
-	defer t.table.config.schema.PutWriter(w)
+	defer t.table.schema.PutWriter(w)
 
 	list := make([]*parts.Part, 0)
 	for granule, indices := range rowsToInsertPerGranule {
@@ -1108,7 +1140,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 
 			part := parts.NewPart(tx, serBuf)
 			if granule == nil { // insert new granule with part
-				g, err := NewGranule(t.table.config, part)
+				g, err := NewGranule(t.table.schema, part)
 				if err != nil {
 					return fmt.Errorf("failed to create granule: %w", err)
 				}
@@ -1178,7 +1210,7 @@ func (t *TableBlock) Index() *btree.BTree {
 }
 
 func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) error {
-	ps := t.table.config.schema
+	ps := t.table.schema
 	ri := int64(0)
 	row, err := pqarrow.RecordToDynamicRow(ps, record, int(ri))
 	if err != nil {
@@ -1196,9 +1228,9 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 		g := i.(*Granule)
 
 		for {
-			if t.table.config.schema.RowLessThan(row, g.Least()) {
+			if t.table.schema.RowLessThan(row, g.Least()) {
 				if prev != nil {
-					if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), t.table.config.schema)); err != nil {
+					if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), t.table.schema)); err != nil {
 						ascendErr = err
 						return false
 					}
@@ -1230,7 +1262,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	}
 
 	if prev == nil { // No suitable granule was found; insert new granule
-		g, err := NewGranule(t.table.config, parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema))
+		g, err := NewGranule(t.table.schema, parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.schema))
 		if err != nil {
 			return fmt.Errorf("new granule failed: %w", err)
 		}
@@ -1253,7 +1285,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	}
 
 	// Append to the last valid granule
-	if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.config.schema)); err != nil && err != io.EOF {
+	if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.schema)); err != nil && err != io.EOF {
 		return err
 	}
 	t.table.metrics.numParts.Add(float64(1))
@@ -1298,7 +1330,7 @@ func (t *TableBlock) splitRowsByGranule(parquetRows *dynparquet.DynamicRows) (ma
 	// the iteration is continued to granule [c, h) into which d is inserted.
 	index.DescendLessOrEqual(
 		btreeComparableDynamicRow{
-			schema:     t.table.config.schema,
+			schema:     t.table.schema,
 			DynamicRow: parquetRows.Get(idx),
 		},
 		func(i btree.Item) bool {
@@ -1306,7 +1338,7 @@ func (t *TableBlock) splitRowsByGranule(parquetRows *dynparquet.DynamicRows) (ma
 			// Descend the rows to insert until we find a row that does not belong
 			// in this granule.
 			for ; idx >= 0; idx-- {
-				if t.table.config.schema.RowLessThan(parquetRows.Get(idx), g.Least()) {
+				if t.table.schema.RowLessThan(parquetRows.Get(idx), g.Least()) {
 					// Go on to the next granule.
 					return true
 				}
@@ -1348,7 +1380,7 @@ func addPartToGranule(granules []*Granule, p *parts.Part) error {
 
 	var prev *Granule
 	for _, g := range granules {
-		if g.tableConfig.schema.RowLessThan(row, g.Least()) {
+		if g.schema.RowLessThan(row, g.Least()) {
 			if prev != nil {
 				if _, err := prev.Append(p); err != nil {
 					return err
@@ -1396,7 +1428,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 		g := i.(*Granule)
 
 		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
-			buf, err := p.AsSerializedBuffer(t.table.config.schema)
+			buf, err := p.AsSerializedBuffer(t.table.schema)
 			if err != nil {
 				ascendErr = err
 				return false
@@ -1421,8 +1453,8 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	}
 	defer rowWriter.close()
 
-	cols := t.table.config.schema.ParquetSortingColumns(dynCols)
-	ps, err := t.table.config.schema.DynamicParquetSchema(dynCols)
+	cols := t.table.schema.ParquetSortingColumns(dynCols)
+	ps, err := t.table.schema.DynamicParquetSchema(dynCols)
 	if err != nil {
 		return err
 	}
@@ -1447,7 +1479,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 			}
 		}
 
-		sorter := parts.NewPartSorter(t.table.config.schema, lvl1)
+		sorter := parts.NewPartSorter(t.table.schema, lvl1)
 		sort.Sort(sorter)
 		if err := sorter.Err(); err != nil {
 			ascendErr = err
@@ -1456,7 +1488,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 
 		// Write the sorted parts
 		for _, p := range lvl1 {
-			buf, err := p.AsSerializedBuffer(t.table.config.schema)
+			buf, err := p.AsSerializedBuffer(t.table.schema)
 			if err != nil {
 				ascendErr = err
 				return false
@@ -1507,21 +1539,21 @@ func withMaxRows(max int) parquetRowWriterOption {
 
 // rowWriter returns a new Parquet row writer with the given dynamic columns.
 func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
-	w, err := t.table.config.schema.GetWriter(writer, dynCols)
+	w, err := t.table.schema.GetWriter(writer, dynCols)
 	if err != nil {
 		return nil, err
 	}
 
 	buffSize := 256
-	if t.table.config.rowGroupSize > 0 {
-		buffSize = t.table.config.rowGroupSize
+	if t.table.config.RowGroupSize > 0 {
+		buffSize = int(t.table.config.RowGroupSize)
 	}
 
 	p := &parquetRowWriter{
 		w:            w,
-		schema:       t.table.config.schema,
+		schema:       t.table.schema,
 		rowsBuf:      make([]parquet.Row, buffSize),
-		rowGroupSize: t.table.config.rowGroupSize,
+		rowGroupSize: int(t.table.config.RowGroupSize),
 	}
 
 	for _, option := range options {

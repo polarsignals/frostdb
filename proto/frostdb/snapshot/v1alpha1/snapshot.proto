@@ -2,8 +2,7 @@ syntax = "proto3";
 
 package frostdb.snapshot.v1alpha1;
 
-import "frostdb/schema/v1alpha1/schema.proto";
-import "frostdb/schema/v1alpha2/schema.proto";
+import "frostdb/table/v1alpha1/config.proto";
 
 // FooterData is a message stored in the footer of a snapshot file that encodes
 // data about the rest of the file.
@@ -13,16 +12,7 @@ message FooterData {
 
 message Table {
   string name = 1;
-  message TableConfig {
-    oneof schema {
-      frostdb.schema.v1alpha1.Schema deprecated_schema = 1;
-      frostdb.schema.v1alpha2.Schema schema_v2 = 2;
-    }
-    int64 row_group_size = 3;
-    int64 block_reader_limit = 4;
-    bool disable_wal = 5;
-  }
-  TableConfig config = 2;
+  frostdb.table.v1alpha1.TableConfig config = 2;
   message TableBlock {
     bytes ulid = 1;
     int64 size = 2;
