@@ -403,20 +403,18 @@ func Test_DB_ColdStart(t *testing.T) {
 				return c
 			},
 		},
-		/*
-			"cold start with storage and wal": {
-				newColumnstore: func(t *testing.T) *ColumnStore {
-					c, err := New(
-						WithLogger(logger),
-						WithBucketStorage(bucket),
-						WithWAL(),
-						WithStoragePath(t.TempDir()),
-					)
-					require.NoError(t, err)
-					return c
-				},
+		"cold start with storage and wal": {
+			newColumnstore: func(t *testing.T) *ColumnStore {
+				c, err := New(
+					WithLogger(logger),
+					WithBucketStorage(bucket),
+					WithWAL(),
+					WithStoragePath(t.TempDir()),
+				)
+				require.NoError(t, err)
+				return c
 			},
-		*/
+		},
 	}
 
 	for name, test := range tests {

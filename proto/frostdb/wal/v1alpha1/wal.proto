@@ -26,6 +26,7 @@ message Entry {
 
   // The new-table-block entry.
   message NewTableBlock {
+    reserved 3, 4; // Previoulsy for schema versions that are now contained in the table config.
     // Table name of the new-table-block.
     string table_name = 1;
     // Block ID of the new-table-block.
