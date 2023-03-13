@@ -732,7 +732,12 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 			// option), a new snapshot is triggered. This is basically the size
 			// of the new data in this block since the last snapshot.
 			blockSize-block.lastSnapshotSize.Load() > t.db.columnStore.snapshotTriggerSize {
-			t.db.asyncSnapshot(ctx, func() {
+			// context.Background is used here for the snapshot since callers
+			// might cancel the context when the write is finished but the
+			// snapshot is not.
+			// TODO(asubiotto): Eventually we should register a cancel function
+			// that is called with a grace period on db.Close.
+			t.db.asyncSnapshot(context.Background(), func() {
 				level.Debug(t.logger).Log(
 					"msg", "successful snapshot on block size trigger",
 					"block_size", humanize.IBytes(uint64(blockSize)),
