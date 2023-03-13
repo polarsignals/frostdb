@@ -1573,3 +1573,35 @@ func Test_DB_WalReplayTableConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), table.config.RowGroupSize)
 }
+
+func TestDBMinTXPersisted(t *testing.T) {
+	ctx := context.Background()
+	c, err := New()
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(ctx, "test")
+	require.NoError(t, err)
+
+	schema := dynparquet.SampleDefinition()
+	table, err := db.Table("test", NewTableConfig(schema))
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+	buf, err := samples.ToBuffer(table.schema)
+	require.NoError(t, err)
+	writeTx, err := table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
+	// Writing the block is asynchronous, so wait for both the new table block
+	// txn and the block persistence txn.
+	db.Wait(writeTx + 2)
+
+	require.Equal(t, uint64(1), db.getMinTXPersisted())
+
+	_, err = db.Table("other", NewTableConfig(schema))
+	require.NoError(t, err)
+
+	require.Equal(t, uint64(0), db.getMinTXPersisted())
+}

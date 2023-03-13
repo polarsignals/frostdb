@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -722,23 +723,26 @@ func (db *DB) Close() error {
 }
 
 func (db *DB) maintainWAL() {
-	db.mtx.RLock()
-	defer db.mtx.RUnlock()
-	minTx := uint64(0)
-	for _, table := range db.tables {
-		table.mtx.RLock()
-		tableMinTxPersisted := table.lastCompleted
-		table.mtx.RUnlock()
-		if minTx == 0 || tableMinTxPersisted < minTx {
-			minTx = tableMinTxPersisted
-		}
-	}
-
-	if minTx > 0 {
+	if minTx := db.getMinTXPersisted(); minTx > 0 {
 		if err := db.wal.Truncate(minTx); err != nil {
 			return
 		}
 	}
+}
+
+func (db *DB) getMinTXPersisted() uint64 {
+	db.mtx.RLock()
+	defer db.mtx.RUnlock()
+	minTx := uint64(math.MaxUint64)
+	for _, table := range db.tables {
+		table.mtx.RLock()
+		tableMinTxPersisted := table.lastCompleted
+		table.mtx.RUnlock()
+		if tableMinTxPersisted < minTx {
+			minTx = tableMinTxPersisted
+		}
+	}
+	return minTx
 }
 
 func (db *DB) readOnlyTable(name string) (*Table, error) {
