@@ -374,14 +374,8 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		}
 
 		if s.enableWAL {
-			snapshotTx, err := db.loadLatestSnapshot(ctx)
-			if err != nil {
-				level.Debug(s.logger).Log(
-					"msg", "failed to load latest snapshot", "db", db.name, "err", err,
-				)
-				snapshotTx = 0
-			}
-			db.wal, err = db.openWAL(ctx, snapshotTx)
+			var err error
+			db.wal, err = db.openWAL(ctx)
 			if err != nil {
 				return err
 			}
@@ -416,7 +410,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 	return db, nil
 }
 
-func (db *DB) openWAL(ctx context.Context, firstIndex uint64) (WAL, error) {
+func (db *DB) openWAL(ctx context.Context) (WAL, error) {
 	wal, err := wal.Open(
 		db.logger,
 		db.reg,
@@ -476,28 +470,30 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	}
 	level.Info(db.logger).Log("msg", "replaying WAL", "snapshot_tx", snapshotTx)
 
-	firstIndex, err := wal.FirstIndex()
-	if err != nil {
-		level.Info(db.logger).Log(
-			"msg", "failed to get WAL first index",
-			"err", err)
-	}
+	{
+		firstIndex, err := wal.FirstIndex()
+		if err != nil {
+			level.Info(db.logger).Log(
+				"msg", "failed to get WAL first index",
+				"err", err)
+		}
 
-	if snapshotTx > firstIndex {
-		if err := wal.Truncate(snapshotTx); err != nil {
-			// Since this is a best-effort truncation, move on if there is an
-			// error.
-			level.Info(db.logger).Log(
-				"msg", "WAL truncation after successful snapshot load encountered error",
-				"err", err,
-				"first_index", firstIndex,
-				"snapshot_tx", snapshotTx,
-			)
-		} else {
-			level.Info(db.logger).Log(
-				"msg", "WAL truncated at snapshot tx",
-				"snapshot_tx", snapshotTx,
-			)
+		if snapshotTx > firstIndex {
+			if err := wal.Truncate(snapshotTx); err != nil {
+				// Since this is a best-effort truncation, move on if there is an
+				// error.
+				level.Info(db.logger).Log(
+					"msg", "WAL truncation after successful snapshot load encountered error",
+					"err", err,
+					"first_index", firstIndex,
+					"snapshot_tx", snapshotTx,
+				)
+			} else {
+				level.Info(db.logger).Log(
+					"msg", "WAL truncated at snapshot tx",
+					"snapshot_tx", snapshotTx,
+				)
+			}
 		}
 	}
 
@@ -507,7 +503,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	lastTx := uint64(0)
 
 	start := time.Now()
-	if err := wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
 			persistedTables[e.TableBlockPersisted.TableName] = tx
@@ -529,7 +525,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
-	if err := wal.Replay(firstIndex, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
 		lastTx = tx
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
@@ -685,8 +681,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
-	db.tx.Store(lastTx)
-	db.highWatermark.Store(lastTx)
+	if lastTx > snapshotTx {
+		db.tx.Store(lastTx)
+		db.highWatermark.Store(lastTx)
+	}
 	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
 	return nil
 }
