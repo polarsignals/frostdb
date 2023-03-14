@@ -1626,3 +1626,17 @@ func TestDBMinTXPersisted(t *testing.T) {
 
 	require.Equal(t, uint64(0), db.getMinTXPersisted())
 }
+
+// TestReplayBackwardsCompatibility is a test that verifies that new versions of
+// the code gracefully handle old versions of the WAL. If this test fails, it
+// is likely that production code will break unless old WAL files are cleaned
+// up.
+// If it is expected that this test will fail, update testdata/oldwal with the
+// new WAL files but make sure to delete old WAL files in production before
+// deploying new code.
+func TestReplayBackwardsCompatibility(t *testing.T) {
+	const storagePath = "testdata/oldwal"
+	c, err := New(WithWAL(), WithStoragePath(storagePath))
+	require.NoError(t, err)
+	defer c.Close()
+}
