@@ -458,7 +458,12 @@ func (t *Table) writeBlock(ctx context.Context, block *TableBlock) {
 			// This snapshot snapshots the new, active, table block. Refer to
 			// the snapshot design document for more details as to why this
 			// snapshot is necessary.
-			if err := t.db.snapshotAtTX(ctx, tx); err != nil {
+			// context.Background is used here for the snapshot since callers
+			// might cancel the context when the write is finished but the
+			// snapshot is not. Note that block.Persist does the same.
+			// TODO(asubiotto): Eventually we should register a cancel function
+			// that is called with a grace period on db.Close.
+			if err := t.db.snapshotAtTX(context.Background(), tx); err != nil {
 				level.Error(t.logger).Log(
 					"msg", "failed to write snapshot on block rotation",
 					"err", err,
