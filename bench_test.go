@@ -3,6 +3,8 @@ package frostdb
 import (
 	"context"
 	"errors"
+	"io"
+	"math/rand"
 	"sort"
 	"strings"
 	"testing"
@@ -11,8 +13,10 @@ import (
 	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/apache/arrow/go/v10/arrow/array"
 	"github.com/apache/arrow/go/v10/arrow/memory"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -34,17 +38,13 @@ const (
 func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, error) {
 	b.Helper()
 
+	b.Logf("replaying WAL")
+	start := time.Now()
 	col, err := New(
 		WithWAL(),
 		WithStoragePath(storagePath),
 	)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	b.Logf("replaying WAL")
-	start := time.Now()
-	if err := col.ReplayWALs(ctx); err != nil {
 		return nil, nil, err
 	}
 	b.Logf("replayed WAL in %s", time.Since(start))
@@ -359,9 +359,57 @@ func BenchmarkReplay(b *testing.B) {
 			)
 			require.NoError(b, err)
 			defer col.Close()
-			if err := col.ReplayWALs(context.Background()); err != nil {
-				b.Fatal(err)
-			}
 		}()
+	}
+}
+
+func NewTestSamples(num int) dynparquet.Samples {
+	samples := make(dynparquet.Samples, 0, num)
+	for i := 0; i < num; i++ {
+		samples = append(samples,
+			dynparquet.Sample{
+				ExampleType: "cpu",
+				Labels: []dynparquet.Label{{
+					Name:  "node",
+					Value: "test3",
+				}},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+				},
+				Timestamp: rand.Int63n(100000),
+				Value:     rand.Int63(),
+			},
+		)
+	}
+	return samples
+}
+
+func Benchmark_Serialize(b *testing.B) {
+	ctx := context.Background()
+	schema := dynparquet.SampleDefinition()
+
+	col, err := New()
+	require.NoError(b, err)
+	defer col.Close()
+
+	db, err := col.DB(ctx, "test")
+	require.NoError(b, err)
+
+	tbl, err := db.Table("test", NewTableConfig(schema))
+	require.NoError(b, err)
+
+	// Insert 10k rows
+	samples := NewTestSamples(10000)
+	buf, err := samples.ToBuffer(tbl.schema)
+	require.NoError(b, err)
+
+	_, err = tbl.InsertBuffer(ctx, buf)
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Serialize the table
+		require.NoError(b, tbl.active.Serialize(io.Discard))
 	}
 }

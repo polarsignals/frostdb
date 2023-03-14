@@ -6,8 +6,7 @@ package snapshotv1alpha1
 
 import (
 	fmt "fmt"
-	v1alpha1 "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	v1alpha2 "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
+	v1alpha1 "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
 	bits "math/bits"
@@ -65,7 +64,7 @@ func (m *FooterData) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *Table_TableConfig) MarshalVT() (dAtA []byte, err error) {
+func (m *Table_TableBlock) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -78,12 +77,12 @@ func (m *Table_TableConfig) MarshalVT() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *Table_TableConfig) MarshalToVT(dAtA []byte) (int, error) {
+func (m *Table_TableBlock) MarshalToVT(dAtA []byte) (int, error) {
 	size := m.SizeVT()
 	return m.MarshalToSizedBufferVT(dAtA[:size])
 }
 
-func (m *Table_TableConfig) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+func (m *Table_TableBlock) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m == nil {
 		return 0, nil
 	}
@@ -95,79 +94,31 @@ func (m *Table_TableConfig) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if vtmsg, ok := m.Schema.(interface {
-		MarshalToVT([]byte) (int, error)
-		SizeVT() int
-	}); ok {
-		{
-			size := vtmsg.SizeVT()
-			i -= size
-			if _, err := vtmsg.MarshalToVT(dAtA[i:]); err != nil {
-				return 0, err
-			}
-		}
-	}
-	if m.DisableWal {
-		i--
-		if m.DisableWal {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
-		i--
-		dAtA[i] = 0x28
-	}
-	if m.BlockReaderLimit != 0 {
-		i = encodeVarint(dAtA, i, uint64(m.BlockReaderLimit))
+	if m.PrevTx != 0 {
+		i = encodeVarint(dAtA, i, uint64(m.PrevTx))
 		i--
 		dAtA[i] = 0x20
 	}
-	if m.RowGroupSize != 0 {
-		i = encodeVarint(dAtA, i, uint64(m.RowGroupSize))
+	if m.MinTx != 0 {
+		i = encodeVarint(dAtA, i, uint64(m.MinTx))
 		i--
 		dAtA[i] = 0x18
 	}
-	return len(dAtA) - i, nil
-}
-
-func (m *Table_TableConfig_DeprecatedSchema) MarshalToVT(dAtA []byte) (int, error) {
-	size := m.SizeVT()
-	return m.MarshalToSizedBufferVT(dAtA[:size])
-}
-
-func (m *Table_TableConfig_DeprecatedSchema) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	if m.DeprecatedSchema != nil {
-		size, err := m.DeprecatedSchema.MarshalToSizedBufferVT(dAtA[:i])
-		if err != nil {
-			return 0, err
-		}
-		i -= size
-		i = encodeVarint(dAtA, i, uint64(size))
+	if m.Size != 0 {
+		i = encodeVarint(dAtA, i, uint64(m.Size))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Ulid) > 0 {
+		i -= len(m.Ulid)
+		copy(dAtA[i:], m.Ulid)
+		i = encodeVarint(dAtA, i, uint64(len(m.Ulid)))
 		i--
 		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
-func (m *Table_TableConfig_SchemaV2) MarshalToVT(dAtA []byte) (int, error) {
-	size := m.SizeVT()
-	return m.MarshalToSizedBufferVT(dAtA[:size])
-}
 
-func (m *Table_TableConfig_SchemaV2) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	if m.SchemaV2 != nil {
-		size, err := m.SchemaV2.MarshalToSizedBufferVT(dAtA[:i])
-		if err != nil {
-			return 0, err
-		}
-		i -= size
-		i = encodeVarint(dAtA, i, uint64(size))
-		i--
-		dAtA[i] = 0x12
-	}
-	return len(dAtA) - i, nil
-}
 func (m *Table) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
@@ -207,8 +158,18 @@ func (m *Table) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 			i -= size
 			i = encodeVarint(dAtA, i, uint64(size))
 			i--
-			dAtA[i] = 0x1a
+			dAtA[i] = 0x22
 		}
+	}
+	if m.ActiveBlock != nil {
+		size, err := m.ActiveBlock.MarshalToSizedBufferVT(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarint(dAtA, i, uint64(size))
+		i--
+		dAtA[i] = 0x1a
 	}
 	if m.Config != nil {
 		size, err := m.Config.MarshalToSizedBufferVT(dAtA[:i])
@@ -362,23 +323,24 @@ func (m *FooterData) SizeVT() (n int) {
 	return n
 }
 
-func (m *Table_TableConfig) SizeVT() (n int) {
+func (m *Table_TableBlock) SizeVT() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	if vtmsg, ok := m.Schema.(interface{ SizeVT() int }); ok {
-		n += vtmsg.SizeVT()
+	l = len(m.Ulid)
+	if l > 0 {
+		n += 1 + l + sov(uint64(l))
 	}
-	if m.RowGroupSize != 0 {
-		n += 1 + sov(uint64(m.RowGroupSize))
+	if m.Size != 0 {
+		n += 1 + sov(uint64(m.Size))
 	}
-	if m.BlockReaderLimit != 0 {
-		n += 1 + sov(uint64(m.BlockReaderLimit))
+	if m.MinTx != 0 {
+		n += 1 + sov(uint64(m.MinTx))
 	}
-	if m.DisableWal {
-		n += 2
+	if m.PrevTx != 0 {
+		n += 1 + sov(uint64(m.PrevTx))
 	}
 	if m.unknownFields != nil {
 		n += len(m.unknownFields)
@@ -386,30 +348,6 @@ func (m *Table_TableConfig) SizeVT() (n int) {
 	return n
 }
 
-func (m *Table_TableConfig_DeprecatedSchema) SizeVT() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.DeprecatedSchema != nil {
-		l = m.DeprecatedSchema.SizeVT()
-		n += 1 + l + sov(uint64(l))
-	}
-	return n
-}
-func (m *Table_TableConfig_SchemaV2) SizeVT() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.SchemaV2 != nil {
-		l = m.SchemaV2.SizeVT()
-		n += 1 + l + sov(uint64(l))
-	}
-	return n
-}
 func (m *Table) SizeVT() (n int) {
 	if m == nil {
 		return 0
@@ -422,6 +360,10 @@ func (m *Table) SizeVT() (n int) {
 	}
 	if m.Config != nil {
 		l = m.Config.SizeVT()
+		n += 1 + l + sov(uint64(l))
+	}
+	if m.ActiveBlock != nil {
+		l = m.ActiveBlock.SizeVT()
 		n += 1 + l + sov(uint64(l))
 	}
 	if len(m.GranuleMetadata) > 0 {
@@ -572,7 +514,7 @@ func (m *FooterData) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *Table_TableConfig) UnmarshalVT(dAtA []byte) error {
+func (m *Table_TableBlock) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -595,17 +537,17 @@ func (m *Table_TableConfig) UnmarshalVT(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: Table_TableConfig: wiretype end group for non-group")
+			return fmt.Errorf("proto: Table_TableBlock: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: Table_TableConfig: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: Table_TableBlock: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DeprecatedSchema", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Ulid", wireType)
 			}
-			var msglen int
+			var byteLen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflow
@@ -615,38 +557,31 @@ func (m *Table_TableConfig) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= int(b&0x7F) << shift
+				byteLen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
+			if byteLen < 0 {
 				return ErrInvalidLength
 			}
-			postIndex := iNdEx + msglen
+			postIndex := iNdEx + byteLen
 			if postIndex < 0 {
 				return ErrInvalidLength
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if oneof, ok := m.Schema.(*Table_TableConfig_DeprecatedSchema); ok {
-				if err := oneof.DeprecatedSchema.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-					return err
-				}
-			} else {
-				v := &v1alpha1.Schema{}
-				if err := v.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-					return err
-				}
-				m.Schema = &Table_TableConfig_DeprecatedSchema{v}
+			m.Ulid = append(m.Ulid[:0], dAtA[iNdEx:postIndex]...)
+			if m.Ulid == nil {
+				m.Ulid = []byte{}
 			}
 			iNdEx = postIndex
 		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SchemaV2", wireType)
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Size", wireType)
 			}
-			var msglen int
+			m.Size = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflow
@@ -656,38 +591,16 @@ func (m *Table_TableConfig) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= int(b&0x7F) << shift
+				m.Size |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
-				return ErrInvalidLength
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if oneof, ok := m.Schema.(*Table_TableConfig_SchemaV2); ok {
-				if err := oneof.SchemaV2.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-					return err
-				}
-			} else {
-				v := &v1alpha2.Schema{}
-				if err := v.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-					return err
-				}
-				m.Schema = &Table_TableConfig_SchemaV2{v}
-			}
-			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field RowGroupSize", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field MinTx", wireType)
 			}
-			m.RowGroupSize = 0
+			m.MinTx = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflow
@@ -697,16 +610,16 @@ func (m *Table_TableConfig) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.RowGroupSize |= int64(b&0x7F) << shift
+				m.MinTx |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
 		case 4:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field BlockReaderLimit", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field PrevTx", wireType)
 			}
-			m.BlockReaderLimit = 0
+			m.PrevTx = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflow
@@ -716,31 +629,11 @@ func (m *Table_TableConfig) UnmarshalVT(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.BlockReaderLimit |= int64(b&0x7F) << shift
+				m.PrevTx |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-		case 5:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DisableWal", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.DisableWal = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skip(dAtA[iNdEx:])
@@ -854,13 +747,49 @@ func (m *Table) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Config == nil {
-				m.Config = &Table_TableConfig{}
+				m.Config = &v1alpha1.TableConfig{}
 			}
 			if err := m.Config.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
 		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ActiveBlock", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLength
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.ActiveBlock == nil {
+				m.ActiveBlock = &Table_TableBlock{}
+			}
+			if err := m.ActiveBlock.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field GranuleMetadata", wireType)
 			}

@@ -1,6 +1,7 @@
 package frostdb
 
 import (
+	"context"
 	"sync/atomic"
 )
 
@@ -11,9 +12,10 @@ type TxNode struct {
 }
 
 type TxPool struct {
-	head  *atomic.Pointer[TxNode]
-	tail  *atomic.Pointer[TxNode]
-	drain chan interface{}
+	head   *atomic.Pointer[TxNode]
+	tail   *atomic.Pointer[TxNode]
+	cancel context.CancelFunc
+	drain  chan interface{}
 }
 
 // NewTxPool returns a new TxPool and starts the pool cleaner routine.
@@ -72,7 +74,9 @@ func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	txpool.head.Store(head)
 	txpool.tail.Store(tail)
 
-	go txpool.cleaner(watermark)
+	ctx, cancel := context.WithCancel(context.Background())
+	txpool.cancel = cancel
+	go txpool.cleaner(ctx, watermark)
 	return txpool
 }
 
@@ -180,24 +184,29 @@ func getUnmarked(node *TxNode) *TxNode {
 
 // cleaner sweeps the pool periodically, and bubbles up the given watermark.
 // this function does not return.
-func (l *TxPool) cleaner(watermark *atomic.Uint64) {
-	for range l.drain {
-		l.delete(func(tx uint64) bool {
-			mark := watermark.Load()
-			switch {
-			case mark+1 == tx:
-				watermark.Add(1)
-				return true // return true to indicate that this node should be removed from the tx list.
-			case mark >= tx:
-				return true
-			default:
-				return false
-			}
-		})
+func (l *TxPool) cleaner(ctx context.Context, watermark *atomic.Uint64) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-l.drain:
+			l.delete(func(tx uint64) bool {
+				mark := watermark.Load()
+				switch {
+				case mark+1 == tx:
+					watermark.Add(1)
+					return true // return true to indicate that this node should be removed from the tx list.
+				case mark >= tx:
+					return true
+				default:
+					return false
+				}
+			})
+		}
 	}
 }
 
 // Stop stops the TxPool's cleaner goroutine.
 func (l *TxPool) Stop() {
-	close(l.drain)
+	l.cancel()
 }

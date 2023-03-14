@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"runtime"
 	"sync"
@@ -51,7 +52,7 @@ func newTestLogger(t TestLogHelper) log.Logger {
 
 func basicTable(t *testing.T, options ...Option) (*ColumnStore, *Table) {
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	logger := newTestLogger(t)
@@ -317,9 +318,12 @@ func Benchmark_Table_Insert_100Rows_100Iters_100Writers(b *testing.B) {
 func BenchmarkInsertSimple(b *testing.B) {
 	var (
 		ctx    = context.Background()
-		schema = dynparquet.NewSampleSchema()
-		config = NewTableConfig(schema)
+		def    = dynparquet.SampleDefinition()
+		config = NewTableConfig(def)
 	)
+
+	schema, err := dynparquet.SchemaFromDefinition(def)
+	require.NoError(b, err)
 
 	c, err := New()
 	require.NoError(b, err)
@@ -367,10 +371,13 @@ func BenchmarkInsertSimple(b *testing.B) {
 
 func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 	var (
-		schema = dynparquet.NewSampleSchema()
+		def    = dynparquet.SampleDefinition()
 		ctx    = context.Background()
-		config = NewTableConfig(schema)
+		config = NewTableConfig(def)
 	)
+
+	schema, err := dynparquet.SchemaFromDefinition(def)
+	require.NoError(b, err)
 
 	logger := log.NewNopLogger()
 
@@ -402,7 +409,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 			})
 		}
 
-		buf, err := rows.ToBuffer(config.schema)
+		buf, err := rows.ToBuffer(schema)
 		require.NoError(b, err)
 
 		buf.Sort()
@@ -597,7 +604,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 }
 
 func Test_Table_NewTableValidIndexDegree(t *testing.T) {
-	config := NewTableConfig(dynparquet.NewSampleSchema())
+	config := NewTableConfig(dynparquet.SampleDefinition())
 	c, err := New(
 		WithLogger(newTestLogger(t)),
 		WithIndexDegree(-1),
@@ -614,7 +621,7 @@ func Test_Table_NewTableValidIndexDegree(t *testing.T) {
 
 func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	logger := newTestLogger(t)
@@ -633,7 +640,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	defer c.Close()
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
-	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
+	_, err = db.Table("test", NewTableConfig(dynparquet.SampleDefinition()))
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failed to create table: Table's columnStore splitSize must be a positive integer > 1 (received -1)")
 
@@ -642,7 +649,7 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 	defer c.Close()
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
-	_, err = db.Table("test", NewTableConfig(dynparquet.NewSampleSchema()))
+	_, err = db.Table("test", NewTableConfig(dynparquet.SampleDefinition()))
 	require.NoError(t, err)
 }
 
@@ -845,7 +852,7 @@ func Test_Table_Bloomfilter(t *testing.T) {
 }
 
 func Test_DoubleTable(t *testing.T) {
-	schema, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
+	def := &schemapb.Schema{
 		Name: "test",
 		Columns: []*schemapb.Column{{
 			Name:          "id",
@@ -860,9 +867,8 @@ func Test_DoubleTable(t *testing.T) {
 			Name:      "id",
 			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 		}},
-	})
-	require.NoError(t, err)
-	config := NewTableConfig(schema)
+	}
+	config := NewTableConfig(def)
 
 	bucket, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
@@ -880,7 +886,7 @@ func Test_DoubleTable(t *testing.T) {
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
 
-	b, err := schema.NewBuffer(nil)
+	b, err := table.schema.NewBuffer(nil)
 	require.NoError(t, err)
 
 	value := rand.Float64()
@@ -1030,7 +1036,7 @@ func Test_Table_NestedSchema(t *testing.T) {
 	tbl, err := db.Table("nested", config)
 	require.NoError(t, err)
 
-	pb, err := schema.NewBufferV2(
+	pb, err := tbl.schema.NewBufferV2(
 		dynparquet.LabelColumn("label1"),
 		dynparquet.LabelColumn("label2"),
 	)
@@ -1282,4 +1288,134 @@ func Test_Table_InsertLeast(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, before+1, table.active.Index().Len())
+}
+
+func Test_Serialize_DisparateDynamicColumns(t *testing.T) {
+	c, table := basicTable(t)
+	defer c.Close()
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	samples = dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label100", Value: "a"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}}
+
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	// Serialize the table
+	require.NoError(t, table.active.Serialize(io.Discard))
+}
+
+func Test_RowWriter(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+		WithRowGroupSize(5),
+	)
+
+	logger := newTestLogger(t)
+
+	c, err := New(WithLogger(logger))
+	require.NoError(t, err)
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+	defer c.Close()
+
+	b := &bytes.Buffer{}
+	rowWriter, err := table.ActiveBlock().rowWriter(b, map[string][]string{
+		"labels": {"node"},
+	})
+	require.NoError(t, err)
+
+	// Write 17(8,9) rows, expect 3 row groups of 5 rows and 1 row group of 2 rows
+	samples := dynparquet.GenerateTestSamples(8)
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+	rows := buf.Rows()
+	_, err = rowWriter.writeRows(rows)
+	require.NoError(t, err)
+	require.NoError(t, rows.Close())
+
+	samples = dynparquet.GenerateTestSamples(9)
+	buf, err = samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+	rows = buf.Rows()
+	_, err = rowWriter.writeRows(rows)
+	require.NoError(t, err)
+	require.NoError(t, rows.Close())
+
+	require.NoError(t, rowWriter.close())
+
+	f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
+	require.NoError(t, err)
+
+	require.Equal(t, 4, len(f.Metadata().RowGroups))
+	for i, rg := range f.Metadata().RowGroups {
+		switch i {
+		case 3:
+			require.Equal(t, int64(2), rg.NumRows)
+		default:
+			require.Equal(t, int64(5), rg.NumRows)
+		}
+	}
 }

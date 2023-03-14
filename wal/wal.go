@@ -22,6 +22,8 @@ import (
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 )
 
+type ReplayHandlerFunc func(tx uint64, record *walpb.Record) error
+
 type NopWAL struct{}
 
 func (w *NopWAL) Close() error {
@@ -32,11 +34,11 @@ func (w *NopWAL) Log(tx uint64, record *walpb.Record) error {
 	return nil
 }
 
-func (w *NopWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
+func (w *NopWAL) Replay(tx uint64, handler ReplayHandlerFunc) error {
 	return nil
 }
 
-func (w *NopWAL) Replay(handler func(tx uint64, record *walpb.Record) error) error {
+func (w *NopWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
 	return nil
 }
 
@@ -168,13 +170,6 @@ func Open(
 		shutdownCh: make(chan struct{}),
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	w.cancel = cancel
-	go func() {
-		w.run(ctx)
-		close(w.shutdownCh)
-	}()
-
 	return w, nil
 }
 
@@ -297,6 +292,9 @@ func (w *FileWAL) Truncate(tx uint64) error {
 }
 
 func (w *FileWAL) Close() error {
+	if w.cancel == nil { // wal was never started
+		return nil
+	}
 	w.cancel()
 	<-w.shutdownCh
 	return w.log.Close()
@@ -387,10 +385,17 @@ func (w *FileWAL) LastIndex() (uint64, error) {
 	return w.log.LastIndex()
 }
 
-func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) error {
-	firstIndex, err := w.log.FirstIndex()
+func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
+	if handler == nil { // no handler provided
+		return nil
+	}
+
+	logFirstIndex, err := w.log.FirstIndex()
 	if err != nil {
 		return fmt.Errorf("read first index: %w", err)
+	}
+	if tx == 0 || tx < logFirstIndex {
+		tx = logFirstIndex
 	}
 
 	lastIndex, err := w.log.LastIndex()
@@ -399,21 +404,26 @@ func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) er
 	}
 
 	// FirstIndex and LastIndex returns zero when there is no WAL files.
-	if firstIndex == 0 || lastIndex == 0 {
+	if tx == 0 || lastIndex == 0 {
 		return nil
 	}
 
-	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", firstIndex, "last_index", lastIndex)
+	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", tx, "last_index", lastIndex)
 
 	defer func() {
-		// recover the panic to print more context. Exit afterwards regardless.
-		if err := recover(); err != nil {
-			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", firstIndex, "last_index", lastIndex, "err", err)
-			panic(err)
+		// recover a panic of reading a transaction. Truncate the wal to the last valid transaction.
+		if r := recover(); r != nil {
+			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", tx, "last_index", lastIndex, "offending_index", tx, "err", err)
+			if err = w.log.TruncateBack(tx - 1); err != nil {
+				return
+			}
+			w.txmtx.Lock()
+			w.nextTx = tx
+			w.txmtx.Unlock()
 		}
 	}()
 
-	for tx := firstIndex; tx <= lastIndex; tx++ {
+	for ; tx <= lastIndex; tx++ {
 		level.Debug(w.logger).Log("msg", "replaying WAL record", "tx", tx)
 		data, err := w.log.Read(tx)
 		if err != nil {
@@ -433,5 +443,15 @@ func (w *FileWAL) Replay(handler func(tx uint64, record *walpb.Record) error) er
 	w.txmtx.Lock()
 	w.nextTx = lastIndex + 1
 	w.txmtx.Unlock()
+
 	return nil
+}
+
+func (w *FileWAL) RunAsync() {
+	ctx, cancel := context.WithCancel(context.Background())
+	w.cancel = cancel
+	go func() {
+		w.run(ctx)
+		close(w.shutdownCh)
+	}()
 }

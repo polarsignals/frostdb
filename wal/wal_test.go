@@ -20,6 +20,7 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	w.RunAsync()
 
 	require.NoError(t, w.Log(1, &walpb.Record{
 		Entry: &walpb.Entry{
@@ -40,8 +41,9 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	w.RunAsync()
 
-	err = w.Replay(func(tx uint64, r *walpb.Record) error {
+	err = w.Replay(0, func(tx uint64, r *walpb.Record) error {
 		require.Equal(t, uint64(1), tx)
 		require.Equal(t, []byte("test-data"), r.Entry.GetWrite().Data)
 		require.Equal(t, "test-table", r.Entry.GetWrite().TableName)
@@ -70,12 +72,8 @@ func TestWAL(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
+	w.RunAsync()
 	defer w.Close()
-
-	err = w.Replay(func(tx uint64, r *walpb.Record) error {
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func TestCorruptWAL(t *testing.T) {
@@ -87,6 +85,7 @@ func TestCorruptWAL(t *testing.T) {
 		path,
 	)
 	require.NoError(t, err)
+	w.RunAsync()
 
 	require.NoError(t, w.Log(1, &walpb.Record{
 		Entry: &walpb.Entry{
@@ -110,6 +109,7 @@ func TestCorruptWAL(t *testing.T) {
 		path,
 	)
 	require.NoError(t, err)
+	w.RunAsync()
 	defer w.Close()
 
 	lastIdx, err := w.LastIndex()
@@ -130,6 +130,7 @@ func TestUnexpectedTxn(t *testing.T) {
 			walDir,
 		)
 		require.NoError(t, err)
+		w.RunAsync()
 		defer w.Close()
 
 		emptyRecord := &walpb.Record{}
@@ -148,6 +149,7 @@ func TestUnexpectedTxn(t *testing.T) {
 		walDir,
 	)
 	require.NoError(t, err)
+	w.RunAsync()
 	defer w.Close()
 	lastIndex, err := w.LastIndex()
 	require.NoError(t, err)

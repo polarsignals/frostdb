@@ -651,10 +651,10 @@ func (s Schema) parquetSortingSchema(
 	return parquet.NewSchema(s.Name(), g), nil
 }
 
-// parquetSortingColumns returns the parquet sorting columns for the dynamic
+// ParquetSortingColumns returns the parquet sorting columns for the dynamic
 // sorting columns with the concrete dynamic column names given in the
 // argument.
-func (s Schema) parquetSortingColumns(
+func (s Schema) ParquetSortingColumns(
 	dynamicColumns map[string][]string,
 ) []parquet.SortingColumn {
 	cols := make([]parquet.SortingColumn, 0, len(s.sortingColumns))
@@ -939,7 +939,7 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 		return nil, fmt.Errorf("create parquet schema for buffer: %w", err)
 	}
 
-	cols := s.parquetSortingColumns(dynamicColumns)
+	cols := s.ParquetSortingColumns(dynamicColumns)
 	return &Buffer{
 		dynamicColumns: dynamicColumns,
 		buffer: parquet.NewBuffer(
@@ -972,7 +972,7 @@ func (s *Schema) NewBufferV2(dynamicColumns ...*schemav2pb.Node) (*Buffer, error
 	}
 
 	ps := ParquetSchemaFromV2Definition(schema)
-	cols := s.parquetSortingColumns(map[string][]string{})
+	cols := s.ParquetSortingColumns(map[string][]string{})
 	return &Buffer{
 		dynamicColumns: map[string][]string{}, // unused for v2
 		buffer: parquet.NewBuffer(
@@ -1018,7 +1018,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 		return nil, err
 	}
 
-	cols := s.parquetSortingColumns(dynamicColumns)
+	cols := s.ParquetSortingColumns(dynamicColumns)
 	bloomFilterColumns := make([]parquet.BloomFilterColumn, 0, len(cols))
 	for _, col := range cols {
 		// Don't add bloom filters to boolean columns
@@ -1143,22 +1143,43 @@ func (r *MergedRowGroup) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(r, r.fields)
 }
 
+type mergeOption struct {
+	dynamicColumns map[string][]string
+}
+
+type MergeOption func(m *mergeOption)
+
+func WithDynamicCols(cols map[string][]string) MergeOption {
+	return func(m *mergeOption) {
+		m.dynamicColumns = cols
+	}
+}
+
 // MergeDynamicRowGroups merges the given dynamic row groups into a single
 // dynamic row group. It merges the parquet schema in a non-conflicting way by
 // merging all the concrete dynamic column names and generating a superset
 // parquet schema that all given dynamic row groups are compatible with.
-func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup) (DynamicRowGroup, error) {
+func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup, options ...MergeOption) (DynamicRowGroup, error) {
 	if len(rowGroups) == 1 {
 		return rowGroups[0], nil
 	}
 
-	dynamicColumns := mergeDynamicRowGroupDynamicColumns(rowGroups)
+	// Apply options
+	m := &mergeOption{}
+	for _, option := range options {
+		option(m)
+	}
+
+	dynamicColumns := m.dynamicColumns
+	if dynamicColumns == nil {
+		dynamicColumns = mergeDynamicRowGroupDynamicColumns(rowGroups)
+	}
 	ps, err := s.DynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, fmt.Errorf("create merged parquet schema merging %d row groups: %w", len(rowGroups), err)
 	}
 
-	cols := s.parquetSortingColumns(dynamicColumns)
+	cols := s.ParquetSortingColumns(dynamicColumns)
 
 	adapters := make([]parquet.RowGroup, 0, len(rowGroups))
 	for _, rowGroup := range rowGroups {

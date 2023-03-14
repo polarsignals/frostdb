@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ import (
 
 func TestDBWithWALAndBucket(t *testing.T) {
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	logger := newTestLogger(t)
@@ -71,14 +72,13 @@ func TestDBWithWALAndBucket(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer c.Close()
-	require.NoError(t, c.ReplayWALs(context.Background()))
 }
 
 func TestDBWithWAL(t *testing.T) {
 	ctx := context.Background()
 	test := func(t *testing.T, isArrow bool) {
 		config := NewTableConfig(
-			dynparquet.NewSampleSchema(),
+			dynparquet.SampleDefinition(),
 		)
 
 		logger := newTestLogger(t)
@@ -251,8 +251,6 @@ func TestDBWithWAL(t *testing.T) {
 		require.NoError(t, err)
 		defer c.Close()
 
-		require.NoError(t, c.ReplayWALs(context.Background()))
-
 		db, err = c.DB(context.Background(), "test")
 		require.NoError(t, err)
 		table, err = db.Table("test", config)
@@ -293,7 +291,7 @@ func TestDBWithWAL(t *testing.T) {
 
 func Test_DB_WithStorage(t *testing.T) {
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	bucket, err := filesystem.NewBucket(t.TempDir())
@@ -381,7 +379,7 @@ func Test_DB_ColdStart(t *testing.T) {
 	}
 
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	bucket, err := filesystem.NewBucket(t.TempDir())
@@ -556,9 +554,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 		},
 	}
 
-	s, err := dynparquet.SchemaFromDefinition(schemaDef)
-	require.NoError(t, err)
-	config := NewTableConfig(s)
+	config := NewTableConfig(schemaDef)
 
 	bucket, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
@@ -582,7 +578,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 		os.RemoveAll(t.Name())
 	})
 
-	buf, err := s.NewBuffer(map[string][]string{
+	buf, err := table.schema.NewBuffer(map[string][]string{
 		"labels": {
 			"label1",
 			"label2",
@@ -623,7 +619,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 	table, err = db.Table(t.Name(), config)
 	require.NoError(t, err)
 
-	buf, err = s.NewBuffer(map[string][]string{
+	buf, err = table.schema.NewBuffer(map[string][]string{
 		"labels": {
 			"label1",
 			"label2",
@@ -651,7 +647,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 	}
 
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	bucket, err := filesystem.NewBucket(t.TempDir())
@@ -930,7 +926,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 	}
 
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	bucket, err := filesystem.NewBucket(t.TempDir())
@@ -1118,9 +1114,7 @@ func Test_DB_TableWrite_FlatSchema(t *testing.T) {
 			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 		}},
 	}
-	schema, err := dynparquet.SchemaFromDefinition(flatDefinition)
-	require.NoError(t, err)
-	config := NewTableConfig(schema)
+	config := NewTableConfig(flatDefinition)
 
 	c, err := New(WithLogger(newTestLogger(t)))
 	require.NoError(t, err)
@@ -1161,7 +1155,7 @@ func Test_DB_TableWrite_FlatSchema(t *testing.T) {
 func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 	ctx := context.Background()
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	c, err := New(WithLogger(newTestLogger(t)))
@@ -1256,20 +1250,10 @@ func Test_DB_TableNotExist(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestReplayBackwardsCompatibility(t *testing.T) {
-	ctx := context.Background()
-	const storagePath = "testdata/oldwal"
-	c, err := New(WithWAL(), WithStoragePath(storagePath))
-	require.NoError(t, err)
-	defer c.Close()
-
-	require.NoError(t, c.ReplayWALs(ctx))
-}
-
 func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 	ctx := context.Background()
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	c, err := New(WithLogger(newTestLogger(t)))
@@ -1387,7 +1371,7 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 
 func Test_DB_ReadOnlyQuery(t *testing.T) {
 	config := NewTableConfig(
-		dynparquet.NewSampleSchema(),
+		dynparquet.SampleDefinition(),
 	)
 
 	logger := newTestLogger(t)
@@ -1430,7 +1414,6 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer c.Close()
-	require.NoError(t, c.ReplayWALs(context.Background()))
 
 	// Query with an aggregat query
 	pool := memory.NewGoAllocator()
@@ -1444,4 +1427,181 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 			return nil
 		})
 	require.NoError(t, err)
+}
+
+// TestDBRecover verifies correct DB recovery with both a WAL and snapshots as
+// well as a block rotation (in which case no duplicate data should be in the
+// database).
+func TestDBRecover(t *testing.T) {
+	ctx := context.Background()
+	const (
+		dbAndTableName = "test"
+		numInserts     = 3
+	)
+	dir := t.TempDir()
+	func() {
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+			WithSnapshotTriggerSize(1),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+		schema := dynparquet.SampleDefinition()
+		table, err := db.Table(dbAndTableName, NewTableConfig(schema))
+		require.NoError(t, err)
+
+		// Insert 3 txns.
+		var lastWriteTx uint64
+		for i := 0; i < numInserts; i++ {
+			samples := dynparquet.NewTestSamples()
+			for i := range samples {
+				samples[i].Timestamp = int64(i)
+			}
+			buf, err := samples.ToBuffer(table.schema)
+			require.NoError(t, err)
+			writeTx, err := table.InsertBuffer(ctx, buf)
+			require.NoError(t, err)
+			if i > 0 {
+				// Wait until a snapshot is written for each write (it is the txn
+				// immediately preceding the write). This has to be done in a loop,
+				// otherwise writes may not cause a snapshot given that there
+				// might be a snapshot in progress.
+				db.Wait(writeTx - 1)
+				lastWriteTx = writeTx
+			}
+		}
+		// At this point, there should be 2 snapshots. One was triggered before
+		// the second write, and the second was triggered before the third write.
+		// A block rotation should trigger the third snapshot.
+		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
+		// Wait for both the new block txn, and the old block rotation txn.
+		db.Wait(lastWriteTx + 2)
+
+		files, err := os.ReadDir(db.snapshotsDir())
+		require.NoError(t, err)
+		snapshotTxns := make([]uint64, 0, len(files))
+		for _, f := range files {
+			tx, err := getTxFromSnapshotFileName(f.Name())
+			require.NoError(t, err)
+			snapshotTxns = append(snapshotTxns, tx)
+		}
+		// Verify that there are now 3 snapshots and their txns.
+		require.Equal(t, []uint64{3, 5, 8}, snapshotTxns)
+	}()
+
+	c, err := New(
+		WithLogger(newTestLogger(t)),
+		WithStoragePath(dir),
+		WithWAL(),
+		WithSnapshotTriggerSize(1),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+	db, err := c.DB(ctx, dbAndTableName)
+	require.NoError(t, err)
+	// Simulate corruption of the snapshot taken during block rotation. This
+	// will cause recovery to use the snapshot with all the data before block
+	// rotation. However, the WAL replay should notice that this data has
+	// already been persisted.
+	require.NoError(t, os.Remove(filepath.Join(db.snapshotsDir(), snapshotFileName(8))))
+
+	engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
+	nrows := 0
+	require.NoError(t, engine.ScanTable(dbAndTableName).
+		Distinct(logicalplan.Col("timestamp")).
+		Execute(
+			ctx,
+			func(_ context.Context, r arrow.Record) error {
+				nrows += int(r.NumRows())
+				return nil
+			}))
+	// No more timestamps if querying in-memory only, since the data has
+	// been rotated.
+	require.Equal(t, 0, nrows)
+}
+
+func Test_DB_WalReplayTableConfig(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+		WithRowGroupSize(10),
+	)
+
+	logger := newTestLogger(t)
+
+	dir := t.TempDir()
+
+	c, err := New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+	require.Equal(t, uint64(10), table.config.RowGroupSize)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(t, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+	}
+	require.NoError(t, c.Close())
+
+	c, err = New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err = c.DB(ctx, "test")
+	require.NoError(t, err)
+
+	table, err = db.Table("test", nil) // Pass nil because we expect the table to already exist because of wal replay
+	require.NoError(t, err)
+	require.Equal(t, uint64(10), table.config.RowGroupSize)
+}
+
+func TestDBMinTXPersisted(t *testing.T) {
+	ctx := context.Background()
+	c, err := New()
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(ctx, "test")
+	require.NoError(t, err)
+
+	schema := dynparquet.SampleDefinition()
+	table, err := db.Table("test", NewTableConfig(schema))
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+	buf, err := samples.ToBuffer(table.schema)
+	require.NoError(t, err)
+	writeTx, err := table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
+	// Writing the block is asynchronous, so wait for both the new table block
+	// txn and the block persistence txn.
+	db.Wait(writeTx + 2)
+
+	require.Equal(t, uint64(1), db.getMinTXPersisted())
+
+	_, err = db.Table("other", NewTableConfig(schema))
+	require.NoError(t, err)
+
+	require.Equal(t, uint64(0), db.getMinTXPersisted())
 }

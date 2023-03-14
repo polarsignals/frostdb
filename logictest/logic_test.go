@@ -22,7 +22,7 @@ type frostDB struct {
 	*frostdb.DB
 }
 
-func (db frostDB) CreateTable(name string, schema *dynparquet.Schema) (Table, error) {
+func (db frostDB) CreateTable(name string, schema *schemapb.Schema) (Table, error) {
 	return db.DB.Table(name, frostdb.NewTableConfig(schema))
 }
 
@@ -37,9 +37,9 @@ func (db frostDB) ScanTable(name string) query.Builder {
 	return queryEngine.ScanTable(name)
 }
 
-var schemas = map[string]*dynparquet.Schema{
-	"default": dynparquet.NewSampleSchema(),
-	"simple_bool": SchemaMust(&schemapb.Schema{
+var schemas = map[string]*schemapb.Schema{
+	"default": dynparquet.SampleDefinition(),
+	"simple_bool": {
 		Name: "simple_bool",
 		Columns: []*schemapb.Column{{
 			Name: "name",
@@ -57,7 +57,7 @@ var schemas = map[string]*dynparquet.Schema{
 			Name:      "found",
 			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 		}},
-	}),
+	},
 }
 
 // TestLogic runs all the datadriven tests in the testdata directory. Refer to

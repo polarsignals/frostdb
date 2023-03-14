@@ -11,17 +11,19 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
+	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
+	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
+	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
 )
 
@@ -69,14 +71,75 @@ func snapshotFileName(tx uint64) string {
 	return fmt.Sprintf("%020d.fdbs", tx)
 }
 
-// snapshot takes a snapshot of the state of the database at transaction tx.
-func (db *DB) snapshot(ctx context.Context, tx uint64) error {
+func getTxFromSnapshotFileName(fileName string) (uint64, error) {
+	parsedTx, err := strconv.ParseUint(fileName[:20], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return parsedTx, nil
+}
+
+// asyncSnapshot begins a new transaction and takes a snapshot of the
+// database in a new goroutine at that txn. It returns whether a snapshot was
+// started (i.e. no other snapshot was in progress). When the snapshot
+// goroutine successfully completes a snapshot, onSuccess is called.
+func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 	if !db.columnStore.enableWAL {
-		// TODO(asubiotto): Should we allow snapshots to be enabled
-		// independently?
-		return nil
+		return
+	}
+	if !db.snapshotInProgress.CompareAndSwap(false, true) {
+		// Snapshot already in progress.
+		return
 	}
 
+	tx, _, commit := db.begin()
+	level.Debug(db.logger).Log(
+		"msg", "starting a new snapshot",
+		"tx", tx,
+	)
+	go func() {
+		start := time.Now()
+		defer db.snapshotInProgress.Store(false)
+		defer commit()
+		if db.columnStore.enableWAL {
+			// Appending a snapshot record to the WAL is necessary,
+			// since the WAL expects a 1:1 relationship between txn ids
+			// and record indexes. This is done before the actual snapshot so
+			// that a failure to snapshot still appends a record to the WAL,
+			// avoiding a WAL deadlock.
+			if err := db.wal.Log(
+				tx,
+				&walpb.Record{
+					Entry: &walpb.Entry{
+						EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
+					},
+				},
+			); err != nil {
+				level.Error(db.logger).Log(
+					"msg", "failed to append snapshot record to WAL", "err", err,
+				)
+				return
+			}
+		}
+
+		if err := db.snapshotAtTX(ctx, tx); err != nil {
+			level.Error(db.logger).Log(
+				"msg", "failed to snapshot database", "err", err,
+			)
+			return
+		}
+		level.Debug(db.logger).Log(
+			"msg", "snapshot complete",
+			"tx", tx,
+			"duration", time.Since(start),
+		)
+		onSuccess()
+	}()
+}
+
+// snapshotAtTX takes a snapshot of the state of the database at transaction tx.
+func (db *DB) snapshotAtTX(ctx context.Context, tx uint64) error {
+	db.metrics.snapshotsStarted.Inc()
 	snapshotsDir := db.snapshotsDir()
 	if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
 		return err
@@ -103,6 +166,7 @@ func (db *DB) snapshot(ctx context.Context, tx uint64) error {
 	}
 	// TODO(asubiotto): If snapshot file sizes become too large, investigate
 	// adding compression.
+	db.metrics.snapshotsCompleted.Inc()
 	return nil
 }
 
@@ -118,6 +182,10 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 		return 0, err
 	}
 
+	if len(files) == 0 {
+		return 0, nil
+	}
+
 	var lastErr error
 	// Iterate in reverse order so that the newest snapshot is first.
 	for i := len(files) - 1; i >= 0; i-- {
@@ -126,7 +194,7 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 		if entry.IsDir() || len(name) < 20 {
 			continue
 		}
-		parsedTx, err := strconv.ParseUint(name[:20], 10, 64)
+		parsedTx, err := getTxFromSnapshotFileName(name)
 		if err != nil {
 			continue
 		}
@@ -212,25 +280,20 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 
 	metadata := &snapshotpb.FooterData{}
 	for _, t := range tables {
-		tableMeta := &snapshotpb.Table{
-			Name: t.name,
-			Config: &snapshotpb.Table_TableConfig{
-				RowGroupSize:     int64(t.config.rowGroupSize),
-				BlockReaderLimit: int64(t.config.blockReaderLimit),
-				DisableWal:       t.config.disableWAL,
-			},
+		block := t.ActiveBlock()
+		blockUlid, err := block.ulid.MarshalBinary()
+		if err != nil {
+			return err
 		}
-		switch v := t.config.schema.Definition().(type) {
-		case *schemapb.Schema:
-			tableMeta.Config.Schema = &snapshotpb.Table_TableConfig_DeprecatedSchema{
-				DeprecatedSchema: v,
-			}
-		case *schemav2pb.Schema:
-			tableMeta.Config.Schema = &snapshotpb.Table_TableConfig_SchemaV2{
-				SchemaV2: v,
-			}
-		default:
-			return fmt.Errorf("unknown schema type: %t", v)
+		tableMeta := &snapshotpb.Table{
+			Name:   t.name,
+			Config: t.config,
+			ActiveBlock: &snapshotpb.Table_TableBlock{
+				Ulid:   blockUlid,
+				Size:   block.Size(),
+				MinTx:  block.minTx,
+				PrevTx: block.prevTx,
+			},
 		}
 
 		var ascendErr error
@@ -246,7 +309,7 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 					if err := ctx.Err(); err != nil {
 						return err
 					}
-					schema := t.config.schema
+					schema := t.schema
 
 					if record := p.Record(); record != nil {
 						partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
@@ -382,16 +445,12 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 		if err := func() error {
 			var schemaMsg proto.Message
 			switch v := tableMeta.Config.Schema.(type) {
-			case *snapshotpb.Table_TableConfig_DeprecatedSchema:
+			case *tablepb.TableConfig_DeprecatedSchema:
 				schemaMsg = v.DeprecatedSchema
-			case *snapshotpb.Table_TableConfig_SchemaV2:
+			case *tablepb.TableConfig_SchemaV2:
 				schemaMsg = v.SchemaV2
 			default:
 				return fmt.Errorf("unhandled schema type: %T", v)
-			}
-			schema, err := dynparquet.SchemaFromDefinition(schemaMsg)
-			if err != nil {
-				return err
 			}
 
 			options := []TableOption{
@@ -402,7 +461,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				options = append(options, WithoutWAL())
 			}
 			tableConfig := NewTableConfig(
-				schema,
+				schemaMsg,
 				options...,
 			)
 			table, err := db.Table(tableMeta.Name, tableConfig)
@@ -410,9 +469,23 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				return err
 			}
 
+			var blockUlid ulid.ULID
+			if err := blockUlid.UnmarshalBinary(tableMeta.ActiveBlock.Ulid); err != nil {
+				return err
+			}
+
 			table.mtx.Lock()
 			block := table.active
+			block.mtx.Lock()
+			block.ulid = blockUlid
+			block.size.Store(tableMeta.ActiveBlock.Size)
+			// Store the last snapshot size so a snapshot is not triggered right
+			// after loading this snapshot.
+			block.lastSnapshotSize.Store(tableMeta.ActiveBlock.Size)
+			block.minTx = tableMeta.ActiveBlock.MinTx
+			block.prevTx = tableMeta.ActiveBlock.PrevTx
 			newIdx := block.Index().Clone()
+			block.mtx.Unlock()
 			table.mtx.Unlock()
 
 			for _, granuleMeta := range tableMeta.GranuleMetadata {
@@ -446,13 +519,13 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 							return err
 						}
 
-						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, schema, partOptions))
+						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, table.schema, partOptions))
 					default:
 						return fmt.Errorf("unknown part encoding: %s", partMeta.Encoding)
 					}
 				}
 
-				granule, err := NewGranule(tableConfig, resultParts...)
+				granule, err := NewGranule(table.schema, resultParts...)
 				if err != nil {
 					return err
 				}
@@ -475,5 +548,36 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 		}
 	}
 
+	return nil
+}
+
+// truncateSnapshotsLessThanTX deletes all snapshots taken at a transaction less
+// than the given tx.
+func (db *DB) truncateSnapshotsLessThanTX(ctx context.Context, tx uint64) error {
+	dir := db.snapshotsDir()
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range files {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		name := entry.Name()
+		if entry.IsDir() || len(name) < 20 {
+			continue
+		}
+		parsedTx, err := getTxFromSnapshotFileName(name)
+		if err != nil {
+			continue
+		}
+		if parsedTx >= tx {
+			// All interesting files have been processed.
+			return nil
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
