@@ -50,6 +50,10 @@ func (w *NopWAL) FirstIndex() (uint64, error) {
 	return 0, nil
 }
 
+func (w *NopWAL) LastIndex() (uint64, error) {
+	return 0, nil
+}
+
 type fileWALMetrics struct {
 	recordsLogged        prometheus.Counter
 	failedLogs           prometheus.Counter
@@ -410,7 +414,14 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 	defer func() {
 		// recover a panic of reading a transaction. Truncate the wal to the last valid transaction.
 		if r := recover(); r != nil {
-			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", tx, "last_index", lastIndex, "offending_index", tx, "err", err)
+			level.Error(w.logger).Log(
+				"msg", "replaying WAL failed",
+				"path", w.path,
+				"first_index", logFirstIndex,
+				"last_index", lastIndex,
+				"offending_index", tx,
+				"err", r,
+			)
 			if err = w.log.TruncateBack(tx - 1); err != nil {
 				return
 			}
