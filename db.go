@@ -465,6 +465,16 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	}
 	snapshotLogArgs := make([]any, 0)
 	if snapshotTx != 0 {
+		db.mtx.Lock()
+		// WAL pointers of tables loaded on snapshot need to be updated to the
+		// DB WAL.
+		for _, table := range db.tables {
+			if !table.config.DisableWal {
+				table.wal = wal
+			}
+		}
+		db.mtx.Unlock()
+
 		snapshotLogArgs = append(
 			snapshotLogArgs,
 			"snapshot_tx", snapshotTx,

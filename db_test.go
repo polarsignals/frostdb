@@ -20,11 +20,10 @@ import (
 	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
-
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
 func TestDBWithWALAndBucket(t *testing.T) {
@@ -1459,8 +1458,8 @@ func TestDBRecover(t *testing.T) {
 		var lastWriteTx uint64
 		for i := 0; i < numInserts; i++ {
 			samples := dynparquet.NewTestSamples()
-			for i := range samples {
-				samples[i].Timestamp = int64(i)
+			for j := range samples {
+				samples[j].Timestamp = int64(i)
 			}
 			buf, err := samples.ToBuffer(table.schema)
 			require.NoError(t, err)
@@ -1523,6 +1522,28 @@ func TestDBRecover(t *testing.T) {
 	// No more timestamps if querying in-memory only, since the data has
 	// been rotated.
 	require.Equal(t, 0, nrows)
+
+	// Ensure that the WAL is written to after loading from a snapshot. This
+	// tests a regression detailed in:
+	// https://github.com/polarsignals/frostdb/issues/390
+	table, err := db.Table(dbAndTableName, nil)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+	for i := range samples {
+		samples[i].Timestamp = numInserts
+	}
+	buf, err := samples.ToBuffer(table.schema)
+	require.NoError(t, err)
+
+	writeTx, err := table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		lastIndex, err := db.wal.LastIndex()
+		require.NoError(t, err)
+		return lastIndex >= writeTx
+	}, time.Second, 10*time.Millisecond)
 }
 
 func Test_DB_WalReplayTableConfig(t *testing.T) {
