@@ -2,6 +2,8 @@ package builder_test
 
 import (
 	"fmt"
+	"math"
+	"math/rand"
 	"testing"
 
 	"github.com/apache/arrow/go/v10/arrow"
@@ -73,4 +75,38 @@ func Test_ListBuilder(t *testing.T) {
 
 	ar := lb.NewArray()
 	require.Equal(t, "[[1 2 3] [4 5 6]]", fmt.Sprintf("%v", ar))
+}
+
+// Test_BuildLargeArray is a test that build a large array ( > MaxInt32)
+// The reason for this test we've hit cases where the binary array builder had so many values appended onto
+// it that it caused the uint32 that was being used to track value offsets to overflow.
+func Test_BuildLargeArray(t *testing.T) {
+	alloc := memory.NewGoAllocator()
+	bldr := builder.NewBuilder(alloc, &arrow.BinaryType{})
+
+	size := rand.Intn(1024) * 1024 // [1k,1MB) values
+	buf := make([]byte, size)
+	binbldr := array.NewBinaryBuilder(alloc, &arrow.BinaryType{})
+	binbldr.Append(buf)
+	arr := binbldr.NewArray()
+
+	n := (math.MaxInt32 / size) + 1
+	for i := 0; i < n; i++ {
+		switch i {
+		case n - 1:
+			require.Error(t, builder.AppendValue(bldr, arr, 0))
+		default:
+			require.NoError(t, builder.AppendValue(bldr, arr, 0))
+		}
+	}
+
+	newarr := bldr.NewArray()
+
+	// Validate we can read all rows
+	for i := 0; i < n-1; i++ {
+		newarr.(*array.Binary).Value(i)
+	}
+
+	// We expect fewer rows in the array
+	require.Equal(t, n-1, newarr.Data().Len())
 }
