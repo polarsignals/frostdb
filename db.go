@@ -702,6 +702,13 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		db.tx.Store(lastTx)
 		db.highWatermark.Store(lastTx)
 	}
+	if lastTxn := db.tx.Load(); lastTxn != lastIndex {
+		return fmt.Errorf(
+			"aborting recovery: cannot make progress if WAL last index %d != db last txn %d",
+			lastIndex, lastTxn,
+		)
+	}
+
 	level.Info(db.logger).Log(
 		append(
 			[]any{
@@ -725,8 +732,12 @@ func (db *DB) Close() error {
 	}
 
 	if db.bucket != nil {
-		// If we've successfully persisted all the table blocks we can remove the wal
+		// If we've successfully persisted all the table blocks we can remove
+		// the wal and snapshots.
 		if err := os.RemoveAll(db.walDir()); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(db.snapshotsDir()); err != nil {
 			return err
 		}
 	}

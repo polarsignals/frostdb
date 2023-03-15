@@ -1437,13 +1437,17 @@ func TestDBRecover(t *testing.T) {
 		dbAndTableName = "test"
 		numInserts     = 3
 	)
-	dir := t.TempDir()
-	func() {
+	setup := func(t *testing.T, blockRotation bool, options ...Option) string {
+		dir := t.TempDir()
 		c, err := New(
-			WithLogger(newTestLogger(t)),
-			WithStoragePath(dir),
-			WithWAL(),
-			WithSnapshotTriggerSize(1),
+			append([]Option{
+				WithLogger(newTestLogger(t)),
+				WithStoragePath(dir),
+				WithWAL(),
+				WithSnapshotTriggerSize(1),
+			},
+				options...,
+			)...,
 		)
 		require.NoError(t, err)
 		defer c.Close()
@@ -1476,10 +1480,12 @@ func TestDBRecover(t *testing.T) {
 		}
 		// At this point, there should be 2 snapshots. One was triggered before
 		// the second write, and the second was triggered before the third write.
-		// A block rotation should trigger the third snapshot.
-		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
-		// Wait for both the new block txn, and the old block rotation txn.
-		db.Wait(lastWriteTx + 2)
+		if blockRotation {
+			// A block rotation should trigger the third snapshot.
+			require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
+			// Wait for both the new block txn, and the old block rotation txn.
+			db.Wait(lastWriteTx + 2)
+		}
 
 		files, err := os.ReadDir(db.snapshotsDir())
 		require.NoError(t, err)
@@ -1489,61 +1495,134 @@ func TestDBRecover(t *testing.T) {
 			require.NoError(t, err)
 			snapshotTxns = append(snapshotTxns, tx)
 		}
+		expectedSnapshots := []uint64{3, 5}
+		if blockRotation {
+			expectedSnapshots = append(expectedSnapshots, 8)
+		}
 		// Verify that there are now 3 snapshots and their txns.
-		require.Equal(t, []uint64{3, 5, 8}, snapshotTxns)
-	}()
+		require.Equal(t, expectedSnapshots, snapshotTxns)
+		return dir
+	}
 
-	c, err := New(
-		WithLogger(newTestLogger(t)),
-		WithStoragePath(dir),
-		WithWAL(),
-		WithSnapshotTriggerSize(1),
-	)
-	require.NoError(t, err)
-	defer c.Close()
-	db, err := c.DB(ctx, dbAndTableName)
-	require.NoError(t, err)
-	// Simulate corruption of the snapshot taken during block rotation. This
-	// will cause recovery to use the snapshot with all the data before block
-	// rotation. However, the WAL replay should notice that this data has
-	// already been persisted.
-	require.NoError(t, os.Remove(filepath.Join(db.snapshotsDir(), snapshotFileName(8))))
+	t.Run("BlockRotation", func(t *testing.T) {
+		dir := setup(t, true)
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+			WithSnapshotTriggerSize(1),
+		)
+		require.NoError(t, err)
+		defer c.Close()
 
-	engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
-	nrows := 0
-	require.NoError(t, engine.ScanTable(dbAndTableName).
-		Distinct(logicalplan.Col("timestamp")).
-		Execute(
-			ctx,
-			func(_ context.Context, r arrow.Record) error {
-				nrows += int(r.NumRows())
-				return nil
-			}))
-	// No more timestamps if querying in-memory only, since the data has
-	// been rotated.
-	require.Equal(t, 0, nrows)
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+
+		engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
+		nrows := 0
+		require.NoError(t, engine.ScanTable(dbAndTableName).
+			Distinct(logicalplan.Col("timestamp")).
+			Execute(
+				ctx,
+				func(_ context.Context, r arrow.Record) error {
+					nrows += int(r.NumRows())
+					return nil
+				}))
+		// No more timestamps if querying in-memory only, since the data has
+		// been rotated.
+		require.Equal(t, 0, nrows)
+	})
+
+	// The ability to write and expect a WAL record to be logged is vital on
+	// database recovery. If it is not the case, writing to the WAL will be
+	// stuck.
+	newWriteAndExpectWALRecord := func(t *testing.T, db *DB, table *Table) {
+		t.Helper()
+		samples := dynparquet.NewTestSamples()
+		for i := range samples {
+			samples[i].Timestamp = numInserts
+		}
+		buf, err := samples.ToBuffer(table.schema)
+		require.NoError(t, err)
+
+		writeTx, err := table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool {
+			lastIndex, err := db.wal.LastIndex()
+			require.NoError(t, err)
+			return lastIndex >= writeTx
+		}, time.Second, 10*time.Millisecond)
+	}
 
 	// Ensure that the WAL is written to after loading from a snapshot. This
 	// tests a regression detailed in:
 	// https://github.com/polarsignals/frostdb/issues/390
-	table, err := db.Table(dbAndTableName, nil)
-	require.NoError(t, err)
-
-	samples := dynparquet.NewTestSamples()
-	for i := range samples {
-		samples[i].Timestamp = numInserts
-	}
-	buf, err := samples.ToBuffer(table.schema)
-	require.NoError(t, err)
-
-	writeTx, err := table.InsertBuffer(ctx, buf)
-	require.NoError(t, err)
-
-	require.Eventually(t, func() bool {
-		lastIndex, err := db.wal.LastIndex()
+	t.Run("Issue390", func(t *testing.T) {
+		dir := setup(t, false)
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+			WithSnapshotTriggerSize(1),
+		)
 		require.NoError(t, err)
-		return lastIndex >= writeTx
-	}, time.Second, 10*time.Millisecond)
+		defer c.Close()
+
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+		table, err := db.Table(dbAndTableName, nil)
+		require.NoError(t, err)
+		newWriteAndExpectWALRecord(t, db, table)
+	})
+
+	// OutOfDateSnapshots verifies a scenario in which the WAL has records with
+	// higher txns than the latest snapshot
+	t.Run("OutOfDateSnapshots", func(t *testing.T) {
+		dir := setup(t, false)
+
+		snapshotsPath := filepath.Join(dir, "databases", dbAndTableName, "snapshots")
+		files, err := os.ReadDir(snapshotsPath)
+		require.NoError(t, err)
+		require.Equal(t, 2, len(files))
+		require.NoError(t, os.RemoveAll(filepath.Join(snapshotsPath, files[len(files)-1].Name())))
+		files, err = os.ReadDir(snapshotsPath)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(files))
+
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+			WithSnapshotTriggerSize(1),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+	})
+
+	// WithBucket ensures normal behavior of recovery in case of graceful
+	// shutdown of a column store with bucket storage.
+	t.Run("WithBucket", func(t *testing.T) {
+		bucket, err := filesystem.NewBucket(t.TempDir())
+		require.NoError(t, err)
+
+		dir := setup(t, true, WithBucketStorage(bucket))
+
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+			WithSnapshotTriggerSize(1),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+		table, err := db.Table(dbAndTableName, NewTableConfig(dynparquet.SampleDefinition()))
+		require.NoError(t, err)
+		newWriteAndExpectWALRecord(t, db, table)
+	})
 }
 
 func Test_DB_WalReplayTableConfig(t *testing.T) {
