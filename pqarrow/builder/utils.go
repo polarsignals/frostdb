@@ -24,6 +24,32 @@ func NewBuilder(mem memory.Allocator, t arrow.DataType) ColumnBuilder {
 	}
 }
 
+func RollbackPrevious(cb ColumnBuilder) error {
+	switch b := cb.(type) {
+	case *OptBinaryBuilder:
+		b.ResetToLength(b.Len() - 1)
+	case *OptInt64Builder:
+		b.ResetToLength(b.Len() - 1)
+	case *OptBooleanBuilder:
+		b.ResetToLength(b.Len() - 1)
+	case *array.Int64Builder:
+		b.Resize(b.Len() - 1)
+	case *array.StringBuilder:
+		b.Resize(b.Len() - 1)
+	case *array.BinaryBuilder:
+		b.Resize(b.Len() - 1)
+	case *array.FixedSizeBinaryBuilder:
+		b.Resize(b.Len() - 1)
+	case *array.BooleanBuilder:
+		b.Resize(b.Len() - 1)
+	case *array.BinaryDictionaryBuilder:
+		b.Resize(b.Len() - 1)
+	default:
+		return fmt.Errorf("unsupported type for RollbackPrevious %T", b)
+	}
+	return nil
+}
+
 func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 	if arr == nil || arr.IsNull(i) {
 		cb.AppendNull()
@@ -32,7 +58,7 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 
 	switch b := cb.(type) {
 	case *OptBinaryBuilder:
-		b.Append(arr.(*array.Binary).Value(i))
+		return b.Append(arr.(*array.Binary).Value(i))
 	case *OptInt64Builder:
 		b.Append(arr.(*array.Int64).Value(i))
 	case *OptBooleanBuilder:
@@ -98,7 +124,7 @@ func AppendArray(cb ColumnBuilder, arr arrow.Array) error {
 	case *OptBinaryBuilder:
 		v := arr.(*array.Binary)
 		offsets := v.ValueOffsets()
-		b.AppendData(v.ValueBytes(), *(*[]uint32)(unsafe.Pointer(&offsets)))
+		return b.AppendData(v.ValueBytes(), *(*[]uint32)(unsafe.Pointer(&offsets)))
 	case *OptInt64Builder:
 		b.AppendData(arr.(*array.Int64).Int64Values())
 	default:
@@ -124,7 +150,7 @@ func AppendGoValue(cb ColumnBuilder, v any) error {
 
 	switch b := cb.(type) {
 	case *OptBinaryBuilder:
-		b.Append(v.([]byte))
+		return b.Append(v.([]byte))
 	case *OptInt64Builder:
 		b.Append(v.(int64))
 	case *OptBooleanBuilder:
