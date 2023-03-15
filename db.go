@@ -439,7 +439,10 @@ func (db *DB) snapshotsDir() string {
 // recover attempts to recover database state from a combination of snapshots
 // and the WAL.
 func (db *DB) recover(ctx context.Context, wal WAL) error {
-	level.Info(db.logger).Log("msg", "recovering db")
+	level.Info(db.logger).Log(
+		"msg", "recovering db",
+		"name", db.name,
+	)
 	snapshotLoadStart := time.Now()
 	snapshotTx, err := db.loadLatestSnapshot(ctx)
 	if err != nil {
@@ -448,11 +451,34 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		)
 		snapshotTx = 0
 	}
-	if snapshotTx != 0 {
+	firstIndex, err := wal.FirstIndex()
+	if err != nil {
 		level.Info(db.logger).Log(
-			"msg", "successfully loaded snapshot",
-			"tx", snapshotTx,
-			"duration", time.Since(snapshotLoadStart),
+			"msg", "failed to get WAL first index",
+			"err", err)
+	}
+	lastIndex, err := wal.LastIndex()
+	if err != nil {
+		level.Info(db.logger).Log(
+			"msg", "failed to get WAL last index",
+			"err", err)
+	}
+	snapshotLogArgs := make([]any, 0)
+	if snapshotTx != 0 {
+		db.mtx.Lock()
+		// WAL pointers of tables loaded on snapshot need to be updated to the
+		// DB WAL.
+		for _, table := range db.tables {
+			if !table.config.DisableWal {
+				table.wal = wal
+			}
+		}
+		db.mtx.Unlock()
+
+		snapshotLogArgs = append(
+			snapshotLogArgs,
+			"snapshot_tx", snapshotTx,
+			"snapshot_load_duration", time.Since(snapshotLoadStart),
 		)
 		if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx); err != nil {
 			// Truncation is best-effort. If it fails, move on.
@@ -461,24 +487,8 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				"err", err,
 				"snapshot_tx", snapshotTx,
 			)
-		} else {
-			level.Info(db.logger).Log(
-				"msg", "truncated snapshots less than loaded snapshot",
-				"snapshot_tx", snapshotTx,
-			)
 		}
-	}
-	level.Info(db.logger).Log("msg", "replaying WAL", "snapshot_tx", snapshotTx)
-
-	{
-		firstIndex, err := wal.FirstIndex()
-		if err != nil {
-			level.Info(db.logger).Log(
-				"msg", "failed to get WAL first index",
-				"err", err)
-		}
-
-		if snapshotTx > firstIndex {
+		if snapshotTx > firstIndex && snapshotTx <= lastIndex {
 			if err := wal.Truncate(snapshotTx); err != nil {
 				// Since this is a best-effort truncation, move on if there is an
 				// error.
@@ -486,14 +496,21 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 					"msg", "WAL truncation after successful snapshot load encountered error",
 					"err", err,
 					"first_index", firstIndex,
+					"last_index", lastIndex,
 					"snapshot_tx", snapshotTx,
 				)
 			} else {
-				level.Info(db.logger).Log(
-					"msg", "WAL truncated at snapshot tx",
-					"snapshot_tx", snapshotTx,
-				)
+				snapshotLogArgs = append(
+					snapshotLogArgs,
+					"wal_truncated", "true",
+					"wal_first_index_pre_truncation", firstIndex)
+				firstIndex = snapshotTx
 			}
+		} else {
+			snapshotLogArgs = append(
+				snapshotLogArgs,
+				"wal_truncated", "false",
+			)
 		}
 	}
 
@@ -681,11 +698,21 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
-	if lastTx > snapshotTx {
+	if lastTx >= snapshotTx {
 		db.tx.Store(lastTx)
 		db.highWatermark.Store(lastTx)
 	}
-	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
+	level.Info(db.logger).Log(
+		append(
+			[]any{
+				"msg", "db recovered",
+				"wal_first_index", firstIndex,
+				"wal_last_index", lastIndex,
+				"wal_replay_duration", time.Since(start),
+			},
+			snapshotLogArgs...,
+		)...,
+	)
 	return nil
 }
 
@@ -704,7 +731,7 @@ func (db *DB) Close() error {
 		}
 	}
 
-	if db.columnStore.enableWAL {
+	if db.columnStore.enableWAL && db.wal != nil {
 		if err := db.wal.Close(); err != nil {
 			return err
 		}

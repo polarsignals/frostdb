@@ -217,7 +217,7 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 			return nil
 		}(); err != nil {
 			err = fmt.Errorf("unable to read snapshot file %s: %w", name, err)
-			level.Info(db.logger).Log(
+			level.Debug(db.logger).Log(
 				"msg", "error reading snapshot",
 				"error", err,
 			)
