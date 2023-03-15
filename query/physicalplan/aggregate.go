@@ -136,10 +136,6 @@ type AggregationFunction interface {
 type HashAggregate struct {
 	pool                  memory.Allocator
 	tracer                trace.Tracer
-	aggregations          []Aggregation
-	groupByCols           map[string]builder.ColumnBuilder
-	colOrdering           []string
-	hashToAggregate       map[uint64]int
 	groupByColumnMatchers []logicalplan.Expr
 	hashSeed              maphash.Seed
 	next                  PhysicalPlan
@@ -151,6 +147,25 @@ type HashAggregate struct {
 	groupByFields      []arrow.Field
 	groupByFieldHashes []hashCombiner
 	groupByArrays      []arrow.Array
+	hashToAggregate    map[uint64]hashtuple
+
+	// aggregates are the collection of all the hash aggregates for this hash aggregation. This is useful when a single hash aggregate cannot fit
+	// into a single record and needs to be split into multiple records.
+	aggregates []*hashAggregate
+}
+
+type hashtuple struct {
+	aggregate int // aggregate is the index into the aggregates slice
+	array     int // array is the index into the aggregations array
+}
+
+// hashAggregate represents a single hash aggregation.
+type hashAggregate struct {
+	aggregations []Aggregation
+	groupByCols  map[string]builder.ColumnBuilder
+
+	colOrdering []string
+	rowCount    int
 }
 
 func NewHashAggregate(
@@ -161,12 +176,8 @@ func NewHashAggregate(
 	finalStage bool,
 ) *HashAggregate {
 	return &HashAggregate{
-		pool:            pool,
-		tracer:          tracer,
-		aggregations:    aggregations,
-		groupByCols:     map[string]builder.ColumnBuilder{},
-		colOrdering:     []string{},
-		hashToAggregate: map[uint64]int{},
+		pool:   pool,
+		tracer: tracer,
 		// TODO: Matchers can be optimized to be something like a radix tree or just a fast-lookup datastructure for exact matches or prefix matches.
 		groupByColumnMatchers: groupByColumnMatchers,
 		hashSeed:              maphash.MakeSeed(),
@@ -175,6 +186,14 @@ func NewHashAggregate(
 		groupByFields:      make([]arrow.Field, 0, 10),
 		groupByFieldHashes: make([]hashCombiner, 0, 10),
 		groupByArrays:      make([]arrow.Array, 0, 10),
+		hashToAggregate:    map[uint64]hashtuple{},
+		aggregates: []*hashAggregate{ // initialize a single hash aggregate; we expect this array to only every grow during very large aggregations.
+			{
+				aggregations: aggregations,
+				groupByCols:  map[string]builder.ColumnBuilder{},
+				colOrdering:  []string{},
+			},
+		},
 	}
 }
 
@@ -188,8 +207,8 @@ func (a *HashAggregate) Draw() *Diagram {
 		child = a.next.Draw()
 	}
 
-	names := make([]string, 0, len(a.aggregations))
-	for _, agg := range a.aggregations {
+	names := make([]string, 0, len(a.aggregates[0].aggregations))
+	for _, agg := range a.aggregates[0].aggregations {
 		names = append(names, agg.resultName)
 	}
 
@@ -324,6 +343,9 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 	// ctx, span := a.tracer.Start(ctx, "HashAggregate/Callback")
 	// defer span.End()
 
+	// aggregate is the current aggregation
+	aggregate := a.aggregates[len(a.aggregates)-1]
+
 	groupByFields := a.groupByFields
 	groupByFieldHashes := a.groupByFieldHashes
 	groupByArrays := a.groupByArrays
@@ -334,7 +356,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		groupByArrays = groupByArrays[:0]
 	}()
 
-	columnToAggregate := make([]arrow.Array, len(a.aggregations))
+	columnToAggregate := make([]arrow.Array, len(aggregate.aggregations))
 	aggregateFieldsFound := 0
 
 	for i, field := range r.Schema().Fields() {
@@ -357,7 +379,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			}
 		}
 
-		for j, col := range a.aggregations {
+		for j, col := range aggregate.aggregations {
 			// If we're aggregating at the final stage we have previously
 			// renamed the pre-aggregated columns to their result names.
 			if a.finalStage {
@@ -375,7 +397,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		}
 	}
 
-	if aggregateFieldsFound != len(a.aggregations) {
+	if aggregateFieldsFound != len(aggregate.aggregations) {
 		return errors.New("aggregate field not found, aggregations are not possible without it")
 	}
 
@@ -399,42 +421,28 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			)
 		}
 
-		k, ok := a.hashToAggregate[hash]
+		tuple, ok := a.hashToAggregate[hash]
 		if !ok {
+			// insert new row into columns grouped by and create new aggregate array to append to.
+			if err := a.updateGroupByCols(i, groupByArrays, groupByFields); err != nil {
+				return err
+			}
+
+			aggregate = a.aggregates[len(a.aggregates)-1]
 			for j, col := range columnToAggregate {
 				agg := builder.NewBuilder(a.pool, col.DataType())
-				a.aggregations[j].arrays = append(a.aggregations[j].arrays, agg)
+				aggregate.aggregations[j].arrays = append(aggregate.aggregations[j].arrays, agg)
 			}
-			k = len(a.aggregations[0].arrays) - 1
-			a.hashToAggregate[hash] = k
-
-			// insert new row into columns grouped by and create new aggregate array to append to.
-			for j, arr := range groupByArrays {
-				fieldName := groupByFields[j].Name
-
-				groupByCol, found := a.groupByCols[fieldName]
-				if !found {
-					groupByCol = builder.NewBuilder(a.pool, groupByFields[j].Type)
-					a.groupByCols[fieldName] = groupByCol
-					a.colOrdering = append(a.colOrdering, fieldName)
-				}
-
-				// We already appended to the arrays to aggregate, so we have
-				// to account for that. We only want to back-fill null values
-				// up until the index that we are about to insert into.
-				for groupByCol.Len() < len(a.aggregations[0].arrays)-1 {
-					groupByCol.AppendNull()
-				}
-
-				err := builder.AppendValue(groupByCol, arr, i)
-				if err != nil {
-					return err
-				}
+			tuple = hashtuple{
+				aggregate: len(a.aggregates) - 1, // always add new aggregates to the current aggregate
+				array:     len(aggregate.aggregations[0].arrays) - 1,
 			}
+			a.hashToAggregate[hash] = tuple
+			aggregate.rowCount++
 		}
 
 		for j, col := range columnToAggregate {
-			if err := builder.AppendValue(a.aggregations[j].arrays[k], col, i); err != nil {
+			if err := builder.AppendValue(a.aggregates[tuple.aggregate].aggregations[j].arrays[tuple.array], col, i); err != nil {
 				return err
 			}
 		}
@@ -443,62 +451,114 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 	return nil
 }
 
+func (a *HashAggregate) updateGroupByCols(row int, groupByArrays []arrow.Array, groupByFields []arrow.Field) error {
+	// aggregate is the current aggregation
+	aggregate := a.aggregates[len(a.aggregates)-1]
+
+	for i, arr := range groupByArrays {
+		fieldName := groupByFields[i].Name
+
+		groupByCol, found := aggregate.groupByCols[fieldName]
+		if !found {
+			groupByCol = builder.NewBuilder(a.pool, groupByFields[i].Type)
+			aggregate.groupByCols[fieldName] = groupByCol
+			aggregate.colOrdering = append(aggregate.colOrdering, fieldName)
+		}
+
+		// We already appended to the arrays to aggregate, so we have
+		// to account for that. We only want to back-fill null values
+		// up until the index that we are about to insert into.
+		for groupByCol.Len() < len(aggregate.aggregations[0].arrays)-1 {
+			groupByCol.AppendNull()
+		}
+
+		err := builder.AppendValue(groupByCol, arr, row)
+		if err != nil {
+			// If we've hit the max size for an array in the group by cols map, then we need to start a new map of column groupings.
+			if errors.Is(err, builder.ErrMaxSizeReached) {
+				aggregations := make([]Aggregation, 0, len(a.aggregates[0].aggregations))
+				for _, agg := range a.aggregates[0].aggregations {
+					aggregations = append(aggregations, Aggregation{
+						expr:       agg.expr,
+						resultName: agg.resultName,
+						function:   agg.function,
+					})
+				}
+				a.aggregates = append(a.aggregates, &hashAggregate{
+					aggregations: aggregations,
+					groupByCols:  map[string]builder.ColumnBuilder{},
+					colOrdering:  []string{},
+				})
+
+				for j := 0; j < i; j++ {
+					builder.RollbackPrevious(aggregate.groupByCols[groupByFields[j].Name])
+				}
+
+				return a.updateGroupByCols(row, groupByArrays, groupByFields)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *HashAggregate) Finish(ctx context.Context) error {
 	ctx, span := a.tracer.Start(ctx, "HashAggregate/Finish")
 	defer span.End()
 
-	numCols := len(a.groupByCols) + 1
-	// Each hash that's aggregated by will become one row in the final result.
-	numRows := len(a.hashToAggregate)
+	for _, aggregate := range a.aggregates {
+		numCols := len(aggregate.groupByCols) + len(aggregate.aggregations)
+		numRows := aggregate.rowCount
 
-	groupByFields := make([]arrow.Field, 0, numCols)
-	groupByArrays := make([]arrow.Array, 0, numCols)
-	for _, fieldName := range a.colOrdering {
-		groupByCol, ok := a.groupByCols[fieldName]
-		if !ok {
-			return fmt.Errorf("unknown field name: %s", fieldName)
-		}
-		for groupByCol.Len() < numRows {
-			// It's possible that columns that are grouped by haven't occurred
-			// in all aggregated rows which causes them to not be of equal size
-			// as the total number of rows so we need to backfill. This happens
-			// for example when there are different sets of dynamic columns in
-			// different row-groups of the table.
-			groupByCol.AppendNull()
-		}
-		arr := groupByCol.NewArray()
-		groupByFields = append(groupByFields, arrow.Field{Name: fieldName, Type: arr.DataType()})
-		groupByArrays = append(groupByArrays, arr)
-	}
-
-	// Rename to clarity upon appending aggregations later
-	aggregateColumns := groupByArrays
-	aggregateFields := groupByFields
-
-	for _, aggregation := range a.aggregations {
-		arr := make([]arrow.Array, 0, numRows)
-		for _, a := range aggregation.arrays {
-			arr = append(arr, a.NewArray())
+		groupByFields := make([]arrow.Field, 0, numCols)
+		groupByArrays := make([]arrow.Array, 0, numCols)
+		for _, fieldName := range aggregate.colOrdering {
+			groupByCol, ok := aggregate.groupByCols[fieldName]
+			if !ok {
+				return fmt.Errorf("unknown field name: %s", fieldName)
+			}
+			for groupByCol.Len() < numRows {
+				// It's possible that columns that are grouped by haven't occurred
+				// in all aggregated rows which causes them to not be of equal size
+				// as the total number of rows so we need to backfill. This happens
+				// for example when there are different sets of dynamic columns in
+				// different row-groups of the table.
+				groupByCol.AppendNull()
+			}
+			arr := groupByCol.NewArray()
+			groupByFields = append(groupByFields, arrow.Field{Name: fieldName, Type: arr.DataType()})
+			groupByArrays = append(groupByArrays, arr)
 		}
 
-		aggregateArray, err := runAggregation(a.finalStage, aggregation.function, a.pool, arr)
+		// Rename to clarity upon appending aggregations later
+		aggregateColumns := groupByArrays
+		aggregateFields := groupByFields
+
+		for _, aggregation := range aggregate.aggregations {
+			arr := make([]arrow.Array, 0, numRows)
+			for _, a := range aggregation.arrays {
+				arr = append(arr, a.NewArray())
+			}
+
+			aggregateArray, err := runAggregation(a.finalStage, aggregation.function, a.pool, arr)
+			if err != nil {
+				return fmt.Errorf("aggregate batched arrays: %w", err)
+			}
+			aggregateColumns = append(aggregateColumns, aggregateArray)
+
+			aggregateFields = append(aggregateFields, arrow.Field{
+				Name: aggregation.resultName, Type: aggregateArray.DataType(),
+			})
+		}
+
+		err := a.next.Callback(ctx, array.NewRecord(
+			arrow.NewSchema(aggregateFields, nil),
+			aggregateColumns,
+			int64(numRows),
+		))
 		if err != nil {
-			return fmt.Errorf("aggregate batched arrays: %w", err)
+			return err
 		}
-		aggregateColumns = append(aggregateColumns, aggregateArray)
-
-		aggregateFields = append(aggregateFields, arrow.Field{
-			Name: aggregation.resultName, Type: aggregateArray.DataType(),
-		})
-	}
-
-	err := a.next.Callback(ctx, array.NewRecord(
-		arrow.NewSchema(aggregateFields, nil),
-		aggregateColumns,
-		int64(numRows),
-	))
-	if err != nil {
-		return err
 	}
 
 	return a.next.Finish(ctx)
