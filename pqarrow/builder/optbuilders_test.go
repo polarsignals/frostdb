@@ -20,7 +20,7 @@ func TestIssue270(t *testing.T) {
 	b := builder.NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
 	b.AppendNull()
 	const expString = "hello"
-	b.Append([]byte(expString))
+	require.NoError(t, b.Append([]byte(expString)))
 	require.Equal(t, b.Len(), 2)
 
 	a := b.NewArray().(*array.Binary)
@@ -50,7 +50,7 @@ func TestRepeatLastValue(t *testing.T) {
 	for _, tc := range testCases {
 		require.NoError(t, builder.AppendGoValue(tc.b, tc.v))
 		require.Equal(t, tc.b.Len(), 1)
-		tc.b.RepeatLastValue(9)
+		require.NoError(t, tc.b.RepeatLastValue(9))
 		require.Equal(t, tc.b.Len(), 10)
 		a := tc.b.NewArray()
 		for i := 0; i < a.Len(); i++ {

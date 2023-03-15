@@ -491,7 +491,9 @@ func (a *HashAggregate) updateGroupByCols(row int, groupByArrays []arrow.Array, 
 				})
 
 				for j := 0; j < i; j++ {
-					builder.RollbackPrevious(aggregate.groupByCols[groupByFields[j].Name])
+					if err := builder.RollbackPrevious(aggregate.groupByCols[groupByFields[j].Name]); err != nil {
+						return err
+					}
 				}
 
 				return a.updateGroupByCols(row, groupByArrays, groupByFields)

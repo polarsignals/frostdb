@@ -31,7 +31,9 @@ func NewBinaryValueWriter(b builder.ColumnBuilder, numValues int) ValueWriter {
 }
 
 func (w *binaryValueWriter) Write(values []parquet.Value) {
-	w.b.AppendParquetValues(values)
+	if err := w.b.AppendParquetValues(values); err != nil {
+		panic("unable to write value") // TODO: handle this error gracefully
+	}
 }
 
 func (w *binaryValueWriter) WritePage(p parquet.Page) error {
@@ -52,8 +54,7 @@ func (w *binaryValueWriter) WritePage(p parquet.Page) error {
 
 	// No nulls in page.
 	values := p.Data()
-	w.b.AppendData(values.ByteArray())
-	return nil
+	return w.b.AppendData(values.ByteArray())
 }
 
 type int64ValueWriter struct {

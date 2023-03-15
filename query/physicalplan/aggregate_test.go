@@ -9,9 +9,10 @@ import (
 	"github.com/apache/arrow/go/v10/arrow"
 	"github.com/apache/arrow/go/v10/arrow/array"
 	"github.com/apache/arrow/go/v10/arrow/memory"
-	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 func randByteSlice(n int) []byte {

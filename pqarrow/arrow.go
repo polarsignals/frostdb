@@ -547,7 +547,9 @@ func (c *ParquetConverter) writeDistinctAllColumns(
 		} else if fieldLen < maxLen {
 			repeatTimes := maxLen - fieldLen
 			if ob, ok := field.(builder.OptimizedBuilder); ok {
-				ob.RepeatLastValue(repeatTimes)
+				if err := ob.RepeatLastValue(repeatTimes); err != nil {
+					return false, err
+				}
 				continue
 			}
 			arr := field.NewArray()
