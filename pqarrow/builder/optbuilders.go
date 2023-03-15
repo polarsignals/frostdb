@@ -1,6 +1,8 @@
 package builder
 
 import (
+	"fmt"
+	"math"
 	"reflect"
 	"sync/atomic"
 	"unsafe"
@@ -28,7 +30,7 @@ type OptimizedBuilder interface {
 	ColumnBuilder
 	AppendNulls(int)
 	ResetToLength(int)
-	RepeatLastValue(int)
+	RepeatLastValue(int) error
 }
 
 type builderBase struct {
@@ -105,7 +107,7 @@ type OptBinaryBuilder struct {
 	// len(data) is never appended to the slice until the next value is added,
 	// i.e. the last offset is never closed until the offsets slice is appended
 	// to or returned to the caller.
-	offsets []uint32
+	offsets []int32
 }
 
 func NewOptBinaryBuilder(dtype arrow.BinaryDataType) *OptBinaryBuilder {
@@ -128,7 +130,7 @@ func (b *OptBinaryBuilder) Release() {
 // AppendNull adds a new null value to the array being built. This is slow,
 // don't use it.
 func (b *OptBinaryBuilder) AppendNull() {
-	b.offsets = append(b.offsets, uint32(len(b.data)))
+	b.offsets = append(b.offsets, int32(len(b.data)))
 	b.builderBase.AppendNulls(1)
 }
 
@@ -136,7 +138,7 @@ func (b *OptBinaryBuilder) AppendNull() {
 // to distinct optimizations in FrostDB.
 func (b *OptBinaryBuilder) AppendNulls(n int) {
 	for i := 0; i < n; i++ {
-		b.offsets = append(b.offsets, uint32(len(b.data)))
+		b.offsets = append(b.offsets, int32(len(b.data)))
 	}
 	b.builderBase.AppendNulls(n)
 }
@@ -145,7 +147,7 @@ func (b *OptBinaryBuilder) AppendNulls(n int) {
 // by the builder and resets the Builder so it can be used to build
 // a new array.
 func (b *OptBinaryBuilder) NewArray() arrow.Array {
-	b.offsets = append(b.offsets, uint32(len(b.data)))
+	b.offsets = append(b.offsets, int32(len(b.data)))
 	var offsetsAsBytes []byte
 
 	fromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&b.offsets))
@@ -169,19 +171,28 @@ func (b *OptBinaryBuilder) NewArray() arrow.Array {
 	b.reset()
 	b.offsets = b.offsets[:0]
 	b.data = b.data[:0]
+
 	return array.NewBinaryData(data)
 }
 
+var ErrMaxSizeReached = fmt.Errorf("max size reached")
+
 // AppendData appends a flat slice of bytes to the builder, with an accompanying
 // slice of offsets. This data is considered to be non-null.
-func (b *OptBinaryBuilder) AppendData(data []byte, offsets []uint32) {
+func (b *OptBinaryBuilder) AppendData(data []byte, offsets []uint32) error {
+	if len(b.data)+len(data) > math.MaxInt32 {
+		return ErrMaxSizeReached
+	}
+
 	// Trim the last offset since we want this last range to be "open".
 	offsets = offsets[:len(offsets)-1]
 
-	offsetConversion := uint32(len(b.data))
+	offsetConversion := int32(len(b.data))
 	b.data = append(b.data, data...)
 	startOffset := len(b.offsets)
-	b.offsets = append(b.offsets, offsets...)
+	for _, offset := range offsets {
+		b.offsets = append(b.offsets, int32(offset))
+	}
 	for curOffset := startOffset; curOffset < len(b.offsets); curOffset++ {
 		b.offsets[curOffset] += offsetConversion
 	}
@@ -189,22 +200,35 @@ func (b *OptBinaryBuilder) AppendData(data []byte, offsets []uint32) {
 	b.length += len(offsets)
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
 	bitutil.SetBitsTo(b.validityBitmap, int64(startOffset), int64(len(offsets)), true)
+	return nil
 }
 
-func (b *OptBinaryBuilder) Append(v []byte) {
-	b.offsets = append(b.offsets, uint32(len(b.data)))
+func (b *OptBinaryBuilder) Append(v []byte) error {
+	if len(b.data)+len(v) > math.MaxInt32 {
+		return ErrMaxSizeReached
+	}
+	b.offsets = append(b.offsets, int32(len(b.data)))
 	b.data = append(b.data, v...)
 	b.length++
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
 	bitutil.SetBit(b.validityBitmap, b.length-1)
+	return nil
 }
 
 // AppendParquetValues appends the given parquet values to the builder. The
 // values may be null, but if it is known upfront that none of the values are
 // null, AppendData offers a more efficient way of appending values.
-func (b *OptBinaryBuilder) AppendParquetValues(values []parquet.Value) {
+func (b *OptBinaryBuilder) AppendParquetValues(values []parquet.Value) error {
+	size := 0
 	for i := range values {
-		b.offsets = append(b.offsets, uint32(len(b.data)))
+		size += len(values[i].ByteArray())
+	}
+	if len(b.data)+size > math.MaxInt32 {
+		return ErrMaxSizeReached
+	}
+
+	for i := range values {
+		b.offsets = append(b.offsets, int32(len(b.data)))
 		b.data = append(b.data, values[i].ByteArray()...)
 	}
 
@@ -215,22 +239,28 @@ func (b *OptBinaryBuilder) AppendParquetValues(values []parquet.Value) {
 	for i := range values {
 		bitutil.SetBitTo(b.validityBitmap, oldLength+i, !values[i].IsNull())
 	}
+
+	return nil
 }
 
 // RepeatLastValue is specific to distinct optimizations in FrostDB.
-func (b *OptBinaryBuilder) RepeatLastValue(n int) {
+func (b *OptBinaryBuilder) RepeatLastValue(n int) error {
 	if bitutil.BitIsNotSet(b.validityBitmap, b.length-1) {
 		// Last value is null.
 		b.AppendNulls(n)
-		return
+		return nil
 	}
 
 	lastValue := b.data[b.offsets[len(b.offsets)-1]:]
+	if len(b.data)+(len(lastValue)*n) > math.MaxInt32 {
+		return ErrMaxSizeReached
+	}
 	for i := 0; i < n; i++ {
-		b.offsets = append(b.offsets, uint32(len(b.data)))
+		b.offsets = append(b.offsets, int32(len(b.data)))
 		b.data = append(b.data, lastValue...)
 	}
 	b.appendValid(n)
+	return nil
 }
 
 // ResetToLength is specific to distinct optimizations in FrostDB.
@@ -336,10 +366,10 @@ func (b *OptInt64Builder) AppendParquetValues(values []parquet.Value) {
 	b.length += len(values)
 }
 
-func (b *OptInt64Builder) RepeatLastValue(n int) {
+func (b *OptInt64Builder) RepeatLastValue(n int) error {
 	if bitutil.BitIsNotSet(b.validityBitmap, b.length-1) {
 		b.AppendNulls(n)
-		return
+		return nil
 	}
 
 	lastValue := b.data[b.length-1]
@@ -348,6 +378,7 @@ func (b *OptInt64Builder) RepeatLastValue(n int) {
 		b.data[i] = lastValue
 	}
 	b.appendValid(n)
+	return nil
 }
 
 // ResetToLength is specific to distinct optimizations in FrostDB.
@@ -450,16 +481,17 @@ func (b *OptBooleanBuilder) AppendSingle(v bool) {
 	bitutil.SetBit(b.validityBitmap, b.length-1)
 }
 
-func (b *OptBooleanBuilder) RepeatLastValue(n int) {
+func (b *OptBooleanBuilder) RepeatLastValue(n int) error {
 	if bitutil.BitIsNotSet(b.validityBitmap, b.length-1) {
 		b.AppendNulls(n)
-		return
+		return nil
 	}
 
 	lastValue := bitutil.BitIsSet(b.data, b.length-1)
 	b.data = resizeBitmap(b.data, b.length+n)
 	bitutil.SetBitsTo(b.data, int64(b.length), int64(n), lastValue)
 	b.appendValid(n)
+	return nil
 }
 
 // ResetToLength is specific to distinct optimizations in FrostDB.
