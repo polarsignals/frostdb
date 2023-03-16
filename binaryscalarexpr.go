@@ -49,6 +49,15 @@ func (e BinaryScalarExpr) Eval(p Particulate) (bool, error) {
 	// existant columns or null values. I'm pretty sure this is completely
 	// wrong and needs per operation, per type specific behavior.
 	if !exists {
+		if e.Right.IsNull() {
+			switch e.Op {
+			case logicalplan.OpEq:
+				return true, nil
+			case logicalplan.OpNotEq:
+				return false, nil
+			}
+		}
+
 		// only handling string for now.
 		if e.Right.Kind() == parquet.ByteArray || e.Right.Kind() == parquet.FixedLenByteArray {
 			switch {
@@ -69,7 +78,7 @@ var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Op) (bool, error) {
 	switch operator {
 	case logicalplan.OpEq:
-		if right == parquet.NullValue() {
+		if right.IsNull() {
 			// Assume all ColumnChunk have NULLs for now.
 			// They will be read and added to a bitmap later on.
 			// TODO: Maybe there's a nice way of reading the NumNulls from the Pages, for me they always return 0
