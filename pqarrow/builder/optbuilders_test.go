@@ -81,6 +81,9 @@ func Test_ListBuilder(t *testing.T) {
 // The reason for this test we've hit cases where the binary array builder had so many values appended onto
 // it that it caused the uint32 that was being used to track value offsets to overflow.
 func Test_BuildLargeArray(t *testing.T) {
+	if testing.Short() {
+		t.Skip("in short mode; skipping long test")
+	}
 	alloc := memory.NewGoAllocator()
 	bldr := builder.NewBuilder(alloc, &arrow.BinaryType{})
 
