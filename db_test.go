@@ -1623,31 +1623,6 @@ func TestDBRecover(t *testing.T) {
 		require.NoError(t, err)
 		newWriteAndExpectWALRecord(t, db, table)
 	})
-
-	// NoProgress verifies that an error is returned if the WAL's last index
-	// does not match up with the last valid snapshot txn. Since DB writes
-	// resume from the snapshot txn, the WAL's last index must match that txn
-	// otherwise no records will ever be logged.
-	t.Run("NoProgress", func(t *testing.T) {
-		dir := setup(t, false)
-
-		// Nuke the WAL.
-		walPath := filepath.Join(dir, "databases", dbAndTableName, "wal")
-		require.NoError(t, os.RemoveAll(walPath))
-
-		bucket, err := filesystem.NewBucket(t.TempDir())
-		require.NoError(t, err)
-		_, err = New(
-			WithLogger(newTestLogger(t)),
-			WithStoragePath(dir),
-			WithWAL(),
-			WithSnapshotTriggerSize(1),
-			// Add buckets storage here since it forces a snapshot on Close,
-			// which previously caused a panic due to half-set fields.
-			WithBucketStorage(bucket),
-		)
-		require.Error(t, err)
-	})
 }
 
 func Test_DB_WalReplayTableConfig(t *testing.T) {

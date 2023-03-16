@@ -706,9 +706,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		db.highWatermark.Store(lastTx)
 	}
 	if lastTxn := db.tx.Load(); lastTxn != lastIndex {
-		return fmt.Errorf(
-			"aborting recovery: cannot make progress if WAL last index %d != db last txn %d",
-			lastIndex, lastTxn,
+		level.Warn(db.logger).Log(
+			"msg", "WAL last index is != db last txn, won't be able to log records to WAL",
+			"wal_last_index", lastIndex,
+			"last_tx", lastTxn,
 		)
 	}
 
