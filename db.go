@@ -389,19 +389,22 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 			}, func() float64 {
 				return float64(db.highWatermark.Load())
 			}),
-			snapshotsStarted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+		}
+		if db.columnStore.snapshotTriggerSize != 0 {
+			db.metrics.snapshotsStarted = promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "snapshots_started",
 				Help: "Number of snapshots started",
-			}),
-			snapshotsCompleted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			})
+			db.metrics.snapshotsCompleted = promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "snapshots_completed",
 				Help: "Number of snapshots completed",
-			}),
+			})
 		}
 		return nil
 	}(); dbSetupErr != nil {
-		// Close handles closing partially set fields in the db.
-		db.Close()
+		// closeInternal handles closing partially set fields in the db without
+		// rotating blocks etc... that the public Close method does.
+		_ = db.closeInternal()
 		return nil, dbSetupErr
 	}
 
@@ -741,7 +744,10 @@ func (db *DB) Close() error {
 			return err
 		}
 	}
+	return db.closeInternal()
+}
 
+func (db *DB) closeInternal() error {
 	if db.columnStore.enableWAL && db.wal != nil {
 		if err := db.wal.Close(); err != nil {
 			return err
