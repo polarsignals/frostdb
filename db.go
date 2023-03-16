@@ -614,7 +614,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			// If we get to this point it means a block was finished but did
 			// not get persisted.
 			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(ctx, table.active)
+			go table.writeBlock(table.active, false /* snapshotDB */)
 
 			protoEqual := false
 			switch schema.(type) {
@@ -731,17 +731,19 @@ func (db *DB) Close() error {
 	for _, table := range db.tables {
 		table.close()
 		if db.bucket != nil {
-			table.writeBlock(context.TODO(), table.ActiveBlock())
+			// Write the blocks but no snapshots since they are long-running
+			// jobs.
+			table.writeBlock(table.ActiveBlock(), false /* snapshotDB */)
 		}
 	}
 
 	if db.bucket != nil {
 		// If we've successfully persisted all the table blocks we can remove
 		// the wal and snapshots.
-		if err := os.RemoveAll(db.walDir()); err != nil {
+		if err := os.RemoveAll(db.snapshotsDir()); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(db.snapshotsDir()); err != nil {
+		if err := os.RemoveAll(db.walDir()); err != nil {
 			return err
 		}
 	}

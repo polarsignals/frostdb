@@ -387,7 +387,7 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	delete(t.pendingBlocks, block)
 }
 
-func (t *Table) writeBlock(ctx context.Context, block *TableBlock) {
+func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 	block.pendingWritersWg.Wait()
 
@@ -446,7 +446,7 @@ func (t *Table) writeBlock(ctx context.Context, block *TableBlock) {
 	}
 	t.mtx.Unlock()
 	t.db.maintainWAL()
-	if t.db.columnStore.snapshotTriggerSize != 0 && t.db.columnStore.enableWAL {
+	if snapshotDB && t.db.columnStore.snapshotTriggerSize != 0 && t.db.columnStore.enableWAL {
 		func() {
 			if !t.db.snapshotInProgress.CompareAndSwap(false, true) {
 				// Snapshot already in progress. This could lead to duplicate
@@ -499,7 +499,7 @@ func (t *Table) RotateBlock(ctx context.Context, block *TableBlock) error {
 	t.metrics.numParts.Set(float64(0))
 
 	t.pendingBlocks[block] = struct{}{}
-	go t.writeBlock(ctx, block)
+	go t.writeBlock(block, true /* snapshotDB */)
 
 	return nil
 }
