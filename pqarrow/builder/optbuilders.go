@@ -107,7 +107,7 @@ type OptBinaryBuilder struct {
 	// len(data) is never appended to the slice until the next value is added,
 	// i.e. the last offset is never closed until the offsets slice is appended
 	// to or returned to the caller.
-	offsets []int32
+	offsets []uint32
 }
 
 func NewOptBinaryBuilder(dtype arrow.BinaryDataType) *OptBinaryBuilder {
@@ -130,7 +130,7 @@ func (b *OptBinaryBuilder) Release() {
 // AppendNull adds a new null value to the array being built. This is slow,
 // don't use it.
 func (b *OptBinaryBuilder) AppendNull() {
-	b.offsets = append(b.offsets, int32(len(b.data)))
+	b.offsets = append(b.offsets, uint32(len(b.data)))
 	b.builderBase.AppendNulls(1)
 }
 
@@ -138,7 +138,7 @@ func (b *OptBinaryBuilder) AppendNull() {
 // to distinct optimizations in FrostDB.
 func (b *OptBinaryBuilder) AppendNulls(n int) {
 	for i := 0; i < n; i++ {
-		b.offsets = append(b.offsets, int32(len(b.data)))
+		b.offsets = append(b.offsets, uint32(len(b.data)))
 	}
 	b.builderBase.AppendNulls(n)
 }
@@ -147,7 +147,7 @@ func (b *OptBinaryBuilder) AppendNulls(n int) {
 // by the builder and resets the Builder so it can be used to build
 // a new array.
 func (b *OptBinaryBuilder) NewArray() arrow.Array {
-	b.offsets = append(b.offsets, int32(len(b.data)))
+	b.offsets = append(b.offsets, uint32(len(b.data)))
 	var offsetsAsBytes []byte
 
 	fromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&b.offsets))
@@ -180,19 +180,17 @@ var ErrMaxSizeReached = fmt.Errorf("max size reached")
 // AppendData appends a flat slice of bytes to the builder, with an accompanying
 // slice of offsets. This data is considered to be non-null.
 func (b *OptBinaryBuilder) AppendData(data []byte, offsets []uint32) error {
-	if len(b.data)+len(data) > math.MaxInt32 {
+	if len(b.data)+len(data) > math.MaxInt32 { // NOTE: we check against a max int32 here (instead of the uint32 that we're using for offsets) because the arror binary arrays use int32s.
 		return ErrMaxSizeReached
 	}
 
 	// Trim the last offset since we want this last range to be "open".
 	offsets = offsets[:len(offsets)-1]
 
-	offsetConversion := int32(len(b.data))
+	offsetConversion := uint32(len(b.data))
 	b.data = append(b.data, data...)
 	startOffset := len(b.offsets)
-	for _, offset := range offsets {
-		b.offsets = append(b.offsets, int32(offset))
-	}
+	b.offsets = append(b.offsets, offsets...)
 	for curOffset := startOffset; curOffset < len(b.offsets); curOffset++ {
 		b.offsets[curOffset] += offsetConversion
 	}
@@ -207,7 +205,7 @@ func (b *OptBinaryBuilder) Append(v []byte) error {
 	if len(b.data)+len(v) > math.MaxInt32 {
 		return ErrMaxSizeReached
 	}
-	b.offsets = append(b.offsets, int32(len(b.data)))
+	b.offsets = append(b.offsets, uint32(len(b.data)))
 	b.data = append(b.data, v...)
 	b.length++
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
@@ -228,7 +226,7 @@ func (b *OptBinaryBuilder) AppendParquetValues(values []parquet.Value) error {
 	}
 
 	for i := range values {
-		b.offsets = append(b.offsets, int32(len(b.data)))
+		b.offsets = append(b.offsets, uint32(len(b.data)))
 		b.data = append(b.data, values[i].ByteArray()...)
 	}
 
@@ -256,7 +254,7 @@ func (b *OptBinaryBuilder) RepeatLastValue(n int) error {
 		return ErrMaxSizeReached
 	}
 	for i := 0; i < n; i++ {
-		b.offsets = append(b.offsets, int32(len(b.data)))
+		b.offsets = append(b.offsets, uint32(len(b.data)))
 		b.data = append(b.data, lastValue...)
 	}
 	b.appendValid(n)
