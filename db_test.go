@@ -1613,6 +1613,7 @@ func TestDBRecover(t *testing.T) {
 			WithStoragePath(dir),
 			WithWAL(),
 			WithSnapshotTriggerSize(1),
+			WithBucketStorage(bucket),
 		)
 		require.NoError(t, err)
 		defer c.Close()
