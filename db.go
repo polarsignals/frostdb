@@ -379,6 +379,19 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 			if err != nil {
 				return err
 			}
+			// WAL pointers of tables need to be updated to the DB WAL since
+			// they are loaded from object storage and snapshots with a no-op
+			// WAL by default.
+			for _, table := range db.tables {
+				if !table.config.DisableWal {
+					table.wal = db.wal
+				}
+			}
+			for _, table := range db.roTables {
+				if !table.config.DisableWal {
+					table.wal = db.wal
+				}
+			}
 		}
 
 		// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
@@ -468,16 +481,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	}
 	snapshotLogArgs := make([]any, 0)
 	if snapshotTx != 0 {
-		db.mtx.Lock()
-		// WAL pointers of tables loaded on snapshot need to be updated to the
-		// DB WAL.
-		for _, table := range db.tables {
-			if !table.config.DisableWal {
-				table.wal = wal
-			}
-		}
-		db.mtx.Unlock()
-
 		snapshotLogArgs = append(
 			snapshotLogArgs,
 			"snapshot_tx", snapshotTx,
@@ -614,7 +617,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			// If we get to this point it means a block was finished but did
 			// not get persisted.
 			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(ctx, table.active)
+			go table.writeBlock(table.active, false /* snapshotDB */)
 
 			protoEqual := false
 			switch schema.(type) {
@@ -731,17 +734,19 @@ func (db *DB) Close() error {
 	for _, table := range db.tables {
 		table.close()
 		if db.bucket != nil {
-			table.writeBlock(context.TODO(), table.ActiveBlock())
+			// Write the blocks but no snapshots since they are long-running
+			// jobs.
+			table.writeBlock(table.ActiveBlock(), false /* snapshotDB */)
 		}
 	}
 
 	if db.bucket != nil {
 		// If we've successfully persisted all the table blocks we can remove
 		// the wal and snapshots.
-		if err := os.RemoveAll(db.walDir()); err != nil {
+		if err := os.RemoveAll(db.snapshotsDir()); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(db.snapshotsDir()); err != nil {
+		if err := os.RemoveAll(db.walDir()); err != nil {
 			return err
 		}
 	}
