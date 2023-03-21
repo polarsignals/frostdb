@@ -297,7 +297,9 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 		}
 
 		var ascendErr error
-		t.ActiveBlock().Index().Ascend(func(i btree.Item) bool {
+		index, done := t.ActiveBlock().Index()
+		defer done()
+		index.Ascend(func(i btree.Item) bool {
 			granuleMeta := &snapshotpb.Granule{}
 			i.(*Granule).PartsForTx(tx, func(p *parts.Part) bool {
 				partMeta := &snapshotpb.Part{
@@ -484,7 +486,9 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 			block.lastSnapshotSize.Store(tableMeta.ActiveBlock.Size)
 			block.minTx = tableMeta.ActiveBlock.MinTx
 			block.prevTx = tableMeta.ActiveBlock.PrevTx
-			newIdx := block.Index().Clone()
+			index, done := block.Index()
+			defer done()
+			newIdx := index.Clone()
 			block.mtx.Unlock()
 			table.mtx.Unlock()
 
@@ -534,7 +538,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 
 			// This shouldn't be necessary since compactions were paused and no
 			// inserts should be happening, but err on the side of caution.
-			for !block.index.CompareAndSwap(block.Index(), newIdx) {
+			for !block.index.CompareAndSwap(index, NewIndex(newIdx)) {
 			}
 
 			return nil
