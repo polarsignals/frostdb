@@ -182,8 +182,10 @@ func TestTable(t *testing.T) {
 	uuid2 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 
 	// One granule with 3 parts
-	require.Equal(t, 1, table.active.Index().Len())
-	require.Equal(t, 3, table.active.Index().Min().(*Granule).parts.Total())
+	index, done := table.active.Index()
+	defer done()
+	require.Equal(t, 1, index.Len())
+	require.Equal(t, 3, index.Min().(*Granule).parts.Total())
 	require.Equal(t, parquet.Row{
 		parquet.ValueOf("test").Level(0, 0, 0),
 		parquet.ValueOf("value1").Level(0, 1, 1),
@@ -193,8 +195,8 @@ func TestTable(t *testing.T) {
 		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
 		parquet.ValueOf(1).Level(0, 0, 6),
 		parquet.ValueOf(1).Level(0, 0, 7),
-	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least).Row)
-	require.Equal(t, 1, table.active.Index().Len())
+	}, (*dynparquet.DynamicRow)(index.Min().(*Granule).metadata.least).Row)
+	require.Equal(t, 1, index.Len())
 }
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
@@ -1266,7 +1268,9 @@ func Test_Table_InsertLeast(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
-	before := table.active.Index().Len()
+	index, done := table.active.Index()
+	defer done()
+	before := index.Len()
 
 	samples = dynparquet.Samples{{
 		ExampleType: "test",
@@ -1287,7 +1291,9 @@ func Test_Table_InsertLeast(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
-	require.Equal(t, before+1, table.active.Index().Len())
+	index, done = table.active.Index()
+	defer done()
+	require.Equal(t, before+1, index.Len())
 }
 
 func Test_Serialize_DisparateDynamicColumns(t *testing.T) {
