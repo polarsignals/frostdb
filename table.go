@@ -190,7 +190,7 @@ type TableBlock struct {
 	// lastSnapshotSize keeps track of the size of the block when it last
 	// triggered a snapshot.
 	lastSnapshotSize atomic.Int64
-	index            atomic.Pointer[btree.BTree]
+	index            *atomic.Pointer[btree.BTree]
 
 	pendingWritersWg sync.WaitGroup
 
@@ -1027,7 +1027,7 @@ func generateULID() ulid.ULID {
 }
 
 func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, error) {
-	idx := atomic.Pointer[btree.BTree]{}
+	idx := &atomic.Pointer[btree.BTree]{}
 	idx.Store(btree.New(table.db.columnStore.indexDegree))
 
 	return &TableBlock{
