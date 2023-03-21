@@ -390,7 +390,6 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 		})
 		return true
 	})
-	return
 }
 
 func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
@@ -1170,7 +1169,6 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 					return err
 				}
 				t.table.metrics.numParts.Add(float64(1))
-
 			} else {
 				if _, err := granule.Append(part); err != nil {
 					return fmt.Errorf("failed to add part to granule: %w", err)
