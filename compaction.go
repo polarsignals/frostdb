@@ -147,8 +147,7 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 
 func (t *TableBlock) compact(cfg *CompactionConfig) error {
 	var compactionErrors errutil.MultiError
-	index, done := t.Index()
-	defer done()
+	index := t.Index()
 	index.Ascend(func(i btree.Item) bool {
 		granuleToCompact := i.(*Granule)
 		if granuleToCompact.metadata.size.Load() < uint64(t.table.db.columnStore.granuleSizeBytes) {

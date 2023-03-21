@@ -182,8 +182,7 @@ func TestTable(t *testing.T) {
 	uuid2 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 
 	// One granule with 3 parts
-	index, done := table.active.Index()
-	defer done()
+	index := table.active.Index()
 	require.Equal(t, 1, index.Len())
 	require.Equal(t, 3, index.Min().(*Granule).parts.Total())
 	require.Equal(t, parquet.Row{
@@ -1268,8 +1267,7 @@ func Test_Table_InsertLeast(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
-	index, done := table.active.Index()
-	defer done()
+	index := table.active.Index()
 	before := index.Len()
 
 	samples = dynparquet.Samples{{
@@ -1291,8 +1289,7 @@ func Test_Table_InsertLeast(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
-	index, done = table.active.Index()
-	defer done()
+	index = table.active.Index()
 	require.Equal(t, before+1, index.Len())
 }
 

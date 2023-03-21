@@ -190,25 +190,11 @@ type TableBlock struct {
 	// lastSnapshotSize keeps track of the size of the block when it last
 	// triggered a snapshot.
 	lastSnapshotSize atomic.Int64
-	index            atomic.Pointer[index]
+	index            atomic.Pointer[btree.BTree]
 
 	pendingWritersWg sync.WaitGroup
 
 	mtx *sync.RWMutex
-}
-
-// index is the index for the table block. It maintains a reference counter to the index to determine when the underlying
-// resources can be safely cleaned up.
-type index struct {
-	ref *atomic.Int64
-	*btree.BTree
-}
-
-func NewIndex(tree *btree.BTree) *index {
-	return &index{
-		BTree: tree,
-		ref:   &atomic.Int64{},
-	}
 }
 
 type tableMetrics struct {
@@ -339,8 +325,7 @@ func newTable(
 		Help: "Number of granules in the table index currently.",
 	}, func() float64 {
 		if active := t.ActiveBlock(); active != nil {
-			index, done := active.Index()
-			defer done()
+			index := active.Index()
 			return float64(index.Len())
 		}
 		return 0
@@ -391,11 +376,9 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 	delete(t.pendingBlocks, block)
-	idx := block.index.Load() // directly load the index here to avoid adding a reference count
+	idx := block.Index()
 	for {
-		if idx.ref.Load() != 0 {
-			continue // keep waiting till the index references drop to 0
-		}
+		// TODO: ensure no active block readers
 		idx.Ascend(func(i btree.Item) bool {
 			g := i.(*Granule)
 			g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
@@ -1044,8 +1027,8 @@ func generateULID() ulid.ULID {
 }
 
 func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, error) {
-	idx := atomic.Pointer[index]{}
-	idx.Store(NewIndex(btree.New(table.db.columnStore.indexDegree)))
+	idx := atomic.Pointer[btree.BTree]{}
+	idx.Store(btree.New(table.db.columnStore.indexDegree))
 
 	return &TableBlock{
 		table:  table,
@@ -1209,8 +1192,7 @@ func (t *TableBlock) replaceIndex(replace func(index *btree.BTree) error) error 
 	var replaceErr error
 	for ok := false; !ok; {
 		ok = func() bool {
-			old, done := t.Index()
-			defer done()
+			old := t.Index()
 			t.mtx.Lock()
 			newIndex := old.Clone()
 			t.mtx.Unlock()
@@ -1220,7 +1202,7 @@ func (t *TableBlock) replaceIndex(replace func(index *btree.BTree) error) error 
 				return true
 			}
 
-			return t.index.CompareAndSwap(old, NewIndex(newIndex))
+			return t.index.CompareAndSwap(old, newIndex)
 		}()
 	}
 	return replaceErr
@@ -1238,8 +1220,7 @@ func (t *TableBlock) RowGroupIterator(
 	span.SetAttributes(attribute.Int64("tx", int64(tx))) // Attributes don't support uint64...
 	defer span.End()
 
-	index, done := t.Index()
-	defer done()
+	index := t.Index()
 
 	var err error
 	index.Ascend(func(i btree.Item) bool {
@@ -1257,12 +1238,8 @@ func (t *TableBlock) Size() int64 {
 }
 
 // Index provides atomic access to the table index.
-func (t *TableBlock) Index() (*index, func()) {
-	index := (*index)(t.index.Load())
-	index.ref.Add(1)
-	return index, func() {
-		index.ref.Add(-1)
-	}
+func (t *TableBlock) Index() *btree.BTree {
+	return (*btree.BTree)(t.index.Load())
 }
 
 func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) error {
@@ -1279,8 +1256,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 
 	var prev *Granule
 	var ascendErr error
-	index, done := t.Index()
-	defer done()
+	index := t.Index()
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
@@ -1353,8 +1329,7 @@ func (r btreeComparableDynamicRow) Less(than btree.Item) bool {
 }
 
 func (t *TableBlock) splitRowsByGranule(parquetRows *dynparquet.DynamicRows) (map[*Granule]map[int]struct{}, error) {
-	index, done := t.Index()
-	defer done()
+	index := t.Index()
 	if index.Len() == 0 {
 		rows := map[int]struct{}{}
 		for i := 0; i < len(parquetRows.Rows); i++ {
@@ -1476,8 +1451,7 @@ func (t *TableBlock) abortCompaction(granule *Granule) {
 func (t *TableBlock) Serialize(writer io.Writer) error {
 	var ascendErr error
 	dynCols := map[string][]string{} // NOTE: it would be nice if we didn't have to go back and find all the dynamic columns...
-	index, done := t.Index()
-	defer done()
+	index := t.Index()
 	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 

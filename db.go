@@ -536,7 +536,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-					table.ActiveBlock().index.Store(NewIndex(btree.New(table.db.columnStore.indexDegree)))
+					table.ActiveBlock().index.Store(btree.New(table.db.columnStore.indexDegree))
 				}
 				db.mtx.Unlock()
 			}
