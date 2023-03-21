@@ -193,6 +193,7 @@ type TableBlock struct {
 	index            *atomic.Pointer[btree.BTree] // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
+	pendingReadersWg sync.WaitGroup
 
 	mtx *sync.RWMutex
 }
@@ -375,21 +376,21 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 	delete(t.pendingBlocks, block)
-	idx := block.Index()
-	for {
-		// TODO: ensure no active block readers
-		idx.Ascend(func(i btree.Item) bool {
-			g := i.(*Granule)
-			g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
-				if r := p.Record(); r != nil {
-					r.Release()
-				}
-				return true
-			})
+
+	// Wait for outstanding readers to finish with the block before releasing underlying resources.
+	block.pendingReadersWg.Wait()
+
+	block.Index().Ascend(func(i btree.Item) bool {
+		g := i.(*Granule)
+		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
+			if r := p.Record(); r != nil {
+				r.Release()
+			}
 			return true
 		})
-		return
-	}
+		return true
+	})
+	return
 }
 
 func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
@@ -1642,8 +1643,10 @@ func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	}
 
 	lastReadBlockTimestamp := t.active.ulid.Time()
+	t.active.pendingReadersWg.Add(1)
 	memoryBlocks := []*TableBlock{t.active}
 	for block := range t.pendingBlocks {
+		block.pendingReadersWg.Add(1)
 		memoryBlocks = append(memoryBlocks, block)
 
 		if block.ulid.Time() < lastReadBlockTimestamp {
@@ -1674,6 +1677,11 @@ func (t *Table) collectRowGroups(
 	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
 	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
+	defer func() {
+		for _, block := range memoryBlocks {
+			block.pendingReadersWg.Done()
+		}
+	}()
 	for _, block := range memoryBlocks {
 		span.AddEvent("memoryBlock")
 		if err := block.RowGroupIterator(ctx, tx, filter, rowGroups); err != nil {
