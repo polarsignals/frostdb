@@ -332,30 +332,28 @@ func TestCompaction(t *testing.T) {
 					switch v {
 					case compactCommand:
 						table.db.Wait(lastTx)
-						index := table.active.Index()
 						require.Equal(
 							t,
 							1,
-							index.Len(),
+							table.active.Index().Len(),
 							"tests assume only a single granule as input",
 						)
 						cfg := table.db.columnStore.compactionConfig
 						if asArrow {
 							cfg.l1ToGranuleSizeRatio = 0.6 // use a different ratio for arrow records
 						}
-						success, err := table.active.compactGranule((index.Min()).(*Granule), cfg)
+						success, err := table.active.compactGranule((table.active.Index().Min()).(*Granule), cfg)
 						require.True(t, success)
 						require.NoError(t, err)
 					case recordGranuleSizeCommand:
 						table.db.Wait(lastTx)
-						index := table.active.Index()
 						require.Equal(
 							t,
 							1,
-							index.Len(),
+							table.active.Index().Len(),
 							"tests assume only a single granule as input",
 						)
-						recordedGranuleSize = (index.Min()).(*Granule).metadata.size.Load()
+						recordedGranuleSize = (table.active.Index().Min()).(*Granule).metadata.size.Load()
 					case setRecordedGranuleSizeCommand:
 						table.db.columnStore.granuleSizeBytes = int64(recordedGranuleSize)
 					case acc:
@@ -385,10 +383,9 @@ func TestCompaction(t *testing.T) {
 					}
 				}
 
-				index := table.active.Index()
-				require.Equal(t, len(tc.expected), index.Len())
+				require.Equal(t, len(tc.expected), table.active.Index().Len())
 				i := 0
-				index.Ascend(func(item btree.Item) bool {
+				table.active.Index().Ascend(func(item btree.Item) bool {
 					g := item.(*Granule)
 					expected := tc.expected[i]
 					require.Equal(t, len(expected.parts), numParts(g))

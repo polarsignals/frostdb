@@ -190,7 +190,7 @@ type TableBlock struct {
 	// lastSnapshotSize keeps track of the size of the block when it last
 	// triggered a snapshot.
 	lastSnapshotSize atomic.Int64
-	index            *atomic.Pointer[btree.BTree]
+	index            *atomic.Pointer[btree.BTree] // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
 
@@ -325,8 +325,7 @@ func newTable(
 		Help: "Number of granules in the table index currently.",
 	}, func() float64 {
 		if active := t.ActiveBlock(); active != nil {
-			index := active.Index()
-			return float64(index.Len())
+			return float64(active.Index().Len())
 		}
 		return 0
 	})
@@ -1027,12 +1026,12 @@ func generateULID() ulid.ULID {
 }
 
 func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, error) {
-	idx := &atomic.Pointer[btree.BTree]{}
-	idx.Store(btree.New(table.db.columnStore.indexDegree))
+	index := atomic.Pointer[btree.BTree]{}
+	index.Store(btree.New(table.db.columnStore.indexDegree))
 
 	return &TableBlock{
 		table:  table,
-		index:  idx,
+		index:  &index,
 		mtx:    &sync.RWMutex{},
 		ulid:   id,
 		size:   &atomic.Int64{},
