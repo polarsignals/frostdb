@@ -1162,7 +1162,7 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 				}
 				t.table.metrics.granulesCreated.Inc()
 
-				if err := t.replaceIndex(func(index *btree.BTree) error {
+				if err := t.updateIndex(func(index *btree.BTree) error {
 					index.ReplaceOrInsert(g)
 					return nil
 				}); err != nil {
@@ -1186,7 +1186,8 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 	return nil
 }
 
-func (t *TableBlock) replaceIndex(replace func(index *btree.BTree) error) error {
+// updateIndex updates that TableBlock's index in a thread safe manner to the result of calling the update fn with the current index.
+func (t *TableBlock) updateIndex(update func(index *btree.BTree) error) error {
 	var replaceErr error
 	for ok := false; !ok; {
 		ok = func() bool {
@@ -1195,7 +1196,7 @@ func (t *TableBlock) replaceIndex(replace func(index *btree.BTree) error) error 
 			newIndex := old.Clone()
 			t.mtx.Unlock()
 
-			if err := replace(newIndex); err != nil {
+			if err := update(newIndex); err != nil {
 				replaceErr = err
 				return true
 			}
@@ -1299,7 +1300,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 		}
 		t.table.metrics.granulesCreated.Inc()
 
-		if err := t.replaceIndex(func(index *btree.BTree) error {
+		if err := t.updateIndex(func(index *btree.BTree) error {
 			index.ReplaceOrInsert(g)
 			return nil
 		}); err != nil {
@@ -1632,6 +1633,8 @@ func (p *parquetRowWriter) close() error {
 	return p.w.Close()
 }
 
+// memoryBlocks collects the active and pending blocks that are currently resident in memory.
+// The pendingReadersWg.Done() function must be called on all blocks returned once processing is finished.
 func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()

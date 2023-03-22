@@ -475,7 +475,7 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 		return false, fmt.Errorf("add part to granules: %w", addPartErr)
 	}
 
-	if err := t.replaceIndex(func(index *btree.BTree) error {
+	if err := t.updateIndex(func(index *btree.BTree) error {
 		if index.Delete(granule) == nil {
 			level.Error(t.logger).Log("msg", "failed to delete granule during split")
 			return fmt.Errorf("failed to delete granule")
