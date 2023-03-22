@@ -458,7 +458,7 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 
 	// Set the newGranules pointer, so new writes will propogate into these new
 	// granules.
-	granule.newGranules = newGranules
+	granule.newGranules.Store(&newGranules)
 
 	// Mark compaction complete in the granule; this will cause new writes to
 	// start using the newGranules pointer. Iterate over the resulting part
