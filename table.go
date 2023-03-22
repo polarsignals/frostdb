@@ -193,6 +193,7 @@ type TableBlock struct {
 	index            *atomic.Pointer[btree.BTree] // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
+	pendingReadersWg sync.WaitGroup
 
 	mtx *sync.RWMutex
 }
@@ -374,6 +375,11 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 func (t *Table) dropPendingBlock(block *TableBlock) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
+	delete(t.pendingBlocks, block)
+
+	// Wait for outstanding readers to finish with the block before releasing underlying resources.
+	block.pendingReadersWg.Wait()
+
 	block.Index().Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
@@ -384,7 +390,6 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 		})
 		return true
 	})
-	delete(t.pendingBlocks, block)
 }
 
 func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
@@ -1157,18 +1162,13 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 				}
 				t.table.metrics.granulesCreated.Inc()
 
-				for {
-					old := t.Index()
-					t.mtx.Lock()
-					newIndex := old.Clone()
-					t.mtx.Unlock()
-
-					newIndex.ReplaceOrInsert(g)
-					if t.index.CompareAndSwap(old, newIndex) {
-						t.table.metrics.numParts.Add(float64(1))
-						break
-					}
+				if err := t.updateIndex(func(index *btree.BTree) error {
+					index.ReplaceOrInsert(g)
+					return nil
+				}); err != nil {
+					return err
 				}
+				t.table.metrics.numParts.Add(float64(1))
 			} else {
 				if _, err := granule.Append(part); err != nil {
 					return fmt.Errorf("failed to add part to granule: %w", err)
@@ -1184,6 +1184,27 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 
 	t.table.metrics.numParts.Add(float64(len(list)))
 	return nil
+}
+
+// updateIndex updates that TableBlock's index in a thread safe manner to the result of calling the update fn with the current index.
+func (t *TableBlock) updateIndex(update func(index *btree.BTree) error) error {
+	var replaceErr error
+	for ok := false; !ok; {
+		ok = func() bool {
+			old := t.Index()
+			t.mtx.Lock()
+			newIndex := old.Clone()
+			t.mtx.Unlock()
+
+			if err := update(newIndex); err != nil {
+				replaceErr = err
+				return true
+			}
+
+			return t.index.CompareAndSwap(old, newIndex)
+		}()
+	}
+	return replaceErr
 }
 
 // RowGroupIterator iterates in order over all granules in the table.
@@ -1279,20 +1300,14 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 		}
 		t.table.metrics.granulesCreated.Inc()
 
-		for {
-			t.mtx.Lock()
-			newIdx := index.Clone() // NOTE: this needs to be an index swap to avoid losing the new granule during a compaction
-			t.mtx.Unlock()
-
-			newIdx.ReplaceOrInsert(g)
-
-			if t.index.CompareAndSwap(index, newIdx) {
-				t.table.metrics.numParts.Add(float64(1))
-				return nil
-			}
-
-			index = t.Index()
+		if err := t.updateIndex(func(index *btree.BTree) error {
+			index.ReplaceOrInsert(g)
+			return nil
+		}); err != nil {
+			return err
 		}
+		t.table.metrics.numParts.Add(float64(1))
+		return nil
 	}
 
 	// Append to the last valid granule
@@ -1435,7 +1450,8 @@ func (t *TableBlock) abortCompaction(granule *Granule) {
 func (t *TableBlock) Serialize(writer io.Writer) error {
 	var ascendErr error
 	dynCols := map[string][]string{} // NOTE: it would be nice if we didn't have to go back and find all the dynamic columns...
-	t.Index().Ascend(func(i btree.Item) bool {
+	index := t.Index()
+	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
 		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
@@ -1471,7 +1487,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	}
 
 	// Merge all parts in a Granule and write that granule to the file
-	t.Index().Ascend(func(i btree.Item) bool {
+	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
 		// collect parts based on compaction level; we do this because level1 parts are already non-overlapping.
@@ -1617,6 +1633,8 @@ func (p *parquetRowWriter) close() error {
 	return p.w.Close()
 }
 
+// memoryBlocks collects the active and pending blocks that are currently resident in memory.
+// The pendingReadersWg.Done() function must be called on all blocks returned once processing is finished.
 func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
@@ -1626,8 +1644,10 @@ func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	}
 
 	lastReadBlockTimestamp := t.active.ulid.Time()
+	t.active.pendingReadersWg.Add(1)
 	memoryBlocks := []*TableBlock{t.active}
 	for block := range t.pendingBlocks {
+		block.pendingReadersWg.Add(1)
 		memoryBlocks = append(memoryBlocks, block)
 
 		if block.ulid.Time() < lastReadBlockTimestamp {
@@ -1658,6 +1678,11 @@ func (t *Table) collectRowGroups(
 	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
 	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
+	defer func() {
+		for _, block := range memoryBlocks {
+			block.pendingReadersWg.Done()
+		}
+	}()
 	for _, block := range memoryBlocks {
 		span.AddEvent("memoryBlock")
 		if err := block.RowGroupIterator(ctx, tx, filter, rowGroups); err != nil {
