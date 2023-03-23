@@ -228,7 +228,13 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (stri
 				if err != nil {
 					return "", fmt.Errorf("insert: %w", err)
 				}
-				rows[i] = append(rows[i], parquet.ValueOf(v).Level(0, 1, colIdx))
+				parquetV := parquet.ValueOf(v)
+				if parquetV.IsNull() {
+					parquetV = parquetV.Level(0, 0, colIdx)
+				} else {
+					parquetV = parquetV.Level(0, 1, colIdx)
+				}
+				rows[i] = append(rows[i], parquetV)
 				colIdx++
 			}
 		}
@@ -242,7 +248,6 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (stri
 	if _, err := buf.WriteRows(rows); err != nil {
 		return "", fmt.Errorf("insert: %w", err)
 	}
-
 	if _, err := r.activeTable.InsertBuffer(ctx, buf); err != nil {
 		return "", fmt.Errorf("insert: %w", err)
 	}
