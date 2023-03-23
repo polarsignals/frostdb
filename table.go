@@ -42,6 +42,7 @@ import (
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
@@ -1255,7 +1256,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 
 	// recordSizePerRow is the rough estimate of the size of each row in the record.
 	numRows := record.NumRows()
-	recordSizePerRow := int(bufutils.RecordSize(record) / int64(numRows))
+	recordSizePerRow := int(arrowutils.RecordSize(record) / int64(numRows))
 
 	var prev *Granule
 	var ascendErr error
@@ -1292,7 +1293,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	})
 	if ascendErr != nil {
 		if ascendErr == io.EOF {
-			t.size.Add(bufutils.RecordSize(record))
+			t.size.Add(arrowutils.RecordSize(record))
 			return nil
 		}
 		return ascendErr
@@ -1312,7 +1313,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 			return err
 		}
 		t.table.metrics.numParts.Add(float64(1))
-		t.size.Add(bufutils.RecordSize(record))
+		t.size.Add(arrowutils.RecordSize(record))
 		return nil
 	}
 
@@ -1320,7 +1321,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, numRows), recordSizePerRow*int(numRows-ri), t.table.schema)); err != nil && err != io.EOF {
 		return err
 	}
-	t.size.Add(bufutils.RecordSize(record))
+	t.size.Add(arrowutils.RecordSize(record))
 	t.table.metrics.numParts.Add(float64(1))
 	return nil
 }

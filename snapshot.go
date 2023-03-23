@@ -20,12 +20,12 @@ import (
 	"github.com/segmentio/parquet-go"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/polarsignals/frostdb/bufutils"
 	"github.com/polarsignals/frostdb/dynparquet"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 // This file implements writing and reading database snapshots from disk.
@@ -520,7 +520,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 							return err
 						}
 
-						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, int(bufutils.RecordSize(record)), table.schema, partOptions))
+						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, int(arrowutils.RecordSize(record)), table.schema, partOptions))
 					default:
 						return fmt.Errorf("unknown part encoding: %s", partMeta.Encoding)
 					}

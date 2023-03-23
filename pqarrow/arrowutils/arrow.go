@@ -1,4 +1,4 @@
-package bufutils
+package arrowutils
 
 import (
 	"github.com/apache/arrow/go/v10/arrow"

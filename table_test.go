@@ -22,10 +22,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
-	"github.com/polarsignals/frostdb/bufutils"
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -1487,7 +1487,7 @@ func Test_Table_Size(t *testing.T) {
 			require.NoError(t, err)
 
 			after := table.ActiveBlock().Size()
-			require.Equal(t, bufutils.RecordSize(rec), after-before)
+			require.Equal(t, arrowutils.RecordSize(rec), after-before)
 		default:
 			buf, err := samples.ToBuffer(table.Schema())
 			require.NoError(t, err)
