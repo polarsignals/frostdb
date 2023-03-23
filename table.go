@@ -1244,8 +1244,9 @@ func (t *TableBlock) Index() *btree.BTree {
 
 func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) error {
 	ps := t.table.schema
-	ri := int64(0)
-	row, err := pqarrow.RecordToDynamicRow(ps, record, int(ri))
+	numRows := record.NumRows()
+	idx := numRows - 1
+	row, err := pqarrow.RecordToDynamicRow(ps, record, int(idx))
 	if err != nil {
 		if err == io.EOF {
 			level.Debug(t.logger).Log("msg", "inserted record with no rows")
@@ -1255,74 +1256,72 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	}
 
 	// recordSizePerRow is the rough estimate of the size of each row in the record.
-	numRows := record.NumRows()
 	recordSizePerRow := int(arrowutils.RecordSize(record) / int64(numRows))
 
-	var prev *Granule
 	var ascendErr error
-	index := t.Index()
-	index.Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-
-		for {
-			if t.table.schema.RowLessThan(row, g.Least()) {
-				if prev != nil {
-					if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), recordSizePerRow, t.table.schema)); err != nil {
-						ascendErr = err
-						return false
-					}
-					ri++
-					t.table.metrics.numParts.Add(float64(1))
-
-					row, err = pqarrow.RecordToDynamicRow(ps, record, int(ri))
-					if err != nil {
-						ascendErr = err
-						return false
-					}
-
-					continue
+	t.Index().DescendLessOrEqual(
+		btreeComparableDynamicRow{
+			schema:     ps,
+			DynamicRow: row,
+		},
+		func(i btree.Item) bool {
+			g := i.(*Granule)
+			// Descend rows to insert until we find a row that does not belong in this granule.
+			n := 0
+			for ; idx >= 0; idx-- {
+				row, err := pqarrow.RecordToDynamicRow(ps, record, int(idx))
+				if err != nil {
+					ascendErr = err
+					return false
 				}
-				return true
+				if ps.RowLessThan(row, g.Least()) {
+					if n > 0 {
+						if _, err := g.Append(parts.NewArrowPart(tx, record.NewSlice(idx+1, idx+1+int64(n)), recordSizePerRow*n, ps)); err != nil {
+							ascendErr = err
+							return false
+						}
+						t.table.metrics.numParts.Add(float64(1))
+					}
+					// Go on to the next granule.
+					return true
+				}
+				n++
 			}
-
-			// stop at the first granule where this is not the least
-			// this might be the correct granule, but we need to check that it isn't the next granule
-			prev = g
-			return true // continue btree iteration
-		}
-	})
+			// If we got here, all rows were exhaused in the loop above.
+			if n > 0 {
+				if _, err := g.Append(parts.NewArrowPart(tx, record.NewSlice(idx+1, idx+1+int64(n)), recordSizePerRow*n, ps)); err != nil {
+					ascendErr = err
+					return false
+				}
+				t.table.metrics.numParts.Add(float64(1))
+			}
+			return false
+		},
+	)
 	if ascendErr != nil {
-		if ascendErr == io.EOF {
-			t.size.Add(arrowutils.RecordSize(record))
-			return nil
-		}
-		return ascendErr
+		return err
 	}
 
-	if prev == nil { // No suitable granule was found; insert new granule
-		g, err := NewGranule(t.table.schema, parts.NewArrowPart(tx, record.NewSlice(ri, numRows), recordSizePerRow*int(numRows-ri), t.table.schema))
-		if err != nil {
-			return fmt.Errorf("new granule failed: %w", err)
-		}
-		t.table.metrics.granulesCreated.Inc()
-
-		if err := t.updateIndex(func(index *btree.BTree) error {
-			index.ReplaceOrInsert(g)
-			return nil
-		}); err != nil {
-			return err
-		}
-		t.table.metrics.numParts.Add(float64(1))
+	if idx < 0 {
+		// All rows exhausted.
 		t.size.Add(arrowutils.RecordSize(record))
 		return nil
 	}
 
-	// Append to the last valid granule
-	if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, numRows), recordSizePerRow*int(numRows-ri), t.table.schema)); err != nil && err != io.EOF {
+	g, err := NewGranule(ps, parts.NewArrowPart(tx, record.NewSlice(0, idx+1), recordSizePerRow*int(idx+1), ps))
+	if err != nil {
+		return fmt.Errorf("new granule failed: %w", err)
+	}
+
+	if err := t.updateIndex(func(index *btree.BTree) error {
+		index.ReplaceOrInsert(g)
+		return nil
+	}); err != nil {
 		return err
 	}
-	t.size.Add(arrowutils.RecordSize(record))
+	t.table.metrics.granulesCreated.Inc()
 	t.table.metrics.numParts.Add(float64(1))
+	t.size.Add(arrowutils.RecordSize(record))
 	return nil
 }
 
