@@ -75,6 +75,11 @@ func (e BinaryScalarExpr) Eval(p Particulate) (bool, error) {
 
 var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 
+// BinaryScalarOperation applies the given operator between the given column
+// chunk and value. If BinaryScalarOperation returns true, it means that the
+// operator may be satisfied by at least one value in the column chunk. If it
+// returns false, it means that the operator will definitely not be satisfied
+// by any value in the column chunk.
 func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Op) (bool, error) {
 	switch operator {
 	case logicalplan.OpEq:
@@ -88,7 +93,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		bloomFilter := left.BloomFilter()
 		if bloomFilter == nil {
 			// If there is no bloom filter then we cannot make a statement about true negative, instead check the min max values of the column chunk
-			return compare(right, Max(left)) <= 0 || compare(right, Min(left)) >= -1, nil
+			return compare(right, Max(left)) <= 0 && compare(right, Min(left)) >= 0, nil
 		}
 
 		ok, err := bloomFilter.Check(right)
