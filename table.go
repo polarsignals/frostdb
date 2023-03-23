@@ -42,6 +42,7 @@ import (
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
@@ -1253,6 +1254,10 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 		return err
 	}
 
+	// recordSizePerRow is the rough estimate of the size of each row in the record.
+	numRows := record.NumRows()
+	recordSizePerRow := int(arrowutils.RecordSize(record) / int64(numRows))
+
 	var prev *Granule
 	var ascendErr error
 	index := t.Index()
@@ -1262,7 +1267,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 		for {
 			if t.table.schema.RowLessThan(row, g.Least()) {
 				if prev != nil {
-					if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), t.table.schema)); err != nil {
+					if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), recordSizePerRow, t.table.schema)); err != nil {
 						ascendErr = err
 						return false
 					}
@@ -1288,13 +1293,14 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	})
 	if ascendErr != nil {
 		if ascendErr == io.EOF {
+			t.size.Add(arrowutils.RecordSize(record))
 			return nil
 		}
 		return ascendErr
 	}
 
 	if prev == nil { // No suitable granule was found; insert new granule
-		g, err := NewGranule(t.table.schema, parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.schema))
+		g, err := NewGranule(t.table.schema, parts.NewArrowPart(tx, record.NewSlice(ri, numRows), recordSizePerRow*int(numRows-ri), t.table.schema))
 		if err != nil {
 			return fmt.Errorf("new granule failed: %w", err)
 		}
@@ -1307,13 +1313,15 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 			return err
 		}
 		t.table.metrics.numParts.Add(float64(1))
+		t.size.Add(arrowutils.RecordSize(record))
 		return nil
 	}
 
 	// Append to the last valid granule
-	if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.schema)); err != nil && err != io.EOF {
+	if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, numRows), recordSizePerRow*int(numRows-ri), t.table.schema)); err != nil && err != io.EOF {
 		return err
 	}
+	t.size.Add(arrowutils.RecordSize(record))
 	t.table.metrics.numParts.Add(float64(1))
 	return nil
 }

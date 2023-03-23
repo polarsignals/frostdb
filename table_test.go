@@ -25,6 +25,7 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -1418,4 +1419,59 @@ func Test_RowWriter(t *testing.T) {
 			require.Equal(t, int64(5), rg.NumRows)
 		}
 	}
+}
+
+// Test_Table_Size ensures the size of the table increases by the size of the inserted data.
+func Test_Table_Size(t *testing.T) {
+	test := func(isArrow bool) {
+		c, table := basicTable(t)
+		defer c.Close()
+
+		before := table.ActiveBlock().Size()
+
+		samples := dynparquet.NewTestSamples()
+		switch isArrow {
+		case true:
+			ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+				"labels": {"node", "namespace", "container"},
+			})
+			require.NoError(t, err)
+
+			ctx := context.Background()
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+			require.NoError(t, err)
+
+			rec, err := samples.ToRecord(sc)
+			require.NoError(t, err)
+
+			_, err = table.InsertRecord(ctx, rec)
+			require.NoError(t, err)
+
+			after := table.ActiveBlock().Size()
+			require.Equal(t, arrowutils.RecordSize(rec), after-before)
+		default:
+			buf, err := samples.ToBuffer(table.Schema())
+			require.NoError(t, err)
+
+			ctx := context.Background()
+			_, err = table.InsertBuffer(ctx, buf)
+			require.NoError(t, err)
+
+			after := table.ActiveBlock().Size()
+			b := bytes.NewBuffer(nil)
+			require.NoError(t, table.Schema().SerializeBuffer(b, buf))
+			serbuf, err := dynparquet.ReaderFromBytes(b.Bytes())
+			require.NoError(t, err)
+
+			require.Equal(t, serbuf.ParquetFile().Size(), after-before)
+		}
+	}
+
+	t.Run("arrow", func(t *testing.T) {
+		test(true)
+	})
+
+	t.Run("parquet", func(t *testing.T) {
+		test(false)
+	})
 }

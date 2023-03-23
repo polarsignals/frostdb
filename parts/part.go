@@ -27,7 +27,10 @@ const (
 type Part struct {
 	buf    *dynparquet.SerializedBuffer
 	record arrow.Record
-	schema *dynparquet.Schema
+	// record relative size is how many bytes are roughly attributed to this record.
+	// It's considered rough because it may be sharing underlying dictionaries with other records.
+	recordRelativeSize int
+	schema             *dynparquet.Schema
 
 	// tx is the id of the transaction that created this part.
 	tx uint64
@@ -89,11 +92,12 @@ func WithCompactionLevel(level CompactionLevel) Option {
 }
 
 // NewArrowPart returns a new Arrow part.
-func NewArrowPart(tx uint64, record arrow.Record, schema *dynparquet.Schema, options ...Option) *Part {
+func NewArrowPart(tx uint64, record arrow.Record, size int, schema *dynparquet.Schema, options ...Option) *Part {
 	p := &Part{
-		tx:     tx,
-		record: record,
-		schema: schema,
+		tx:                 tx,
+		record:             record,
+		recordRelativeSize: size,
+		schema:             schema,
 	}
 
 	for _, opt := range options {
@@ -129,15 +133,7 @@ func (p *Part) Size() int64 {
 		return p.buf.ParquetFile().Size()
 	}
 
-	size := int64(0)
-	for _, col := range p.record.Columns() {
-		for _, buf := range col.Data().Buffers() { // NOTE: may need to get Children data instances for nested
-			if buf != nil {
-				size += int64(buf.Len())
-			}
-		}
-	}
-	return size
+	return int64(p.recordRelativeSize)
 }
 
 func (p *Part) CompactionLevel() CompactionLevel {

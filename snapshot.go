@@ -25,6 +25,7 @@ import (
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 // This file implements writing and reading database snapshots from disk.
@@ -519,7 +520,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 							return err
 						}
 
-						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, table.schema, partOptions))
+						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, int(arrowutils.RecordSize(record)), table.schema, partOptions))
 					default:
 						return fmt.Errorf("unknown part encoding: %s", partMeta.Encoding)
 					}
