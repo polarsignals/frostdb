@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
+	"github.com/polarsignals/frostdb/bufutils"
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
@@ -1418,4 +1419,98 @@ func Test_RowWriter(t *testing.T) {
 			require.Equal(t, int64(5), rg.NumRows)
 		}
 	}
+}
+
+// Test_Table_Size ensures the size of the table increases by the size of the inserted data.
+func Test_Table_Size(t *testing.T) {
+	test := func(isArrow bool) {
+		c, table := basicTable(t)
+		defer c.Close()
+
+		before := table.ActiveBlock().Size()
+
+		samples := dynparquet.Samples{{
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 1,
+			Value:     1,
+		}, {
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value2"},
+				{Name: "label2", Value: "value2"},
+				{Name: "label3", Value: "value3"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 2,
+			Value:     2,
+		}, {
+			ExampleType: "test",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value3"},
+				{Name: "label2", Value: "value2"},
+				{Name: "label4", Value: "value4"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			},
+			Timestamp: 3,
+			Value:     3,
+		}}
+
+		switch isArrow {
+		case true:
+			ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+				"labels": {"label1", "label2", "label3", "label4"},
+			})
+			require.NoError(t, err)
+
+			ctx := context.Background()
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+			require.NoError(t, err)
+
+			rec, err := samples.ToRecord(sc)
+			require.NoError(t, err)
+
+			_, err = table.InsertRecord(ctx, rec)
+			require.NoError(t, err)
+
+			after := table.ActiveBlock().Size()
+			require.Equal(t, bufutils.RecordSize(rec), after-before)
+		default:
+			buf, err := samples.ToBuffer(table.Schema())
+			require.NoError(t, err)
+
+			ctx := context.Background()
+			_, err = table.InsertBuffer(ctx, buf)
+			require.NoError(t, err)
+
+			after := table.ActiveBlock().Size()
+			b := bytes.NewBuffer(nil)
+			require.NoError(t, table.Schema().SerializeBuffer(b, buf))
+			serbuf, err := dynparquet.ReaderFromBytes(b.Bytes())
+			require.NoError(t, err)
+
+			require.Equal(t, serbuf.ParquetFile().Size(), after-before)
+		}
+	}
+
+	t.Run("arrow", func(t *testing.T) {
+		test(true)
+	})
+
+	t.Run("parquet", func(t *testing.T) {
+		test(false)
+	})
 }
