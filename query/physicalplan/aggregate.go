@@ -512,6 +512,10 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 		numCols := len(aggregate.groupByCols) + len(aggregate.aggregations)
 		numRows := aggregate.rowCount
 
+		if numRows == 0 { // skip empty aggregates
+			continue
+		}
+
 		groupByFields := make([]arrow.Field, 0, numCols)
 		groupByArrays := make([]arrow.Array, 0, numCols)
 		for _, fieldName := range aggregate.colOrdering {

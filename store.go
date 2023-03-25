@@ -11,9 +11,12 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/storage"
 )
 
 // Persist uploads the block to the underlying bucket.
@@ -41,40 +44,49 @@ func (t *TableBlock) Persist() error {
 	return nil
 }
 
-func (t *Table) IterateBucketBlocks(
-	ctx context.Context,
-	logger log.Logger,
-	lastBlockTimestamp uint64,
-	filter TrueNegativeFilter,
-	rowGroups chan<- any,
-) error {
-	if t.db.bucket == nil || t.db.ignoreStorageOnQuery {
-		return nil
-	}
-	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks")
+// DefaultObjstoreBucket is the default implementation of the DataSource and DataSink interface.
+type DefaultObjstoreBucket struct {
+	tracer trace.Tracer
+	logger log.Logger
+	bucket storage.Bucket
+
+	blockReaderLimit int
+}
+
+func (b *DefaultObjstoreBucket) String() string {
+	return b.bucket.Name()
+}
+
+func (b *DefaultObjstoreBucket) TableScan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error {
+	ctx, span := b.tracer.Start(ctx, "Source/RowGroupIterator")
 	span.SetAttributes(attribute.Int64("lastBlockTimestamp", int64(lastBlockTimestamp)))
 	defer span.End()
 
+	f, err := BooleanExpr(filter)
+	if err != nil {
+		return err
+	}
+
 	n := 0
 	errg := &errgroup.Group{}
-	errg.SetLimit(int(t.config.BlockReaderLimit))
-	err := t.db.bucket.Iter(ctx, t.name, func(blockDir string) error {
+	errg.SetLimit(int(b.blockReaderLimit))
+	err = b.bucket.Iter(ctx, prefix, func(blockDir string) error {
 		n++
-		errg.Go(func() error { return t.ProcessFile(ctx, blockDir, lastBlockTimestamp, filter, rowGroups) })
+		errg.Go(func() error { return b.ProcessFile(ctx, blockDir, lastBlockTimestamp, f, stream) })
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	level.Debug(logger).Log("msg", "read blocks", "n", n)
+	level.Debug(b.logger).Log("msg", "read blocks", "n", n)
 	return errg.Wait()
 }
 
-func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64) (*parquet.File, error) {
-	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/OpenFile")
+func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName string, size int64) (*parquet.File, error) {
+	ctx, span := b.tracer.Start(ctx, "Source/IterateBucketBlocks/Iter/OpenFile")
 	defer span.End()
-	r, err := t.db.bucket.GetReaderAt(ctx, blockName)
+	r, err := b.bucket.GetReaderAt(ctx, blockName)
 	if err != nil {
 		return nil, err
 	}
@@ -94,8 +106,8 @@ func (t *Table) openBlockFile(ctx context.Context, blockName string, size int64)
 }
 
 // ProcessFile will process a bucket block parquet file.
-func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, rowGroups chan<- any) error {
-	ctx, span := t.tracer.Start(ctx, "Table/IterateBucketBlocks/Iter/ProcessFile")
+func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, rowGroups chan<- any) error {
+	ctx, span := b.tracer.Start(ctx, "Source/IterateBucketBlocks/Iter/ProcessFile")
 	defer span.End()
 
 	blockUlid, err := ulid.Parse(filepath.Base(blockDir))
@@ -110,14 +122,14 @@ func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimes
 	}
 
 	blockName := filepath.Join(blockDir, "data.parquet")
-	attribs, err := t.db.bucket.Attributes(ctx, blockName)
+	attribs, err := b.bucket.Attributes(ctx, blockName)
 	if err != nil {
 		return err
 	}
 
 	span.SetAttributes(attribute.Int64("size", attribs.Size))
 
-	file, err := t.openBlockFile(ctx, blockName, attribs.Size)
+	file, err := b.openBlockFile(ctx, blockName, attribs.Size)
 	if err != nil {
 		return err
 	}
@@ -128,11 +140,11 @@ func (t *Table) ProcessFile(ctx context.Context, blockDir string, lastBlockTimes
 		return err
 	}
 
-	return t.filterRowGroups(ctx, buf, filter, rowGroups)
+	return b.filterRowGroups(ctx, buf, filter, rowGroups)
 }
 
-func (t *Table) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, rowGroups chan<- any) error {
-	_, span := t.tracer.Start(ctx, "Table/filterRowGroups")
+func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, rowGroups chan<- any) error {
+	_, span := b.tracer.Start(ctx, "Source/filterRowGroups")
 	defer span.End()
 	span.SetAttributes(attribute.Int("row_groups", buf.NumRowGroups()))
 

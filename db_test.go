@@ -276,6 +276,19 @@ func TestDBWithWAL(t *testing.T) {
 			r.Release()
 		}
 		require.Equal(t, int64(5), rows)
+
+		// Perform an aggregate query against the replayed data
+		engine := query.NewEngine(pool, db.TableProvider())
+		err = engine.ScanTable("test").
+			Aggregate(
+				[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+				[]logicalplan.Expr{logicalplan.Col("labels.label2")},
+			).
+			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+				fmt.Println(r)
+				return nil
+			})
+		require.NoError(t, err)
 	}
 
 	t.Run("parquet", func(t *testing.T) {

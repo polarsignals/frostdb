@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"runtime"
@@ -1697,8 +1698,12 @@ func (t *Table) collectRowGroups(
 		}
 	}
 
-	if err := t.IterateBucketBlocks(ctx, t.logger, lastBlockTimestamp, filter, rowGroups); err != nil {
-		return err
+	// Collect from all other data sources.
+	for _, source := range t.db.sources {
+		span.AddEvent(fmt.Sprintf("source/%s", source.String()))
+		if err := source.TableScan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, lastBlockTimestamp, rowGroups); err != nil {
+			return err
+		}
 	}
 
 	return nil

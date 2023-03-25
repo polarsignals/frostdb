@@ -56,6 +56,9 @@ type ColumnStore struct {
 	indexDegree int
 	// splitSize is the number of new granules that are created when granules are split (default =2)
 	splitSize int
+
+	sources []DataSource
+	// TODO: sinks []DataSink
 }
 
 type metrics struct {
@@ -177,6 +180,19 @@ func WithStorage(bucket storage.Bucket) Option {
 	}
 }
 
+func WithDataSource(ds DataSource) Option {
+	return func(s *ColumnStore) error {
+		s.sources = append(s.sources, ds)
+		return nil
+	}
+}
+
+func WithDataSink(ds interface{}) Option {
+	return func(s *ColumnStore) error {
+		return nil
+	}
+}
+
 func WithWAL() Option {
 	return func(s *ColumnStore) error {
 		s.enableWAL = true
@@ -293,10 +309,16 @@ type DB struct {
 	roTables map[string]*Table
 	tables   map[string]*Table
 
-	storagePath          string
-	wal                  WAL
+	storagePath string
+	wal         WAL
+
+	// TODO: replace bucket and ignoreStoreOnQuery with sources and sinks
 	bucket               storage.Bucket
 	ignoreStorageOnQuery bool
+
+	sources []DataSource
+	sinks   []DataSink
+
 	// Databases monotonically increasing transaction id
 	tx *atomic.Uint64
 
@@ -311,6 +333,15 @@ type DB struct {
 	snapshotInProgress atomic.Bool
 
 	metrics *dbMetrics
+}
+
+type DataSource interface {
+	fmt.Stringer
+	TableScan(ctx context.Context, prefix string, schema *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error
+}
+
+type DataSink interface {
+	fmt.Stringer
 }
 
 func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
@@ -350,10 +381,19 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		storagePath:          filepath.Join(s.DatabasesDir(), name),
 		wal:                  &wal.NopWAL{},
 		ignoreStorageOnQuery: s.ignoreStorageOnQuery,
+		sources:              s.sources,
 	}
 
 	if s.bucket != nil {
 		db.bucket = storage.NewPrefixedBucket(s.bucket, db.name)
+		if db.sources != nil {
+			db.sources = append(db.sources, &DefaultObjstoreBucket{
+				tracer:           db.tracer,
+				logger:           db.logger,
+				bucket:           s.bucket,
+				blockReaderLimit: 10, // TODO: this shouldn't be a table config anyways
+			})
+		}
 	}
 
 	if dbSetupErr := func() error {

@@ -53,6 +53,10 @@ func (f PreExprVisitorFunc) PreVisit(expr logicalplan.Expr) bool {
 	return f(expr)
 }
 
+func (f PreExprVisitorFunc) Visit(expr logicalplan.Expr) bool {
+	return false
+}
+
 func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
 	return false
 }

@@ -72,6 +72,11 @@ func (e *BinaryExpr) Accept(visitor Visitor) bool {
 		return false
 	}
 
+	continu = visitor.Visit(e)
+	if !continu {
+		return false
+	}
+
 	continu = e.Right.Accept(visitor)
 	if !continu {
 		return false
