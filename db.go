@@ -596,9 +596,9 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 						db.tracer,
 						wal,
 					)
-				}
-				if err != nil {
-					return fmt.Errorf("instantiate table: %w", err)
+					if err != nil {
+						return fmt.Errorf("instantiate table: %w", err)
+					}
 				}
 
 				table.active, err = newTableBlock(table, 0, tx, id)
