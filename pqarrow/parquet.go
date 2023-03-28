@@ -37,6 +37,11 @@ func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 }
 
 func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) ([]parquet.Value, error) {
+	if c.IsNull(index) {
+		row = append(row, parquet.ValueOf(nil).Level(rep, def, col))
+		return row, nil
+	}
+
 	switch arr := c.(type) {
 	case *array.Int64:
 		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
