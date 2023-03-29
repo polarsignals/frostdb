@@ -10,6 +10,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/segmentio/parquet-go"
+	"github.com/thanos-io/objstore"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
@@ -21,40 +22,79 @@ import (
 
 // Persist uploads the block to the underlying bucket.
 func (t *TableBlock) Persist() error {
-	if t.table.db.bucket == nil {
+	if len(t.table.db.sinks) != 0 {
 		return nil
 	}
 
-	r, w := io.Pipe()
-	var err error
-	go func() {
-		defer w.Close()
-		err = t.Serialize(w)
-	}()
-	defer r.Close()
+	for i, sink := range t.table.db.sinks {
+		if i > 0 {
+			return fmt.Errorf("multiple sinks not supported")
+		}
+		r, w := io.Pipe()
+		var err error
+		go func() {
+			defer w.Close()
+			err = t.Serialize(w)
+		}()
+		defer r.Close()
 
-	fileName := filepath.Join(t.table.name, t.ulid.String(), "data.parquet")
-	if err := t.table.db.bucket.Upload(context.Background(), fileName, r); err != nil {
-		return fmt.Errorf("failed to upload block %v", err)
-	}
+		fileName := filepath.Join(t.table.name, t.ulid.String(), "data.parquet")
+		if err := sink.Upload(context.Background(), fileName, r); err != nil {
+			return fmt.Errorf("failed to upload block %v", err)
+		}
 
-	if err != nil {
-		return fmt.Errorf("failed to serialize block: %v", err)
+		if err != nil {
+			return fmt.Errorf("failed to serialize block: %v", err)
+		}
 	}
 	return nil
 }
 
 // DefaultObjstoreBucket is the default implementation of the DataSource and DataSink interface.
 type DefaultObjstoreBucket struct {
+	storage.Bucket
 	tracer trace.Tracer
 	logger log.Logger
-	bucket storage.Bucket
 
 	blockReaderLimit int
 }
 
+type DefaultObjstoreBucketOption func(*DefaultObjstoreBucket)
+
+func StorageWithBlockReaderLimit(limit int) DefaultObjstoreBucketOption {
+	return func(b *DefaultObjstoreBucket) {
+		b.blockReaderLimit = limit
+	}
+}
+
+func StorageWithTracer(tracer trace.Tracer) DefaultObjstoreBucketOption {
+	return func(b *DefaultObjstoreBucket) {
+		b.tracer = tracer
+	}
+}
+
+func StorageWithLogger(logger log.Logger) DefaultObjstoreBucketOption {
+	return func(b *DefaultObjstoreBucket) {
+		b.logger = logger
+	}
+}
+
+func NewDefaultObjstoreBucket(b objstore.Bucket, options ...DefaultObjstoreBucketOption) *DefaultObjstoreBucket {
+	d := &DefaultObjstoreBucket{
+		Bucket: storage.NewBucketReaderAt(b),
+		tracer: trace.NewNoopTracerProvider().Tracer(""),
+		logger: log.NewNopLogger(),
+	}
+
+	for _, option := range options {
+		option(d)
+	}
+
+	return d
+}
+
 func (b *DefaultObjstoreBucket) String() string {
-	return b.bucket.Name()
+	return b.Bucket.Name()
 }
 
 func (b *DefaultObjstoreBucket) TableScan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error {
@@ -70,7 +110,7 @@ func (b *DefaultObjstoreBucket) TableScan(ctx context.Context, prefix string, _ 
 	n := 0
 	errg := &errgroup.Group{}
 	errg.SetLimit(int(b.blockReaderLimit))
-	err = b.bucket.Iter(ctx, prefix, func(blockDir string) error {
+	err = b.Iter(ctx, prefix, func(blockDir string) error {
 		n++
 		errg.Go(func() error { return b.ProcessFile(ctx, blockDir, lastBlockTimestamp, f, stream) })
 		return nil
@@ -86,7 +126,7 @@ func (b *DefaultObjstoreBucket) TableScan(ctx context.Context, prefix string, _ 
 func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName string, size int64) (*parquet.File, error) {
 	ctx, span := b.tracer.Start(ctx, "Source/IterateBucketBlocks/Iter/OpenFile")
 	defer span.End()
-	r, err := b.bucket.GetReaderAt(ctx, blockName)
+	r, err := b.GetReaderAt(ctx, blockName)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +162,7 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 	}
 
 	blockName := filepath.Join(blockDir, "data.parquet")
-	attribs, err := b.bucket.Attributes(ctx, blockName)
+	attribs, err := b.Attributes(ctx, blockName)
 	if err != nil {
 		return err
 	}

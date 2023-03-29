@@ -872,10 +872,12 @@ func Test_DoubleTable(t *testing.T) {
 	config := NewTableConfig(def)
 
 	bucket := objstore.NewInMemBucket()
+	sinksource := NewDefaultObjstoreBucket(bucket)
 	logger := newTestLogger(t)
 	c, err := New(
 		WithLogger(logger),
-		WithBucketStorage(bucket),
+		WithDataSink(sinksource),
+		WithDataSource(sinksource),
 	)
 	require.NoError(t, err)
 	defer c.Close()
