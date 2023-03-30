@@ -1701,7 +1701,7 @@ func (t *Table) collectRowGroups(
 	// Collect from all other data sources.
 	for _, source := range t.db.sources {
 		span.AddEvent(fmt.Sprintf("source/%s", source.String()))
-		if err := source.TableScan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, lastBlockTimestamp, rowGroups); err != nil {
+		if err := source.Scan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, lastBlockTimestamp, rowGroups); err != nil {
 			return err
 		}
 	}

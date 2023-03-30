@@ -289,7 +289,6 @@ func TestDBWithWAL(t *testing.T) {
 				[]logicalplan.Expr{logicalplan.Col("labels.label2")},
 			).
 			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-				fmt.Println(r)
 				return nil
 			})
 		require.NoError(t, err)

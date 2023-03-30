@@ -22,7 +22,7 @@ import (
 
 // Persist uploads the block to the underlying bucket.
 func (t *TableBlock) Persist() error {
-	if len(t.table.db.sinks) != 0 {
+	if len(t.table.db.sinks) == 0 {
 		return nil
 	}
 
@@ -38,7 +38,7 @@ func (t *TableBlock) Persist() error {
 		}()
 		defer r.Close()
 
-		fileName := filepath.Join(t.table.name, t.ulid.String(), "data.parquet")
+		fileName := filepath.Join(t.table.db.name, t.table.name, t.ulid.String(), "data.parquet")
 		if err := sink.Upload(context.Background(), fileName, r); err != nil {
 			return fmt.Errorf("failed to upload block %v", err)
 		}
@@ -81,9 +81,10 @@ func StorageWithLogger(logger log.Logger) DefaultObjstoreBucketOption {
 
 func NewDefaultObjstoreBucket(b objstore.Bucket, options ...DefaultObjstoreBucketOption) *DefaultObjstoreBucket {
 	d := &DefaultObjstoreBucket{
-		Bucket: storage.NewBucketReaderAt(b),
-		tracer: trace.NewNoopTracerProvider().Tracer(""),
-		logger: log.NewNopLogger(),
+		Bucket:           storage.NewBucketReaderAt(b),
+		tracer:           trace.NewNoopTracerProvider().Tracer(""),
+		logger:           log.NewNopLogger(),
+		blockReaderLimit: 10,
 	}
 
 	for _, option := range options {
@@ -93,11 +94,27 @@ func NewDefaultObjstoreBucket(b objstore.Bucket, options ...DefaultObjstoreBucke
 	return d
 }
 
+func (b *DefaultObjstoreBucket) Prefixes(ctx context.Context, prefix string) ([]string, error) {
+	ctx, span := b.tracer.Start(ctx, "Source/Prefixes")
+	defer span.End()
+
+	var prefixes []string
+	err := b.Iter(ctx, prefix, func(prefix string) error {
+		prefixes = append(prefixes, filepath.Base(prefix))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return prefixes, nil
+}
+
 func (b *DefaultObjstoreBucket) String() string {
 	return b.Bucket.Name()
 }
 
-func (b *DefaultObjstoreBucket) TableScan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error {
+func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error {
 	ctx, span := b.tracer.Start(ctx, "Source/RowGroupIterator")
 	span.SetAttributes(attribute.Int64("lastBlockTimestamp", int64(lastBlockTimestamp)))
 	defer span.End()

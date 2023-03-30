@@ -310,7 +310,8 @@ type DB struct {
 // DataSource is remote source of data that can be queried.
 type DataSource interface {
 	fmt.Stringer
-	TableScan(ctx context.Context, prefix string, schema *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error
+	Scan(ctx context.Context, prefix string, schema *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error
+	Prefixes(ctx context.Context, prefix string) ([]string, error)
 }
 
 // Datasink is a remote destination for data.
@@ -356,28 +357,27 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		storagePath:   filepath.Join(s.DatabasesDir(), name),
 		wal:           &wal.NopWAL{},
 		sources:       s.sources,
+		sinks:         s.sinks,
 	}
 
 	if dbSetupErr := func() error {
 		db.txPool = NewTxPool(db.highWatermark)
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
-		// If sources are configured; scan for existing tables in the database
-		/* TODO(thor): Disabled rotable for now with the new DataSource interface
 		if len(db.sources) != 0 {
 			for _, source := range db.sources {
-				if err := db.bucket.Iter(ctx, "", func(tableName string) error {
-					_, err := db.readOnlyTable(strings.TrimSuffix(tableName, "/"))
+				prefixes, err := source.Prefixes(ctx, name)
+				if err != nil {
+					return err
+				}
+
+				for _, prefix := range prefixes {
+					_, err := db.readOnlyTable(prefix)
 					if err != nil {
 						return err
 					}
-
-					return nil
-				}); err != nil {
-					return fmt.Errorf("bucket iter on database open: %w", err)
 				}
 			}
 		}
-		*/
 
 		if s.enableWAL {
 			var err error
