@@ -423,7 +423,6 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 
 		tuple, ok := a.hashToAggregate[hash]
 		if !ok {
-
 			aggregate = a.aggregates[len(a.aggregates)-1]
 			for j, col := range columnToAggregate {
 				agg := builder.NewBuilder(a.pool, col.DataType())
