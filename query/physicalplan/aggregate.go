@@ -423,10 +423,6 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 
 		tuple, ok := a.hashToAggregate[hash]
 		if !ok {
-			// insert new row into columns grouped by and create new aggregate array to append to.
-			if err := a.updateGroupByCols(i, groupByArrays, groupByFields); err != nil {
-				return err
-			}
 
 			aggregate = a.aggregates[len(a.aggregates)-1]
 			for j, col := range columnToAggregate {
@@ -439,6 +435,11 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			}
 			a.hashToAggregate[hash] = tuple
 			aggregate.rowCount++
+
+			// insert new row into columns grouped by and create new aggregate array to append to.
+			if err := a.updateGroupByCols(i, groupByArrays, groupByFields); err != nil {
+				return err
+			}
 		}
 
 		for j, col := range columnToAggregate {
