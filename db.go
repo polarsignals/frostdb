@@ -578,37 +578,37 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			table, err := db.GetTable(tableName)
 			var tableErr ErrTableNotFound
 			if errors.As(err, &tableErr) {
-				config := NewTableConfig(schema, FromConfig(entry.Config))
-				// TODO: May be we should acquire mutux lock when mutating d.roTables and d.tables?
-				// s.DB creates read only Table instance when BucketStore is configured.
-				// Make sure to use the existing Table instace instead of creating new one to avoid dangling instance.
-				table, ok := db.roTables[tableName]
-				if ok {
-					delete(db.roTables, tableName)
-					table.config = config
-				} else {
-					table, err = newTable(
-						db,
-						tableName,
-						config,
-						db.reg,
-						db.logger,
-						db.tracer,
-						wal,
-					)
-					if err != nil {
-						return fmt.Errorf("instantiate table: %w", err)
+				return func() error {
+					db.mtx.Lock()
+					defer db.mtx.Unlock()
+					config := NewTableConfig(schema, FromConfig(entry.Config))
+					if _, ok := db.roTables[tableName]; ok {
+						table, err = db.promoteReadOnlyTableLocked(tableName, config)
+						if err != nil {
+							return fmt.Errorf("promoting read only table: %w", err)
+						}
+					} else {
+						table, err = newTable(
+							db,
+							tableName,
+							config,
+							db.reg,
+							db.logger,
+							db.tracer,
+							wal,
+						)
+						if err != nil {
+							return fmt.Errorf("instantiate table: %w", err)
+						}
 					}
-				}
 
-				table.active, err = newTableBlock(table, 0, tx, id)
-				if err != nil {
-					return err
-				}
-				db.mtx.Lock()
-				db.tables[tableName] = table
-				db.mtx.Unlock()
-				return nil
+					table.active, err = newTableBlock(table, 0, tx, id)
+					if err != nil {
+						return err
+					}
+					db.tables[tableName] = table
+					return nil
+				}()
 			}
 			if err != nil {
 				return fmt.Errorf("get table: %w", err)
@@ -816,6 +816,25 @@ func (db *DB) readOnlyTable(name string) (*Table, error) {
 	return table, nil
 }
 
+// promoteReadOnlyTableLocked promotes a read-only table to a read-write table.
+// The read-write table is returned but not added to the database. Callers must
+// do so.
+// db.mtx must be held while calling this method.
+func (db *DB) promoteReadOnlyTableLocked(name string, config *tablepb.TableConfig) (*Table, error) {
+	table, ok := db.roTables[name]
+	if !ok {
+		return nil, fmt.Errorf("read only table %s not found", name)
+	}
+	schema, err := schemaFromTableConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	table.config = config
+	table.schema = schema
+	delete(db.roTables, name)
+	return table, nil
+}
+
 func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	if !validateName(name) {
 		return nil, errors.New("invalid table name")
@@ -838,15 +857,12 @@ func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	}
 
 	// Check if this table exists as a read only table
-	table, ok = db.roTables[name]
-	if ok {
+	if _, ok := db.roTables[name]; ok {
 		var err error
-		table.config = config
-		table.schema, err = schemaFromTableConfig(config)
+		table, err = db.promoteReadOnlyTableLocked(name, config)
 		if err != nil {
 			return nil, err
 		}
-		delete(db.roTables, name)
 	} else {
 		var err error
 		table, err = newTable(
