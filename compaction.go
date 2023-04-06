@@ -248,52 +248,52 @@ func newCompactionMetrics(reg prometheus.Registerer, granuleSize float64) *compa
 	countBuckets := prometheus.ExponentialBuckets(1, 2, 10)
 	return &compactionMetrics{
 		level0SizeBefore: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_level_0_size_before",
+			Name:    "frostdb_compaction_level_0_size_before",
 			Help:    "Total level 0 size when beginning compaction",
 			Buckets: sizeBuckets,
 		}),
 		level0CountBefore: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_level_0_count_before",
+			Name:    "frostdb_compaction_level_0_count_before",
 			Help:    "Number of level 0 parts when beginning compaction",
 			Buckets: countBuckets,
 		}),
 		level1SizeBefore: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_level_1_size_before",
+			Name:    "frostdb_compaction_level_1_size_before",
 			Help:    "Total level 1 size when beginning compaction",
 			Buckets: sizeBuckets,
 		}),
 		level1CountBefore: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_level_1_count_before",
+			Name:    "frostdb_compaction_level_1_count_before",
 			Help:    "Number of level 0 parts when beginning compaction",
 			Buckets: countBuckets,
 		}),
 		numPartsOverlap: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_num_parts_overlap",
+			Name:    "frostdb_compaction_num_parts_overlap",
 			Help:    "Number of level 1 parts that overlapped with level 0 parts",
 			Buckets: countBuckets,
 		}),
 		uncompletedTxnPartCount: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_uncompleted_txn_part_count",
+			Name:    "frostdb_compaction_uncompleted_txn_part_count",
 			Help:    "Number of parts with uncompleted txns that could not be compacted",
 			Buckets: countBuckets,
 		}),
 		level1SizeAfter: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_level_1_size_after",
+			Name:    "frostdb_compaction_level_1_size_after",
 			Help:    "Total level 1 size after compaction",
 			Buckets: sizeBuckets,
 		}),
 		level1CountAfter: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_level_1_count_after",
+			Name:    "frostdb_compaction_level_1_count_after",
 			Help:    "Number of level 1 parts after compaction",
 			Buckets: countBuckets,
 		}),
 		splits: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_splits",
+			Name:    "frostdb_compaction_splits",
 			Help:    "Number of granule splits",
 			Buckets: countBuckets,
 		}),
 		totalDuration: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "compaction_total_duration_seconds",
+			Name:    "frostdb_compaction_total_duration_seconds",
 			Help:    "Total compaction duration",
 			Buckets: timeBuckets,
 		}),
