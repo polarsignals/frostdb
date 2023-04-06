@@ -19,7 +19,7 @@ type Granule struct {
 	schema *dynparquet.Schema
 
 	// newGranules are the granules that were created after a split
-	newGranules []*Granule
+	newGranules *atomic.Pointer[[]*Granule]
 }
 
 // GranuleMetadata is the metadata for a granule.
@@ -38,10 +38,12 @@ type GranuleMetadata struct {
 
 func NewGranule(schema *dynparquet.Schema, prts ...*parts.Part) (*Granule, error) {
 	g := &Granule{
-		parts:    parts.NewList(&atomic.Pointer[parts.Node]{}, parts.None),
-		schema:   schema,
-		metadata: GranuleMetadata{},
+		parts:       parts.NewList(&atomic.Pointer[parts.Node]{}, parts.None),
+		schema:      schema,
+		metadata:    GranuleMetadata{},
+		newGranules: &atomic.Pointer[[]*Granule]{},
 	}
+	g.newGranules.Store(&[]*Granule{})
 
 	for _, p := range prts {
 		if err := g.addPart(p); err != nil {
@@ -80,7 +82,7 @@ func (g *Granule) Append(p *parts.Part) (uint64, error) {
 	// If the prepend returned that we're adding to the compacted list; then we
 	// need to propagate the Part to the new granules.
 	if node.Compacted() {
-		err := addPartToGranule(g.newGranules, p)
+		err := addPartToGranule(*g.newGranules.Load(), p)
 		if err != nil {
 			return 0, err
 		}
@@ -156,11 +158,11 @@ func (g *Granule) Collect(ctx context.Context, tx uint64, filter TrueNegativeFil
 		return true
 	})
 
-	if len(g.newGranules) != 0 && len(records) != 0 { // This granule was pruned while we were retaining Records; it's not safe to use them anymore
+	if len(*g.newGranules.Load()) != 0 && len(records) != 0 { // This granule was pruned while we were retaining Records; it's not safe to use them anymore
 		for _, r := range records {
 			r.Release()
 		}
-		for _, newGran := range g.newGranules {
+		for _, newGran := range *g.newGranules.Load() {
 			newGran.Collect(ctx, tx, filter, collector)
 		}
 	} else {

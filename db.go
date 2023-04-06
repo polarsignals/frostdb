@@ -379,6 +379,19 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 			if err != nil {
 				return err
 			}
+			// WAL pointers of tables need to be updated to the DB WAL since
+			// they are loaded from object storage and snapshots with a no-op
+			// WAL by default.
+			for _, table := range db.tables {
+				if !table.config.DisableWal {
+					table.wal = db.wal
+				}
+			}
+			for _, table := range db.roTables {
+				if !table.config.DisableWal {
+					table.wal = db.wal
+				}
+			}
 		}
 
 		// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
@@ -389,19 +402,22 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 			}, func() float64 {
 				return float64(db.highWatermark.Load())
 			}),
-			snapshotsStarted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+		}
+		if db.columnStore.snapshotTriggerSize != 0 {
+			db.metrics.snapshotsStarted = promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "snapshots_started",
 				Help: "Number of snapshots started",
-			}),
-			snapshotsCompleted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			})
+			db.metrics.snapshotsCompleted = promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "snapshots_completed",
 				Help: "Number of snapshots completed",
-			}),
+			})
 		}
 		return nil
 	}(); dbSetupErr != nil {
-		// Close handles closing partially set fields in the db.
-		db.Close()
+		// closeInternal handles closing partially set fields in the db without
+		// rotating blocks etc... that the public Close method does.
+		_ = db.closeInternal()
 		return nil, dbSetupErr
 	}
 
@@ -439,7 +455,10 @@ func (db *DB) snapshotsDir() string {
 // recover attempts to recover database state from a combination of snapshots
 // and the WAL.
 func (db *DB) recover(ctx context.Context, wal WAL) error {
-	level.Info(db.logger).Log("msg", "recovering db")
+	level.Info(db.logger).Log(
+		"msg", "recovering db",
+		"name", db.name,
+	)
 	snapshotLoadStart := time.Now()
 	snapshotTx, err := db.loadLatestSnapshot(ctx)
 	if err != nil {
@@ -448,11 +467,24 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		)
 		snapshotTx = 0
 	}
-	if snapshotTx != 0 {
+	firstIndex, err := wal.FirstIndex()
+	if err != nil {
 		level.Info(db.logger).Log(
-			"msg", "successfully loaded snapshot",
-			"tx", snapshotTx,
-			"duration", time.Since(snapshotLoadStart),
+			"msg", "failed to get WAL first index",
+			"err", err)
+	}
+	lastIndex, err := wal.LastIndex()
+	if err != nil {
+		level.Info(db.logger).Log(
+			"msg", "failed to get WAL last index",
+			"err", err)
+	}
+	snapshotLogArgs := make([]any, 0)
+	if snapshotTx != 0 {
+		snapshotLogArgs = append(
+			snapshotLogArgs,
+			"snapshot_tx", snapshotTx,
+			"snapshot_load_duration", time.Since(snapshotLoadStart),
 		)
 		if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx); err != nil {
 			// Truncation is best-effort. If it fails, move on.
@@ -461,24 +493,8 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				"err", err,
 				"snapshot_tx", snapshotTx,
 			)
-		} else {
-			level.Info(db.logger).Log(
-				"msg", "truncated snapshots less than loaded snapshot",
-				"snapshot_tx", snapshotTx,
-			)
 		}
-	}
-	level.Info(db.logger).Log("msg", "replaying WAL", "snapshot_tx", snapshotTx)
-
-	{
-		firstIndex, err := wal.FirstIndex()
-		if err != nil {
-			level.Info(db.logger).Log(
-				"msg", "failed to get WAL first index",
-				"err", err)
-		}
-
-		if snapshotTx > firstIndex {
+		if snapshotTx > firstIndex && snapshotTx <= lastIndex {
 			if err := wal.Truncate(snapshotTx); err != nil {
 				// Since this is a best-effort truncation, move on if there is an
 				// error.
@@ -486,14 +502,21 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 					"msg", "WAL truncation after successful snapshot load encountered error",
 					"err", err,
 					"first_index", firstIndex,
+					"last_index", lastIndex,
 					"snapshot_tx", snapshotTx,
 				)
 			} else {
-				level.Info(db.logger).Log(
-					"msg", "WAL truncated at snapshot tx",
-					"snapshot_tx", snapshotTx,
-				)
+				snapshotLogArgs = append(
+					snapshotLogArgs,
+					"wal_truncated", "true",
+					"wal_first_index_pre_truncation", firstIndex)
+				firstIndex = snapshotTx
 			}
+		} else {
+			snapshotLogArgs = append(
+				snapshotLogArgs,
+				"wal_truncated", "false",
+			)
 		}
 	}
 
@@ -555,37 +578,37 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			table, err := db.GetTable(tableName)
 			var tableErr ErrTableNotFound
 			if errors.As(err, &tableErr) {
-				config := NewTableConfig(schema, FromConfig(entry.Config))
-				// TODO: May be we should acquire mutux lock when mutating d.roTables and d.tables?
-				// s.DB creates read only Table instance when BucketStore is configured.
-				// Make sure to use the existing Table instace instead of creating new one to avoid dangling instance.
-				table, ok := db.roTables[tableName]
-				if ok {
-					delete(db.roTables, tableName)
-					table.config = config
-				} else {
-					table, err = newTable(
-						db,
-						tableName,
-						config,
-						db.reg,
-						db.logger,
-						db.tracer,
-						wal,
-					)
-				}
-				if err != nil {
-					return fmt.Errorf("instantiate table: %w", err)
-				}
+				return func() error {
+					db.mtx.Lock()
+					defer db.mtx.Unlock()
+					config := NewTableConfig(schema, FromConfig(entry.Config))
+					if _, ok := db.roTables[tableName]; ok {
+						table, err = db.promoteReadOnlyTableLocked(tableName, config)
+						if err != nil {
+							return fmt.Errorf("promoting read only table: %w", err)
+						}
+					} else {
+						table, err = newTable(
+							db,
+							tableName,
+							config,
+							db.reg,
+							db.logger,
+							db.tracer,
+							wal,
+						)
+						if err != nil {
+							return fmt.Errorf("instantiate table: %w", err)
+						}
+					}
 
-				table.active, err = newTableBlock(table, 0, tx, id)
-				if err != nil {
-					return err
-				}
-				db.mtx.Lock()
-				db.tables[tableName] = table
-				db.mtx.Unlock()
-				return nil
+					table.active, err = newTableBlock(table, 0, tx, id)
+					if err != nil {
+						return err
+					}
+					db.tables[tableName] = table
+					return nil
+				}()
 			}
 			if err != nil {
 				return fmt.Errorf("get table: %w", err)
@@ -594,7 +617,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			// If we get to this point it means a block was finished but did
 			// not get persisted.
 			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(ctx, table.active)
+			go table.writeBlock(table.active, false /* snapshotDB */)
 
 			protoEqual := false
 			switch schema.(type) {
@@ -681,11 +704,29 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
-	if lastTx > snapshotTx {
+	if lastTx >= snapshotTx {
 		db.tx.Store(lastTx)
 		db.highWatermark.Store(lastTx)
 	}
-	level.Info(db.logger).Log("msg", "replaying WAL completed", "duration", time.Since(start))
+	if lastTxn := db.tx.Load(); lastTxn != lastIndex {
+		level.Warn(db.logger).Log(
+			"msg", "WAL last index is != db last txn, won't be able to log records to WAL",
+			"wal_last_index", lastIndex,
+			"last_tx", lastTxn,
+		)
+	}
+
+	level.Info(db.logger).Log(
+		append(
+			[]any{
+				"msg", "db recovered",
+				"wal_first_index", firstIndex,
+				"wal_last_index", lastIndex,
+				"wal_replay_duration", time.Since(start),
+			},
+			snapshotLogArgs...,
+		)...,
+	)
 	return nil
 }
 
@@ -693,18 +734,27 @@ func (db *DB) Close() error {
 	for _, table := range db.tables {
 		table.close()
 		if db.bucket != nil {
-			table.writeBlock(context.TODO(), table.ActiveBlock())
+			// Write the blocks but no snapshots since they are long-running
+			// jobs.
+			table.writeBlock(table.ActiveBlock(), false /* snapshotDB */)
 		}
 	}
 
 	if db.bucket != nil {
-		// If we've successfully persisted all the table blocks we can remove the wal
+		// If we've successfully persisted all the table blocks we can remove
+		// the wal and snapshots.
+		if err := os.RemoveAll(db.snapshotsDir()); err != nil {
+			return err
+		}
 		if err := os.RemoveAll(db.walDir()); err != nil {
 			return err
 		}
 	}
+	return db.closeInternal()
+}
 
-	if db.columnStore.enableWAL {
+func (db *DB) closeInternal() error {
+	if db.columnStore.enableWAL && db.wal != nil {
 		if err := db.wal.Close(); err != nil {
 			return err
 		}
@@ -766,6 +816,25 @@ func (db *DB) readOnlyTable(name string) (*Table, error) {
 	return table, nil
 }
 
+// promoteReadOnlyTableLocked promotes a read-only table to a read-write table.
+// The read-write table is returned but not added to the database. Callers must
+// do so.
+// db.mtx must be held while calling this method.
+func (db *DB) promoteReadOnlyTableLocked(name string, config *tablepb.TableConfig) (*Table, error) {
+	table, ok := db.roTables[name]
+	if !ok {
+		return nil, fmt.Errorf("read only table %s not found", name)
+	}
+	schema, err := schemaFromTableConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	table.config = config
+	table.schema = schema
+	delete(db.roTables, name)
+	return table, nil
+}
+
 func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	if !validateName(name) {
 		return nil, errors.New("invalid table name")
@@ -788,15 +857,12 @@ func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	}
 
 	// Check if this table exists as a read only table
-	table, ok = db.roTables[name]
-	if ok {
+	if _, ok := db.roTables[name]; ok {
 		var err error
-		table.config = config
-		table.schema, err = schemaFromTableConfig(config)
+		table, err = db.promoteReadOnlyTableLocked(name, config)
 		if err != nil {
 			return nil, err
 		}
-		delete(db.roTables, name)
 	} else {
 		var err error
 		table, err = newTable(

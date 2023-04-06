@@ -20,3 +20,20 @@ select timestamp where timestamp >= 2
 ----
 2
 3
+
+# projection of null column
+exec
+select value where labels.label5 = null and labels.label3 != null
+----
+2
+
+# inverse projection of null column
+exec
+select value where labels.label5 != null and labels.label3 != null
+----
+
+# multi null column projection
+exec
+select value where (labels.label3 = 'value3' and labels.label5 = null) or (labels.label3 = null and labels.label5 = 'a')
+----
+2

@@ -49,6 +49,15 @@ func (e BinaryScalarExpr) Eval(p Particulate) (bool, error) {
 	// existant columns or null values. I'm pretty sure this is completely
 	// wrong and needs per operation, per type specific behavior.
 	if !exists {
+		if e.Right.IsNull() {
+			switch e.Op {
+			case logicalplan.OpEq:
+				return true, nil
+			case logicalplan.OpNotEq:
+				return false, nil
+			}
+		}
+
 		// only handling string for now.
 		if e.Right.Kind() == parquet.ByteArray || e.Right.Kind() == parquet.FixedLenByteArray {
 			switch {
@@ -66,20 +75,27 @@ func (e BinaryScalarExpr) Eval(p Particulate) (bool, error) {
 
 var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 
+// BinaryScalarOperation applies the given operator between the given column
+// chunk and value. If BinaryScalarOperation returns true, it means that the
+// operator may be satisfied by at least one value in the column chunk. If it
+// returns false, it means that the operator will definitely not be satisfied
+// by any value in the column chunk.
 func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Op) (bool, error) {
 	switch operator {
 	case logicalplan.OpEq:
-		if right == parquet.NullValue() {
-			// Assume all ColumnChunk have NULLs for now.
-			// They will be read and added to a bitmap later on.
-			// TODO: Maybe there's a nice way of reading the NumNulls from the Pages, for me they always return 0
-			return true, nil
+		numNulls := NullCount(left)
+		if right.IsNull() {
+			return numNulls > 0, nil
+		}
+		if numNulls == left.NumValues() {
+			// No non-null values, so there is definitely not a match.
+			return false, nil
 		}
 
 		bloomFilter := left.BloomFilter()
 		if bloomFilter == nil {
 			// If there is no bloom filter then we cannot make a statement about true negative, instead check the min max values of the column chunk
-			return compare(right, Max(left)) <= 0 || compare(right, Min(left)) >= -1, nil
+			return compare(right, Max(left)) <= 0 && compare(right, Min(left)) >= 0, nil
 		}
 
 		ok, err := bloomFilter.Check(right)
@@ -123,6 +139,15 @@ func Min(chunk parquet.ColumnChunk) parquet.Value {
 	}
 
 	return min
+}
+
+func NullCount(chunk parquet.ColumnChunk) int64 {
+	columnIndex := chunk.ColumnIndex()
+	numNulls := int64(0)
+	for i := 0; i < columnIndex.NumPages(); i++ {
+		numNulls += columnIndex.NullCount(i)
+	}
+	return numNulls
 }
 
 // Max returns the maximum value found in the column chunk across all pages.

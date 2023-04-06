@@ -42,6 +42,7 @@ import (
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
@@ -174,6 +175,7 @@ type WAL interface {
 	Replay(tx uint64, handler wal.ReplayHandlerFunc) error
 	Truncate(tx uint64) error
 	FirstIndex() (uint64, error)
+	LastIndex() (uint64, error)
 }
 
 type TableBlock struct {
@@ -192,6 +194,7 @@ type TableBlock struct {
 	index            *atomic.Pointer[btree.BTree] // *btree.BTree
 
 	pendingWritersWg sync.WaitGroup
+	pendingReadersWg sync.WaitGroup
 
 	mtx *sync.RWMutex
 }
@@ -373,6 +376,11 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 func (t *Table) dropPendingBlock(block *TableBlock) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
+	delete(t.pendingBlocks, block)
+
+	// Wait for outstanding readers to finish with the block before releasing underlying resources.
+	block.pendingReadersWg.Wait()
+
 	block.Index().Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
@@ -383,10 +391,9 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 		})
 		return true
 	})
-	delete(t.pendingBlocks, block)
 }
 
-func (t *Table) writeBlock(ctx context.Context, block *TableBlock) {
+func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 	block.pendingWritersWg.Wait()
 
@@ -445,7 +452,7 @@ func (t *Table) writeBlock(ctx context.Context, block *TableBlock) {
 	}
 	t.mtx.Unlock()
 	t.db.maintainWAL()
-	if t.db.columnStore.snapshotTriggerSize != 0 && t.db.columnStore.enableWAL {
+	if snapshotDB && t.db.columnStore.snapshotTriggerSize != 0 && t.db.columnStore.enableWAL {
 		func() {
 			if !t.db.snapshotInProgress.CompareAndSwap(false, true) {
 				// Snapshot already in progress. This could lead to duplicate
@@ -458,7 +465,12 @@ func (t *Table) writeBlock(ctx context.Context, block *TableBlock) {
 			// This snapshot snapshots the new, active, table block. Refer to
 			// the snapshot design document for more details as to why this
 			// snapshot is necessary.
-			if err := t.db.snapshotAtTX(ctx, tx); err != nil {
+			// context.Background is used here for the snapshot since callers
+			// might cancel the context when the write is finished but the
+			// snapshot is not. Note that block.Persist does the same.
+			// TODO(asubiotto): Eventually we should register a cancel function
+			// that is called with a grace period on db.Close.
+			if err := t.db.snapshotAtTX(context.Background(), tx); err != nil {
 				level.Error(t.logger).Log(
 					"msg", "failed to write snapshot on block rotation",
 					"err", err,
@@ -493,7 +505,7 @@ func (t *Table) RotateBlock(ctx context.Context, block *TableBlock) error {
 	t.metrics.numParts.Set(float64(0))
 
 	t.pendingBlocks[block] = struct{}{}
-	go t.writeBlock(ctx, block)
+	go t.writeBlock(block, true /* snapshotDB */)
 
 	return nil
 }
@@ -1151,18 +1163,13 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 				}
 				t.table.metrics.granulesCreated.Inc()
 
-				for {
-					old := t.Index()
-					t.mtx.Lock()
-					newIndex := old.Clone()
-					t.mtx.Unlock()
-
-					newIndex.ReplaceOrInsert(g)
-					if t.index.CompareAndSwap(old, newIndex) {
-						t.table.metrics.numParts.Add(float64(1))
-						break
-					}
+				if err := t.updateIndex(func(index *btree.BTree) error {
+					index.ReplaceOrInsert(g)
+					return nil
+				}); err != nil {
+					return err
 				}
+				t.table.metrics.numParts.Add(float64(1))
 			} else {
 				if _, err := granule.Append(part); err != nil {
 					return fmt.Errorf("failed to add part to granule: %w", err)
@@ -1178,6 +1185,27 @@ func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.Seri
 
 	t.table.metrics.numParts.Add(float64(len(list)))
 	return nil
+}
+
+// updateIndex updates that TableBlock's index in a thread safe manner to the result of calling the update fn with the current index.
+func (t *TableBlock) updateIndex(update func(index *btree.BTree) error) error {
+	var replaceErr error
+	for ok := false; !ok; {
+		ok = func() bool {
+			old := t.Index()
+			t.mtx.Lock()
+			newIndex := old.Clone()
+			t.mtx.Unlock()
+
+			if err := update(newIndex); err != nil {
+				replaceErr = err
+				return true
+			}
+
+			return t.index.CompareAndSwap(old, newIndex)
+		}()
+	}
+	return replaceErr
 }
 
 // RowGroupIterator iterates in order over all granules in the table.
@@ -1216,8 +1244,9 @@ func (t *TableBlock) Index() *btree.BTree {
 
 func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) error {
 	ps := t.table.schema
-	ri := int64(0)
-	row, err := pqarrow.RecordToDynamicRow(ps, record, int(ri))
+	numRows := record.NumRows()
+	idx := numRows - 1
+	row, err := pqarrow.RecordToDynamicRow(ps, record, int(idx))
 	if err != nil {
 		if err == io.EOF {
 			level.Debug(t.logger).Log("msg", "inserted record with no rows")
@@ -1226,74 +1255,73 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 		return err
 	}
 
-	var prev *Granule
+	// recordSizePerRow is the rough estimate of the size of each row in the record.
+	recordSizePerRow := int(arrowutils.RecordSize(record) / int64(numRows))
+
 	var ascendErr error
-	index := t.Index()
-	index.Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-
-		for {
-			if t.table.schema.RowLessThan(row, g.Least()) {
-				if prev != nil {
-					if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, ri+1), t.table.schema)); err != nil {
-						ascendErr = err
-						return false
-					}
-					ri++
-					t.table.metrics.numParts.Add(float64(1))
-
-					row, err = pqarrow.RecordToDynamicRow(ps, record, int(ri))
-					if err != nil {
-						ascendErr = err
-						return false
-					}
-
-					continue
+	t.Index().DescendLessOrEqual(
+		btreeComparableDynamicRow{
+			schema:     ps,
+			DynamicRow: row,
+		},
+		func(i btree.Item) bool {
+			g := i.(*Granule)
+			// Descend rows to insert until we find a row that does not belong in this granule.
+			n := 0
+			for ; idx >= 0; idx-- {
+				row, err := pqarrow.RecordToDynamicRow(ps, record, int(idx))
+				if err != nil {
+					ascendErr = err
+					return false
 				}
-				return true
+				if ps.RowLessThan(row, g.Least()) {
+					if n > 0 {
+						if _, err := g.Append(parts.NewArrowPart(tx, record.NewSlice(idx+1, idx+1+int64(n)), recordSizePerRow*n, ps)); err != nil {
+							ascendErr = err
+							return false
+						}
+						t.table.metrics.numParts.Add(float64(1))
+					}
+					// Go on to the next granule.
+					return true
+				}
+				n++
 			}
-
-			// stop at the first granule where this is not the least
-			// this might be the correct granule, but we need to check that it isn't the next granule
-			prev = g
-			return true // continue btree iteration
-		}
-	})
-	if ascendErr != nil {
-		if ascendErr == io.EOF {
-			return nil
-		}
-		return ascendErr
-	}
-
-	if prev == nil { // No suitable granule was found; insert new granule
-		g, err := NewGranule(t.table.schema, parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.schema))
-		if err != nil {
-			return fmt.Errorf("new granule failed: %w", err)
-		}
-		t.table.metrics.granulesCreated.Inc()
-
-		for {
-			t.mtx.Lock()
-			newIdx := index.Clone() // NOTE: this needs to be an index swap to avoid losing the new granule during a compaction
-			t.mtx.Unlock()
-
-			newIdx.ReplaceOrInsert(g)
-
-			if t.index.CompareAndSwap(index, newIdx) {
+			// If we got here, all rows were exhaused in the loop above.
+			if n > 0 {
+				if _, err := g.Append(parts.NewArrowPart(tx, record.NewSlice(idx+1, idx+1+int64(n)), recordSizePerRow*n, ps)); err != nil {
+					ascendErr = err
+					return false
+				}
 				t.table.metrics.numParts.Add(float64(1))
-				return nil
 			}
-
-			index = t.Index()
-		}
-	}
-
-	// Append to the last valid granule
-	if _, err := prev.Append(parts.NewArrowPart(tx, record.NewSlice(ri, record.NumRows()), t.table.schema)); err != nil && err != io.EOF {
+			return false
+		},
+	)
+	if ascendErr != nil {
 		return err
 	}
+
+	if idx < 0 {
+		// All rows exhausted.
+		t.size.Add(arrowutils.RecordSize(record))
+		return nil
+	}
+
+	g, err := NewGranule(ps, parts.NewArrowPart(tx, record.NewSlice(0, idx+1), recordSizePerRow*int(idx+1), ps))
+	if err != nil {
+		return fmt.Errorf("new granule failed: %w", err)
+	}
+
+	if err := t.updateIndex(func(index *btree.BTree) error {
+		index.ReplaceOrInsert(g)
+		return nil
+	}); err != nil {
+		return err
+	}
+	t.table.metrics.granulesCreated.Inc()
 	t.table.metrics.numParts.Add(float64(1))
+	t.size.Add(arrowutils.RecordSize(record))
 	return nil
 }
 
@@ -1429,7 +1457,8 @@ func (t *TableBlock) abortCompaction(granule *Granule) {
 func (t *TableBlock) Serialize(writer io.Writer) error {
 	var ascendErr error
 	dynCols := map[string][]string{} // NOTE: it would be nice if we didn't have to go back and find all the dynamic columns...
-	t.Index().Ascend(func(i btree.Item) bool {
+	index := t.Index()
+	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
 		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
@@ -1465,7 +1494,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	}
 
 	// Merge all parts in a Granule and write that granule to the file
-	t.Index().Ascend(func(i btree.Item) bool {
+	index.Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
 
 		// collect parts based on compaction level; we do this because level1 parts are already non-overlapping.
@@ -1611,6 +1640,8 @@ func (p *parquetRowWriter) close() error {
 	return p.w.Close()
 }
 
+// memoryBlocks collects the active and pending blocks that are currently resident in memory.
+// The pendingReadersWg.Done() function must be called on all blocks returned once processing is finished.
 func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
@@ -1620,8 +1651,10 @@ func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
 	}
 
 	lastReadBlockTimestamp := t.active.ulid.Time()
+	t.active.pendingReadersWg.Add(1)
 	memoryBlocks := []*TableBlock{t.active}
 	for block := range t.pendingBlocks {
+		block.pendingReadersWg.Add(1)
 		memoryBlocks = append(memoryBlocks, block)
 
 		if block.ulid.Time() < lastReadBlockTimestamp {
@@ -1652,6 +1685,11 @@ func (t *Table) collectRowGroups(
 	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
 	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
+	defer func() {
+		for _, block := range memoryBlocks {
+			block.pendingReadersWg.Done()
+		}
+	}()
 	for _, block := range memoryBlocks {
 		span.AddEvent("memoryBlock")
 		if err := block.RowGroupIterator(ctx, tx, filter, rowGroups); err != nil {

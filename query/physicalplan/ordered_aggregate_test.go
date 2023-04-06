@@ -221,7 +221,7 @@ func TestOrderedAggregate(t *testing.T) {
 							groupBuilders[i].AppendNull()
 							continue
 						}
-						groupBuilders[i].Append([]byte(v))
+						require.NoError(t, groupBuilders[i].Append([]byte(v)))
 					}
 					a := groupBuilders[i].NewArray()
 					recordFields = append(
@@ -304,7 +304,7 @@ func TestOrderedAggregateDynCols(t *testing.T) {
 		groupBuilder := builder.NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
 		valBuilder := builder.NewOptInt64Builder(arrow.PrimitiveTypes.Int64)
 		for j := 0; j < numVals; j++ {
-			groupBuilder.Append([]byte("group"))
+			require.NoError(t, groupBuilder.Append([]byte("group")))
 			valBuilder.Append(1)
 		}
 

@@ -458,7 +458,7 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 
 	// Set the newGranules pointer, so new writes will propogate into these new
 	// granules.
-	granule.newGranules = newGranules
+	granule.newGranules.Store(&newGranules)
 
 	// Mark compaction complete in the granule; this will cause new writes to
 	// start using the newGranules pointer. Iterate over the resulting part
@@ -475,32 +475,26 @@ func (t *TableBlock) compactGranule(granule *Granule, cfg *CompactionConfig) (bo
 		return false, fmt.Errorf("add part to granules: %w", addPartErr)
 	}
 
-	for {
-		index := t.Index()
-		t.mtx.Lock()
-		newIdx := index.Clone() // TODO(THOR): we can't clone concurrently
-		t.mtx.Unlock()
-
-		if newIdx.Delete(granule) == nil {
+	if err := t.updateIndex(func(index *btree.BTree) error {
+		if index.Delete(granule) == nil {
 			level.Error(t.logger).Log("msg", "failed to delete granule during split")
-			return false, fmt.Errorf("failed to delete granule")
+			return fmt.Errorf("failed to delete granule")
 		}
 
 		for _, g := range newGranules {
-			if dupe := newIdx.ReplaceOrInsert(g); dupe != nil {
+			if dupe := index.ReplaceOrInsert(g); dupe != nil {
 				level.Error(t.logger).Log("duplicate insert performed")
 			}
 		}
 
-		// Point to the new index.
-		if t.index.CompareAndSwap(index, newIdx) {
-			sizeDiff := int64(stats.level1SizeAfter) - (stats.level0SizeBefore + stats.level1SizeBefore)
-			t.size.Add(sizeDiff)
-
-			t.table.metrics.numParts.Add(float64(int(stats.level1CountAfter) - partsBefore))
-			break
-		}
+		return nil
+	}); err != nil {
+		return false, err
 	}
+	sizeDiff := int64(stats.level1SizeAfter) - (stats.level0SizeBefore + stats.level1SizeBefore)
+	t.size.Add(sizeDiff)
+	t.table.metrics.numParts.Add(float64(int(stats.level1CountAfter) - partsBefore))
+
 	stats.totalDuration = time.Since(start)
 	stats.recordAndLog(t.table.metrics.compactionMetrics, t.logger)
 	// Release all records in L0 parts

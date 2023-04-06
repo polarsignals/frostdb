@@ -41,14 +41,29 @@ func (e BinaryScalarExpr) Eval(r arrow.Record) (*Bitmap, error) {
 		return nil, err
 	}
 
-	// TODO: This needs a bunch of test cases to validate edge cases like non
-	// existant columns or null values. I'm pretty sure this is completely
-	// wrong and needs per operation, per type specific behavior.
 	if !exists {
 		res := NewBitmap()
-		for i := uint32(0); i < uint32(r.NumRows()); i++ {
-			res.Add(i)
+		switch e.Op {
+		case logicalplan.OpEq:
+			if e.Right.IsValid() { // missing column; looking for == non-nil
+				switch t := e.Right.(type) {
+				case *scalar.Binary:
+					if t.String() != "" { // treat empty string equivalent to nil
+						return res, nil
+					}
+				case *scalar.String:
+					if t.String() != "" { // treat empty string equivalent to nil
+						return res, nil
+					}
+				}
+			}
+		case logicalplan.OpNotEq: // missing column; looking for != nil
+			if !e.Right.IsValid() {
+				return res, nil
+			}
 		}
+
+		res.AddRange(0, uint64(r.NumRows()))
 		return res, nil
 	}
 

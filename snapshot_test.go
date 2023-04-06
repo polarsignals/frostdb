@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"math"
 	"os"
 	"strconv"
 	"testing"
@@ -26,6 +27,7 @@ func TestSnapshot(t *testing.T) {
 		c, err := New(
 			WithStoragePath(t.TempDir()),
 			WithWAL(),
+			WithSnapshotTriggerSize(math.MaxInt64),
 		)
 		require.NoError(t, err)
 		defer c.Close()
@@ -45,6 +47,7 @@ func TestSnapshot(t *testing.T) {
 		c, err := New(
 			WithStoragePath(t.TempDir()),
 			WithWAL(),
+			WithSnapshotTriggerSize(math.MaxInt64),
 		)
 		require.NoError(t, err)
 		defer c.Close()
@@ -141,6 +144,7 @@ func TestSnapshot(t *testing.T) {
 		c, err := New(
 			WithStoragePath(t.TempDir()),
 			WithWAL(),
+			WithSnapshotTriggerSize(math.MaxInt64),
 		)
 		require.NoError(t, err)
 		defer c.Close()

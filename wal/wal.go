@@ -50,6 +50,10 @@ func (w *NopWAL) FirstIndex() (uint64, error) {
 	return 0, nil
 }
 
+func (w *NopWAL) LastIndex() (uint64, error) {
+	return 0, nil
+}
+
 type fileWALMetrics struct {
 	recordsLogged        prometheus.Counter
 	failedLogs           prometheus.Counter
@@ -62,9 +66,6 @@ type FileWAL struct {
 	logger log.Logger
 	path   string
 	log    *wal.Log
-
-	nextTx uint64
-	txmtx  *sync.Mutex
 
 	metrics        *fileWALMetrics
 	logRequestCh   chan *logRequest
@@ -128,8 +129,6 @@ func Open(
 		logger:       logger,
 		path:         path,
 		log:          log,
-		nextTx:       1,
-		txmtx:        &sync.Mutex{},
 		logRequestCh: make(chan *logRequest),
 		logRequestPool: &sync.Pool{
 			New: func() any {
@@ -213,10 +212,17 @@ func (w *FileWAL) run(ctx context.Context) {
 			}
 			return
 		case <-ticker.C:
-			w.txmtx.Lock()
-			nextTx := w.nextTx
-			w.txmtx.Unlock()
 			batch := batch[:0]
+			nextTx, err := w.log.LastIndex()
+			if err != nil {
+				// TODO(asubiotto): Should we do something else here? This
+				// most likely indicates that the WAL is corrupt.
+				level.Error(w.logger).Log(
+					"msg", "WAL failed to get last index",
+					"err", err,
+				)
+			}
+			nextTx++
 			w.mtx.Lock()
 			for w.queue.Len() > 0 {
 				if minTx := (*w.queue)[0].tx; minTx != nextTx {
@@ -247,8 +253,7 @@ func (w *FileWAL) run(ctx context.Context) {
 				walBatch.Write(r.tx, r.data)
 			}
 
-			err := w.log.WriteBatch(walBatch)
-			if err != nil {
+			if err := w.log.WriteBatch(walBatch); err != nil {
 				w.metrics.failedLogs.Add(float64(len(batch)))
 				lastIndex, lastIndexErr := w.log.LastIndex()
 				level.Error(w.logger).Log(
@@ -267,10 +272,6 @@ func (w *FileWAL) run(ctx context.Context) {
 			for _, r := range batch {
 				w.logRequestPool.Put(r)
 			}
-
-			w.txmtx.Lock()
-			w.nextTx = nextTx
-			w.txmtx.Unlock()
 		}
 	}
 }
@@ -413,13 +414,17 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 	defer func() {
 		// recover a panic of reading a transaction. Truncate the wal to the last valid transaction.
 		if r := recover(); r != nil {
-			level.Error(w.logger).Log("msg", "replaying WAL failed", "path", w.path, "first_index", tx, "last_index", lastIndex, "offending_index", tx, "err", err)
+			level.Error(w.logger).Log(
+				"msg", "replaying WAL failed",
+				"path", w.path,
+				"first_index", logFirstIndex,
+				"last_index", lastIndex,
+				"offending_index", tx,
+				"err", r,
+			)
 			if err = w.log.TruncateBack(tx - 1); err != nil {
 				return
 			}
-			w.txmtx.Lock()
-			w.nextTx = tx
-			w.txmtx.Unlock()
 		}
 	}()
 
@@ -439,10 +444,6 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 			return fmt.Errorf("call replay handler: %w", err)
 		}
 	}
-
-	w.txmtx.Lock()
-	w.nextTx = lastIndex + 1
-	w.txmtx.Unlock()
 
 	return nil
 }
