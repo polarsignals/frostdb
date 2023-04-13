@@ -17,7 +17,6 @@ import (
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
-	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
@@ -34,8 +33,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 	logger := newTestLogger(t)
 
 	dir := t.TempDir()
-	bucket, err := filesystem.NewBucket(dir)
-	require.NoError(t, err)
+	bucket := objstore.NewInMemBucket()
 
 	c, err := New(
 		WithLogger(logger),
@@ -293,9 +291,7 @@ func Test_DB_WithStorage(t *testing.T) {
 		dynparquet.SampleDefinition(),
 	)
 
-	bucket, err := filesystem.NewBucket(t.TempDir())
-	require.NoError(t, err)
-
+	bucket := objstore.NewInMemBucket()
 	logger := newTestLogger(t)
 
 	c, err := New(
@@ -381,12 +377,7 @@ func Test_DB_ColdStart(t *testing.T) {
 		dynparquet.SampleDefinition(),
 	)
 
-	bucket, err := filesystem.NewBucket(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(sanitize(t.Name()))
-	})
-
+	bucket := objstore.NewInMemBucket()
 	logger := newTestLogger(t)
 
 	tests := map[string]struct {
@@ -555,11 +546,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 
 	config := NewTableConfig(schemaDef)
 
-	bucket, err := filesystem.NewBucket(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(t.Name())
-	})
+	bucket := objstore.NewInMemBucket()
 
 	logger := newTestLogger(t)
 
@@ -649,12 +636,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 		dynparquet.SampleDefinition(),
 	)
 
-	bucket, err := filesystem.NewBucket(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(sanitize(t.Name()))
-	})
-
+	bucket := objstore.NewInMemBucket()
 	logger := newTestLogger(t)
 
 	tests := map[string]struct {
@@ -928,12 +910,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 		dynparquet.SampleDefinition(),
 	)
 
-	bucket, err := filesystem.NewBucket(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(sanitize(t.Name()))
-	})
-
+	bucket := objstore.NewInMemBucket()
 	logger := newTestLogger(t)
 
 	now := time.Now()
@@ -1376,8 +1353,7 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 	logger := newTestLogger(t)
 
 	dir := t.TempDir()
-	bucket, err := filesystem.NewBucket(dir)
-	require.NoError(t, err)
+	bucket := objstore.NewInMemBucket()
 
 	c, err := New(
 		WithLogger(logger),
@@ -1603,9 +1579,7 @@ func TestDBRecover(t *testing.T) {
 	// WithBucket ensures normal behavior of recovery in case of graceful
 	// shutdown of a column store with bucket storage.
 	t.Run("WithBucket", func(t *testing.T) {
-		bucket, err := filesystem.NewBucket(t.TempDir())
-		require.NoError(t, err)
-
+		bucket := objstore.NewInMemBucket()
 		dir := setup(t, true, WithBucketStorage(bucket))
 
 		c, err := New(

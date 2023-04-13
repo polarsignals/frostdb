@@ -20,7 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
-	"github.com/thanos-io/objstore/providers/filesystem"
+	"github.com/thanos-io/objstore"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
@@ -871,9 +871,7 @@ func Test_DoubleTable(t *testing.T) {
 	}
 	config := NewTableConfig(def)
 
-	bucket, err := filesystem.NewBucket(t.TempDir())
-	require.NoError(t, err)
-
+	bucket := objstore.NewInMemBucket()
 	logger := newTestLogger(t)
 	c, err := New(
 		WithLogger(logger),
