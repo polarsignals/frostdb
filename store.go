@@ -20,6 +20,9 @@ import (
 	"github.com/polarsignals/frostdb/storage"
 )
 
+// DefaultBlockReaderLimit is the concurrency limit for reading blocks.
+const DefaultBlockReaderLimit = 10
+
 // Persist uploads the block to the underlying bucket.
 func (t *TableBlock) Persist() error {
 	if len(t.table.db.sinks) == 0 {
@@ -84,7 +87,7 @@ func NewDefaultObjstoreBucket(b objstore.Bucket, options ...DefaultObjstoreBucke
 		Bucket:           storage.NewBucketReaderAt(b),
 		tracer:           trace.NewNoopTracerProvider().Tracer(""),
 		logger:           log.NewNopLogger(),
-		blockReaderLimit: 10,
+		blockReaderLimit: DefaultBlockReaderLimit,
 	}
 
 	for _, option := range options {
