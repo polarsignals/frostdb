@@ -288,6 +288,7 @@ type DB struct {
 	storagePath string
 	wal         WAL
 
+	// The database supports multiple data sources and sinks.
 	sources []DataSource
 	sinks   []DataSink
 
@@ -310,7 +311,7 @@ type DB struct {
 // DataSource is remote source of data that can be queried.
 type DataSource interface {
 	fmt.Stringer
-	Scan(ctx context.Context, prefix string, schema *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error
+	Scan(ctx context.Context, prefix string, schema *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, callback func(context.Context, any) error) error
 	Prefixes(ctx context.Context, prefix string) ([]string, error)
 }
 

@@ -117,7 +117,7 @@ func (b *DefaultObjstoreBucket) String() string {
 	return b.Bucket.Name()
 }
 
-func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, stream chan<- any) error {
+func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, callback func(context.Context, any) error) error {
 	ctx, span := b.tracer.Start(ctx, "Source/RowGroupIterator")
 	span.SetAttributes(attribute.Int64("lastBlockTimestamp", int64(lastBlockTimestamp)))
 	defer span.End()
@@ -132,7 +132,7 @@ func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynp
 	errg.SetLimit(int(b.blockReaderLimit))
 	err = b.Iter(ctx, prefix, func(blockDir string) error {
 		n++
-		errg.Go(func() error { return b.ProcessFile(ctx, blockDir, lastBlockTimestamp, f, stream) })
+		errg.Go(func() error { return b.ProcessFile(ctx, blockDir, lastBlockTimestamp, f, callback) })
 		return nil
 	})
 	if err != nil {
@@ -166,7 +166,7 @@ func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName str
 }
 
 // ProcessFile will process a bucket block parquet file.
-func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, rowGroups chan<- any) error {
+func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, callback func(context.Context, any) error) error {
 	ctx, span := b.tracer.Start(ctx, "Source/IterateBucketBlocks/Iter/ProcessFile")
 	defer span.End()
 
@@ -200,10 +200,10 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 		return err
 	}
 
-	return b.filterRowGroups(ctx, buf, filter, rowGroups)
+	return b.filterRowGroups(ctx, buf, filter, callback)
 }
 
-func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, rowGroups chan<- any) error {
+func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, callback func(context.Context, any) error) error {
 	_, span := b.tracer.Start(ctx, "Source/filterRowGroups")
 	defer span.End()
 	span.SetAttributes(attribute.Int("row_groups", buf.NumRowGroups()))
@@ -215,7 +215,9 @@ func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynpar
 			return err
 		}
 		if mayContainUsefulData {
-			rowGroups <- rg
+			if err := callback(ctx, rg); err != nil {
+				return err
+			}
 		}
 	}
 
