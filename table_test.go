@@ -872,10 +872,11 @@ func Test_DoubleTable(t *testing.T) {
 	config := NewTableConfig(def)
 
 	bucket := objstore.NewInMemBucket()
+	sinksource := NewDefaultObjstoreBucket(bucket)
 	logger := newTestLogger(t)
 	c, err := New(
 		WithLogger(logger),
-		WithBucketStorage(bucket),
+		WithReadWriteStorage(sinksource),
 	)
 	require.NoError(t, err)
 	defer c.Close()
@@ -1071,7 +1072,6 @@ func Test_Table_NestedSchema(t *testing.T) {
 				records++
 				require.Equal(t, int64(1), ar.NumRows())
 				require.Equal(t, int64(3), ar.NumCols())
-				fmt.Println(ar)
 				ar.Retain()
 				r = ar
 				return nil

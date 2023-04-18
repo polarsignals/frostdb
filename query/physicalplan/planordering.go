@@ -71,6 +71,10 @@ func (f preExprVisitorFunc) PreVisit(expr logicalplan.Expr) bool {
 	return f(expr)
 }
 
+func (f preExprVisitorFunc) Visit(_ logicalplan.Expr) bool {
+	return true
+}
+
 func (f preExprVisitorFunc) PostVisit(_ logicalplan.Expr) bool {
 	return true
 }

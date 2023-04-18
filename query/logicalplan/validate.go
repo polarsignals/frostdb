@@ -401,6 +401,10 @@ func (v *findExpressionForTypeVisitor) PreVisit(expr Expr) bool {
 	return true
 }
 
+func (v *findExpressionForTypeVisitor) Visit(expr Expr) bool {
+	return true
+}
+
 func (v *findExpressionForTypeVisitor) PostVisit(expr Expr) bool {
 	found := v.exprType == reflect.TypeOf(expr)
 	if found {

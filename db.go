@@ -21,7 +21,6 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/thanos-io/objstore"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
@@ -37,25 +36,26 @@ import (
 )
 
 type ColumnStore struct {
-	mtx                  *sync.RWMutex
-	dbs                  map[string]*DB
-	reg                  prometheus.Registerer
-	logger               log.Logger
-	tracer               trace.Tracer
-	granuleSizeBytes     int64
-	activeMemorySize     int64
-	storagePath          string
-	bucket               storage.Bucket
-	ignoreStorageOnQuery bool
-	enableWAL            bool
-	compactionConfig     *CompactionConfig
-	snapshotTriggerSize  int64
-	metrics              metrics
+	mtx                 *sync.RWMutex
+	dbs                 map[string]*DB
+	reg                 prometheus.Registerer
+	logger              log.Logger
+	tracer              trace.Tracer
+	granuleSizeBytes    int64
+	activeMemorySize    int64
+	storagePath         string
+	enableWAL           bool
+	compactionConfig    *CompactionConfig
+	snapshotTriggerSize int64
+	metrics             metrics
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
 	// splitSize is the number of new granules that are created when granules are split (default =2)
 	splitSize int
+
+	sources []DataSource
+	sinks   []DataSink
 }
 
 type metrics struct {
@@ -163,16 +163,24 @@ func WithSplitSize(size int) Option {
 	}
 }
 
-func WithBucketStorage(bucket objstore.Bucket) Option {
+func WithReadWriteStorage(ds DataSinkSource) Option {
 	return func(s *ColumnStore) error {
-		s.bucket = storage.NewBucketReaderAt(bucket)
+		s.sources = append(s.sources, ds)
+		s.sinks = append(s.sinks, ds)
 		return nil
 	}
 }
 
-func WithStorage(bucket storage.Bucket) Option {
+func WithReadOnlyStorage(ds DataSource) Option {
 	return func(s *ColumnStore) error {
-		s.bucket = bucket
+		s.sources = append(s.sources, ds)
+		return nil
+	}
+}
+
+func WithWriteOnlyStorage(ds DataSink) Option {
+	return func(s *ColumnStore) error {
+		s.sinks = append(s.sinks, ds)
 		return nil
 	}
 }
@@ -187,14 +195,6 @@ func WithWAL() Option {
 func WithStoragePath(path string) Option {
 	return func(s *ColumnStore) error {
 		s.storagePath = path
-		return nil
-	}
-}
-
-// WithIgnoreStorageOnQuery storage paths aren't included in queries.
-func WithIgnoreStorageOnQuery() Option {
-	return func(s *ColumnStore) error {
-		s.ignoreStorageOnQuery = true
 		return nil
 	}
 }
@@ -293,10 +293,13 @@ type DB struct {
 	roTables map[string]*Table
 	tables   map[string]*Table
 
-	storagePath          string
-	wal                  WAL
-	bucket               storage.Bucket
-	ignoreStorageOnQuery bool
+	storagePath string
+	wal         WAL
+
+	// The database supports multiple data sources and sinks.
+	sources []DataSource
+	sinks   []DataSink
+
 	// Databases monotonically increasing transaction id
 	tx *atomic.Uint64
 
@@ -311,6 +314,25 @@ type DB struct {
 	snapshotInProgress atomic.Bool
 
 	metrics *dbMetrics
+}
+
+// DataSinkSource is a convenience interface for a data source and sink.
+type DataSinkSource interface {
+	DataSink
+	DataSource
+}
+
+// DataSource is remote source of data that can be queried.
+type DataSource interface {
+	fmt.Stringer
+	Scan(ctx context.Context, prefix string, schema *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, callback func(context.Context, any) error) error
+	Prefixes(ctx context.Context, prefix string) ([]string, error)
+}
+
+// Datasink is a remote destination for data.
+type DataSink interface {
+	fmt.Stringer
+	storage.Bucket
 }
 
 func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
@@ -337,39 +359,38 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 	reg := prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg)
 	logger := log.WithPrefix(s.logger, "db", name)
 	db = &DB{
-		columnStore:          s,
-		name:                 name,
-		mtx:                  &sync.RWMutex{},
-		tables:               map[string]*Table{},
-		roTables:             map[string]*Table{},
-		reg:                  reg,
-		logger:               logger,
-		tracer:               s.tracer,
-		tx:                   &atomic.Uint64{},
-		highWatermark:        &atomic.Uint64{},
-		storagePath:          filepath.Join(s.DatabasesDir(), name),
-		wal:                  &wal.NopWAL{},
-		ignoreStorageOnQuery: s.ignoreStorageOnQuery,
-	}
-
-	if s.bucket != nil {
-		db.bucket = storage.NewPrefixedBucket(s.bucket, db.name)
+		columnStore:   s,
+		name:          name,
+		mtx:           &sync.RWMutex{},
+		tables:        map[string]*Table{},
+		roTables:      map[string]*Table{},
+		reg:           reg,
+		logger:        logger,
+		tracer:        s.tracer,
+		tx:            &atomic.Uint64{},
+		highWatermark: &atomic.Uint64{},
+		storagePath:   filepath.Join(s.DatabasesDir(), name),
+		wal:           &wal.NopWAL{},
+		sources:       s.sources,
+		sinks:         s.sinks,
 	}
 
 	if dbSetupErr := func() error {
 		db.txPool = NewTxPool(db.highWatermark)
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
-		// If bucket storage is configured; scan for existing tables in the database
-		if db.bucket != nil {
-			if err := db.bucket.Iter(ctx, "", func(tableName string) error {
-				_, err := db.readOnlyTable(strings.TrimSuffix(tableName, "/"))
+		if len(db.sources) != 0 {
+			for _, source := range db.sources {
+				prefixes, err := source.Prefixes(ctx, name)
 				if err != nil {
 					return err
 				}
 
-				return nil
-			}); err != nil {
-				return fmt.Errorf("bucket iter on database open: %w", err)
+				for _, prefix := range prefixes {
+					_, err := db.readOnlyTable(prefix)
+					if err != nil {
+						return err
+					}
+				}
 			}
 		}
 
@@ -733,14 +754,14 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 func (db *DB) Close() error {
 	for _, table := range db.tables {
 		table.close()
-		if db.bucket != nil {
+		if len(db.sinks) != 0 {
 			// Write the blocks but no snapshots since they are long-running
 			// jobs.
 			table.writeBlock(table.ActiveBlock(), false /* snapshotDB */)
 		}
 	}
 
-	if db.bucket != nil {
+	if len(db.sinks) != 0 {
 		// If we've successfully persisted all the table blocks we can remove
 		// the wal and snapshots.
 		if err := os.RemoveAll(db.snapshotsDir()); err != nil {

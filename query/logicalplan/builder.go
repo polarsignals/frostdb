@@ -52,6 +52,7 @@ func (b Builder) Project(
 
 type Visitor interface {
 	PreVisit(expr Expr) bool
+	Visit(expr Expr) bool
 	PostVisit(expr Expr) bool
 }
 
