@@ -876,8 +876,7 @@ func Test_DoubleTable(t *testing.T) {
 	logger := newTestLogger(t)
 	c, err := New(
 		WithLogger(logger),
-		WithDataSink(sinksource),
-		WithDataSource(sinksource),
+		WithReadWriteStorage(sinksource),
 	)
 	require.NoError(t, err)
 	defer c.Close()

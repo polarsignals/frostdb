@@ -41,8 +41,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		WithLogger(logger),
 		WithWAL(),
 		WithStoragePath(dir),
-		WithDataSource(sinksource),
-		WithDataSink(sinksource),
+		WithReadWriteStorage(sinksource),
 		WithActiveMemorySize(100*1024),
 	)
 	require.NoError(t, err)
@@ -67,8 +66,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		WithLogger(logger),
 		WithWAL(),
 		WithStoragePath(dir),
-		WithDataSource(sinksource),
-		WithDataSink(sinksource),
+		WithReadWriteStorage(sinksource),
 		WithActiveMemorySize(100*1024),
 	)
 	require.NoError(t, err)
@@ -313,8 +311,7 @@ func Test_DB_WithStorage(t *testing.T) {
 
 	c, err := New(
 		WithLogger(logger),
-		WithDataSource(sinksource),
-		WithDataSink(sinksource),
+		WithReadWriteStorage(sinksource),
 	)
 	require.NoError(t, err)
 
@@ -406,8 +403,7 @@ func Test_DB_ColdStart(t *testing.T) {
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
 					WithLogger(logger),
-					WithDataSink(sinksource),
-					WithDataSource(sinksource),
+					WithReadWriteStorage(sinksource),
 				)
 				require.NoError(t, err)
 				return c
@@ -417,8 +413,7 @@ func Test_DB_ColdStart(t *testing.T) {
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
 					WithLogger(logger),
-					WithDataSink(sinksource),
-					WithDataSource(sinksource),
+					WithReadWriteStorage(sinksource),
 					WithWAL(),
 					WithStoragePath(t.TempDir()),
 				)
@@ -494,8 +489,7 @@ func Test_DB_ColdStart(t *testing.T) {
 			// Open a new database pointed to the same bucket storage
 			c, err = New(
 				WithLogger(logger),
-				WithDataSink(sinksource),
-				WithDataSource(sinksource),
+				WithReadWriteStorage(sinksource),
 			)
 			require.NoError(t, err)
 			defer c.Close()
@@ -575,8 +569,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 
 	c, err := New(
 		WithLogger(logger),
-		WithDataSink(sinksource),
-		WithDataSource(sinksource),
+		WithReadWriteStorage(sinksource),
 	)
 	require.NoError(t, err)
 
@@ -616,8 +609,7 @@ func Test_DB_ColdStart_MissingColumn(t *testing.T) {
 	// Open a new database pointed to the same bucket storage
 	c, err = New(
 		WithLogger(logger),
-		WithDataSink(sinksource),
-		WithDataSource(sinksource),
+		WithReadWriteStorage(sinksource),
 	)
 	require.NoError(t, err)
 	defer c.Close()
@@ -683,8 +675,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
 					WithLogger(logger),
-					WithDataSink(sinksource),
-					WithDataSource(sinksource),
+					WithReadWriteStorage(sinksource),
 				)
 				require.NoError(t, err)
 				return c
@@ -699,8 +690,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
 					WithLogger(logger),
-					WithDataSink(sinksource),
-					WithDataSource(sinksource),
+					WithReadWriteStorage(sinksource),
 				)
 				require.NoError(t, err)
 				return c
@@ -774,8 +764,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 			// Open a new database pointed to the same bucket storage
 			c, err = New(
 				WithLogger(logger),
-				WithDataSink(sinksource),
-				WithDataSource(sinksource),
+				WithReadWriteStorage(sinksource),
 			)
 			require.NoError(t, err)
 			defer c.Close()
@@ -915,8 +904,7 @@ func Test_DB_OpenError(t *testing.T) {
 
 	c, err := New(
 		WithLogger(logger),
-		WithDataSink(sinksource),
-		WithDataSource(sinksource),
+		WithReadWriteStorage(sinksource),
 	)
 	require.NoError(t, err)
 	defer c.Close()
@@ -964,8 +952,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
 					WithLogger(logger),
-					WithDataSink(sinksource),
-					WithDataSource(sinksource),
+					WithReadWriteStorage(sinksource),
 				)
 				require.NoError(t, err)
 				return c
@@ -979,8 +966,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			newColumnstore: func(t *testing.T) *ColumnStore {
 				c, err := New(
 					WithLogger(logger),
-					WithDataSink(sinksource),
-					WithDataSource(sinksource),
+					WithReadWriteStorage(sinksource),
 				)
 				require.NoError(t, err)
 				return c
@@ -1054,8 +1040,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			// Open a new database pointed to the same bucket storage
 			c, err = New(
 				WithLogger(logger),
-				WithDataSink(sinksource),
-				WithDataSource(sinksource),
+				WithReadWriteStorage(sinksource),
 			)
 			require.NoError(t, err)
 			defer c.Close()
@@ -1395,8 +1380,7 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 		WithLogger(logger),
 		WithWAL(),
 		WithStoragePath(dir),
-		WithDataSink(sinksource),
-		WithDataSource(sinksource),
+		WithReadWriteStorage(sinksource),
 		WithActiveMemorySize(100*1024),
 	)
 	require.NoError(t, err)
@@ -1421,8 +1405,7 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 		WithLogger(logger),
 		WithWAL(),
 		WithStoragePath(dir),
-		WithDataSink(sinksource),
-		WithDataSource(sinksource),
+		WithReadWriteStorage(sinksource),
 		WithActiveMemorySize(100*1024),
 	)
 	require.NoError(t, err)
@@ -1619,15 +1602,14 @@ func TestDBRecover(t *testing.T) {
 	t.Run("WithBucket", func(t *testing.T) {
 		bucket := objstore.NewInMemBucket()
 		sinksource := NewDefaultObjstoreBucket(bucket)
-		dir := setup(t, true, WithDataSink(sinksource), WithDataSource(sinksource))
+		dir := setup(t, true, WithReadWriteStorage(sinksource))
 
 		c, err := New(
 			WithLogger(newTestLogger(t)),
 			WithStoragePath(dir),
 			WithWAL(),
 			WithSnapshotTriggerSize(1),
-			WithDataSink(sinksource),
-			WithDataSource(sinksource),
+			WithReadWriteStorage(sinksource),
 		)
 		require.NoError(t, err)
 		defer c.Close()

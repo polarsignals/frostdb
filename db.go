@@ -163,14 +163,22 @@ func WithSplitSize(size int) Option {
 	}
 }
 
-func WithDataSource(ds DataSource) Option {
+func WithReadWriteStorage(ds DataSinkSource) Option {
+	return func(s *ColumnStore) error {
+		s.sources = append(s.sources, ds)
+		s.sinks = append(s.sinks, ds)
+		return nil
+	}
+}
+
+func WithReadOnlyStorage(ds DataSource) Option {
 	return func(s *ColumnStore) error {
 		s.sources = append(s.sources, ds)
 		return nil
 	}
 }
 
-func WithDataSink(ds DataSink) Option {
+func WithWriteOnlyStorage(ds DataSink) Option {
 	return func(s *ColumnStore) error {
 		s.sinks = append(s.sinks, ds)
 		return nil
@@ -306,6 +314,12 @@ type DB struct {
 	snapshotInProgress atomic.Bool
 
 	metrics *dbMetrics
+}
+
+// DataSinkSource is a convenience interface for a data source and sink.
+type DataSinkSource interface {
+	DataSink
+	DataSource
 }
 
 // DataSource is remote source of data that can be queried.
