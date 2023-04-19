@@ -548,6 +548,9 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 
 	start := time.Now()
 	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
 			persistedTables[e.TableBlockPersisted.TableName] = tx
@@ -570,6 +573,9 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	}
 
 	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		lastTx = tx
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
