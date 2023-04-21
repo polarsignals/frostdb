@@ -113,8 +113,9 @@ type Schema struct {
 	sortingColumns []SortingColumn
 	dynamicColumns []int
 
-	writers *sync.Map
-	buffers *sync.Map
+	writers        *sync.Map
+	buffers        *sync.Map
+	sortingSchemas *sync.Map
 }
 
 // IsDynamicColumn returns true if the passed in column is a dynamic column.
@@ -544,6 +545,7 @@ func newSchema(
 		columnIndexes:  columnIndexes,
 		writers:        &sync.Map{},
 		buffers:        &sync.Map{},
+		sortingSchemas: &sync.Map{},
 	}
 
 	for i, col := range columns {
@@ -1084,6 +1086,32 @@ func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*Po
 	}
 	pooled.(*PooledWriter).GenericWriter.Reset(w)
 	return pooled.(*PooledWriter), nil
+}
+
+type PooledParquetSchema struct {
+	pool   *sync.Pool
+	schema *parquet.Schema
+}
+
+func (s *Schema) GetParquetSortingSchema(dynamicColumns map[string][]string) (*PooledParquetSchema, error) {
+	key := serializeDynamicColumns(dynamicColumns)
+	pool, _ := s.sortingSchemas.LoadOrStore(key, &sync.Pool{})
+	pooled := pool.(*sync.Pool).Get()
+	if pooled == nil {
+		ps, err := s.parquetSortingSchema(dynamicColumns)
+		if err != nil {
+			return nil, err
+		}
+		return &PooledParquetSchema{
+			pool:   pool.(*sync.Pool),
+			schema: ps,
+		}, nil
+	}
+	return pooled.(*PooledParquetSchema), nil
+}
+
+func (s *Schema) PutParquetSortingSchema(ps *PooledParquetSchema) {
+	ps.pool.Put(ps)
 }
 
 func (s *Schema) PutWriter(w *PooledWriter) {
