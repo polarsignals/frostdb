@@ -55,11 +55,13 @@ func (w *NopWAL) LastIndex() (uint64, error) {
 }
 
 type fileWALMetrics struct {
-	recordsLogged        prometheus.Counter
-	failedLogs           prometheus.Counter
-	lastTruncationAt     prometheus.Gauge
-	walTruncations       prometheus.Counter
-	walTruncationsFailed prometheus.Counter
+	recordsLogged         prometheus.Counter
+	failedLogs            prometheus.Counter
+	lastTruncationAt      prometheus.Gauge
+	walTruncations        prometheus.Counter
+	walTruncationsFailed  prometheus.Counter
+	walRepairs            prometheus.Counter
+	walRepairsLostRecords prometheus.Counter
 }
 
 type FileWAL struct {
@@ -110,18 +112,43 @@ func Open(
 	reg prometheus.Registerer,
 	path string,
 ) (*FileWAL, error) {
+	var (
+		repairedWAL bool
+		lostRecords uint64
+	)
 	log, err := wal.Open(path, wal.DefaultOptions)
 	if err != nil {
 		if !errors.Is(err, wal.ErrCorrupt) {
 			return nil, err
 		}
 		// Try to repair the corrupt WAL
-		if err := tryRepairWAL(path); err != nil {
+		numRemainingFiles, err := tryRepairWAL(path)
+		if err != nil {
 			return nil, fmt.Errorf("failed to repair corrupt WAL: %w", err)
 		}
 		log, err = wal.Open(path, wal.DefaultOptions)
 		if err != nil {
 			return nil, err
+		}
+		repairedWAL = true
+		firstIndex, err := log.FirstIndex()
+		if err != nil {
+			return nil, err
+		}
+		lastIndex, err := log.LastIndex()
+		if err != nil {
+			return nil, err
+		}
+		// In this case it is very difficult to count the exact number of
+		// records lost due to this WAL repair since we can't read the WAL file.
+		// Compute an average number of records based on the average number of
+		// records per file in the WAL.
+		if numRemainingFiles == 0 {
+			numRemainingFiles = 1
+		}
+		lostRecords = (lastIndex - firstIndex) / uint64(numRemainingFiles)
+		if lostRecords < 1 {
+			lostRecords = 1
 		}
 	}
 
@@ -165,8 +192,21 @@ func Open(
 				Name: "frostdb_wal_truncations_failed_total",
 				Help: "The number of WAL truncations",
 			}),
+			walRepairs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "frostdb_wal_repairs_total",
+				Help: "The number of times the WAL had to be repaired (truncated) due to corrupt records",
+			}),
+			walRepairsLostRecords: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "frostdb_wal_replairs_lost_records_total",
+				Help: "The number of WAL records lost due to WAL repairs (truncations)",
+			}),
 		},
 		shutdownCh: make(chan struct{}),
+	}
+
+	if repairedWAL {
+		w.metrics.walRepairs.Inc()
+		w.metrics.walRepairsLostRecords.Add(float64(lostRecords))
 	}
 
 	return w, nil
@@ -176,23 +216,23 @@ func Open(
 // in the directory. Corruption can occur when the recorded size of an entry in
 // the file does not correspond to its actual size. A better option would be to
 // read the last WAL file and remove the corrupted entry, but this is good
-// enough for now.
-func tryRepairWAL(path string) error {
+// enough for now. This function returns the number of remaining files.
+func tryRepairWAL(path string) (int, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	path = absPath
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if err := os.Remove(filepath.Join(absPath, entries[len(entries)-1].Name())); err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return len(entries) - 1, nil
 }
 
 func (w *FileWAL) run(ctx context.Context) {
@@ -412,7 +452,8 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 	level.Debug(w.logger).Log("msg", "replaying WAL", "first_index", tx, "last_index", lastIndex)
 
 	defer func() {
-		// recover a panic of reading a transaction. Truncate the wal to the last valid transaction.
+		// recover a panic of reading a transaction. Truncate the wal to the
+		// last valid transaction.
 		if r := recover(); r != nil {
 			level.Error(w.logger).Log(
 				"msg", "replaying WAL failed",
@@ -425,6 +466,8 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 			if err = w.log.TruncateBack(tx - 1); err != nil {
 				return
 			}
+			w.metrics.walRepairs.Inc()
+			w.metrics.walRepairsLostRecords.Add(float64((lastIndex - tx) + 1))
 		}
 	}()
 
