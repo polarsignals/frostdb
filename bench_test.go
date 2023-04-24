@@ -38,7 +38,7 @@ const (
 func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, error) {
 	b.Helper()
 
-	b.Logf("replaying WAL")
+	b.Logf("recovering DB")
 	start := time.Now()
 	col, err := New(
 		WithWAL(),
@@ -47,7 +47,7 @@ func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, e
 	if err != nil {
 		return nil, nil, err
 	}
-	b.Logf("replayed WAL in %s", time.Since(start))
+	b.Logf("recovered DB in %s", time.Since(start))
 
 	colDB, err := col.DB(ctx, dbName)
 	if err != nil {
@@ -65,7 +65,7 @@ func newDBForBenchmarks(ctx context.Context, b testing.TB) (*ColumnStore, *DB, e
 	}
 	b.Logf("ensured compaction in %s", time.Since(start))
 
-	b.Logf("db initialized and WAL replayed, starting benchmark %s", b.Name())
+	b.Logf("db initialized and recovered, starting benchmark %s", b.Name())
 	return col, colDB, nil
 }
 
@@ -345,6 +345,29 @@ func BenchmarkQuery(b *testing.B) {
 				b.Fatalf("query returned error: %v", err)
 			}
 		}
+	})
+
+	// BenchmarkFilter benchmarks performing a simple filter. This is useful to get an idea of our scan speed (minus the
+	// execution engine).
+	b.Run("Filter", func(b *testing.B) {
+		table, err := db.Table(tableName, nil)
+		require.NoError(b, err)
+		size := table.ActiveBlock().Size()
+		for i := 0; i < b.N; i++ {
+			if err := engine.ScanTable(tableName).
+				Filter(
+					logicalplan.And(fullFilter...),
+				).
+				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					if r.NumRows() == 0 {
+						b.Fatal("expected at least one row")
+					}
+					return nil
+				}); err != nil {
+				b.Fatalf("query returned error: %v", err)
+			}
+		}
+		b.ReportMetric(float64(size)/(float64(b.Elapsed().Milliseconds())/float64(b.N)), "B/msec")
 	})
 }
 
