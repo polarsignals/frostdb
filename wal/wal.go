@@ -197,7 +197,7 @@ func Open(
 				Help: "The number of times the WAL had to be repaired (truncated) due to corrupt records",
 			}),
 			walRepairsLostRecords: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_wal_replairs_lost_records_total",
+				Name: "frostdb_wal_repairs_lost_records_total",
 				Help: "The number of WAL records lost due to WAL repairs (truncations)",
 			}),
 		},
