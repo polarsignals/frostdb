@@ -1604,6 +1604,23 @@ func TestDBRecover(t *testing.T) {
 		sinksource := NewDefaultObjstoreBucket(bucket)
 		dir := setup(t, true, WithReadWriteStorage(sinksource))
 
+		// The previous wal and snapshots directories should be empty since data
+		// is persisted on Close, rendering the directories useless.
+		databasesDir := filepath.Join(dir, "databases")
+		entries, err := os.ReadDir(databasesDir)
+		require.NoError(t, err)
+		for _, e := range entries {
+			dbEntries, err := os.ReadDir(filepath.Join(databasesDir, e.Name()))
+			require.NoError(t, err)
+			if len(dbEntries) > 0 {
+				entryNames := make([]string, 0, len(dbEntries))
+				for _, e := range dbEntries {
+					entryNames = append(entryNames, e.Name())
+				}
+				t.Fatalf("expected an empty dir but found the following entries: %v", entryNames)
+			}
+		}
+
 		c, err := New(
 			WithLogger(newTestLogger(t)),
 			WithStoragePath(dir),
