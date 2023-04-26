@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -15,9 +13,10 @@ import (
 	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/polarsignals/wal"
+	"github.com/polarsignals/wal/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/tidwall/wal"
 
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 )
@@ -55,7 +54,6 @@ func (w *NopWAL) LastIndex() (uint64, error) {
 }
 
 type fileWALMetrics struct {
-	recordsLogged         prometheus.Counter
 	failedLogs            prometheus.Counter
 	lastTruncationAt      prometheus.Gauge
 	walTruncations        prometheus.Counter
@@ -64,10 +62,12 @@ type fileWALMetrics struct {
 	walRepairsLostRecords prometheus.Counter
 }
 
+const dirPerms = os.FileMode(0o750)
+
 type FileWAL struct {
 	logger log.Logger
 	path   string
-	log    *wal.Log
+	log    wal.LogStore
 
 	metrics        *fileWALMetrics
 	logRequestCh   chan *logRequest
@@ -112,50 +112,20 @@ func Open(
 	reg prometheus.Registerer,
 	path string,
 ) (*FileWAL, error) {
-	var (
-		repairedWAL bool
-		lostRecords uint64
-	)
-	log, err := wal.Open(path, wal.DefaultOptions)
+	if err := os.MkdirAll(path, dirPerms); err != nil {
+		return nil, err
+	}
+
+	reg = prometheus.WrapRegistererWithPrefix("frostdb_wal_", reg)
+	logStore, err := wal.Open(path, wal.WithLogger(logger), wal.WithMetricsRegisterer(reg))
 	if err != nil {
-		if !errors.Is(err, wal.ErrCorrupt) {
-			return nil, err
-		}
-		// Try to repair the corrupt WAL
-		numRemainingFiles, err := tryRepairWAL(path)
-		if err != nil {
-			return nil, fmt.Errorf("failed to repair corrupt WAL: %w", err)
-		}
-		log, err = wal.Open(path, wal.DefaultOptions)
-		if err != nil {
-			return nil, err
-		}
-		repairedWAL = true
-		firstIndex, err := log.FirstIndex()
-		if err != nil {
-			return nil, err
-		}
-		lastIndex, err := log.LastIndex()
-		if err != nil {
-			return nil, err
-		}
-		// In this case it is very difficult to count the exact number of
-		// records lost due to this WAL repair since we can't read the WAL file.
-		// Compute an average number of records based on the average number of
-		// records per file in the WAL.
-		if numRemainingFiles == 0 {
-			numRemainingFiles = 1
-		}
-		lostRecords = (lastIndex - firstIndex) / uint64(numRemainingFiles)
-		if lostRecords < 1 {
-			lostRecords = 1
-		}
+		return nil, err
 	}
 
 	w := &FileWAL{
 		logger:       logger,
 		path:         path,
-		log:          log,
+		log:          logStore,
 		logRequestCh: make(chan *logRequest),
 		logRequestPool: &sync.Pool{
 			New: func() any {
@@ -172,73 +142,43 @@ func Open(
 		mtx:   &sync.Mutex{},
 		queue: &logRequestQueue{},
 		metrics: &fileWALMetrics{
-			recordsLogged: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_wal_records_logged_total",
-				Help: "Number of records logged to WAL",
-			}),
+			// TODO(asubiotto): Move these metrics to the underlying WAL
+			// package.
 			failedLogs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_wal_failed_logs_total",
+				Name: "failed_logs_total",
 				Help: "Number of failed WAL logs",
 			}),
 			lastTruncationAt: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "frostdb_last_truncation_at",
+				Name: "last_truncation_at",
 				Help: "The last transaction the WAL was truncated to",
 			}),
 			walTruncations: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_wal_truncations_total",
+				Name: "truncations_total",
 				Help: "The number of WAL truncations",
 			}),
 			walTruncationsFailed: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_wal_truncations_failed_total",
+				Name: "truncations_failed_total",
 				Help: "The number of WAL truncations",
 			}),
 			walRepairs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_wal_repairs_total",
+				Name: "repairs_total",
 				Help: "The number of times the WAL had to be repaired (truncated) due to corrupt records",
 			}),
 			walRepairsLostRecords: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_wal_repairs_lost_records_total",
+				Name: "repairs_lost_records_total",
 				Help: "The number of WAL records lost due to WAL repairs (truncations)",
 			}),
 		},
 		shutdownCh: make(chan struct{}),
 	}
 
-	if repairedWAL {
-		w.metrics.walRepairs.Inc()
-		w.metrics.walRepairsLostRecords.Add(float64(lostRecords))
-	}
-
 	return w, nil
-}
-
-// tryRepairWAL operates on a corrupt WAL directory by removing the last file
-// in the directory. Corruption can occur when the recorded size of an entry in
-// the file does not correspond to its actual size. A better option would be to
-// read the last WAL file and remove the corrupted entry, but this is good
-// enough for now. This function returns the number of remaining files.
-func tryRepairWAL(path string) (int, error) {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return 0, err
-	}
-	path = absPath
-
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return 0, err
-	}
-
-	if err := os.Remove(filepath.Join(absPath, entries[len(entries)-1].Name())); err != nil {
-		return 0, err
-	}
-	return len(entries) - 1, nil
 }
 
 func (w *FileWAL) run(ctx context.Context) {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
-	walBatch := &wal.Batch{}
+	walBatch := make([]types.LogEntry, 0)
 	batch := make([]*logRequest, 0, 128) // random number is random
 	for {
 		select {
@@ -288,25 +228,25 @@ func (w *FileWAL) run(ctx context.Context) {
 				continue
 			}
 
-			walBatch.Clear()
+			walBatch = walBatch[:0]
 			for _, r := range batch {
-				walBatch.Write(r.tx, r.data)
+				walBatch = append(walBatch, types.LogEntry{
+					Index: r.tx,
+					// No copy is needed here since the log request is only
+					// released once these bytes are persisted.
+					Data: r.data,
+				})
 			}
 
-			if err := w.log.WriteBatch(walBatch); err != nil {
+			if err := w.log.StoreLogs(walBatch); err != nil {
 				w.metrics.failedLogs.Add(float64(len(batch)))
 				lastIndex, lastIndexErr := w.log.LastIndex()
 				level.Error(w.logger).Log(
 					"msg", "failed to write WAL batch",
 					"err", err,
-					// Sprintf is used here because the logging package does not
-					// support logging arbitrary values.
-					"batch", fmt.Sprintf("%v", walBatch),
 					"lastIndex", lastIndex,
 					"lastIndexErr", lastIndexErr,
 				)
-			} else {
-				w.metrics.recordsLogged.Add(float64(len(batch)))
 			}
 
 			for _, r := range batch {
@@ -473,13 +413,13 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 
 	for ; tx <= lastIndex; tx++ {
 		level.Debug(w.logger).Log("msg", "replaying WAL record", "tx", tx)
-		data, err := w.log.Read(tx)
-		if err != nil {
+		var entry types.LogEntry
+		if err := w.log.GetLog(tx, &entry); err != nil {
 			return fmt.Errorf("read index %d: %w", tx, err)
 		}
 
 		record := &walpb.Record{}
-		if err := record.UnmarshalVT(data); err != nil {
+		if err := record.UnmarshalVT(entry.Data); err != nil {
 			return fmt.Errorf("unmarshal WAL record: %w", err)
 		}
 
