@@ -415,12 +415,16 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 		level.Debug(w.logger).Log("msg", "replaying WAL record", "tx", tx)
 		var entry types.LogEntry
 		if err := w.log.GetLog(tx, &entry); err != nil {
-			return fmt.Errorf("read index %d: %w", tx, err)
+			// Panic since this is most likely a corruption issue. The recover
+			// call above will truncate the WAL to the last valid transaction.
+			panic(fmt.Sprintf("read index %d: %v", tx, err))
 		}
 
 		record := &walpb.Record{}
 		if err := record.UnmarshalVT(entry.Data); err != nil {
-			return fmt.Errorf("unmarshal WAL record: %w", err)
+			// Panic since this is most likely a corruption issue. The recover
+			// call above will truncate the WAL to the last valid transaction.
+			panic(fmt.Sprintf("unmarshal WAL record: %v", err))
 		}
 
 		if err := handler(tx, record); err != nil {
