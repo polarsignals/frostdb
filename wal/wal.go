@@ -29,19 +29,19 @@ func (w *NopWAL) Close() error {
 	return nil
 }
 
-func (w *NopWAL) Log(tx uint64, record *walpb.Record) error {
+func (w *NopWAL) Log(_ uint64, _ *walpb.Record) error {
 	return nil
 }
 
-func (w *NopWAL) Replay(tx uint64, handler ReplayHandlerFunc) error {
+func (w *NopWAL) Replay(_ uint64, _ ReplayHandlerFunc) error {
 	return nil
 }
 
-func (w *NopWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
+func (w *NopWAL) LogRecord(_ uint64, _ string, _ arrow.Record) error {
 	return nil
 }
 
-func (w *NopWAL) Truncate(tx uint64) error {
+func (w *NopWAL) Truncate(_ uint64) error {
 	return nil
 }
 
