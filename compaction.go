@@ -137,9 +137,14 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 			c.db.mtx.RUnlock()
 
 			for _, table := range tablesToCompact {
-				if err := table.ActiveBlock().compact(c.cfg); err != nil {
+				block, done, err := table.ActiveWriteBlock() // obtain a write block to prevent compaction and persistence from running at the same time
+				if err != nil {
+					continue // errors are for tables closing
+				}
+				if err := block.compact(c.cfg); err != nil {
 					level.Warn(c.db.logger).Log("msg", "compaction failed", "err", err)
 				}
+				done()
 			}
 		}
 	}
