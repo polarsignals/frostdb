@@ -437,7 +437,47 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 
 			// insert new row into columns grouped by and create new aggregate array to append to.
 			if err := a.updateGroupByCols(i, groupByArrays, groupByFields); err != nil {
-				return err
+				if !errors.Is(err, builder.ErrMaxSizeReached) {
+					return err
+				}
+
+				// Max size reached, rollback the aggregation creation and create new aggregate
+				aggregate.rowCount--
+				for j := range columnToAggregate {
+					l := len(aggregate.aggregations[j].arrays)
+					aggregate.aggregations[j].arrays = aggregate.aggregations[j].arrays[:l-1]
+				}
+
+				// Create new aggregation
+				aggregations := make([]Aggregation, 0, len(a.aggregates[0].aggregations))
+				for _, agg := range a.aggregates[0].aggregations {
+					aggregations = append(aggregations, Aggregation{
+						expr:       agg.expr,
+						resultName: agg.resultName,
+						function:   agg.function,
+					})
+				}
+				a.aggregates = append(a.aggregates, &hashAggregate{
+					aggregations: aggregations,
+					groupByCols:  map[string]builder.ColumnBuilder{},
+					colOrdering:  []string{},
+				})
+
+				aggregate = a.aggregates[len(a.aggregates)-1]
+				for j, col := range columnToAggregate {
+					agg := builder.NewBuilder(a.pool, col.DataType())
+					aggregate.aggregations[j].arrays = append(aggregate.aggregations[j].arrays, agg)
+				}
+				tuple = hashtuple{
+					aggregate: len(a.aggregates) - 1, // always add new aggregates to the current aggregate
+					array:     len(aggregate.aggregations[0].arrays) - 1,
+				}
+				a.hashToAggregate[hash] = tuple
+				aggregate.rowCount++
+
+				if err := a.updateGroupByCols(i, groupByArrays, groupByFields); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -472,32 +512,14 @@ func (a *HashAggregate) updateGroupByCols(row int, groupByArrays []arrow.Array, 
 			groupByCol.AppendNull()
 		}
 
-		err := builder.AppendValue(groupByCol, arr, row)
-		if err != nil {
-			// If we've hit the max size for an array in the group by cols map, then we need to start a new map of column groupings.
-			if errors.Is(err, builder.ErrMaxSizeReached) {
-				aggregations := make([]Aggregation, 0, len(a.aggregates[0].aggregations))
-				for _, agg := range a.aggregates[0].aggregations {
-					aggregations = append(aggregations, Aggregation{
-						expr:       agg.expr,
-						resultName: agg.resultName,
-						function:   agg.function,
-					})
+		if err := builder.AppendValue(groupByCol, arr, row); err != nil {
+			// Rollback
+			for j := 0; j < i; j++ {
+				if err := builder.RollbackPrevious(aggregate.groupByCols[groupByFields[j].Name]); err != nil {
+					return err
 				}
-				a.aggregates = append(a.aggregates, &hashAggregate{
-					aggregations: aggregations,
-					groupByCols:  map[string]builder.ColumnBuilder{},
-					colOrdering:  []string{},
-				})
-
-				for j := 0; j < i; j++ {
-					if err := builder.RollbackPrevious(aggregate.groupByCols[groupByFields[j].Name]); err != nil {
-						return err
-					}
-				}
-
-				return a.updateGroupByCols(row, groupByArrays, groupByFields)
 			}
+
 			return err
 		}
 	}
