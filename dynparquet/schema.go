@@ -39,28 +39,34 @@ type SortingColumn interface {
 }
 
 // Ascending constructs a SortingColumn value which dictates to sort by the column in ascending order.
-func Ascending(column string) SortingColumn { return ascending(column) }
+func Ascending(column string) SortingColumn { return ascending{name: column, path: []string{column}} }
 
 // Descending constructs a SortingColumn value which dictates to sort by the column in descending order.
-func Descending(column string) SortingColumn { return descending(column) }
+func Descending(column string) SortingColumn { return descending{name: column, path: []string{column}} }
 
 // NullsFirst wraps the SortingColumn passed as argument so that it instructs
 // the row group to place null values first in the column.
 func NullsFirst(sortingColumn SortingColumn) SortingColumn { return nullsFirst{sortingColumn} }
 
-type ascending string
+type ascending struct {
+	name string
+	path []string
+}
 
-func (asc ascending) String() string     { return fmt.Sprintf("ascending(%s)", string(asc)) }
-func (asc ascending) ColumnName() string { return string(asc) }
-func (asc ascending) Path() []string     { return []string{string(asc)} }
+func (asc ascending) String() string     { return "ascending(" + asc.name + ")" }
+func (asc ascending) ColumnName() string { return asc.name }
+func (asc ascending) Path() []string     { return asc.path }
 func (asc ascending) Descending() bool   { return false }
 func (asc ascending) NullsFirst() bool   { return false }
 
-type descending string
+type descending struct {
+	name string
+	path []string
+}
 
-func (desc descending) String() string     { return fmt.Sprintf("descending(%s)", string(desc)) }
-func (desc descending) ColumnName() string { return string(desc) }
-func (desc descending) Path() []string     { return []string{string(desc)} }
+func (desc descending) String() string     { return "descending(" + desc.name + ")" }
+func (desc descending) ColumnName() string { return desc.name }
+func (desc descending) Path() []string     { return desc.path }
 func (desc descending) Descending() bool   { return true }
 func (desc descending) NullsFirst() bool   { return false }
 
@@ -70,10 +76,12 @@ func (nf nullsFirst) String() string   { return fmt.Sprintf("nulls_first+%s", nf
 func (nf nullsFirst) NullsFirst() bool { return true }
 
 func makeDynamicSortingColumn(dynamicColumnName string, sortingColumn SortingColumn) SortingColumn {
+	fullName := sortingColumn.ColumnName() + "." + dynamicColumnName
 	return dynamicSortingColumn{
 		SortingColumn:     sortingColumn,
 		dynamicColumnName: dynamicColumnName,
-		fullName:          sortingColumn.ColumnName() + "." + dynamicColumnName,
+		fullName:          fullName,
+		path:              []string{fullName},
 	}
 }
 
@@ -82,6 +90,7 @@ type dynamicSortingColumn struct {
 	SortingColumn
 	dynamicColumnName string
 	fullName          string
+	path              []string
 }
 
 func (dyn dynamicSortingColumn) String() string {
@@ -92,7 +101,7 @@ func (dyn dynamicSortingColumn) ColumnName() string {
 	return dyn.fullName
 }
 
-func (dyn dynamicSortingColumn) Path() []string { return []string{dyn.ColumnName()} }
+func (dyn dynamicSortingColumn) Path() []string { return dyn.path }
 
 // Schema is a dynamic parquet schema. It extends a parquet schema with the
 // ability that any column definition that is dynamic will have columns
