@@ -180,6 +180,8 @@ func (w *FileWAL) run(ctx context.Context) {
 	defer ticker.Stop()
 	walBatch := make([]types.LogEntry, 0)
 	batch := make([]*logRequest, 0, 128) // random number is random
+	// lastQueueSize is only used on shutdown to reduce debug logging verbosity.
+	lastQueueSize := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -188,8 +190,24 @@ func (w *FileWAL) run(ctx context.Context) {
 			w.mtx.Unlock()
 			if n > 0 {
 				// Need to drain the queue before we can shutdown.
+				if n == lastQueueSize {
+					continue
+				}
+				lastQueueSize = n
+				lastIdx, err := w.log.LastIndex()
+				logOpts := []any{
+					"msg", "WAL received shutdown request; waiting for log request queue to drain",
+					"queueSize", n,
+					"minTx", (*w.queue)[0].tx,
+					"lastIndex", lastIdx,
+				}
+				if err != nil {
+					logOpts = append(logOpts, "lastIndexErr", err)
+				}
+				level.Debug(w.logger).Log(logOpts...)
 				continue
 			}
+			level.Debug(w.logger).Log("msg", "WAL shut down")
 			return
 		case <-ticker.C:
 			batch := batch[:0]
@@ -276,6 +294,7 @@ func (w *FileWAL) Close() error {
 	if w.cancel == nil { // wal was never started
 		return nil
 	}
+	level.Debug(w.logger).Log("msg", "WAL received shutdown request; canceling run loop")
 	w.cancel()
 	<-w.shutdownCh
 	return w.log.Close()
