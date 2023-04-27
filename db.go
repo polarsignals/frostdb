@@ -233,7 +233,14 @@ func (s *ColumnStore) Close() error {
 	errg := &errgroup.Group{}
 	errg.SetLimit(runtime.GOMAXPROCS(0))
 	for _, db := range s.dbs {
-		errg.Go(db.Close)
+		toClose := db
+		errg.Go(func() error {
+			err := toClose.Close()
+			if err != nil {
+				level.Error(s.logger).Log("msg", "error closing DB", "db", toClose.name, "err", err)
+			}
+			return err
+		})
 	}
 
 	return errg.Wait()
@@ -770,6 +777,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 }
 
 func (db *DB) Close() error {
+	level.Info(db.logger).Log("msg", "closing DB")
 	for _, table := range db.tables {
 		table.close()
 		if len(db.sinks) != 0 {
@@ -778,6 +786,7 @@ func (db *DB) Close() error {
 			table.writeBlock(table.ActiveBlock(), false /* snapshotDB */)
 		}
 	}
+	level.Info(db.logger).Log("msg", "closed all tables")
 
 	if err := db.closeInternal(); err != nil {
 		return err
@@ -820,6 +829,7 @@ func (db *DB) Close() error {
 		if err := os.RemoveAll(trashDir); err != nil {
 			return err
 		}
+		level.Info(db.logger).Log("msg", "cleaned up wal & snapshots")
 	}
 	return nil
 }
