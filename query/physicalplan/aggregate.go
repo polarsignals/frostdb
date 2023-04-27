@@ -15,6 +15,7 @@ import (
 	"github.com/dgryski/go-metro"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -270,9 +271,29 @@ func hashArray(arr arrow.Array) []uint64 {
 		return hashBooleanArray(ar)
 	case *array.Dictionary:
 		return hashDictionaryArray(ar)
+	case *array.List:
+		return hashListArray(ar)
 	default:
 		panic("unsupported array type " + fmt.Sprintf("%T", arr))
 	}
+}
+
+func hashListArray(arr *array.List) []uint64 {
+	res := make([]uint64, arr.Len())
+	for i := 0; i < arr.Len(); i++ {
+		list := []byte{}
+		if err := arrowutils.ForEachValueInList(i, arr, func(_ int, v any) {
+			switch val := v.(type) {
+			case []byte:
+				list = append(list, val...)
+			}
+		}); err != nil {
+			panic(err)
+		}
+
+		res[i] = metro.Hash64(list, 0)
+	}
+	return res
 }
 
 func hashDictionaryArray(arr *array.Dictionary) []uint64 {

@@ -91,26 +91,28 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 		default:
 			return fmt.Errorf("non-dictionary array %T provided for dictionary builder", a)
 		}
-	// case *array.List:
-	//	// TODO: This seems horribly inefficient, we already have the whole
-	//	// array and are just doing an expensive copy, but arrow doesn't seem
-	//	// to be able to append whole list scalars at once.
-	//	length := s.Value.Len()
-	//	larr := arr.(*array.ListBuilder)
-	//	vb := larr.ValueBuilder()
-	//	larr.Append(true)
-	//	for i := 0; i < length; i++ {
-	//		v, err := scalar.GetScalar(s.Value, i)
-	//		if err != nil {
-	//			return err
-	//		}
+	case *ListBuilder:
+		list := arr.(*array.List)
+		start, end := list.ValueOffsets(i)
+		values := array.NewSlice(list.ListValues(), start, end)
+		defer values.Release()
 
-	//		err = appendValue(vb, v)
-	//		if err != nil {
-	//			return err
-	//		}
-	//	}
-	//	return nil
+		switch v := values.(type) {
+		case *array.Dictionary:
+			switch dict := v.Dictionary().(type) {
+			case *array.Binary:
+				b.Append(true)
+				for j := 0; j < v.Len(); j++ {
+					vb := b.ValueBuilder()
+					switch bldr := vb.(type) {
+					case *array.BinaryDictionaryBuilder:
+						bldr.Append(dict.Value(v.GetValueIndex(j)))
+					default:
+						return fmt.Errorf("uknown value builder type %T", bldr)
+					}
+				}
+			}
+		}
 	default:
 		return fmt.Errorf("unsupported type for arrow append %T", b)
 	}
