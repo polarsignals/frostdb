@@ -79,6 +79,9 @@ message StorageLayout {
 
     // Wether values in the column are allowed to be null.
     bool nullable = 4;
+
+    // Whether the column is repeated.
+    bool repeated = 5;
 }
 
 // SortingColumn definition.
