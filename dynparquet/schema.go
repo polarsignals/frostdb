@@ -116,6 +116,7 @@ type Schema struct {
 	writers        *sync.Map
 	buffers        *sync.Map
 	sortingSchemas *sync.Map
+	parquetSchemas *sync.Map
 }
 
 // IsDynamicColumn returns true if the passed in column is a dynamic column.
@@ -546,6 +547,7 @@ func newSchema(
 		writers:        &sync.Map{},
 		buffers:        &sync.Map{},
 		sortingSchemas: &sync.Map{},
+		parquetSchemas: &sync.Map{},
 	}
 
 	for i, col := range columns {
@@ -607,9 +609,9 @@ func (s *Schema) ParquetSchema() *parquet.Schema {
 	}
 }
 
-// DynamicParquetSchema returns the parquet schema for the dynamic schema with the
+// dynamicParquetSchema returns the parquet schema for the dynamic schema with the
 // concrete dynamic column names given in the argument.
-func (s Schema) DynamicParquetSchema(
+func (s Schema) dynamicParquetSchema(
 	dynamicColumns map[string][]string,
 ) (
 	*parquet.Schema,
@@ -945,21 +947,22 @@ func (b *Buffer) DynamicRows() DynamicRowReader {
 // NewBuffer returns a new buffer with a concrete parquet schema generated
 // using the given concrete dynamic column names.
 func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) {
-	ps, err := s.DynamicParquetSchema(dynamicColumns)
+	ps, err := s.GetDynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, fmt.Errorf("create parquet schema for buffer: %w", err)
 	}
+	defer s.PutPooledParquetSchema(ps)
 
 	cols := s.ParquetSortingColumns(dynamicColumns)
 	return &Buffer{
 		dynamicColumns: dynamicColumns,
 		buffer: parquet.NewBuffer(
-			ps,
+			ps.Schema,
 			parquet.SortingRowGroupConfig(
 				parquet.SortingColumns(cols...),
 			),
 		),
-		fields: ps.Fields(),
+		fields: ps.Schema.Fields(),
 	}, nil
 }
 
@@ -1024,10 +1027,11 @@ const bloomFilterBitsPerValue = 10
 // NewWriter returns a new parquet writer with a concrete parquet schema
 // generated using the given concrete dynamic column names.
 func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*parquet.GenericWriter[any], error) {
-	ps, err := s.DynamicParquetSchema(dynamicColumns)
+	ps, err := s.GetDynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, err
 	}
+	defer s.PutPooledParquetSchema(ps)
 
 	cols := s.ParquetSortingColumns(dynamicColumns)
 	bloomFilterColumns := make([]parquet.BloomFilterColumn, 0, len(cols))
@@ -1048,7 +1052,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 	}
 
 	return parquet.NewGenericWriter[any](w,
-		ps,
+		ps.Schema,
 		parquet.ColumnIndexSizeLimit(ColumnIndexSize),
 		parquet.BloomFilters(bloomFilterColumns...),
 		parquet.KeyValueMetadata(
@@ -1090,9 +1094,12 @@ func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*Po
 
 type PooledParquetSchema struct {
 	pool   *sync.Pool
-	schema *parquet.Schema
+	Schema *parquet.Schema
 }
 
+// GetParquetSortingSchema returns a parquet schema of the sorting columns and
+// the given dynamic columns.
+// The difference with GetDynamicParquetSchema is that non-sorting columns are elided.
 func (s *Schema) GetParquetSortingSchema(dynamicColumns map[string][]string) (*PooledParquetSchema, error) {
 	key := serializeDynamicColumns(dynamicColumns)
 	pool, _ := s.sortingSchemas.LoadOrStore(key, &sync.Pool{})
@@ -1104,13 +1111,34 @@ func (s *Schema) GetParquetSortingSchema(dynamicColumns map[string][]string) (*P
 		}
 		return &PooledParquetSchema{
 			pool:   pool.(*sync.Pool),
-			schema: ps,
+			Schema: ps,
 		}, nil
 	}
 	return pooled.(*PooledParquetSchema), nil
 }
 
-func (s *Schema) PutParquetSortingSchema(ps *PooledParquetSchema) {
+// GetDynamicParquetSchema returns a parquet schema of the all columns and
+// the given dynamic columns.
+// The difference with GetParquetSortingSchema is that all columns are included
+// in the parquet schema.
+func (s *Schema) GetDynamicParquetSchema(dynamicColumns map[string][]string) (*PooledParquetSchema, error) {
+	key := serializeDynamicColumns(dynamicColumns)
+	pool, _ := s.parquetSchemas.LoadOrStore(key, &sync.Pool{})
+	pooled := pool.(*sync.Pool).Get()
+	if pooled == nil {
+		ps, err := s.dynamicParquetSchema(dynamicColumns)
+		if err != nil {
+			return nil, err
+		}
+		return &PooledParquetSchema{
+			pool:   pool.(*sync.Pool),
+			Schema: ps,
+		}, nil
+	}
+	return pooled.(*PooledParquetSchema), nil
+}
+
+func (s *Schema) PutPooledParquetSchema(ps *PooledParquetSchema) {
 	ps.pool.Put(ps)
 }
 
@@ -1211,17 +1239,18 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup, options ...M
 	if dynamicColumns == nil {
 		dynamicColumns = mergeDynamicRowGroupDynamicColumns(rowGroups)
 	}
-	ps, err := s.DynamicParquetSchema(dynamicColumns)
+	ps, err := s.GetDynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, fmt.Errorf("create merged parquet schema merging %d row groups: %w", len(rowGroups), err)
 	}
+	defer s.PutPooledParquetSchema(ps)
 
 	cols := s.ParquetSortingColumns(dynamicColumns)
 
 	adapters := make([]parquet.RowGroup, 0, len(rowGroups))
 	for _, rowGroup := range rowGroups {
 		adapters = append(adapters, NewDynamicRowGroupMergeAdapter(
-			ps,
+			ps.Schema,
 			cols,
 			dynamicColumns,
 			rowGroup,
@@ -1241,7 +1270,7 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup, options ...M
 	return &MergedRowGroup{
 		RowGroup: merge,
 		DynCols:  dynamicColumns,
-		fields:   ps.Fields(),
+		fields:   ps.Schema.Fields(),
 	}, nil
 }
 

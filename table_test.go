@@ -1125,10 +1125,11 @@ func Test_RecordToRow(t *testing.T) {
 	record := bld.NewRecord()
 
 	dynschema := dynparquet.NewSampleSchema()
-	ps, err := dynschema.DynamicParquetSchema(pqarrow.RecordDynamicCols(record))
+	ps, err := dynschema.GetDynamicParquetSchema(pqarrow.RecordDynamicCols(record))
 	require.NoError(t, err)
+	defer dynschema.PutPooledParquetSchema(ps)
 
-	row, err := pqarrow.RecordToRow(dynschema, ps, record, 0)
+	row, err := pqarrow.RecordToRow(dynschema, ps.Schema, record, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[<null> hello world <null> 10 20]", fmt.Sprintf("%v", row))
 }
@@ -1177,13 +1178,14 @@ func Test_L0Query(t *testing.T) {
 		Value:     3,
 	}}
 
-	ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
 		"labels": {"label1", "label2", "label3", "label4"},
 	})
 	require.NoError(t, err)
+	defer table.Schema().PutPooledParquetSchema(ps)
 
 	ctx := context.Background()
-	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
 	require.NoError(t, err)
 
 	r, err := samples.ToRecord(sc)
@@ -1431,13 +1433,14 @@ func Test_Table_Size(t *testing.T) {
 		samples := dynparquet.NewTestSamples()
 		switch isArrow {
 		case true:
-			ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
 				"labels": {"node", "namespace", "container"},
 			})
 			require.NoError(t, err)
+			defer table.Schema().PutPooledParquetSchema(ps)
 
 			ctx := context.Background()
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
 			require.NoError(t, err)
 
 			rec, err := samples.ToRecord(sc)

@@ -139,12 +139,13 @@ func TestDBWithWAL(t *testing.T) {
 		switch isArrow {
 		case true:
 
-			ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
 				"labels": {"label1", "label2", "label3", "label4"},
 			})
 			require.NoError(t, err)
+			defer table.Schema().PutPooledParquetSchema(ps)
 
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
 			require.NoError(t, err)
 
 			rec, err := samples.ToRecord(sc)
@@ -179,12 +180,13 @@ func TestDBWithWAL(t *testing.T) {
 
 		switch isArrow {
 		case true:
-			ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
 				"labels": {"label1", "label2"},
 			})
 			require.NoError(t, err)
+			defer table.Schema().PutPooledParquetSchema(ps)
 
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
 			require.NoError(t, err)
 
 			rec, err := samples.ToRecord(sc)
@@ -218,12 +220,13 @@ func TestDBWithWAL(t *testing.T) {
 
 		switch isArrow {
 		case true:
-			ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
 				"labels": {"label1", "label2", "label3"},
 			})
 			require.NoError(t, err)
+			defer table.Schema().PutPooledParquetSchema(ps)
 
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
 			require.NoError(t, err)
 
 			rec, err := samples.ToRecord(sc)
@@ -1305,12 +1308,13 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 		},
 	}
 
-	ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
 		"labels": {"label1", "label2", "label3"},
 	})
 	require.NoError(t, err)
+	defer table.Schema().PutPooledParquetSchema(ps)
 
-	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
 	require.NoError(t, err)
 
 	r, err := samples.ToRecord(sc)

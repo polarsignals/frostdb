@@ -83,8 +83,8 @@ func (s *Schema) Cmp(a, b *DynamicRow) int {
 	if err != nil {
 		panic(fmt.Sprintf("unexpected schema state: %v", err))
 	}
-	sortingSchema := pooledSchema.schema
-	defer s.PutParquetSortingSchema(pooledSchema)
+	sortingSchema := pooledSchema.Schema
+	defer s.PutPooledParquetSchema(pooledSchema)
 
 	// Iterate over all the schema columns to prepare the rows for comparison.
 	// The main reason we can't directly pass in {a,b}.Row is that they might
