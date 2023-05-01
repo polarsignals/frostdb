@@ -92,6 +92,7 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 			return fmt.Errorf("non-dictionary array %T provided for dictionary builder", a)
 		}
 	case *ListBuilder:
+		vb := b.ValueBuilder()
 		list := arr.(*array.List)
 		start, end := list.ValueOffsets(i)
 		values := array.NewSlice(list.ListValues(), start, end)
@@ -103,10 +104,11 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 			case *array.Binary:
 				b.Append(true)
 				for j := 0; j < v.Len(); j++ {
-					vb := b.ValueBuilder()
 					switch bldr := vb.(type) {
 					case *array.BinaryDictionaryBuilder:
-						bldr.Append(dict.Value(v.GetValueIndex(j)))
+						if err := bldr.Append(dict.Value(v.GetValueIndex(j))); err != nil {
+							return err
+						}
 					default:
 						return fmt.Errorf("uknown value builder type %T", bldr)
 					}

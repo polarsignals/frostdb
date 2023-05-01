@@ -1525,20 +1525,23 @@ func Test_Insert_Repeated(t *testing.T) {
 	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
 	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
 	row = append(row, parquet.ValueOf("blah").Level(1, 1, 2))
-	buffer.WriteRows([]parquet.Row{row})
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
 	row = nil
 	row = append(row, parquet.ValueOf("foo2").Level(0, 0, 0))
 	row = append(row, parquet.ValueOf(3).Level(0, 0, 1))
 	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
 	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
-	buffer.WriteRows([]parquet.Row{row})
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
 	row = nil
 	row = append(row, parquet.ValueOf("foo3").Level(0, 0, 0))
 	row = append(row, parquet.ValueOf(6).Level(0, 0, 1))
 	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
 	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
 	row = append(row, parquet.ValueOf("blah").Level(1, 1, 2))
-	buffer.WriteRows([]parquet.Row{row})
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
 
 	ctx := context.Background()
 

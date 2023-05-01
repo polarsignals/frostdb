@@ -73,7 +73,6 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 			default:
 				row = append(row, parquet.ValueOf(v).Level(rep+1, def+1, col))
 			}
-
 		}); err != nil {
 			return nil, err
 		}
