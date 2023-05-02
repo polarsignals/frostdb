@@ -56,6 +56,11 @@ type ColumnStore struct {
 
 	sources []DataSource
 	sinks   []DataSink
+
+	// testingOptions are options only used for testing purposes.
+	testingOptions struct {
+		disableReclaimDiskSpaceOnSnapshot bool
+	}
 }
 
 type metrics struct {
@@ -857,6 +862,25 @@ func (db *DB) maintainWAL() {
 			return
 		}
 	}
+}
+
+// reclaimDiskSpace attempts to read the latest valid snapshot txn and removes
+// any snapshots/wal entries that are older than the snapshot tx.
+func (db *DB) reclaimDiskSpace(ctx context.Context) error {
+	if db.columnStore.testingOptions.disableReclaimDiskSpaceOnSnapshot {
+		return nil
+	}
+	validSnapshotTxn, err := db.getLatestValidSnapshotTxn(ctx)
+	if err != nil {
+		return err
+	}
+	if validSnapshotTxn == 0 {
+		return nil
+	}
+	if err := db.truncateSnapshotsLessThanTX(ctx, validSnapshotTxn); err != nil {
+		return err
+	}
+	return db.wal.Truncate(validSnapshotTxn)
 }
 
 func (db *DB) getMinTXPersisted() uint64 {
