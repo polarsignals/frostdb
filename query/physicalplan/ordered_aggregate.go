@@ -177,7 +177,7 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 				a.scratch.groupByMap[field.Name] = groupColInfo{field: field, arr: r.Column(i)}
 				if _, ok := a.groupBuilders[field.Name]; !ok {
 					a.groupColOrdering = append(a.groupColOrdering, field)
-					b := builder.NewBuilder(a.pool, field.Type)
+					b := builder.NewBuilder(a.pool, field.Type, field.Nullable)
 					a.groupBuilders[field.Name] = b
 					foundNewColumns = true
 					if a.notFirstCall {
@@ -194,7 +194,7 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 		if a.columnToAggregate.MatchColumn(field.Name) {
 			columnToAggregate = r.Column(i)
 			if a.arrayToAggCarry == nil {
-				a.arrayToAggCarry = builder.NewBuilder(a.pool, columnToAggregate.DataType())
+				a.arrayToAggCarry = builder.NewBuilder(a.pool, columnToAggregate.DataType(), false)
 			}
 			aggregateFieldFound = true
 		}
@@ -367,7 +367,7 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 				// Since we're accumulating the group results until the call
 				// to Finish, it is unsafe to reuse this builder since the
 				// underlying buffers are reused, so allocate a new one.
-				a.groupBuilders[field.Name] = builder.NewBuilder(a.pool, arr.DataType())
+				a.groupBuilders[field.Name] = builder.NewBuilder(a.pool, arr.DataType(), false)
 				a.groupResults[n] = append(a.groupResults[n], arr)
 			}
 		}

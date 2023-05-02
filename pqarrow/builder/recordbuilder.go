@@ -32,7 +32,7 @@ func NewRecordBuilder(mem memory.Allocator, schema *arrow.Schema) *RecordBuilder
 	}
 
 	for i, f := range schema.Fields() {
-		b.fields[i] = NewBuilder(mem, f.Type)
+		b.fields[i] = NewBuilder(mem, f.Type, f.Nullable)
 	}
 
 	return b
@@ -110,7 +110,7 @@ func (b *RecordBuilder) ExpandSchema(schema *arrow.Schema) {
 		}
 
 		// Add the new field
-		b.fields = append(b.fields[:i], append([]ColumnBuilder{NewBuilder(b.mem, f.Type)}, b.fields[i:]...)...)
+		b.fields = append(b.fields[:i], append([]ColumnBuilder{NewBuilder(b.mem, f.Type, f.Nullable)}, b.fields[i:]...)...)
 	}
 
 	b.schema = schema

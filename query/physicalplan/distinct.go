@@ -83,7 +83,7 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 
 	resBuilders := make([]builder.ColumnBuilder, 0, len(distinctArrays))
 	for _, arr := range distinctArrays {
-		resBuilders = append(resBuilders, builder.NewBuilder(d.pool, arr.DataType()))
+		resBuilders = append(resBuilders, builder.NewBuilder(d.pool, arr.DataType(), false))
 	}
 	rows := int64(0)
 

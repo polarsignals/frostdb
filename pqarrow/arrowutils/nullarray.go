@@ -29,7 +29,7 @@ func MakeVirtualNullArray(dt arrow.DataType, len int) VirtualNullArray {
 func MakeNullArray(mem memory.Allocator, dt arrow.DataType, len int) arrow.Array {
 	// TODO(asubiotto): This can be improved by using the optimized builders'
 	// AppendNulls. Not sure whether this should be part of the builder package.
-	b := builder.NewBuilder(mem, dt)
+	b := builder.NewBuilder(mem, dt, true)
 	b.Reserve(len)
 	for i := 0; i < len; i++ {
 		b.AppendNull()

@@ -161,17 +161,19 @@ func min(a, b int) int {
 type ListBuilder struct {
 	builder
 
-	etype   arrow.DataType // data type of the list's elements.
-	values  ColumnBuilder
-	offsets *array.Int32Builder
+	nullable bool
+	etype    arrow.DataType // data type of the list's elements.
+	values   ColumnBuilder
+	offsets  *array.Int32Builder
 }
 
-func NewListBuilder(mem memory.Allocator, etype arrow.DataType) *ListBuilder {
+func NewListBuilder(mem memory.Allocator, etype arrow.DataType, nullable bool) *ListBuilder {
 	return &ListBuilder{
-		builder: builder{refCount: 1, mem: mem},
-		etype:   etype,
-		values:  NewBuilder(mem, etype),
-		offsets: array.NewInt32Builder(mem),
+		nullable: nullable,
+		builder:  builder{refCount: 1, mem: mem},
+		etype:    etype,
+		values:   NewBuilder(mem, etype, nullable),
+		offsets:  array.NewInt32Builder(mem),
 	}
 }
 
@@ -288,16 +290,29 @@ func (b *ListBuilder) newData() (data *array.Data) {
 		offsets = arr.Data().Buffers()[1]
 	}
 
-	data = array.NewData(
-		arrow.ListOf(b.etype), b.length,
-		[]*memory.Buffer{
-			b.nullBitmap,
-			offsets,
-		},
-		[]arrow.ArrayData{values.Data()},
-		b.nulls,
-		0,
-	)
+	if b.nullable {
+		data = array.NewData(
+			arrow.ListOf(b.etype), b.length,
+			[]*memory.Buffer{
+				b.nullBitmap,
+				offsets,
+			},
+			[]arrow.ArrayData{values.Data()},
+			b.nulls,
+			0,
+		)
+	} else {
+		data = array.NewData(
+			arrow.ListOfNonNullable(b.etype), b.length,
+			[]*memory.Buffer{
+				b.nullBitmap,
+				offsets,
+			},
+			[]arrow.ArrayData{values.Data()},
+			b.nulls,
+			0,
+		)
+	}
 	b.reset()
 
 	return
