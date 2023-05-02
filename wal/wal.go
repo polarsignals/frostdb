@@ -71,10 +71,12 @@ type FileWAL struct {
 
 	metrics        *fileWALMetrics
 	logRequestCh   chan *logRequest
-	queue          *logRequestQueue
 	logRequestPool *sync.Pool
 	arrowBufPool   *sync.Pool
-	mtx            *sync.Mutex
+	protected      struct {
+		sync.Mutex
+		queue logRequestQueue
+	}
 
 	cancel     func()
 	shutdownCh chan struct{}
@@ -139,8 +141,6 @@ func Open(
 				return &bytes.Buffer{}
 			},
 		},
-		mtx:   &sync.Mutex{},
-		queue: &logRequestQueue{},
 		metrics: &fileWALMetrics{
 			// TODO(asubiotto): Move these metrics to the underlying WAL
 			// package.
@@ -179,26 +179,29 @@ func (w *FileWAL) run(ctx context.Context) {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	walBatch := make([]types.LogEntry, 0)
-	batch := make([]*logRequest, 0, 128) // random number is random
+	batch := make([]*logRequest, 0, 128)
 	// lastQueueSize is only used on shutdown to reduce debug logging verbosity.
 	lastQueueSize := 0
 	for {
 		select {
 		case <-ctx.Done():
-			w.mtx.Lock()
-			n := w.queue.Len()
-			w.mtx.Unlock()
+			w.protected.Lock()
+			n := w.protected.queue.Len()
+			w.protected.Unlock()
 			if n > 0 {
 				// Need to drain the queue before we can shutdown.
 				if n == lastQueueSize {
 					continue
 				}
 				lastQueueSize = n
+				w.protected.Lock()
+				minTx := w.protected.queue[0].tx
+				w.protected.Unlock()
 				lastIdx, err := w.log.LastIndex()
 				logOpts := []any{
 					"msg", "WAL received shutdown request; waiting for log request queue to drain",
 					"queueSize", n,
-					"minTx", (*w.queue)[0].tx,
+					"minTx", minTx,
 					"lastIndex", lastIdx,
 				}
 				if err != nil {
@@ -221,9 +224,9 @@ func (w *FileWAL) run(ctx context.Context) {
 				)
 			}
 			nextTx++
-			w.mtx.Lock()
-			for w.queue.Len() > 0 {
-				if minTx := (*w.queue)[0].tx; minTx != nextTx {
+			w.protected.Lock()
+			for w.protected.queue.Len() > 0 {
+				if minTx := w.protected.queue[0].tx; minTx != nextTx {
 					if minTx < nextTx {
 						// The next entry must be dropped otherwise progress
 						// will never be made. Log a warning given this could
@@ -233,15 +236,15 @@ func (w *FileWAL) run(ctx context.Context) {
 							"expected", nextTx,
 							"found", minTx,
 						)
-						_ = heap.Pop(w.queue)
+						_ = heap.Pop(&w.protected.queue)
 					}
 					break
 				}
-				r := heap.Pop(w.queue).(*logRequest)
+				r := heap.Pop(&w.protected.queue).(*logRequest)
 				batch = append(batch, r)
 				nextTx++
 			}
-			w.mtx.Unlock()
+			w.protected.Unlock()
 			if len(batch) == 0 {
 				continue
 			}
@@ -313,9 +316,9 @@ func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
 		return err
 	}
 
-	w.mtx.Lock()
-	heap.Push(w.queue, r)
-	w.mtx.Unlock()
+	w.protected.Lock()
+	heap.Push(&w.protected.queue, r)
+	w.protected.Unlock()
 
 	return nil
 }
@@ -370,9 +373,9 @@ func (w *FileWAL) LogRecord(tx uint64, table string, record arrow.Record) error 
 		return err
 	}
 
-	w.mtx.Lock()
-	heap.Push(w.queue, r)
-	w.mtx.Unlock()
+	w.protected.Lock()
+	heap.Push(&w.protected.queue, r)
+	w.protected.Unlock()
 
 	return nil
 }
