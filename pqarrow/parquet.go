@@ -12,6 +12,7 @@ import (
 
 	"github.com/polarsignals/frostdb/bufutils"
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
@@ -64,6 +65,18 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 		default:
 			return nil, fmt.Errorf("dictionary not of expected type: %T", dict)
 		}
+	case *array.List:
+		if err := arrowutils.ForEachValueInList(index, arr, func(i int, v any) {
+			switch i {
+			case 0:
+				row = append(row, parquet.ValueOf(v).Level(rep, def+1, col))
+			default:
+				row = append(row, parquet.ValueOf(v).Level(rep+1, def+1, col))
+			}
+		}); err != nil {
+			return nil, err
+		}
+		return appendToRow(row, arr.ListValues(), index, rep, def, col)
 	default:
 		return nil, fmt.Errorf("column not of expected type: %v", c.DataType().ID())
 	}

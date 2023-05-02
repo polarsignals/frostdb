@@ -26,6 +26,7 @@ import (
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
+	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -1472,4 +1473,114 @@ func Test_Table_Size(t *testing.T) {
 	t.Run("parquet", func(t *testing.T) {
 		test(false)
 	})
+}
+
+func Test_Insert_Repeated(t *testing.T) {
+	schema := &schemapb.Schema{
+		Name: "repeated",
+		Columns: []*schemapb.Column{{
+			Name: "name",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+		}, {
+			Name: "values",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				Repeated: true,
+			},
+		}, {
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+		}},
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "name",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	}
+	config := NewTableConfig(schema)
+	logger := newTestLogger(t)
+
+	c, err := New(WithLogger(logger))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	buffer, err := table.Schema().GetBuffer(nil)
+	require.NoError(t, err)
+
+	var row parquet.Row
+	row = append(row, parquet.ValueOf("foo").Level(0, 0, 0))
+	row = append(row, parquet.ValueOf(4).Level(0, 0, 1))
+	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
+	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
+	row = append(row, parquet.ValueOf("blah").Level(1, 1, 2))
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
+	row = nil
+	row = append(row, parquet.ValueOf("foo2").Level(0, 0, 0))
+	row = append(row, parquet.ValueOf(3).Level(0, 0, 1))
+	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
+	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
+	row = nil
+	row = append(row, parquet.ValueOf("foo3").Level(0, 0, 0))
+	row = append(row, parquet.ValueOf(6).Level(0, 0, 1))
+	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
+	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
+	row = append(row, parquet.ValueOf("blah").Level(1, 1, 2))
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Test insertion as record
+	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
+	defer converter.Close()
+
+	require.NoError(t, converter.Convert(ctx, buffer))
+	record := converter.NewRecord()
+	defer record.Release()
+
+	_, err = table.InsertRecord(ctx, record)
+	require.NoError(t, err)
+
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+		err = table.Iterator(
+			ctx,
+			tx,
+			memory.NewGoAllocator(),
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				require.Equal(t, int64(3), ar.NumRows())
+				require.Equal(t, int64(3), ar.NumCols())
+				return nil
+			}},
+		)
+		require.NoError(t, err)
+		return nil
+	})
+
+	engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
+	err = engine.ScanTable("test").
+		Aggregate(
+			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]logicalplan.Expr{logicalplan.Col("values")},
+		).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			require.Equal(t, int64(2), r.NumRows())
+			require.Equal(t, int64(2), r.NumCols())
+			return nil
+		})
+	require.NoError(t, err)
 }

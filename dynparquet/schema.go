@@ -401,7 +401,7 @@ type v1storageLayoutWrapper struct {
 }
 
 func (s *v1storageLayoutWrapper) GetRepeated() bool {
-	return false
+	return s.Repeated
 }
 
 func (s *v1storageLayoutWrapper) GetTypeInt32() int32 {
