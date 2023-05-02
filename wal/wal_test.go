@@ -1,9 +1,11 @@
 package wal
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -154,4 +156,48 @@ func TestUnexpectedTxn(t *testing.T) {
 	lastIndex, err := w.LastIndex()
 	require.NoError(t, err)
 	require.Equal(t, lastIndex, uint64(2))
+}
+
+func TestWALTruncate(t *testing.T) {
+	dir := t.TempDir()
+	w, err := Open(
+		log.NewNopLogger(),
+		prometheus.NewRegistry(),
+		dir,
+	)
+	require.NoError(t, err)
+	defer w.Close()
+	w.RunAsync()
+
+	for i := uint64(0); i < 10; i++ {
+		require.NoError(t, w.Log(i, &walpb.Record{
+			Entry: &walpb.Entry{
+				EntryType: &walpb.Entry_Write_{
+					Write: &walpb.Entry_Write{
+						Data:      []byte(fmt.Sprintf("test-data-%d", i)),
+						TableName: "test-table",
+					},
+				},
+			},
+		}))
+	}
+	require.NoError(t, w.Truncate(9))
+
+	// Wait for the WAL to asynchronously log and truncate.
+	require.Eventually(t, func() bool {
+		tx, _ := w.FirstIndex()
+		return tx == 9
+	}, time.Second, 10*time.Millisecond)
+
+	numRecords := 0
+	require.NoError(
+		t,
+		w.Replay(0, func(tx uint64, r *walpb.Record) error {
+			numRecords++
+			require.Equal(t, uint64(9), tx)
+			require.Equal(t, []byte("test-data-9"), r.Entry.GetWrite().Data)
+			return nil
+		}),
+	)
+	require.Equal(t, 1, numRecords)
 }
