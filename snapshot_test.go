@@ -35,6 +35,11 @@ func TestSnapshot(t *testing.T) {
 		db, err := c.DB(ctx, "test")
 		require.NoError(t, err)
 
+		// Complete a txn so that the snapshot is created at txn 1, snapshots at
+		// txn 0 are considered empty so ignored.
+		_, _, commit := db.begin()
+		commit()
+
 		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load()))
 
 		txBefore := db.highWatermark.Load()

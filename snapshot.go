@@ -178,30 +178,14 @@ func (db *DB) loadLatestSnapshot(ctx context.Context) (uint64, error) {
 }
 
 func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64, error) {
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, err
-	}
-
-	if len(files) == 0 {
-		return 0, nil
-	}
-
-	var lastErr error
-	// Iterate in reverse order so that the newest snapshot is first.
-	for i := len(files) - 1; i >= 0; i-- {
-		entry := files[i]
-		name := entry.Name()
-		if entry.IsDir() || len(name) < 20 {
-			continue
-		}
-		parsedTx, err := getTxFromSnapshotFileName(name)
-		if err != nil {
-			continue
-		}
-
+	var (
+		lastErr   error
+		loadedTxn uint64
+	)
+	// No error should be returned from snapshotsDo.
+	_ = db.snapshotsDo(ctx, dir, func(parsedTx uint64, entry os.DirEntry) (bool, error) {
 		if err := func() error {
-			f, err := os.Open(filepath.Join(dir, name))
+			f, err := os.Open(filepath.Join(dir, entry.Name()))
 			if err != nil {
 				return err
 			}
@@ -217,17 +201,23 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 			db.highWatermark.Store(parsedTx)
 			return nil
 		}(); err != nil {
-			err = fmt.Errorf("unable to read snapshot file %s: %w", name, err)
+			err = fmt.Errorf("unable to read snapshot file %s: %w", entry.Name(), err)
 			level.Debug(db.logger).Log(
 				"msg", "error reading snapshot",
 				"error", err,
 			)
 			lastErr = err
-			continue
+			return true, nil
 		}
 		// Success.
-		return parsedTx, nil
+		loadedTxn = parsedTx
+		return false, nil
+	})
+	if loadedTxn != 0 {
+		// Successfully loaded a snapshot.
+		return loadedTxn, nil
 	}
+
 	errString := "no valid snapshots found"
 	if lastErr != nil {
 		return 0, fmt.Errorf("%s: lastErr: %w", errString, lastErr)
@@ -556,11 +546,29 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 // than the given tx.
 func (db *DB) truncateSnapshotsLessThanTX(ctx context.Context, tx uint64) error {
 	dir := db.snapshotsDir()
+	return db.snapshotsDo(ctx, dir, func(fileTx uint64, entry os.DirEntry) (bool, error) {
+		if fileTx >= tx {
+			// Continue.
+			return true, nil
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+			return false, err
+		}
+		return true, nil
+	})
+}
+
+// snapshotsDo executes the given callback with the filename of each snapshot
+// in dir in reverse lexicographical order (most recent snapshot first). If
+// false or an error is returned by the callback, the iteration is aborted and
+// the error returned.
+func (db *DB) snapshotsDo(ctx context.Context, dir string, callback func(tx uint64, entry os.DirEntry) (bool, error)) error {
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
-	for _, entry := range files {
+	for i := len(files) - 1; i >= 0; i-- {
+		entry := files[i]
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -572,12 +580,10 @@ func (db *DB) truncateSnapshotsLessThanTX(ctx context.Context, tx uint64) error 
 		if err != nil {
 			continue
 		}
-		if parsedTx >= tx {
-			// All interesting files have been processed.
-			return nil
-		}
-		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+		if ok, err := callback(parsedTx, entry); err != nil {
 			return err
+		} else if !ok {
+			return nil
 		}
 	}
 	return nil
