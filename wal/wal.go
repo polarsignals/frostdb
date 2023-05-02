@@ -76,6 +76,11 @@ type FileWAL struct {
 	protected      struct {
 		sync.Mutex
 		queue logRequestQueue
+		// truncateTx is set when the caller wishes to perform a truncation. The
+		// WAL will keep on logging records up to and including this txn and
+		// then perform a truncation. If another truncate call occurs in the
+		// meantime, the highest txn will be used.
+		truncateTx uint64
 	}
 
 	cancel     func()
@@ -225,6 +230,9 @@ func (w *FileWAL) run(ctx context.Context) {
 			}
 			nextTx++
 			w.protected.Lock()
+			// truncateTx will be non-zero if the log should be truncated after
+			// a successful call to StoreLogs.
+			truncateTx := uint64(0)
 			for w.protected.queue.Len() > 0 {
 				if minTx := w.protected.queue[0].tx; minTx != nextTx {
 					if minTx < nextTx {
@@ -242,6 +250,10 @@ func (w *FileWAL) run(ctx context.Context) {
 				}
 				r := heap.Pop(&w.protected.queue).(*logRequest)
 				batch = append(batch, r)
+				if r.tx == w.protected.truncateTx {
+					truncateTx = r.tx
+					w.protected.truncateTx = 0
+				}
 				nextTx++
 			}
 			w.protected.Unlock()
@@ -270,6 +282,19 @@ func (w *FileWAL) run(ctx context.Context) {
 				)
 			}
 
+			if truncateTx != 0 {
+				w.metrics.lastTruncationAt.Set(float64(truncateTx))
+				w.metrics.walTruncations.Inc()
+
+				level.Debug(w.logger).Log("msg", "truncating WAL", "tx", truncateTx)
+				if err := w.log.TruncateFront(truncateTx); err != nil {
+					level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", truncateTx, "err", err)
+					w.metrics.walTruncationsFailed.Inc()
+				} else {
+					level.Debug(w.logger).Log("msg", "truncated WAL", "tx", truncateTx)
+				}
+			}
+
 			for _, r := range batch {
 				w.logRequestPool.Put(r)
 			}
@@ -277,19 +302,15 @@ func (w *FileWAL) run(ctx context.Context) {
 	}
 }
 
+// Truncate queues a truncation of the WAL at the given tx. Note that the
+// truncation will be performed asynchronously. A nil error does not indicate
+// a successful truncation.
 func (w *FileWAL) Truncate(tx uint64) error {
-	w.metrics.lastTruncationAt.Set(float64(tx))
-	w.metrics.walTruncations.Inc()
-
-	level.Debug(w.logger).Log("msg", "truncating WAL", "tx", tx)
-	err := w.log.TruncateFront(tx)
-	if err != nil {
-		level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", tx, "err", err)
-		w.metrics.walTruncationsFailed.Inc()
-		return err
+	w.protected.Lock()
+	defer w.protected.Unlock()
+	if tx > w.protected.truncateTx {
+		w.protected.truncateTx = tx
 	}
-	level.Debug(w.logger).Log("msg", "truncated WAL", "tx", tx)
-
 	return nil
 }
 
