@@ -217,7 +217,6 @@ func listType(n parquet.Node) (arrow.DataType, error) {
 	}
 	if n.Optional() {
 		return arrow.ListOf(listType), nil
-	} else {
-		return arrow.ListOfNonNullable(listType), nil
 	}
+	return arrow.ListOfNonNullable(listType), nil
 }
