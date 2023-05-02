@@ -225,6 +225,41 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 	return 0, fmt.Errorf("%s", errString)
 }
 
+func (db *DB) getLatestValidSnapshotTxn(ctx context.Context) (uint64, error) {
+	dir := db.snapshotsDir()
+	latestValidTxn := uint64(0)
+	// No error should be returned from snapshotsDo.
+	_ = db.snapshotsDo(ctx, dir, func(parsedTx uint64, entry os.DirEntry) (bool, error) {
+		if err := func() error {
+			f, err := os.Open(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			// readFooter validates the checksum.
+			if _, err := readFooter(f, info.Size()); err != nil {
+				return err
+			}
+			return nil
+		}(); err != nil {
+			level.Debug(db.logger).Log(
+				"msg", "error reading snapshot",
+				"error", err,
+			)
+			// Continue to the next snapshot.
+			return true, nil
+		}
+		// Valid snapshot found.
+		latestValidTxn = parsedTx
+		return false, nil
+	})
+	return latestValidTxn, nil
+}
+
 type offsetWriter struct {
 	w               io.Writer
 	runningChecksum hash.Hash32

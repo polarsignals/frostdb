@@ -1442,6 +1442,10 @@ func TestDBRecover(t *testing.T) {
 				WithStoragePath(dir),
 				WithWAL(),
 				WithSnapshotTriggerSize(1),
+				// Disable reclaiming disk space on snapshot (i.e. deleting
+				// old snapshots and WAL). This allows us to modify on-disk
+				// state for some tests.
+				WithTestingNoDiskSpaceReclaimOnSnapshot(),
 			},
 				options...,
 			)...,
