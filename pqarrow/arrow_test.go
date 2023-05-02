@@ -594,7 +594,7 @@ func TestList(t *testing.T) {
 
 	column := record.Column(0)
 	colType := column.DataType().(*arrow.ListType)
-	require.True(t, colType.ElemField().Nullable)
+	require.False(t, colType.ElemField().Nullable)
 
 	listArray := column.(*array.List)
 	vals := listArray.ListValues().(*array.Int64).Int64Values()
@@ -802,7 +802,6 @@ func Test_ParquetToArrowV2(t *testing.T) {
 		require.NoError(t, c.Convert(ctx, pb))
 	}
 	r := c.NewRecord()
-	fmt.Println(r)
 	require.Equal(t, int64(n), r.NumRows())
 }
 
