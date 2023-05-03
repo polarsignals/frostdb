@@ -230,9 +230,6 @@ func (w *FileWAL) run(ctx context.Context) {
 			}
 			nextTx++
 			w.protected.Lock()
-			// truncateTx will be non-zero if the log should be truncated after
-			// a successful call to StoreLogs.
-			truncateTx := uint64(0)
 			for w.protected.queue.Len() > 0 {
 				if minTx := w.protected.queue[0].tx; minTx != nextTx {
 					if minTx < nextTx {
@@ -250,14 +247,19 @@ func (w *FileWAL) run(ctx context.Context) {
 				}
 				r := heap.Pop(&w.protected.queue).(*logRequest)
 				batch = append(batch, r)
-				if r.tx == w.protected.truncateTx {
-					truncateTx = r.tx
-					w.protected.truncateTx = 0
-				}
 				nextTx++
 			}
+			// truncateTx will be non-zero if we either are about to log a
+			// record with a txn past the txn to truncate, or we have logged one
+			// in the past.
+			truncateTx := uint64(0)
+			if w.protected.truncateTx < nextTx {
+				truncateTx = w.protected.truncateTx
+				w.protected.truncateTx = 0
+			}
 			w.protected.Unlock()
-			if len(batch) == 0 {
+			if len(batch) == 0 && truncateTx == 0 {
+				// No records to log or truncations.
 				continue
 			}
 
@@ -271,15 +273,17 @@ func (w *FileWAL) run(ctx context.Context) {
 				})
 			}
 
-			if err := w.log.StoreLogs(walBatch); err != nil {
-				w.metrics.failedLogs.Add(float64(len(batch)))
-				lastIndex, lastIndexErr := w.log.LastIndex()
-				level.Error(w.logger).Log(
-					"msg", "failed to write WAL batch",
-					"err", err,
-					"lastIndex", lastIndex,
-					"lastIndexErr", lastIndexErr,
-				)
+			if len(walBatch) > 0 {
+				if err := w.log.StoreLogs(walBatch); err != nil {
+					w.metrics.failedLogs.Add(float64(len(batch)))
+					lastIndex, lastIndexErr := w.log.LastIndex()
+					level.Error(w.logger).Log(
+						"msg", "failed to write WAL batch",
+						"err", err,
+						"lastIndex", lastIndex,
+						"lastIndexErr", lastIndexErr,
+					)
+				}
 			}
 
 			if truncateTx != 0 {

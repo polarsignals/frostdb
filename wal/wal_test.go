@@ -159,45 +159,57 @@ func TestUnexpectedTxn(t *testing.T) {
 }
 
 func TestWALTruncate(t *testing.T) {
-	dir := t.TempDir()
-	w, err := Open(
-		log.NewNopLogger(),
-		prometheus.NewRegistry(),
-		dir,
-	)
-	require.NoError(t, err)
-	defer w.Close()
-	w.RunAsync()
+	for i, tc := range []string{"BeforeLog", "AfterLog"} {
+		t.Run(tc, func(t *testing.T) {
+			dir := t.TempDir()
+			w, err := Open(
+				log.NewNopLogger(),
+				prometheus.NewRegistry(),
+				dir,
+			)
+			require.NoError(t, err)
+			defer w.Close()
+			w.RunAsync()
 
-	for i := uint64(0); i < 10; i++ {
-		require.NoError(t, w.Log(i, &walpb.Record{
-			Entry: &walpb.Entry{
-				EntryType: &walpb.Entry_Write_{
-					Write: &walpb.Entry_Write{
-						Data:      []byte(fmt.Sprintf("test-data-%d", i)),
-						TableName: "test-table",
+			for i := uint64(0); i < 10; i++ {
+				require.NoError(t, w.Log(i, &walpb.Record{
+					Entry: &walpb.Entry{
+						EntryType: &walpb.Entry_Write_{
+							Write: &walpb.Entry_Write{
+								Data:      []byte(fmt.Sprintf("test-data-%d", i)),
+								TableName: "test-table",
+							},
+						},
 					},
-				},
-			},
-		}))
+				}))
+			}
+			if i == 1 {
+				// Wait until the last entry is written before issuing the
+				// truncate call.
+				require.Eventually(t, func() bool {
+					tx, _ := w.LastIndex()
+					return tx == 9
+				}, time.Second, 10*time.Millisecond)
+			}
+			require.NoError(t, w.Truncate(9))
+
+			// Wait for the WAL to asynchronously log and truncate.
+			require.Eventually(t, func() bool {
+				tx, _ := w.FirstIndex()
+				return tx == 9
+			}, time.Second, 10*time.Millisecond)
+
+			numRecords := 0
+			require.NoError(
+				t,
+				w.Replay(0, func(tx uint64, r *walpb.Record) error {
+					numRecords++
+					require.Equal(t, uint64(9), tx)
+					require.Equal(t, []byte("test-data-9"), r.Entry.GetWrite().Data)
+					return nil
+				}),
+			)
+			require.Equal(t, 1, numRecords)
+		})
 	}
-	require.NoError(t, w.Truncate(9))
-
-	// Wait for the WAL to asynchronously log and truncate.
-	require.Eventually(t, func() bool {
-		tx, _ := w.FirstIndex()
-		return tx == 9
-	}, time.Second, 10*time.Millisecond)
-
-	numRecords := 0
-	require.NoError(
-		t,
-		w.Replay(0, func(tx uint64, r *walpb.Record) error {
-			numRecords++
-			require.Equal(t, uint64(9), tx)
-			require.Equal(t, []byte("test-data-9"), r.Entry.GetWrite().Data)
-			return nil
-		}),
-	)
-	require.Equal(t, 1, numRecords)
 }
