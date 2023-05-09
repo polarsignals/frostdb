@@ -825,20 +825,6 @@ func (t *Table) View(ctx context.Context, fn func(ctx context.Context, tx uint64
 	return fn(ctx, tx)
 }
 
-// prepareForFlush sets the nullability on a Record column if the type is a
-// ListType.
-// TODO: Is this a bug in arrow? We already set the nullability in
-// parquetColumnToArrowArray, but it doesn't appear to transfer into the
-// resulting array's type. Needs to be investigated.
-func prepareForFlush(r arrow.Record, schema *parquet.Schema) {
-	for i, c := range r.Columns() {
-		switch t := c.DataType().(type) {
-		case *arrow.ListType:
-			t.SetElemNullable(schema.Fields()[i].Optional())
-		}
-	}
-}
-
 // Iterator iterates in order over all granules in the table. It stops iterating when the iterator function returns false.
 func (t *Table) Iterator(
 	ctx context.Context,
@@ -879,8 +865,6 @@ func (t *Table) Iterator(
 			converter := pqarrow.NewParquetConverter(pool, *iterOpts)
 			defer converter.Close()
 
-			var rgSchema *parquet.Schema
-
 			for {
 				select {
 				case <-ctx.Done():
@@ -891,7 +875,6 @@ func (t *Table) Iterator(
 						if r == nil || r.NumRows() == 0 {
 							return nil
 						}
-						prepareForFlush(r, rgSchema)
 						if err := callback(ctx, r); err != nil {
 							return err
 						}
@@ -907,7 +890,6 @@ func (t *Table) Iterator(
 							return err
 						}
 					case dynparquet.DynamicRowGroup:
-						rgSchema = t.Schema()
 						if err := converter.Convert(ctx, t); err != nil {
 							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 						}
@@ -917,7 +899,6 @@ func (t *Table) Iterator(
 						}
 						if converter.NumRows() >= bufferSize {
 							r := converter.NewRecord()
-							prepareForFlush(r, rgSchema)
 							if err := callback(ctx, r); err != nil {
 								return err
 							}
