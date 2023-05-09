@@ -53,12 +53,13 @@ func insertSampleRecords(ctx context.Context, t *testing.T, table *Table, timest
 		})
 	}
 
-	ps, err := table.Schema().DynamicParquetSchema(map[string][]string{
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
 		"labels": {"label1"},
 	})
 	require.NoError(t, err)
+	defer table.Schema().PutPooledParquetSchema(ps)
 
-	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps, logicalplan.IterOptions{})
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
 	require.NoError(t, err)
 
 	ar, err := samples.ToRecord(sc)

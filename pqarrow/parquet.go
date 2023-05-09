@@ -158,38 +158,34 @@ func RecordToDynamicSchema(schema *dynparquet.Schema, record arrow.Record) (*par
 	return sc, bufutils.Dedupe(dyncols), sc.Fields()
 }
 
-func RecordToDynamicRow(schema *dynparquet.Schema, record arrow.Record, index int) (*dynparquet.DynamicRow, error) {
+func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, record arrow.Record, index int) (*dynparquet.DynamicRow, error) {
 	if index >= int(record.NumRows()) {
 		return nil, io.EOF
 	}
 
-	ps, err := schema.DynamicParquetSchema(RecordDynamicCols(record))
+	row, err := RecordToRow(dynSchema, pqSchema, record, index)
 	if err != nil {
 		return nil, err
 	}
 
-	row, err := RecordToRow(schema, ps, record, index)
-	if err != nil {
-		return nil, err
-	}
-
-	sch, dyncols, fields := RecordToDynamicSchema(schema, record)
+	sch, dyncols, fields := RecordToDynamicSchema(dynSchema, record)
 	return dynparquet.NewDynamicRow(row, sch, dyncols, fields), nil
 }
 
 func RecordToFile(schema *dynparquet.Schema, w *parquet.GenericWriter[any], r arrow.Record) error {
 	defer w.Close()
 
-	ps, err := schema.DynamicParquetSchema(RecordDynamicCols(r))
+	ps, err := schema.GetDynamicParquetSchema(RecordDynamicCols(r))
 	if err != nil {
 		return err
 	}
+	defer schema.PutPooledParquetSchema(ps)
 
 	rows := make([]parquet.Row, 0, r.NumRows())
-	finalFields := ps.Fields()
+	finalFields := ps.Schema.Fields()
 	recordFields := r.Schema().Fields()
 	for i := 0; i < int(r.NumRows()); i++ {
-		row, err := getRecordRow(schema, ps, r, i, finalFields, recordFields)
+		row, err := getRecordRow(schema, ps.Schema, r, i, finalFields, recordFields)
 		if err != nil {
 			return err
 		}

@@ -150,8 +150,12 @@ func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	}
 
 	if p.record != nil {
-		var err error
-		p.minRow, err = pqarrow.RecordToDynamicRow(p.schema, p.record, 0)
+		pooledSchema, err := p.schema.GetDynamicParquetSchema(pqarrow.RecordDynamicCols(p.record))
+		if err != nil {
+			return nil, err
+		}
+		defer p.schema.PutPooledParquetSchema(pooledSchema)
+		p.minRow, err = pqarrow.RecordToDynamicRow(p.schema, pooledSchema.Schema, p.record, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -181,8 +185,12 @@ func (p *Part) most() (*dynparquet.DynamicRow, error) {
 	}
 
 	if p.record != nil {
-		var err error
-		p.maxRow, err = pqarrow.RecordToDynamicRow(p.schema, p.record, int(p.record.NumRows()-1))
+		pooledSchema, err := p.schema.GetDynamicParquetSchema(pqarrow.RecordDynamicCols(p.record))
+		if err != nil {
+			return nil, err
+		}
+		defer p.schema.PutPooledParquetSchema(pooledSchema)
+		p.maxRow, err = pqarrow.RecordToDynamicRow(p.schema, pooledSchema.Schema, p.record, int(p.record.NumRows()-1))
 		if err != nil {
 			return nil, err
 		}
