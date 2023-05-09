@@ -306,83 +306,91 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 
 	metadata := &snapshotpb.FooterData{}
 	for _, t := range tables {
-		block := t.ActiveBlock()
-		blockUlid, err := block.ulid.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		tableMeta := &snapshotpb.Table{
-			Name:   t.name,
-			Config: t.config,
-			ActiveBlock: &snapshotpb.Table_TableBlock{
-				Ulid:   blockUlid,
-				Size:   block.Size(),
-				MinTx:  block.minTx,
-				PrevTx: block.prevTx,
-			},
-		}
+		if err := func() error {
+			// Obtain a write block to prevent racing with
+			// compaction/persistence.
+			block, done, err := t.ActiveWriteBlock()
+			if err != nil {
+				return err
+			}
+			defer done()
+			blockUlid, err := block.ulid.MarshalBinary()
+			if err != nil {
+				return err
+			}
+			tableMeta := &snapshotpb.Table{
+				Name:   t.name,
+				Config: t.config,
+				ActiveBlock: &snapshotpb.Table_TableBlock{
+					Ulid:   blockUlid,
+					Size:   block.Size(),
+					MinTx:  block.minTx,
+					PrevTx: block.prevTx,
+				},
+			}
 
-		var ascendErr error
-		t.ActiveBlock().Index().Ascend(func(i btree.Item) bool {
-			granuleMeta := &snapshotpb.Granule{}
-			i.(*Granule).PartsForTx(tx, func(p *parts.Part) bool {
-				partMeta := &snapshotpb.Part{
-					StartOffset:     int64(offW.offset),
-					Tx:              p.TX(),
-					CompactionLevel: uint64(p.CompactionLevel()),
+			var ascendErr error
+			block.Index().Ascend(func(i btree.Item) bool {
+				granuleMeta := &snapshotpb.Granule{}
+				i.(*Granule).PartsForTx(tx, func(p *parts.Part) bool {
+					partMeta := &snapshotpb.Part{
+						StartOffset:     int64(offW.offset),
+						Tx:              p.TX(),
+						CompactionLevel: uint64(p.CompactionLevel()),
+					}
+					if err := func() error {
+						if err := ctx.Err(); err != nil {
+							return err
+						}
+						schema := t.schema
+
+						if record := p.Record(); record != nil {
+							partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
+							recordWriter := ipc.NewWriter(
+								w,
+								ipc.WithSchema(record.Schema()),
+							)
+							defer recordWriter.Close()
+							return recordWriter.Write(record)
+						}
+						partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
+
+						buf, err := p.AsSerializedBuffer(schema)
+						if err != nil {
+							return err
+						}
+						rows := buf.Reader()
+						defer rows.Close()
+
+						parquetWriter, err := schema.GetWriter(w, buf.DynamicColumns())
+						if err != nil {
+							return err
+						}
+						defer schema.PutWriter(parquetWriter)
+						defer parquetWriter.Close()
+
+						if _, err := parquet.CopyRows(parquetWriter, rows); err != nil {
+							return err
+						}
+						return nil
+					}(); err != nil {
+						ascendErr = err
+						return false
+					}
+					partMeta.EndOffset = int64(offW.offset)
+					granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
+					return true
+				})
+				if len(granuleMeta.PartMetadata) > 0 {
+					tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta)
 				}
-				if err := func() error {
-					if err := ctx.Err(); err != nil {
-						return err
-					}
-					schema := t.schema
-
-					if record := p.Record(); record != nil {
-						partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
-						recordWriter := ipc.NewWriter(
-							w,
-							ipc.WithSchema(record.Schema()),
-						)
-						defer recordWriter.Close()
-						return recordWriter.Write(record)
-					}
-					partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
-
-					buf, err := p.AsSerializedBuffer(schema)
-					if err != nil {
-						return err
-					}
-					rows := buf.Reader()
-					defer rows.Close()
-
-					parquetWriter, err := schema.GetWriter(w, buf.DynamicColumns())
-					if err != nil {
-						return err
-					}
-					defer schema.PutWriter(parquetWriter)
-					defer parquetWriter.Close()
-
-					if _, err := parquet.CopyRows(parquetWriter, rows); err != nil {
-						return err
-					}
-					return nil
-				}(); err != nil {
-					ascendErr = err
-					return false
-				}
-				partMeta.EndOffset = int64(offW.offset)
-				granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
 				return true
 			})
-			if len(granuleMeta.PartMetadata) > 0 {
-				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta)
-			}
-			return true
-		})
-		if ascendErr != nil {
+			metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
 			return ascendErr
+		}(); err != nil {
+			return err
 		}
-		metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
 	}
 	footer, err := metadata.MarshalVT()
 	if err != nil {
