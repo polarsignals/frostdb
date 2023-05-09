@@ -62,7 +62,7 @@ func TestRepeatLastValue(t *testing.T) {
 }
 
 func Test_ListBuilder(t *testing.T) {
-	lb := builder.NewListBuilder(memory.NewGoAllocator(), &arrow.Int64Type{}, false)
+	lb := builder.NewListBuilder(memory.NewGoAllocator(), &arrow.Int64Type{})
 
 	lb.Append(true)
 	lb.ValueBuilder().(*builder.OptInt64Builder).Append(1)
@@ -85,7 +85,7 @@ func Test_BuildLargeArray(t *testing.T) {
 		t.Skip("in short mode; skipping long test")
 	}
 	alloc := memory.NewGoAllocator()
-	bldr := builder.NewBuilder(alloc, &arrow.BinaryType{}, true)
+	bldr := builder.NewBuilder(alloc, &arrow.BinaryType{})
 
 	size := rand.Intn(1024) * 1024 // [1k,1MB) values
 	buf := make([]byte, size)

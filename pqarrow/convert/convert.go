@@ -95,11 +95,7 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 	}
 
 	if n.Repeated() {
-		if n.Optional() {
-			dt = arrow.ListOf(dt)
-		} else {
-			dt = arrow.ListOfNonNullable(dt)
-		}
+		dt = arrow.ListOf(dt)
 	}
 
 	return dt, nil
@@ -215,8 +211,5 @@ func listType(n parquet.Node) (arrow.DataType, error) {
 	if err != nil {
 		return nil, err
 	}
-	if n.Optional() {
-		return arrow.ListOf(listType), nil
-	}
-	return arrow.ListOfNonNullable(listType), nil
+	return arrow.ListOf(listType), nil
 }

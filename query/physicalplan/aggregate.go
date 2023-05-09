@@ -446,7 +446,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		if !ok {
 			aggregate = a.aggregates[len(a.aggregates)-1]
 			for j, col := range columnToAggregate {
-				agg := builder.NewBuilder(a.pool, col.DataType(), false)
+				agg := builder.NewBuilder(a.pool, col.DataType())
 				aggregate.aggregations[j].arrays = append(aggregate.aggregations[j].arrays, agg)
 			}
 			tuple = hashtuple{
@@ -486,7 +486,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 
 				aggregate = a.aggregates[len(a.aggregates)-1]
 				for j, col := range columnToAggregate {
-					agg := builder.NewBuilder(a.pool, col.DataType(), false)
+					agg := builder.NewBuilder(a.pool, col.DataType())
 					aggregate.aggregations[j].arrays = append(aggregate.aggregations[j].arrays, agg)
 				}
 				tuple = hashtuple{
@@ -521,7 +521,7 @@ func (a *HashAggregate) updateGroupByCols(row int, groupByArrays []arrow.Array, 
 
 		groupByCol, found := aggregate.groupByCols[fieldName]
 		if !found {
-			groupByCol = builder.NewBuilder(a.pool, groupByFields[i].Type, groupByFields[i].Nullable)
+			groupByCol = builder.NewBuilder(a.pool, groupByFields[i].Type)
 			aggregate.groupByCols[fieldName] = groupByCol
 			aggregate.colOrdering = append(aggregate.colOrdering, fieldName)
 		}

@@ -239,7 +239,6 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 	if err != nil {
 		return err
 	}
-
 	// If the schema has no fields we simply ignore this RowGroup that has no data.
 	if len(schema.Fields()) == 0 {
 		return nil
