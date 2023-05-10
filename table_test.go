@@ -1525,9 +1525,7 @@ func Test_Insert_Repeated(t *testing.T) {
 	var row parquet.Row
 	row = append(row, parquet.ValueOf("foo").Level(0, 0, 0))
 	row = append(row, parquet.ValueOf(4).Level(0, 0, 1))
-	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
-	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
-	row = append(row, parquet.ValueOf("blah").Level(1, 1, 2))
+	row = append(row, parquet.ValueOf(nil).Level(0, 0, 2))
 	_, err = buffer.WriteRows([]parquet.Row{row})
 	require.NoError(t, err)
 	row = nil
@@ -1542,7 +1540,6 @@ func Test_Insert_Repeated(t *testing.T) {
 	row = append(row, parquet.ValueOf(6).Level(0, 0, 1))
 	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
 	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
-	row = append(row, parquet.ValueOf("blah").Level(1, 1, 2))
 	_, err = buffer.WriteRows([]parquet.Row{row})
 	require.NoError(t, err)
 

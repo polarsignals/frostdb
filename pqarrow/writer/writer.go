@@ -155,17 +155,14 @@ func NewListValueWriter(newValueWriter func(b builder.ColumnBuilder, numValues i
 }
 
 func (w *repeatedValueWriter) Write(values []parquet.Value) {
-	v0 := values[0]
-	rep := v0.RepetitionLevel()
-	def := v0.DefinitionLevel()
-	if rep == 0 && def == 0 {
-		w.b.AppendNull()
-	}
-
 	listStart := false
 	start := 0
 	for i, v := range values {
 		if v.RepetitionLevel() == 0 {
+			if v.DefinitionLevel() == 0 {
+				w.b.AppendNull()
+				continue
+			}
 			if listStart {
 				w.b.Append(true)
 				w.values.Write(values[start:i])
