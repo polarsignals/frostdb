@@ -1508,79 +1508,116 @@ func Test_Insert_Repeated(t *testing.T) {
 	config := NewTableConfig(schema)
 	logger := newTestLogger(t)
 
-	c, err := New(WithLogger(logger))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		c.Close()
-	})
+	tests := map[string]struct {
+		nilBeg    bool
+		nilMiddle bool
+		nilEnd    bool
+	}{
+		"beginning": {true, false, false},
+		"middle":    {false, true, false},
+		"end":       {false, false, true},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
 
-	db, err := c.DB(context.Background(), "test")
-	require.NoError(t, err)
-	table, err := db.Table("test", config)
-	require.NoError(t, err)
+			c, err := New(WithLogger(logger))
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				c.Close()
+			})
 
-	buffer, err := table.Schema().GetBuffer(nil)
-	require.NoError(t, err)
+			db, err := c.DB(context.Background(), "test")
+			require.NoError(t, err)
+			table, err := db.Table("test", config)
+			require.NoError(t, err)
 
-	var row parquet.Row
-	row = append(row, parquet.ValueOf("foo").Level(0, 0, 0))
-	row = append(row, parquet.ValueOf(4).Level(0, 0, 1))
-	row = append(row, parquet.ValueOf(nil).Level(0, 0, 2))
-	_, err = buffer.WriteRows([]parquet.Row{row})
-	require.NoError(t, err)
-	row = nil
-	row = append(row, parquet.ValueOf("foo2").Level(0, 0, 0))
-	row = append(row, parquet.ValueOf(3).Level(0, 0, 1))
-	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
-	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
-	_, err = buffer.WriteRows([]parquet.Row{row})
-	require.NoError(t, err)
-	row = nil
-	row = append(row, parquet.ValueOf("foo3").Level(0, 0, 0))
-	row = append(row, parquet.ValueOf(6).Level(0, 0, 1))
-	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
-	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
-	_, err = buffer.WriteRows([]parquet.Row{row})
-	require.NoError(t, err)
+			buffer, err := table.Schema().GetBuffer(nil)
+			require.NoError(t, err)
 
-	ctx := context.Background()
+			var row parquet.Row
+			if test.nilBeg {
+				row = nil
+				row = append(row, parquet.ValueOf("foo").Level(0, 0, 0))
+				row = append(row, parquet.ValueOf(4).Level(0, 0, 1))
+				row = append(row, parquet.ValueOf(nil).Level(0, 0, 2))
+				_, err = buffer.WriteRows([]parquet.Row{row})
+				require.NoError(t, err)
+			}
 
-	// Test insertion as record
-	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
-	defer converter.Close()
+			row = nil
+			row = append(row, parquet.ValueOf("foo2").Level(0, 0, 0))
+			row = append(row, parquet.ValueOf(3).Level(0, 0, 1))
+			row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
+			row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
+			_, err = buffer.WriteRows([]parquet.Row{row})
+			require.NoError(t, err)
 
-	require.NoError(t, converter.Convert(ctx, buffer))
-	record := converter.NewRecord()
-	defer record.Release()
+			if test.nilMiddle {
+				row = nil
+				row = append(row, parquet.ValueOf("foo").Level(0, 0, 0))
+				row = append(row, parquet.ValueOf(4).Level(0, 0, 1))
+				row = append(row, parquet.ValueOf(nil).Level(0, 0, 2))
+				_, err = buffer.WriteRows([]parquet.Row{row})
+				require.NoError(t, err)
+			}
 
-	_, err = table.InsertRecord(ctx, record)
-	require.NoError(t, err)
+			row = nil
+			row = append(row, parquet.ValueOf("foo3").Level(0, 0, 0))
+			row = append(row, parquet.ValueOf(6).Level(0, 0, 1))
+			row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
+			row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
+			_, err = buffer.WriteRows([]parquet.Row{row})
+			require.NoError(t, err)
 
-	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		err = table.Iterator(
-			ctx,
-			tx,
-			memory.NewGoAllocator(),
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-				require.Equal(t, int64(3), ar.NumRows())
-				require.Equal(t, int64(3), ar.NumCols())
+			if test.nilEnd {
+				row = nil
+				row = append(row, parquet.ValueOf("foo").Level(0, 0, 0))
+				row = append(row, parquet.ValueOf(4).Level(0, 0, 1))
+				row = append(row, parquet.ValueOf(nil).Level(0, 0, 2))
+				_, err = buffer.WriteRows([]parquet.Row{row})
+				require.NoError(t, err)
+			}
+
+			ctx := context.Background()
+
+			// Test insertion as record
+			converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
+			defer converter.Close()
+
+			require.NoError(t, converter.Convert(ctx, buffer))
+			record := converter.NewRecord()
+			defer record.Release()
+
+			_, err = table.InsertRecord(ctx, record)
+			require.NoError(t, err)
+
+			err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+				err = table.Iterator(
+					ctx,
+					tx,
+					memory.NewGoAllocator(),
+					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+						require.Equal(t, int64(3), ar.NumRows())
+						require.Equal(t, int64(3), ar.NumCols())
+						return nil
+					}},
+				)
+				require.NoError(t, err)
 				return nil
-			}},
-		)
-		require.NoError(t, err)
-		return nil
-	})
+			})
 
-	engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
-	err = engine.ScanTable("test").
-		Aggregate(
-			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
-			[]logicalplan.Expr{logicalplan.Col("values")},
-		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-			require.Equal(t, int64(2), r.NumRows())
-			require.Equal(t, int64(2), r.NumCols())
-			return nil
+			engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
+			err = engine.ScanTable("test").
+				Aggregate(
+					[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+					[]logicalplan.Expr{logicalplan.Col("values")},
+				).
+				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+					require.Equal(t, int64(2), r.NumRows())
+					require.Equal(t, int64(2), r.NumCols())
+					return nil
+				})
+			require.NoError(t, err)
 		})
-	require.NoError(t, err)
+	}
 }
