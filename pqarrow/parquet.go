@@ -135,30 +135,7 @@ func RecordDynamicCols(record arrow.Record) map[string][]string {
 	return bufutils.Dedupe(dyncols)
 }
 
-// RecordToDynamicSchema converts an arrow record into a parquet schema, dynamic cols, and parquet fields.
-func RecordToDynamicSchema(schema *dynparquet.Schema, record arrow.Record) (*parquet.Schema, map[string][]string, []parquet.Field) {
-	dyncols := map[string][]string{}
-	g := parquet.Group{}
-	for _, f := range schema.ParquetSchema().Fields() {
-		for _, af := range record.Schema().Fields() {
-			name := af.Name
-			parts := strings.SplitN(name, ".", 2)
-			if len(parts) == 2 { // dynamic column
-				name = parts[0] // dedupe
-				dyncols[parts[0]] = append(dyncols[parts[0]], parts[1])
-			}
-
-			if f.Name() == name {
-				g[af.Name] = f
-			}
-		}
-	}
-
-	sc := parquet.NewSchema("arrow converted", g)
-	return sc, bufutils.Dedupe(dyncols), sc.Fields()
-}
-
-func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, record arrow.Record, index int) (*dynparquet.DynamicRow, error) {
+func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, record arrow.Record, dyncols map[string][]string, index int) (*dynparquet.DynamicRow, error) {
 	if index >= int(record.NumRows()) {
 		return nil, io.EOF
 	}
@@ -168,8 +145,7 @@ func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, 
 		return nil, err
 	}
 
-	sch, dyncols, fields := RecordToDynamicSchema(dynSchema, record)
-	return dynparquet.NewDynamicRow(row, sch, dyncols, fields), nil
+	return dynparquet.NewDynamicRow(row, pqSchema, dyncols, pqSchema.Fields()), nil
 }
 
 func RecordToFile(schema *dynparquet.Schema, w *parquet.GenericWriter[any], r arrow.Record) error {
