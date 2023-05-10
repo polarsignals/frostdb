@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
 	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
@@ -65,6 +68,33 @@ const (
 	// to support.
 	minReadVersion = snapshotVersion
 )
+
+type snapshotMetrics struct {
+	snapshotsTotal            *prometheus.CounterVec
+	snapshotFileSizeBytes     prometheus.Gauge
+	snapshotDurationHistogram prometheus.Histogram
+}
+
+func newSnapshotMetrics(reg prometheus.Registerer) *snapshotMetrics {
+	reg = prometheus.WrapRegistererWithPrefix("frostdb_snapshots_", reg)
+	return &snapshotMetrics{
+		snapshotsTotal: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+			Name: "total",
+			Help: "Total number of snapshots",
+		},
+			[]string{"success"},
+		),
+		snapshotFileSizeBytes: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+			Name: "file_size_bytes",
+			Help: "Size of snapshots in bytes",
+		}),
+		snapshotDurationHistogram: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "duration_seconds",
+			Help:    "Duration of snapshots in seconds",
+			Buckets: prometheus.ExponentialBucketsRange(1, 60, 5),
+		}),
+	}
+}
 
 // segmentName returns a 20-byte textual representation of a snapshot file name
 // at a given txn used for lexical ordering.
@@ -140,34 +170,53 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 
 // snapshotAtTX takes a snapshot of the state of the database at transaction tx.
 func (db *DB) snapshotAtTX(ctx context.Context, tx uint64) error {
-	db.metrics.snapshotsStarted.Inc()
-	snapshotsDir := db.snapshotsDir()
-	if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
-		return err
-	}
-
-	fileName := filepath.Join(snapshotsDir, snapshotFileName(tx))
-	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, filePerms)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
+	var fileSize int64
+	start := time.Now()
 	if err := func() error {
-		if err := writeSnapshot(ctx, tx, db, f); err != nil {
+		snapshotsDir := db.snapshotsDir()
+		if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
 			return err
 		}
-		return f.Sync()
-	}(); err != nil {
-		err = fmt.Errorf("failed to write snapshot for tx %d: %w", tx, err)
-		if removeErr := os.Remove(fileName); removeErr != nil {
-			err = fmt.Errorf("%w: failed to remove snapshot file: %v", err, removeErr)
+
+		fileName := filepath.Join(snapshotsDir, snapshotFileName(tx))
+		f, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, filePerms)
+		if err != nil {
+			return err
 		}
+		defer f.Close()
+
+		if err := func() error {
+			if err := writeSnapshot(ctx, tx, db, f); err != nil {
+				return err
+			}
+			if err := f.Sync(); err != nil {
+				return err
+			}
+			info, err := f.Stat()
+			if err != nil {
+				return err
+			}
+			fileSize = info.Size()
+			return nil
+		}(); err != nil {
+			err = fmt.Errorf("failed to write snapshot for tx %d: %w", tx, err)
+			if removeErr := os.Remove(fileName); removeErr != nil {
+				err = fmt.Errorf("%w: failed to remove snapshot file: %v", err, removeErr)
+			}
+			return err
+		}
+		return nil
+	}(); err != nil {
+		db.metrics.snapshotMetrics.snapshotsTotal.WithLabelValues("false").Inc()
 		return err
 	}
+	db.metrics.snapshotMetrics.snapshotsTotal.WithLabelValues("true").Inc()
+	if fileSize > 0 {
+		db.metrics.snapshotMetrics.snapshotFileSizeBytes.Set(float64(fileSize))
+	}
+	db.metrics.snapshotMetrics.snapshotDurationHistogram.Observe(time.Since(start).Seconds())
 	// TODO(asubiotto): If snapshot file sizes become too large, investigate
 	// adding compression.
-	db.metrics.snapshotsCompleted.Inc()
 	return nil
 }
 

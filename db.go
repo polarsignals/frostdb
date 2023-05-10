@@ -289,9 +289,8 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 }
 
 type dbMetrics struct {
-	txHighWatermark    prometheus.GaugeFunc
-	snapshotsStarted   prometheus.Counter
-	snapshotsCompleted prometheus.Counter
+	txHighWatermark prometheus.GaugeFunc
+	snapshotMetrics *snapshotMetrics
 }
 
 type DB struct {
@@ -440,14 +439,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 			}),
 		}
 		if db.columnStore.snapshotTriggerSize != 0 {
-			db.metrics.snapshotsStarted = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "snapshots_started",
-				Help: "Number of snapshots started",
-			})
-			db.metrics.snapshotsCompleted = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "snapshots_completed",
-				Help: "Number of snapshots completed",
-			})
+			db.metrics.snapshotMetrics = newSnapshotMetrics(reg)
 		}
 		return nil
 	}(); dbSetupErr != nil {
