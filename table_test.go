@@ -1519,7 +1519,6 @@ func Test_Insert_Repeated(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-
 			c, err := New(WithLogger(logger))
 			require.NoError(t, err)
 			t.Cleanup(func() {
