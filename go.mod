@@ -14,7 +14,7 @@ require (
 	github.com/oklog/ulid v1.3.1
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
-	github.com/polarsignals/wal v0.0.0-20230427102350-18d6223bfbdc
+	github.com/polarsignals/wal v0.0.0-20230509073041-6731e243de20
 	github.com/prometheus/client_golang v1.15.0
 	github.com/segmentio/parquet-go v0.0.0-20230209224803-1d85e8136681
 	github.com/stretchr/testify v1.8.2
