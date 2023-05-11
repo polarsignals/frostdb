@@ -6,12 +6,12 @@ managed:
 
 plugins:
   # renovate: datasource=github-releases depName=protocolbuffers/protobuf-go
-  - remote: buf.build/protocolbuffers/plugins/go:v1.28.0-1
+  - plugin: buf.build/protocolbuffers/go:v1.30.0
     out: gen/proto/go
     opt: paths=source_relative
 
   # renovate: datasource=github-releases depName=planetscale/vtprotobuf
-  - remote: buf.build/planetscale/plugins/vtproto:v0.3.0
+  - plugin: buf.build/community/planetscale-vtprotobuf:v0.4.0
     out: gen/proto/go
     opt:
       - paths=source_relative,features=marshal+unmarshal+size+pool
