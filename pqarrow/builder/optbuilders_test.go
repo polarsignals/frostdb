@@ -62,7 +62,7 @@ func TestRepeatLastValue(t *testing.T) {
 }
 
 func Test_ListBuilder(t *testing.T) {
-	lb := builder.NewListBuilder(memory.NewGoAllocator(), &arrow.Int64Type{})
+	lb := builder.NewLargeListBuilder(memory.NewGoAllocator(), &arrow.Int64Type{})
 
 	lb.Append(true)
 	lb.ValueBuilder().(*builder.OptInt64Builder).Append(1)

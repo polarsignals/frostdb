@@ -271,14 +271,14 @@ func hashArray(arr arrow.Array) []uint64 {
 		return hashBooleanArray(ar)
 	case *array.Dictionary:
 		return hashDictionaryArray(ar)
-	case *array.List:
+	case *array.LargeList:
 		return hashListArray(ar)
 	default:
 		panic("unsupported array type " + fmt.Sprintf("%T", arr))
 	}
 }
 
-func hashListArray(arr *array.List) []uint64 {
+func hashListArray(arr *array.LargeList) []uint64 {
 	res := make([]uint64, arr.Len())
 	for i := 0; i < arr.Len(); i++ {
 		list := []byte{}

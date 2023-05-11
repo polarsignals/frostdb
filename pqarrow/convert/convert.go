@@ -95,7 +95,7 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 	}
 
 	if n.Repeated() {
-		dt = arrow.ListOf(dt)
+		dt = arrow.LargeListOf(dt)
 	}
 
 	return dt, nil
@@ -109,7 +109,7 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 	}
 
 	list := false
-	if typ, ok := dt.(*arrow.ListType); ok {
+	if typ, ok := dt.(*arrow.LargeListType); ok {
 		// Unwrap the list type.
 		list = true
 		dt = typ.Elem()
@@ -211,5 +211,5 @@ func listType(n parquet.Node) (arrow.DataType, error) {
 	if err != nil {
 		return nil, err
 	}
-	return arrow.ListOf(listType), nil
+	return arrow.LargeListOf(listType), nil
 }

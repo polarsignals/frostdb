@@ -593,10 +593,10 @@ func TestList(t *testing.T) {
 	require.Equal(t, int64(1), record.NumCols())
 
 	column := record.Column(0)
-	colType := column.DataType().(*arrow.ListType)
+	colType := column.DataType().(*arrow.LargeListType)
 	require.True(t, colType.ElemField().Nullable)
 
-	listArray := column.(*array.List)
+	listArray := column.(*array.LargeList)
 	vals := listArray.ListValues().(*array.Int64).Int64Values()
 	for i := range data {
 		require.Equal(
@@ -664,11 +664,11 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 				},
 				{
 					Name: "timestamps",
-					Type: arrow.ListOf(&arrow.Int64Type{}),
+					Type: arrow.LargeListOf(&arrow.Int64Type{}),
 				},
 				{
 					Name: "values",
-					Type: arrow.ListOf(&arrow.Int64Type{}),
+					Type: arrow.LargeListOf(&arrow.Int64Type{}),
 				},
 			}, nil),
 		},
@@ -693,7 +693,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 				},
 				{
 					Name: "timestamps",
-					Type: arrow.ListOf(&arrow.Int64Type{}),
+					Type: arrow.LargeListOf(&arrow.Int64Type{}),
 				},
 			}, nil),
 		},
@@ -718,7 +718,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 				},
 				{
 					Name: "timestamps",
-					Type: arrow.ListOf(&arrow.Int64Type{}),
+					Type: arrow.LargeListOf(&arrow.Int64Type{}),
 				},
 			}, nil),
 		},
@@ -751,7 +751,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 				},
 				{
 					Name: "timestamps",
-					Type: arrow.ListOf(&arrow.Int64Type{}),
+					Type: arrow.LargeListOf(&arrow.Int64Type{}),
 				},
 			}, nil),
 		},
