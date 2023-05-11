@@ -37,7 +37,7 @@ func TestParquetNodeToType(t *testing.T) {
 		},
 		{
 			parquetNode: parquet.List(parquet.String()), // NOTE: can't determine string vs binary in conversion
-			arrowType:   arrow.ListOf(&arrow.BinaryType{}),
+			arrowType:   arrow.LargeListOf(&arrow.BinaryType{}),
 		},
 		{
 			parquetNode: parquet.Map( // NOTE: can't determine string vs binary in conversion
