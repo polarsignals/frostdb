@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
 	"github.com/apache/arrow/go/v10/arrow/ipc"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
@@ -65,6 +68,33 @@ const (
 	// to support.
 	minReadVersion = snapshotVersion
 )
+
+type snapshotMetrics struct {
+	snapshotsTotal            *prometheus.CounterVec
+	snapshotFileSizeBytes     prometheus.Gauge
+	snapshotDurationHistogram prometheus.Histogram
+}
+
+func newSnapshotMetrics(reg prometheus.Registerer) *snapshotMetrics {
+	reg = prometheus.WrapRegistererWithPrefix("frostdb_snapshots_", reg)
+	return &snapshotMetrics{
+		snapshotsTotal: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+			Name: "total",
+			Help: "Total number of snapshots",
+		},
+			[]string{"success"},
+		),
+		snapshotFileSizeBytes: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+			Name: "file_size_bytes",
+			Help: "Size of snapshots in bytes",
+		}),
+		snapshotDurationHistogram: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "duration_seconds",
+			Help:    "Duration of snapshots in seconds",
+			Buckets: prometheus.ExponentialBucketsRange(1, 60, 5),
+		}),
+	}
+}
 
 // segmentName returns a 20-byte textual representation of a snapshot file name
 // at a given txn used for lexical ordering.
@@ -140,34 +170,53 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 
 // snapshotAtTX takes a snapshot of the state of the database at transaction tx.
 func (db *DB) snapshotAtTX(ctx context.Context, tx uint64) error {
-	db.metrics.snapshotsStarted.Inc()
-	snapshotsDir := db.snapshotsDir()
-	if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
-		return err
-	}
-
-	fileName := filepath.Join(snapshotsDir, snapshotFileName(tx))
-	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, filePerms)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
+	var fileSize int64
+	start := time.Now()
 	if err := func() error {
-		if err := writeSnapshot(ctx, tx, db, f); err != nil {
+		snapshotsDir := db.snapshotsDir()
+		if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
 			return err
 		}
-		return f.Sync()
-	}(); err != nil {
-		err = fmt.Errorf("failed to write snapshot for tx %d: %w", tx, err)
-		if removeErr := os.Remove(fileName); removeErr != nil {
-			err = fmt.Errorf("%w: failed to remove snapshot file: %v", err, removeErr)
+
+		fileName := filepath.Join(snapshotsDir, snapshotFileName(tx))
+		f, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, filePerms)
+		if err != nil {
+			return err
 		}
+		defer f.Close()
+
+		if err := func() error {
+			if err := writeSnapshot(ctx, tx, db, f); err != nil {
+				return err
+			}
+			if err := f.Sync(); err != nil {
+				return err
+			}
+			info, err := f.Stat()
+			if err != nil {
+				return err
+			}
+			fileSize = info.Size()
+			return nil
+		}(); err != nil {
+			err = fmt.Errorf("failed to write snapshot for tx %d: %w", tx, err)
+			if removeErr := os.Remove(fileName); removeErr != nil {
+				err = fmt.Errorf("%w: failed to remove snapshot file: %v", err, removeErr)
+			}
+			return err
+		}
+		return nil
+	}(); err != nil {
+		db.metrics.snapshotMetrics.snapshotsTotal.WithLabelValues("false").Inc()
 		return err
 	}
+	db.metrics.snapshotMetrics.snapshotsTotal.WithLabelValues("true").Inc()
+	if fileSize > 0 {
+		db.metrics.snapshotMetrics.snapshotFileSizeBytes.Set(float64(fileSize))
+	}
+	db.metrics.snapshotMetrics.snapshotDurationHistogram.Observe(time.Since(start).Seconds())
 	// TODO(asubiotto): If snapshot file sizes become too large, investigate
 	// adding compression.
-	db.metrics.snapshotsCompleted.Inc()
 	return nil
 }
 
@@ -306,83 +355,91 @@ func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 
 	metadata := &snapshotpb.FooterData{}
 	for _, t := range tables {
-		block := t.ActiveBlock()
-		blockUlid, err := block.ulid.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		tableMeta := &snapshotpb.Table{
-			Name:   t.name,
-			Config: t.config,
-			ActiveBlock: &snapshotpb.Table_TableBlock{
-				Ulid:   blockUlid,
-				Size:   block.Size(),
-				MinTx:  block.minTx,
-				PrevTx: block.prevTx,
-			},
-		}
+		if err := func() error {
+			// Obtain a write block to prevent racing with
+			// compaction/persistence.
+			block, done, err := t.ActiveWriteBlock()
+			if err != nil {
+				return err
+			}
+			defer done()
+			blockUlid, err := block.ulid.MarshalBinary()
+			if err != nil {
+				return err
+			}
+			tableMeta := &snapshotpb.Table{
+				Name:   t.name,
+				Config: t.config,
+				ActiveBlock: &snapshotpb.Table_TableBlock{
+					Ulid:   blockUlid,
+					Size:   block.Size(),
+					MinTx:  block.minTx,
+					PrevTx: block.prevTx,
+				},
+			}
 
-		var ascendErr error
-		t.ActiveBlock().Index().Ascend(func(i btree.Item) bool {
-			granuleMeta := &snapshotpb.Granule{}
-			i.(*Granule).PartsForTx(tx, func(p *parts.Part) bool {
-				partMeta := &snapshotpb.Part{
-					StartOffset:     int64(offW.offset),
-					Tx:              p.TX(),
-					CompactionLevel: uint64(p.CompactionLevel()),
+			var ascendErr error
+			block.Index().Ascend(func(i btree.Item) bool {
+				granuleMeta := &snapshotpb.Granule{}
+				i.(*Granule).PartsForTx(tx, func(p *parts.Part) bool {
+					partMeta := &snapshotpb.Part{
+						StartOffset:     int64(offW.offset),
+						Tx:              p.TX(),
+						CompactionLevel: uint64(p.CompactionLevel()),
+					}
+					if err := func() error {
+						if err := ctx.Err(); err != nil {
+							return err
+						}
+						schema := t.schema
+
+						if record := p.Record(); record != nil {
+							partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
+							recordWriter := ipc.NewWriter(
+								w,
+								ipc.WithSchema(record.Schema()),
+							)
+							defer recordWriter.Close()
+							return recordWriter.Write(record)
+						}
+						partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
+
+						buf, err := p.AsSerializedBuffer(schema)
+						if err != nil {
+							return err
+						}
+						rows := buf.Reader()
+						defer rows.Close()
+
+						parquetWriter, err := schema.GetWriter(w, buf.DynamicColumns())
+						if err != nil {
+							return err
+						}
+						defer schema.PutWriter(parquetWriter)
+						defer parquetWriter.Close()
+
+						if _, err := parquet.CopyRows(parquetWriter, rows); err != nil {
+							return err
+						}
+						return nil
+					}(); err != nil {
+						ascendErr = err
+						return false
+					}
+					partMeta.EndOffset = int64(offW.offset)
+					granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
+					return true
+				})
+				if len(granuleMeta.PartMetadata) > 0 {
+					tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta)
 				}
-				if err := func() error {
-					if err := ctx.Err(); err != nil {
-						return err
-					}
-					schema := t.schema
-
-					if record := p.Record(); record != nil {
-						partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
-						recordWriter := ipc.NewWriter(
-							w,
-							ipc.WithSchema(record.Schema()),
-						)
-						defer recordWriter.Close()
-						return recordWriter.Write(record)
-					}
-					partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
-
-					buf, err := p.AsSerializedBuffer(schema)
-					if err != nil {
-						return err
-					}
-					rows := buf.Reader()
-					defer rows.Close()
-
-					parquetWriter, err := schema.GetWriter(w, buf.DynamicColumns())
-					if err != nil {
-						return err
-					}
-					defer schema.PutWriter(parquetWriter)
-					defer parquetWriter.Close()
-
-					if _, err := parquet.CopyRows(parquetWriter, rows); err != nil {
-						return err
-					}
-					return nil
-				}(); err != nil {
-					ascendErr = err
-					return false
-				}
-				partMeta.EndOffset = int64(offW.offset)
-				granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
 				return true
 			})
-			if len(granuleMeta.PartMetadata) > 0 {
-				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta)
-			}
-			return true
-		})
-		if ascendErr != nil {
+			metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
 			return ascendErr
+		}(); err != nil {
+			return err
 		}
-		metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
 	}
 	footer, err := metadata.MarshalVT()
 	if err != nil {

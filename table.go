@@ -1245,12 +1245,13 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	ps := t.table.schema
 	numRows := record.NumRows()
 	idx := numRows - 1
-	pooledSchema, err := ps.GetDynamicParquetSchema(pqarrow.RecordDynamicCols(record))
+	dynCols := pqarrow.RecordDynamicCols(record)
+	pooledSchema, err := ps.GetDynamicParquetSchema(dynCols)
 	if err != nil {
 		return err
 	}
 	defer ps.PutPooledParquetSchema(pooledSchema)
-	row, err := pqarrow.RecordToDynamicRow(ps, pooledSchema.Schema, record, int(idx))
+	row, err := pqarrow.RecordToDynamicRow(ps, pooledSchema.Schema, record, dynCols, int(idx))
 	if err != nil {
 		if err == io.EOF {
 			level.Debug(t.logger).Log("msg", "inserted record with no rows")
@@ -1273,7 +1274,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 			// Descend rows to insert until we find a row that does not belong in this granule.
 			n := 0
 			for ; idx >= 0; idx-- {
-				row, err := pqarrow.RecordToDynamicRow(ps, pooledSchema.Schema, record, int(idx))
+				row, err := pqarrow.RecordToDynamicRow(ps, pooledSchema.Schema, record, dynCols, int(idx))
 				if err != nil {
 					ascendErr = err
 					return false

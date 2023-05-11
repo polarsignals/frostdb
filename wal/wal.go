@@ -56,8 +56,6 @@ func (w *NopWAL) LastIndex() (uint64, error) {
 type fileWALMetrics struct {
 	failedLogs            prometheus.Counter
 	lastTruncationAt      prometheus.Gauge
-	walTruncations        prometheus.Counter
-	walTruncationsFailed  prometheus.Counter
 	walRepairs            prometheus.Counter
 	walRepairsLostRecords prometheus.Counter
 }
@@ -147,8 +145,6 @@ func Open(
 			},
 		},
 		metrics: &fileWALMetrics{
-			// TODO(asubiotto): Move these metrics to the underlying WAL
-			// package.
 			failedLogs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "failed_logs_total",
 				Help: "Number of failed WAL logs",
@@ -156,14 +152,6 @@ func Open(
 			lastTruncationAt: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
 				Name: "last_truncation_at",
 				Help: "The last transaction the WAL was truncated to",
-			}),
-			walTruncations: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "truncations_total",
-				Help: "The number of WAL truncations",
-			}),
-			walTruncationsFailed: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "truncations_failed_total",
-				Help: "The number of WAL truncations",
 			}),
 			walRepairs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "repairs_total",
@@ -288,12 +276,9 @@ func (w *FileWAL) run(ctx context.Context) {
 
 			if truncateTx != 0 {
 				w.metrics.lastTruncationAt.Set(float64(truncateTx))
-				w.metrics.walTruncations.Inc()
-
 				level.Debug(w.logger).Log("msg", "truncating WAL", "tx", truncateTx)
 				if err := w.log.TruncateFront(truncateTx); err != nil {
 					level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", truncateTx, "err", err)
-					w.metrics.walTruncationsFailed.Inc()
 				} else {
 					level.Debug(w.logger).Log("msg", "truncated WAL", "tx", truncateTx)
 				}
