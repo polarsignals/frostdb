@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/apache/arrow/go/v10/arrow"
-	"github.com/apache/arrow/go/v10/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/array"
 )
 
 // GetGroupsAndOrderedSetRanges returns a min-heap of group ranges and ordered

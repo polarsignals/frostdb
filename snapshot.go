@@ -16,7 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/apache/arrow/go/v10/arrow/ipc"
+	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/oklog/ulid"

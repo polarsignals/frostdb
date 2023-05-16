@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/apache/arrow/go/v10/arrow"
-	"github.com/apache/arrow/go/v10/arrow/memory"
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/memory"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb"
