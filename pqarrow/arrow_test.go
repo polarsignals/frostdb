@@ -226,27 +226,27 @@ func TestMergeToArrow(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 8)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Int16Type{},
+		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
 	}})
 	require.Equal(t, as.Field(1), arrow.Field{Name: "labels.label1", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Int16Type{},
+		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
 	}, Nullable: true})
 	require.Equal(t, as.Field(2), arrow.Field{Name: "labels.label2", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Int16Type{},
+		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
 	}, Nullable: true})
 	require.Equal(t, as.Field(3), arrow.Field{Name: "labels.label3", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Int16Type{},
+		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
 	}, Nullable: true})
 	require.Equal(t, as.Field(4), arrow.Field{Name: "labels.label4", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Int16Type{},
+		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
 	}, Nullable: true})
 	require.Equal(t, as.Field(5), arrow.Field{Name: "stacktrace", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Int16Type{},
+		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
 	}})
 	require.Equal(t, as.Field(6), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
@@ -455,7 +455,7 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 3)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Int16Type{},
+		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
 	}})
 	require.Equal(t, as.Field(1), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
@@ -550,7 +550,7 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 3)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Int16Type{},
+		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
 	}})
 	require.Equal(t, as.Field(1), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
@@ -593,10 +593,10 @@ func TestList(t *testing.T) {
 	require.Equal(t, int64(1), record.NumCols())
 
 	column := record.Column(0)
-	colType := column.DataType().(*arrow.LargeListType)
+	colType := column.DataType().(*arrow.ListType)
 	require.True(t, colType.ElemField().Nullable)
 
-	listArray := column.(*array.LargeList)
+	listArray := column.(*array.List)
 	vals := listArray.ListValues().(*array.Int64).Int64Values()
 	for i := range data {
 		require.Equal(
@@ -647,7 +647,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 						{
 							Name: "label1",
 							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Int16Type{},
+								IndexType: &arrow.Uint32Type{},
 								ValueType: &arrow.BinaryType{},
 							},
 							Nullable: true,
@@ -655,7 +655,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 						{
 							Name: "label2",
 							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Int16Type{},
+								IndexType: &arrow.Uint32Type{},
 								ValueType: &arrow.BinaryType{},
 							},
 							Nullable: true,
@@ -664,11 +664,11 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 				},
 				{
 					Name: "timestamps",
-					Type: arrow.LargeListOf(&arrow.Int64Type{}),
+					Type: arrow.ListOf(&arrow.Int64Type{}),
 				},
 				{
 					Name: "values",
-					Type: arrow.LargeListOf(&arrow.Int64Type{}),
+					Type: arrow.ListOf(&arrow.Int64Type{}),
 				},
 			}, nil),
 		},
@@ -684,7 +684,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 						{
 							Name: "label1",
 							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Int16Type{},
+								IndexType: &arrow.Uint32Type{},
 								ValueType: &arrow.BinaryType{},
 							},
 							Nullable: true,
@@ -693,7 +693,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 				},
 				{
 					Name: "timestamps",
-					Type: arrow.LargeListOf(&arrow.Int64Type{}),
+					Type: arrow.ListOf(&arrow.Int64Type{}),
 				},
 			}, nil),
 		},
@@ -709,7 +709,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 						{
 							Name: "label2",
 							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Int16Type{},
+								IndexType: &arrow.Uint32Type{},
 								ValueType: &arrow.BinaryType{},
 							},
 							Nullable: true,
@@ -718,7 +718,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 				},
 				{
 					Name: "timestamps",
-					Type: arrow.LargeListOf(&arrow.Int64Type{}),
+					Type: arrow.ListOf(&arrow.Int64Type{}),
 				},
 			}, nil),
 		},
@@ -734,7 +734,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 						{
 							Name: "label1",
 							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Int16Type{},
+								IndexType: &arrow.Uint32Type{},
 								ValueType: &arrow.BinaryType{},
 							},
 							Nullable: true,
@@ -742,7 +742,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 						{
 							Name: "label2",
 							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Int16Type{},
+								IndexType: &arrow.Uint32Type{},
 								ValueType: &arrow.BinaryType{},
 							},
 							Nullable: true,
@@ -751,7 +751,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 				},
 				{
 					Name: "timestamps",
-					Type: arrow.LargeListOf(&arrow.Int64Type{}),
+					Type: arrow.ListOf(&arrow.Int64Type{}),
 				},
 			}, nil),
 		},

@@ -21,7 +21,7 @@ func RecordSize(r arrow.Record) int64 {
 	return size
 }
 
-func ForEachValueInList(index int, arr *array.LargeList, iterator func(int, any)) error {
+func ForEachValueInList(index int, arr *array.List, iterator func(int, any)) error {
 	start, end := arr.ValueOffsets(index)
 	list := array.NewSlice(arr.ListValues(), start, end)
 	defer list.Release()

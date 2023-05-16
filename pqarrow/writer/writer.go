@@ -139,13 +139,13 @@ func (w *uint64ValueWriter) WritePage(p parquet.Page) error {
 }
 
 type repeatedValueWriter struct {
-	b      *builder.LargeListBuilder
+	b      *builder.ListBuilder
 	values ValueWriter
 }
 
 func NewListValueWriter(newValueWriter func(b builder.ColumnBuilder, numValues int) ValueWriter) func(b builder.ColumnBuilder, numValues int) ValueWriter {
 	return func(b builder.ColumnBuilder, numValues int) ValueWriter {
-		builder := b.(*builder.LargeListBuilder)
+		builder := b.(*builder.ListBuilder)
 
 		return &repeatedValueWriter{
 			b:      builder,

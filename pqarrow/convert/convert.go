@@ -65,7 +65,7 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 					fallthrough
 				case format.RLEDictionary:
 					dt = &arrow.DictionaryType{
-						IndexType: &arrow.Int16Type{}, // TODO: do we need more width?
+						IndexType: &arrow.Uint32Type{},
 						ValueType: &arrow.BinaryType{},
 					}
 				default:
@@ -95,7 +95,7 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 	}
 
 	if n.Repeated() {
-		dt = arrow.LargeListOf(dt)
+		dt = arrow.ListOf(dt)
 	}
 
 	return dt, nil
@@ -109,7 +109,7 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 	}
 
 	list := false
-	if typ, ok := dt.(*arrow.LargeListType); ok {
+	if typ, ok := dt.(*arrow.ListType); ok {
 		// Unwrap the list type.
 		list = true
 		dt = typ.Elem()
@@ -211,5 +211,5 @@ func listType(n parquet.Node) (arrow.DataType, error) {
 	if err != nil {
 		return nil, err
 	}
-	return arrow.LargeListOf(listType), nil
+	return arrow.ListOf(listType), nil
 }

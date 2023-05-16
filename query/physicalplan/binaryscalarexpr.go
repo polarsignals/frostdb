@@ -161,7 +161,7 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 	}
 
 	switch leftType.(type) {
-	case *arrow.LargeListType:
+	case *arrow.ListType:
 		panic("TODO: list comparisons unimplemented")
 	}
 

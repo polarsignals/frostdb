@@ -15,8 +15,8 @@ func NewBuilder(mem memory.Allocator, t arrow.DataType) ColumnBuilder {
 		return NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
 	case *arrow.Int64Type:
 		return NewOptInt64Builder(arrow.PrimitiveTypes.Int64)
-	case *arrow.LargeListType:
-		return NewLargeListBuilder(mem, t.Elem())
+	case *arrow.ListType:
+		return NewListBuilder(mem, t.Elem())
 	case *arrow.BooleanType:
 		return NewOptBooleanBuilder(arrow.FixedWidthTypes.Boolean)
 	default:
@@ -91,9 +91,9 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 		default:
 			return fmt.Errorf("non-dictionary array %T provided for dictionary builder", a)
 		}
-	case *LargeListBuilder:
+	case *ListBuilder:
 		vb := b.ValueBuilder()
-		list := arr.(*array.LargeList)
+		list := arr.(*array.List)
 		start, end := list.ValueOffsets(i)
 		values := array.NewSlice(list.ListValues(), start, end)
 		defer values.Release()
