@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/apache/arrow/go/v10/arrow"
+	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/google/btree"
 
 	"github.com/polarsignals/frostdb/dynparquet"
