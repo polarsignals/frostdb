@@ -157,27 +157,27 @@ func min(a, b int) int {
 	return b
 }
 
-// LargeListBuilder is a wrapper over an array.LargeLargeListBuilder that uses ColumnBuilder as a values buffer.
-type LargeListBuilder struct {
+// ListBuilder is a wrapper over an array.ListBuilder that uses ColumnBuilder as a values buffer.
+type ListBuilder struct {
 	builder
 
 	etype   arrow.DataType // data type of the list's elements.
 	values  ColumnBuilder
-	offsets *array.Int64Builder
+	offsets *array.Int32Builder
 }
 
-func NewLargeListBuilder(mem memory.Allocator, etype arrow.DataType) *LargeListBuilder {
-	return &LargeListBuilder{
+func NewListBuilder(mem memory.Allocator, etype arrow.DataType) *ListBuilder {
+	return &ListBuilder{
 		builder: builder{refCount: 1, mem: mem},
 		etype:   etype,
 		values:  NewBuilder(mem, etype),
-		offsets: array.NewInt64Builder(mem),
+		offsets: array.NewInt32Builder(mem),
 	}
 }
 
 // Release decreases the reference count by 1.
 // When the reference count goes to zero, the memory is freed.
-func (b *LargeListBuilder) Release() {
+func (b *ListBuilder) Release() {
 	if atomic.AddInt64(&b.refCount, -1) == 0 {
 		if b.nullBitmap != nil {
 			b.nullBitmap.Release()
@@ -189,29 +189,29 @@ func (b *LargeListBuilder) Release() {
 	b.offsets.Release()
 }
 
-func (b *LargeListBuilder) appendNextOffset() {
-	b.offsets.Append(int64(b.values.Len()))
+func (b *ListBuilder) appendNextOffset() {
+	b.offsets.Append(int32(b.values.Len()))
 }
 
-func (b *LargeListBuilder) Append(v bool) {
+func (b *ListBuilder) Append(v bool) {
 	b.Reserve(1)
 	b.unsafeAppendBoolToBitmap(v)
 	b.appendNextOffset()
 }
 
-func (b *LargeListBuilder) AppendNull() {
+func (b *ListBuilder) AppendNull() {
 	b.Reserve(1)
 	b.unsafeAppendBoolToBitmap(false)
 	b.appendNextOffset()
 }
 
-func (b *LargeListBuilder) AppendValues(offsets []int64, valid []bool) {
+func (b *ListBuilder) AppendValues(offsets []int32, valid []bool) {
 	b.Reserve(len(valid))
 	b.offsets.AppendValues(offsets, nil)
 	b.builder.unsafeAppendBoolsToBitmap(valid, len(valid))
 }
 
-func (b *LargeListBuilder) unsafeAppendBoolToBitmap(isValid bool) {
+func (b *ListBuilder) unsafeAppendBoolToBitmap(isValid bool) {
 	if isValid {
 		bitutil.SetBit(b.nullBitmap.Bytes(), b.length)
 	} else {
@@ -220,26 +220,26 @@ func (b *LargeListBuilder) unsafeAppendBoolToBitmap(isValid bool) {
 	b.length++
 }
 
-func (b *LargeListBuilder) init(capacity int) {
+func (b *ListBuilder) init(capacity int) {
 	b.builder.init(capacity)
 	b.offsets.Resize(capacity + 1)
 }
 
 // Reserve ensures there is enough space for appending n elements
 // by checking the capacity and calling Resize if necessary.
-func (b *LargeListBuilder) Reserve(n int) {
+func (b *ListBuilder) Reserve(n int) {
 	b.builder.reserve(n, b.resizeHelper)
 	b.offsets.Reserve(n)
 }
 
 // Resize adjusts the space allocated by b to n elements. If n is greater than b.Cap(),
 // additional memory will be allocated. If n is smaller, the allocated memory may reduced.
-func (b *LargeListBuilder) Resize(n int) {
+func (b *ListBuilder) Resize(n int) {
 	b.resizeHelper(n)
 	b.offsets.Resize(n)
 }
 
-func (b *LargeListBuilder) resizeHelper(n int) {
+func (b *ListBuilder) resizeHelper(n int) {
 	if n < minBuilderCapacity {
 		n = minBuilderCapacity
 	}
@@ -251,45 +251,45 @@ func (b *LargeListBuilder) resizeHelper(n int) {
 	}
 }
 
-func (b *LargeListBuilder) ValueBuilder() ColumnBuilder {
+func (b *ListBuilder) ValueBuilder() ColumnBuilder {
 	return b.values
 }
 
-// NewArray creates a List array from the memory buffers used by the builder and resets the LargeListBuilder
+// NewArray creates a List array from the memory buffers used by the builder and resets the ListBuilder
 // so it can be used to build a new array.
-func (b *LargeListBuilder) NewArray() arrow.Array {
+func (b *ListBuilder) NewArray() arrow.Array {
 	return b.NewListArray()
 }
 
-func (b *LargeListBuilder) Len() int {
+func (b *ListBuilder) Len() int {
 	return b.length
 }
 
-// NewListArray creates a List array from the memory buffers used by the builder and resets the LargeListBuilder
+// NewListArray creates a List array from the memory buffers used by the builder and resets the ListBuilder
 // so it can be used to build a new array.
-func (b *LargeListBuilder) NewListArray() (a *array.LargeList) {
+func (b *ListBuilder) NewListArray() (a *array.List) {
 	if b.offsets.Len() != b.length+1 {
 		b.appendNextOffset()
 	}
 	data := b.newData()
-	a = array.NewLargeListData(data)
+	a = array.NewListData(data)
 	data.Release()
 	return
 }
 
-func (b *LargeListBuilder) newData() (data *array.Data) {
+func (b *ListBuilder) newData() (data *array.Data) {
 	values := b.values.NewArray()
 	defer values.Release()
 
 	var offsets *memory.Buffer
 	if b.offsets != nil {
-		arr := b.offsets.NewInt64Array()
+		arr := b.offsets.NewInt32Array()
 		defer arr.Release()
 		offsets = arr.Data().Buffers()[1]
 	}
 
 	data = array.NewData(
-		arrow.LargeListOf(b.etype), b.length,
+		arrow.ListOf(b.etype), b.length,
 		[]*memory.Buffer{
 			b.nullBitmap,
 			offsets,
@@ -303,6 +303,6 @@ func (b *LargeListBuilder) newData() (data *array.Data) {
 	return
 }
 
-func (b *LargeListBuilder) Retain() {
+func (b *ListBuilder) Retain() {
 	b.values.Retain()
 }

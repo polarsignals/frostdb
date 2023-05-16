@@ -65,7 +65,7 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 		default:
 			return nil, fmt.Errorf("dictionary not of expected type: %T", dict)
 		}
-	case *array.LargeList:
+	case *array.List:
 		if err := arrowutils.ForEachValueInList(index, arr, func(i int, v any) {
 			switch i {
 			case 0:
