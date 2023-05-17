@@ -68,6 +68,7 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 						IndexType: &arrow.Uint32Type{},
 						ValueType: &arrow.BinaryType{},
 					}
+					dt = arrow.RunEndEncodedOf(&arrow.Int32Type{}, dt)
 				default:
 					dt = &arrow.BinaryType{}
 				}
@@ -133,6 +134,8 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 		wr = writer.NewFloat64ValueWriter
 	case *arrow.DictionaryType:
 		wr = writer.NewDictionaryValueWriter
+	case *arrow.RunEndEncodedType:
+		wr = writer.NewRunEndEncodedValueWriter
 	default:
 		return nil, errors.New("unsupported type: " + n.Type().String())
 	}
