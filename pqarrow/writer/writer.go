@@ -502,31 +502,18 @@ func (w *dictionaryValueWriter) WritePage(p parquet.Page) error {
 }
 
 type runEndEncodedValueWriter struct {
-	b *array.RunEndEncodedBuilder
+	b *builder.OptRunEndEncodedBuilder
 }
 
 func NewRunEndEncodedValueWriter(b builder.ColumnBuilder, _ int) ValueWriter {
 	res := &runEndEncodedValueWriter{
-		b: b.(*array.RunEndEncodedBuilder),
+		b: b.(*builder.OptRunEndEncodedBuilder),
 	}
 	return res
 }
 
 func (w *runEndEncodedValueWriter) Write(values []parquet.Value) {
-	for _, v := range values {
-		if v.IsNull() {
-			w.b.AppendNull()
-		} else {
-			switch vb := w.b.ValueBuilder().(type) {
-			case *array.BinaryDictionaryBuilder:
-				if err := vb.Append(v.Bytes()); err != nil {
-					panic(fmt.Sprintf("failed to append to dictionary: %v", err)) // We should really return errors in the writer interface
-				}
-			default:
-				panic(fmt.Sprintf("unsupported run end encoded value builder: %T", vb))
-			}
-		}
-	}
+	w.b.AppendParquetValues(values)
 }
 
 func (w *runEndEncodedValueWriter) WritePage(p parquet.Page) error {

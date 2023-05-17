@@ -95,6 +95,7 @@ var (
 	_ OptimizedBuilder = (*OptBinaryBuilder)(nil)
 	_ OptimizedBuilder = (*OptInt64Builder)(nil)
 	_ OptimizedBuilder = (*OptBooleanBuilder)(nil)
+	_ OptimizedBuilder = (*OptRunEndEncodedBuilder)(nil)
 )
 
 // OptBinaryBuilder is an optimized array.BinaryBuilder.
@@ -501,4 +502,97 @@ func (b *OptBooleanBuilder) ResetToLength(n int) {
 	b.length = n
 	b.data = resizeBitmap(b.data, n)
 	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
+}
+
+type OptRunEndEncodedBuilder struct {
+	builder *array.RunEndEncodedBuilder
+	prev    *parquet.Value
+}
+
+func NewOptRunEndEncodedBuilder(mem memory.Allocator, runEnds, encoded arrow.DataType) *OptRunEndEncodedBuilder {
+	return &OptRunEndEncodedBuilder{
+		builder: array.NewRunEndEncodedBuilder(mem, runEnds, encoded),
+	}
+}
+
+func (b *OptRunEndEncodedBuilder) Release() {
+	b.builder.Release()
+}
+
+func (b *OptRunEndEncodedBuilder) AppendNull() {
+	if b.prev == nil || !b.prev.IsNull() {
+		v := parquet.ValueOf(nil)
+		b.prev = &v
+		b.builder.AppendNull()
+		b.builder.Append(1)
+		return
+	}
+
+	b.builder.ContinueRun(1)
+}
+
+func (b *OptRunEndEncodedBuilder) AppendNulls(n int) {
+	if b.prev == nil || !b.prev.IsNull() {
+		v := parquet.ValueOf(nil)
+		b.prev = &v
+		b.builder.AppendNull()
+		b.builder.Append(uint64(n))
+		return
+	}
+
+	b.builder.ContinueRun(uint64(n))
+}
+
+func (b *OptRunEndEncodedBuilder) NewArray() arrow.Array {
+	return b.builder.NewArray()
+}
+
+func (b *OptRunEndEncodedBuilder) Append(data []byte, valid int) {
+	panic("unimplemented")
+}
+
+func (b *OptRunEndEncodedBuilder) AppendParquetValues(values []parquet.Value) {
+	for _, v := range values {
+		if b.prev == nil || !parquet.Equal(*b.prev, v) {
+			current := v.Clone()
+			b.prev = &current
+			vb := b.builder.ValueBuilder()
+			switch vb.(type) {
+			case *array.BinaryDictionaryBuilder:
+				vb.(*array.BinaryDictionaryBuilder).Append(v.Bytes())
+			default:
+				panic(fmt.Sprintf("unhandled value builder type %T", vb))
+			}
+			b.builder.Append(1)
+			continue
+		}
+
+		b.builder.ContinueRun(1)
+	}
+}
+
+func (b *OptRunEndEncodedBuilder) RepeatLastValue(n int) error {
+	b.builder.ContinueRun(uint64(n))
+	return nil
+}
+
+// ResetToLength is specific to distinct optimizations in FrostDB.
+func (b *OptRunEndEncodedBuilder) ResetToLength(n int) {
+	b.builder.Resize(n)
+}
+
+func (b *OptRunEndEncodedBuilder) Len() int {
+	return b.builder.Len()
+}
+
+func (b *OptRunEndEncodedBuilder) Cap() int {
+	return b.builder.Cap()
+}
+
+func (b *OptRunEndEncodedBuilder) Reserve(n int) {
+	b.builder.Reserve(n)
+}
+
+func (b *OptRunEndEncodedBuilder) Retain() {
+	b.builder.Retain()
 }
