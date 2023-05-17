@@ -3,6 +3,7 @@ package builder
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"reflect"
 	"sync/atomic"
 	"unsafe"
@@ -505,6 +506,7 @@ func (b *OptBooleanBuilder) ResetToLength(n int) {
 }
 
 type OptRunEndEncodedBuilder struct {
+	id      string // TODO REMOVE ME
 	builder *array.RunEndEncodedBuilder
 	prev    *parquet.Value
 }
@@ -512,6 +514,7 @@ type OptRunEndEncodedBuilder struct {
 func NewOptRunEndEncodedBuilder(mem memory.Allocator, runEnds, encoded arrow.DataType) *OptRunEndEncodedBuilder {
 	return &OptRunEndEncodedBuilder{
 		builder: array.NewRunEndEncodedBuilder(mem, runEnds, encoded),
+		id:      fmt.Sprintf("%v", rand.Intn(100)),
 	}
 }
 
@@ -520,22 +523,13 @@ func (b *OptRunEndEncodedBuilder) Release() {
 }
 
 func (b *OptRunEndEncodedBuilder) AppendNull() {
-	if b.prev == nil || !b.prev.IsNull() {
-		v := parquet.ValueOf(nil)
-		b.prev = &v
-		b.builder.AppendNull()
-		b.builder.Append(1)
-		return
-	}
-
-	b.builder.ContinueRun(1)
+	b.AppendNulls(1)
 }
 
 func (b *OptRunEndEncodedBuilder) AppendNulls(n int) {
 	if b.prev == nil || !b.prev.IsNull() {
 		v := parquet.ValueOf(nil)
 		b.prev = &v
-		b.builder.AppendNull()
 		b.builder.Append(uint64(n))
 		return
 	}
