@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -114,29 +115,68 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 	require.NoError(t, c.Convert(ctx, buf4))
 
 	ar := c.NewRecord()
+	fmt.Println(ar)
 	require.Equal(t, int64(8), ar.NumCols())
 	require.Equal(t, int64(5), ar.NumRows())
-	for j := 0; j < int(ar.NumCols()); j++ {
-		switch j {
+	for i, col := range ar.Columns() {
+		switch i {
 		case 0:
-			require.Equal(t, `{ dictionary: []
-  indices: [(null) (null) (null) (null) (null)] }`, fmt.Sprintf("%v", ar.Column(j)))
+			for i := 0; i < col.Len(); i++ {
+				v := arrowutils.GetREEValue(i, col)
+				require.Nil(t, v)
+			}
 		case 1:
-			require.Equal(t, `{ dictionary: ["value1" "value2" "value3"]
-  indices: [0 1 2 0 0] }`, fmt.Sprintf("%v", ar.Column(j)))
+			for i := 0; i < col.Len(); i++ {
+				v := arrowutils.GetREEValue(i, col)
+				switch i {
+				case 1:
+					require.Equal(t, []byte("value2"), v)
+				case 2:
+					require.Equal(t, []byte("value3"), v)
+				case 0:
+					fallthrough
+				case 3:
+					fallthrough
+				case 4:
+					require.Equal(t, []byte("value1"), v)
+				}
+			}
 		case 2:
-			require.Equal(t, `{ dictionary: ["value2"]
-  indices: [0 0 0 0 0] }`, fmt.Sprintf("%v", ar.Column(j)))
+			for i := 0; i < col.Len(); i++ {
+				v := arrowutils.GetREEValue(i, col)
+				require.Equal(t, []byte("value2"), v)
+			}
 		case 3:
-			require.Equal(t, `{ dictionary: ["value3"]
-  indices: [(null) 0 (null) (null) 0] }`, fmt.Sprintf("%v", ar.Column(j)))
+			for i := 0; i < col.Len(); i++ {
+				v := arrowutils.GetREEValue(i, col)
+				switch i {
+				case 1:
+					fallthrough
+				case 4:
+					require.Equal(t, []byte("value3"), v)
+				default:
+					require.Nil(t, v)
+				}
+			}
 		case 4:
-			require.Equal(t, `{ dictionary: ["value4"]
-  indices: [(null) (null) 0 (null) (null)] }`, fmt.Sprintf("%v", ar.Column(j)))
+			for i := 0; i < col.Len(); i++ {
+				v := arrowutils.GetREEValue(i, col)
+				switch i {
+				case 2:
+					require.Equal(t, []byte("value4"), v)
+				default:
+					require.Nil(t, v)
+				}
+			}
+		case 5:
+			for i := 0; i < col.Len(); i++ {
+				v := arrowutils.GetREEValue(i, col)
+				require.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, v)
+			}
 		case 6:
-			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", ar.Column(j)))
+			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", col))
 		case 7:
-			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", ar.Column(j)))
+			require.Equal(t, `[1 2 3 2 3]`, fmt.Sprintf("%v", col))
 		}
 	}
 }

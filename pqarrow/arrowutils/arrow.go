@@ -41,3 +41,22 @@ func ForEachValueInList(index int, arr *array.List, iterator func(int, any)) err
 
 	return nil
 }
+
+func GetREEValue(i int, arr arrow.Array) any {
+	ree := arr.(*array.RunEndEncoded)
+	values := ree.Values()
+	ends := ree.RunEndsArr().(*array.Int32)
+	dict := values.(*array.Dictionary)
+	bin := dict.Dictionary().(*array.Binary)
+
+	for j := 0; j < ends.Len(); j++ {
+		if i < int(ends.Value(j)) {
+			if dict.IsNull(j) {
+				return nil
+			}
+			return bin.Value(dict.GetValueIndex(j))
+		}
+	}
+
+	return nil
+}

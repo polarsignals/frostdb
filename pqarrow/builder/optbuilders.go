@@ -530,6 +530,7 @@ func (b *OptRunEndEncodedBuilder) AppendNulls(n int) {
 	if b.prev == nil || !b.prev.IsNull() {
 		v := parquet.ValueOf(nil)
 		b.prev = &v
+		b.builder.ValueBuilder().AppendNull()
 		b.builder.Append(uint64(n))
 		return
 	}
