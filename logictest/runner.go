@@ -11,13 +11,16 @@ import (
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow/memory"
 	"github.com/cockroachdb/datadriven"
 	"github.com/google/uuid"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/sqlparse"
 )
 
@@ -61,6 +64,7 @@ type DB interface {
 type Table interface {
 	Schema() *dynparquet.Schema
 	InsertBuffer(context.Context, *dynparquet.Buffer) (uint64, error)
+	InsertRecord(context.Context, arrow.Record) (uint64, error)
 }
 
 type Runner struct {
@@ -82,20 +86,20 @@ func NewRunner(db DB, schemas map[string]*schemapb.Schema) *Runner {
 
 // RunCmd parses and runs datadriven command with the associated arguments, and
 // returns the result.
-func (r *Runner) RunCmd(ctx context.Context, c *datadriven.TestData) string {
-	result, err := r.handleCmd(ctx, c)
+func (r *Runner) RunCmd(ctx context.Context, c *datadriven.TestData, arrow bool) string {
+	result, err := r.handleCmd(ctx, c, arrow)
 	if err != nil {
 		return err.Error()
 	}
 	return result
 }
 
-func (r *Runner) handleCmd(ctx context.Context, c *datadriven.TestData) (string, error) {
+func (r *Runner) handleCmd(ctx context.Context, c *datadriven.TestData, arrow bool) (string, error) {
 	switch c.Cmd {
 	case createTableCmd:
 		return r.handleCreateTable(ctx, c)
 	case insertCmd:
-		return r.handleInsert(ctx, c)
+		return r.handleInsert(ctx, c, arrow)
 	case execCmd:
 		return r.handleExec(ctx, c)
 	}
@@ -139,7 +143,7 @@ type colDef struct {
 	dynColName string
 }
 
-func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (string, error) {
+func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData, arrow bool) (string, error) {
 	var colDefs []colDef
 
 	schema := r.activeTable.Schema()
@@ -248,8 +252,27 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (stri
 	if _, err := buf.WriteRows(rows); err != nil {
 		return "", fmt.Errorf("insert: %w", err)
 	}
-	if _, err := r.activeTable.InsertBuffer(ctx, buf); err != nil {
-		return "", fmt.Errorf("insert: %w", err)
+
+	buf.Sort()
+
+	if arrow {
+		converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
+		defer converter.Close()
+
+		if err := converter.Convert(ctx, buf); err != nil {
+			return "", err
+		}
+
+		rec := converter.NewRecord()
+		defer rec.Release()
+
+		if _, err := r.activeTable.InsertRecord(ctx, rec); err != nil {
+			return "", fmt.Errorf("insert: %w", err)
+		}
+	} else {
+		if _, err := r.activeTable.InsertBuffer(ctx, buf); err != nil {
+			return "", fmt.Errorf("insert: %w", err)
+		}
 	}
 
 	return c.Expected, nil
