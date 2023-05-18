@@ -265,30 +265,16 @@ func TestMergeToArrow(t *testing.T) {
 	as, err := ParquetRowGroupToArrowSchema(ctx, merge, logicalplan.IterOptions{})
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 8)
-	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.DictionaryType{
+	dt := arrow.RunEndEncodedOf(&arrow.Int32Type{}, &arrow.DictionaryType{
 		IndexType: &arrow.Uint32Type{},
 		ValueType: &arrow.BinaryType{},
-	}})
-	require.Equal(t, as.Field(1), arrow.Field{Name: "labels.label1", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Uint32Type{},
-		ValueType: &arrow.BinaryType{},
-	}, Nullable: true})
-	require.Equal(t, as.Field(2), arrow.Field{Name: "labels.label2", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Uint32Type{},
-		ValueType: &arrow.BinaryType{},
-	}, Nullable: true})
-	require.Equal(t, as.Field(3), arrow.Field{Name: "labels.label3", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Uint32Type{},
-		ValueType: &arrow.BinaryType{},
-	}, Nullable: true})
-	require.Equal(t, as.Field(4), arrow.Field{Name: "labels.label4", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Uint32Type{},
-		ValueType: &arrow.BinaryType{},
-	}, Nullable: true})
-	require.Equal(t, as.Field(5), arrow.Field{Name: "stacktrace", Type: &arrow.DictionaryType{
-		IndexType: &arrow.Uint32Type{},
-		ValueType: &arrow.BinaryType{},
-	}})
+	})
+	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: dt})
+	require.Equal(t, as.Field(1), arrow.Field{Name: "labels.label1", Type: dt, Nullable: true})
+	require.Equal(t, as.Field(2), arrow.Field{Name: "labels.label2", Type: dt, Nullable: true})
+	require.Equal(t, as.Field(3), arrow.Field{Name: "labels.label3", Type: dt, Nullable: true})
+	require.Equal(t, as.Field(4), arrow.Field{Name: "labels.label4", Type: dt, Nullable: true})
+	require.Equal(t, as.Field(5), arrow.Field{Name: "stacktrace", Type: dt})
 	require.Equal(t, as.Field(6), arrow.Field{Name: "timestamp", Type: &arrow.Int64Type{}})
 	require.Equal(t, as.Field(7), arrow.Field{Name: "value", Type: &arrow.Int64Type{}})
 
