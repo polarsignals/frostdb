@@ -667,19 +667,13 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 					Name: "labels",
 					Type: arrow.StructOf([]arrow.Field{
 						{
-							Name: "label1",
-							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Uint32Type{},
-								ValueType: &arrow.BinaryType{},
-							},
+							Name:     "label1",
+							Type:     RLEDictionaryType,
 							Nullable: true,
 						},
 						{
-							Name: "label2",
-							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Uint32Type{},
-								ValueType: &arrow.BinaryType{},
-							},
+							Name:     "label2",
+							Type:     RLEDictionaryType,
 							Nullable: true,
 						},
 					}...),
@@ -704,11 +698,8 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 					Name: "labels",
 					Type: arrow.StructOf([]arrow.Field{
 						{
-							Name: "label1",
-							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Uint32Type{},
-								ValueType: &arrow.BinaryType{},
-							},
+							Name:     "label1",
+							Type:     RLEDictionaryType,
 							Nullable: true,
 						},
 					}...),
@@ -729,11 +720,8 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 					Name: "labels",
 					Type: arrow.StructOf([]arrow.Field{
 						{
-							Name: "label2",
-							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Uint32Type{},
-								ValueType: &arrow.BinaryType{},
-							},
+							Name:     "label2",
+							Type:     RLEDictionaryType,
 							Nullable: true,
 						},
 					}...),
@@ -754,19 +742,13 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 					Name: "labels",
 					Type: arrow.StructOf([]arrow.Field{
 						{
-							Name: "label1",
-							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Uint32Type{},
-								ValueType: &arrow.BinaryType{},
-							},
+							Name:     "label1",
+							Type:     RLEDictionaryType,
 							Nullable: true,
 						},
 						{
-							Name: "label2",
-							Type: &arrow.DictionaryType{
-								IndexType: &arrow.Uint32Type{},
-								ValueType: &arrow.BinaryType{},
-							},
+							Name:     "label2",
+							Type:     RLEDictionaryType,
 							Nullable: true,
 						},
 					}...),
