@@ -273,9 +273,27 @@ func hashArray(arr arrow.Array) []uint64 {
 		return hashDictionaryArray(ar)
 	case *array.List:
 		return hashListArray(ar)
+	case *array.RunEndEncoded:
+		return hashRunEndEncodedArray(ar)
 	default:
 		panic("unsupported array type " + fmt.Sprintf("%T", arr))
 	}
+}
+
+func hashRunEndEncodedArray(arr *array.RunEndEncoded) []uint64 {
+	res := make([]uint64, arr.Len())
+	for i := 0; i < arr.Len(); i++ {
+		v := arrowutils.GetREEValue(i, arr)
+		switch val := v.(type) {
+		case nil:
+		case []byte:
+			res[i] = metro.Hash64(val, 0)
+		default:
+			panic(fmt.Sprintf("unsupported REE value type: %T", val))
+		}
+	}
+
+	return res
 }
 
 func hashListArray(arr *array.List) []uint64 {
