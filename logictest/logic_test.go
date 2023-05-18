@@ -80,7 +80,18 @@ func TestLogic(t *testing.T) {
 		require.NoError(t, err)
 		r := NewRunner(frostDB{DB: db}, schemas)
 		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
-			return r.RunCmd(ctx, c)
+			return r.RunCmd(ctx, c, false)
+		})
+	})
+	datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
+		columnStore, err := frostdb.New()
+		require.NoError(t, err)
+		defer columnStore.Close()
+		db, err := columnStore.DB(ctx, "test")
+		require.NoError(t, err)
+		r := NewRunner(frostDB{DB: db}, schemas)
+		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
+			return r.RunCmd(ctx, c, true)
 		})
 	})
 }
