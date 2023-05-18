@@ -302,6 +302,7 @@ type structWriter struct {
 	// offset is the column index offset that this node has in the overall schema
 	offset int
 	b      *array.StructBuilder
+	runs   map[int]*parquet.Value
 }
 
 func NewStructWriterFromOffset(offset int) NewWriterFunc {
@@ -309,6 +310,7 @@ func NewStructWriterFromOffset(offset int) NewWriterFunc {
 		return &structWriter{
 			offset: offset,
 			b:      b.(*array.StructBuilder),
+			runs:   make(map[int]*parquet.Value),
 		}
 	}
 }
@@ -438,8 +440,31 @@ func (s *structWriter) findLeafBuilder(searchIndex, currentIndex int, builder ar
 			}
 			return 1, true
 		}
+	case *array.RunEndEncodedBuilder:
+		if searchIndex == currentIndex {
+			for _, v := range values {
+				if prev := s.runs[searchIndex]; prev == nil || !parquet.Equal(*prev, v) {
+					current := v.Clone()
+					s.runs[searchIndex] = &current
+					vb := b.ValueBuilder()
+					switch bldr := vb.(type) {
+					case *array.BinaryDictionaryBuilder:
+						if err := bldr.Append(v.Bytes()); err != nil {
+							panic(fmt.Sprintf("failed to append: %v", err))
+						}
+					default:
+						panic(fmt.Sprintf("unsupported value builder type: %T", vb))
+					}
+					b.Append(1)
+				} else {
+					b.ContinueRun(1)
+				}
+
+			}
+			return 1, true
+		}
 	default:
-		panic(fmt.Sprintf("unsuported value type: %v", b))
+		panic(fmt.Sprintf("unsuported value type: %T", b))
 	}
 
 	return 1, false

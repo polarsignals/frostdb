@@ -121,7 +121,6 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 	require.NoError(t, c.Convert(ctx, buf4))
 
 	ar := c.NewRecord()
-	fmt.Println(ar)
 	require.Equal(t, int64(8), ar.NumCols())
 	require.Equal(t, int64(5), ar.NumRows())
 	for i, col := range ar.Columns() {
@@ -806,7 +805,6 @@ func Test_ParquetToArrowV2(t *testing.T) {
 		require.NoError(t, c.Convert(ctx, pb))
 	}
 	r := c.NewRecord()
-	fmt.Println(r)
 	require.Equal(t, int64(n), r.NumRows())
 }
 

@@ -552,9 +552,11 @@ func (b *OptRunEndEncodedBuilder) AppendParquetValues(values []parquet.Value) {
 			current := v.Clone()
 			b.prev = &current
 			vb := b.builder.ValueBuilder()
-			switch vb.(type) {
+			switch bldr := vb.(type) {
 			case *array.BinaryDictionaryBuilder:
-				vb.(*array.BinaryDictionaryBuilder).Append(v.Bytes())
+				if err := bldr.Append(v.Bytes()); err != nil {
+					panic(fmt.Sprintf("failed to append %v", err))
+				}
 			default:
 				panic(fmt.Sprintf("unhandled value builder type %T", vb))
 			}
