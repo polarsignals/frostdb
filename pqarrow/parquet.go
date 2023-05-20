@@ -76,7 +76,6 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 		}); err != nil {
 			return nil, err
 		}
-		return appendToRow(row, arr.ListValues(), index, rep, def, col)
 	default:
 		return nil, fmt.Errorf("column not of expected type: %v", c.DataType().ID())
 	}
