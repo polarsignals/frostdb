@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"reflect"
@@ -506,7 +507,8 @@ func (b *OptBooleanBuilder) ResetToLength(n int) {
 
 type OptRunEndEncodedBuilder struct {
 	builder *array.RunEndEncodedBuilder
-	prev    *parquet.Value
+	prev    any
+	valid   bool
 }
 
 func NewOptRunEndEncodedBuilder(mem memory.Allocator, runEnds, encoded arrow.DataType) *OptRunEndEncodedBuilder {
@@ -524,44 +526,55 @@ func (b *OptRunEndEncodedBuilder) AppendNull() {
 }
 
 func (b *OptRunEndEncodedBuilder) AppendNulls(n int) {
-	if b.prev == nil || !b.prev.IsNull() {
-		v := parquet.ValueOf(nil)
-		b.prev = &v
-		b.builder.ValueBuilder().AppendNull()
-		b.builder.Append(uint64(n))
-		return
+	if b.valid && b.prev == nil {
+		b.builder.ContinueRun(uint64(n))
 	}
 
-	b.builder.ContinueRun(uint64(n))
+	b.prev = nil
+	b.builder.ValueBuilder().AppendNull()
+	b.builder.Append(uint64(n))
 }
 
 func (b *OptRunEndEncodedBuilder) NewArray() arrow.Array {
 	return b.builder.NewArray()
 }
 
-func (b *OptRunEndEncodedBuilder) Append(data []byte, valid int) {
-	panic("unimplemented")
+func (b *OptRunEndEncodedBuilder) AppendBytes(data []byte) {
+	vb := b.builder.ValueBuilder()
+	switch bldr := vb.(type) {
+	case *array.BinaryDictionaryBuilder:
+		if b.valid {
+			if b.prev == nil {
+				if data == nil {
+					b.builder.ContinueRun(1)
+					return
+				}
+			} else {
+				if bytes.Compare(b.prev.([]byte), data) == 0 {
+					b.builder.ContinueRun(1)
+					return
+				}
+			}
+		}
+		if err := bldr.Append(data); err != nil {
+			panic(fmt.Sprintf("failed to append %v", err))
+		}
+	default:
+		panic(fmt.Sprintf("unhandled value builder type %T", vb))
+	}
+	b.builder.Append(1)
 }
 
 func (b *OptRunEndEncodedBuilder) AppendParquetValues(values []parquet.Value) {
 	for _, v := range values {
-		if b.prev == nil || !parquet.Equal(*b.prev, v) {
-			current := v.Clone()
-			b.prev = &current
-			vb := b.builder.ValueBuilder()
-			switch bldr := vb.(type) {
-			case *array.BinaryDictionaryBuilder:
-				if err := bldr.Append(v.Bytes()); err != nil {
-					panic(fmt.Sprintf("failed to append %v", err))
-				}
-			default:
-				panic(fmt.Sprintf("unhandled value builder type %T", vb))
-			}
-			b.builder.Append(1)
+		vb := b.builder.ValueBuilder()
+		switch vb.(type) {
+		case *array.BinaryDictionaryBuilder:
+			b.AppendBytes(v.Bytes())
 			continue
+		default:
+			panic(fmt.Sprintf("unhandled value builder type %T", vb))
 		}
-
-		b.builder.ContinueRun(1)
 	}
 }
 
