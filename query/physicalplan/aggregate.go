@@ -283,7 +283,7 @@ func hashArray(arr arrow.Array) []uint64 {
 func hashRunEndEncodedArray(arr *array.RunEndEncoded) []uint64 {
 	res := make([]uint64, arr.Len())
 	for i := 0; i < arr.Len(); i++ {
-		v := arrowutils.GetREEValue(i, arr)
+		v := arr.GetOneForMarshal(i)
 		switch val := v.(type) {
 		case nil:
 		case []byte:

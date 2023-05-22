@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -127,12 +126,11 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 		switch i {
 		case 0:
 			for i := 0; i < col.Len(); i++ {
-				v := arrowutils.GetREEValue(i, col)
-				require.Nil(t, v)
+				require.Nil(t, col.GetOneForMarshal(i))
 			}
 		case 1:
 			for i := 0; i < col.Len(); i++ {
-				v := arrowutils.GetREEValue(i, col)
+				v := col.GetOneForMarshal(i)
 				switch i {
 				case 1:
 					require.Equal(t, []byte("value2"), v)
@@ -148,12 +146,12 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 			}
 		case 2:
 			for i := 0; i < col.Len(); i++ {
-				v := arrowutils.GetREEValue(i, col)
+				v := col.GetOneForMarshal(i)
 				require.Equal(t, []byte("value2"), v)
 			}
 		case 3:
 			for i := 0; i < col.Len(); i++ {
-				v := arrowutils.GetREEValue(i, col)
+				v := col.GetOneForMarshal(i)
 				switch i {
 				case 1:
 					fallthrough
@@ -165,7 +163,7 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 			}
 		case 4:
 			for i := 0; i < col.Len(); i++ {
-				v := arrowutils.GetREEValue(i, col)
+				v := col.GetOneForMarshal(i)
 				switch i {
 				case 2:
 					require.Equal(t, []byte("value4"), v)
@@ -175,7 +173,7 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 			}
 		case 5:
 			for i := 0; i < col.Len(); i++ {
-				v := arrowutils.GetREEValue(i, col)
+				v := col.GetOneForMarshal(i)
 				require.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, v)
 			}
 		case 6:
