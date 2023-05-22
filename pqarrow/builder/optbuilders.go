@@ -3,7 +3,6 @@ package builder
 import (
 	"fmt"
 	"math"
-	"math/rand"
 	"reflect"
 	"sync/atomic"
 	"unsafe"
@@ -506,7 +505,6 @@ func (b *OptBooleanBuilder) ResetToLength(n int) {
 }
 
 type OptRunEndEncodedBuilder struct {
-	id      string // TODO REMOVE ME
 	builder *array.RunEndEncodedBuilder
 	prev    *parquet.Value
 }
@@ -514,7 +512,6 @@ type OptRunEndEncodedBuilder struct {
 func NewOptRunEndEncodedBuilder(mem memory.Allocator, runEnds, encoded arrow.DataType) *OptRunEndEncodedBuilder {
 	return &OptRunEndEncodedBuilder{
 		builder: array.NewRunEndEncodedBuilder(mem, runEnds, encoded),
-		id:      fmt.Sprintf("%v", rand.Intn(100)),
 	}
 }
 
