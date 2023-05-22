@@ -11,7 +11,6 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/memory"
 	"github.com/stretchr/testify/require"
 
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
 
@@ -54,8 +53,7 @@ func TestRepeatLastValue(t *testing.T) {
 		require.Equal(t, tc.b.Len(), 10)
 		a := tc.b.NewArray()
 		for i := 0; i < a.Len(); i++ {
-			v, err := arrowutils.GetValue(a, i)
-			require.NoError(t, err)
+			v := a.GetOneForMarshal(i)
 			require.Equal(t, tc.v, v)
 		}
 	}
