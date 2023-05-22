@@ -1620,3 +1620,105 @@ func Test_Insert_Repeated(t *testing.T) {
 		})
 	}
 }
+
+func Test_Compact_Repeated(t *testing.T) {
+	schema := &schemapb.Schema{
+		Name: "repeated",
+		Columns: []*schemapb.Column{{
+			Name: "name",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+		}, {
+			Name: "values",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				Repeated: true,
+			},
+		}, {
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+		}},
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "name",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	}
+	config := NewTableConfig(schema)
+	logger := newTestLogger(t)
+
+	c, err := New(
+		WithLogger(logger),
+		WithGranuleSizeBytes(10), // NOTE: set small granule size to force compaction
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	buffer, err := table.Schema().GetBuffer(nil)
+	require.NoError(t, err)
+
+	var row parquet.Row
+	row = nil
+	row = append(row, parquet.ValueOf("foo").Level(0, 0, 0))
+	row = append(row, parquet.ValueOf(4).Level(0, 0, 1))
+	row = append(row, parquet.ValueOf(nil).Level(0, 0, 2))
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
+
+	row = nil
+	row = append(row, parquet.ValueOf("foo2").Level(0, 0, 0))
+	row = append(row, parquet.ValueOf(3).Level(0, 0, 1))
+	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
+	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
+
+	row = nil
+	row = append(row, parquet.ValueOf("foo3").Level(0, 0, 0))
+	row = append(row, parquet.ValueOf(6).Level(0, 0, 1))
+	row = append(row, parquet.ValueOf("bar").Level(0, 1, 2))
+	row = append(row, parquet.ValueOf("baz").Level(1, 1, 2))
+	_, err = buffer.WriteRows([]parquet.Row{row})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
+	defer converter.Close()
+
+	require.NoError(t, converter.Convert(ctx, buffer))
+	before := converter.NewRecord()
+	defer before.Release()
+
+	_, err = table.InsertRecord(ctx, before)
+	require.NoError(t, err)
+
+	// Compact the record
+	require.NoError(t, table.EnsureCompaction())
+
+	// Retrieve the compacted data
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+		err = table.Iterator(
+			ctx,
+			tx,
+			memory.NewGoAllocator(),
+			[]logicalplan.Callback{func(ctx context.Context, after arrow.Record) error {
+				require.True(t, array.RecordEqual(before, after))
+				return nil
+			}},
+		)
+		require.NoError(t, err)
+		return nil
+	})
+}
