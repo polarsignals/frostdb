@@ -68,10 +68,7 @@ func GetGroupsAndOrderedSetRanges(
 			}
 
 			// And update the current group.
-			v, err := GetValue(t, j)
-			if err != nil {
-				return err
-			}
+			v := t.GetOneForMarshal(j)
 			switch concreteV := v.(type) {
 			case []byte:
 				// Safe copy, otherwise the value might get overwritten.

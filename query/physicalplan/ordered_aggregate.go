@@ -242,10 +242,7 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 		a.scratch.groupByArrays = append(a.scratch.groupByArrays, arr)
 		if !a.notFirstCall {
 			// Initialize curGroup to the first value in each column.
-			v, err := arrowutils.GetValue(arr, 0)
-			if err != nil {
-				return err
-			}
+			v := arr.GetOneForMarshal(0)
 			switch concreteV := v.(type) {
 			case []byte:
 				// Safe copy.
@@ -342,17 +339,12 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 			a.groupResults = append(a.groupResults, nil)
 		}
 		for i, field := range a.groupColOrdering {
-			var (
-				v   any
-				err error
-			)
+			var v any
 			if groupEnd == 0 {
 				// End of the current group of the last record.
 				v = a.curGroup[field.Name]
 			} else {
-				if v, err = arrowutils.GetValue(a.scratch.groupByArrays[i], int(groupStart)); err != nil {
-					return err
-				}
+				v = a.scratch.groupByArrays[i].GetOneForMarshal(int(groupStart))
 			}
 			if err := builder.AppendGoValue(
 				a.groupBuilders[field.Name],
@@ -496,11 +488,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 		firstGroup := make([]any, len(a.groupColOrdering))
 		groupArrs := mergedRecord.Columns()[:len(a.groupColOrdering)]
 		for i, arr := range groupArrs {
-			v, err := arrowutils.GetValue(arr, 0)
-			if err != nil {
-				return err
-			}
-			firstGroup[i] = v
+			firstGroup[i] = arr.GetOneForMarshal(0)
 		}
 		wrappedGroupRanges, _, _, err := arrowutils.GetGroupsAndOrderedSetRanges(firstGroup, groupArrs)
 		if err != nil {

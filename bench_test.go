@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -156,10 +155,7 @@ func getDeterministicTypeFilterExpr(
 		for i := 0; i < int(r.NumRows()); i++ {
 			row := make([]string, 0, len(typeColumns))
 			for j := range typeColumns {
-				v, err := arrowutils.GetValue(r.Column(j), i)
-				if err != nil {
-					return err
-				}
+				v := r.Column(j).GetOneForMarshal(i)
 				row = append(row, string(v.([]byte)))
 			}
 			results = append(results, row)
@@ -206,10 +202,7 @@ func getDeterministicLabelValuePair(ctx context.Context, engine *query.LocalEngi
 				if arr.IsNull(i) {
 					continue
 				}
-				v, err := arrowutils.GetValue(arr, i)
-				if err != nil {
-					return err
-				}
+				v := arr.GetOneForMarshal(i)
 				values = append(values, string(v.([]byte)))
 			}
 			return nil
