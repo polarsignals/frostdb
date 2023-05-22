@@ -44,27 +44,6 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 	}
 
 	switch arr := c.(type) {
-	case *array.Int64:
-		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
-	case *array.Boolean:
-		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
-	case *array.Binary:
-		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
-	case *array.String:
-		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
-	case *array.Uint64:
-		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
-	case *array.Float64:
-		row = append(row, parquet.ValueOf(arr.Value(index)).Level(rep, def, col))
-	case *array.Dictionary:
-		switch dict := arr.Dictionary().(type) {
-		case *array.Binary:
-			row = append(row, parquet.ValueOf(dict.Value(arr.GetValueIndex(index))).Level(rep, def, col))
-		case *array.String:
-			row = append(row, parquet.ValueOf(dict.Value(arr.GetValueIndex(index))).Level(rep, def, col))
-		default:
-			return nil, fmt.Errorf("dictionary not of expected type: %T", dict)
-		}
 	case *array.List:
 		if err := arrowutils.ForEachValueInList(index, arr, func(i int, v any) {
 			switch i {
@@ -77,7 +56,7 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("column not of expected type: %v", c.DataType().ID())
+		row = append(row, parquet.ValueOf(arr.GetOneForMarshal(index)).Level(rep, def, col))
 	}
 
 	return row, nil
