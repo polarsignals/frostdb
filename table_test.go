@@ -1086,8 +1086,8 @@ func Test_Table_NestedSchema(t *testing.T) {
 	require.Equal(t, 1, records)
 
 	s := r.Column(0).(*array.Struct)
-	require.Equal(t, "value1", fmt.Sprintf(string(s.Field(0).(*array.RunEndEncoded).GetOneForMarshal(0).([]byte))))
-	require.Equal(t, "value1", fmt.Sprintf(string(s.Field(1).(*array.RunEndEncoded).GetOneForMarshal(0).([]byte))))
+	require.Equal(t, "value1", fmt.Sprint(string(s.Field(0).(*array.RunEndEncoded).GetOneForMarshal(0).([]byte))))
+	require.Equal(t, "value1", fmt.Sprint(string(s.Field(1).(*array.RunEndEncoded).GetOneForMarshal(0).([]byte))))
 	require.Equal(t, `[[1 2]]`, fmt.Sprintf("%v", r.Column(1)))
 	require.Equal(t, `[[2 3]]`, fmt.Sprintf("%v", r.Column(2)))
 }

@@ -459,7 +459,6 @@ func (s *structWriter) findLeafBuilder(searchIndex, currentIndex int, builder ar
 				} else {
 					b.ContinueRun(1)
 				}
-
 			}
 			return 1, true
 		}

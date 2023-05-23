@@ -16,7 +16,7 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-// Helper var for unit tests
+// Helper var for unit tests.
 var RLEDictionaryType = arrow.RunEndEncodedOf(&arrow.Int32Type{}, &arrow.DictionaryType{
 	IndexType: &arrow.Uint32Type{},
 	ValueType: &arrow.BinaryType{},

@@ -550,7 +550,7 @@ func (b *OptRunEndEncodedBuilder) AppendBytes(data []byte) {
 					return
 				}
 			} else {
-				if bytes.Compare(b.prev.([]byte), data) == 0 {
+				if bytes.Equal(b.prev.([]byte), data) {
 					b.builder.ContinueRun(1)
 					return
 				}
