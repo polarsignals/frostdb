@@ -1085,9 +1085,9 @@ func Test_Table_NestedSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, records)
 
-	require.Equal(t, `{{ dictionary: ["value1"]
-  indices: [0] } { dictionary: ["value1"]
-  indices: [0] }}`, fmt.Sprintf("%v", r.Column(0)))
+	s := r.Column(0).(*array.Struct)
+	require.Equal(t, "value1", fmt.Sprintf(string(s.Field(0).(*array.RunEndEncoded).GetOneForMarshal(0).([]byte))))
+	require.Equal(t, "value1", fmt.Sprintf(string(s.Field(1).(*array.RunEndEncoded).GetOneForMarshal(0).([]byte))))
 	require.Equal(t, `[[1 2]]`, fmt.Sprintf("%v", r.Column(1)))
 	require.Equal(t, `[[2 3]]`, fmt.Sprintf("%v", r.Column(2)))
 }
