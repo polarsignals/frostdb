@@ -61,15 +61,19 @@ func (s Samples) ToRecord(schema *arrow.Schema) (arrow.Record, error) {
 	numLabels := len(schema.Fields()) - 4
 
 	for _, sample := range s {
-		if err := bld.Field(0).(*array.BinaryDictionaryBuilder).Append([]byte(sample.ExampleType)); err != nil {
+		reebldr := bld.Field(0).(*array.RunEndEncodedBuilder)
+		reebldr.Append(1) // TODO: we're not creating runs here...
+		if err := reebldr.ValueBuilder().(*array.BinaryDictionaryBuilder).Append([]byte(sample.ExampleType)); err != nil {
 			return nil, fmt.Errorf("failed to append example type: %v", err)
 		}
 		for i := 0; i < numLabels; i++ {
 			found := false
 			for _, lbl := range sample.Labels {
 				if "labels."+lbl.Name == schema.Field(i+1).Name {
-					if err := bld.Field(i + 1).(*array.BinaryDictionaryBuilder).Append([]byte(lbl.Value)); err != nil {
-						return nil, fmt.Errorf("failed to append value: %v", err)
+					reebldr := bld.Field(i + 1).(*array.RunEndEncodedBuilder)
+					reebldr.Append(1) // TODO: we're not creating runs here...
+					if err := reebldr.ValueBuilder().(*array.BinaryDictionaryBuilder).Append([]byte(lbl.Value)); err != nil {
+						return nil, fmt.Errorf("failed to append example type: %v", err)
 					}
 					found = true
 					break
@@ -80,7 +84,9 @@ func (s Samples) ToRecord(schema *arrow.Schema) (arrow.Record, error) {
 				bld.Field(i + 1).AppendNull()
 			}
 		}
-		if err := bld.Field(1 + numLabels).(*array.BinaryDictionaryBuilder).Append(ExtractLocationIDs(sample.Stacktrace)); err != nil {
+		reebldr = bld.Field(1 + numLabels).(*array.RunEndEncodedBuilder)
+		reebldr.Append(1) // TODO: we're not creating runs here...
+		if err := reebldr.ValueBuilder().(*array.BinaryDictionaryBuilder).Append(ExtractLocationIDs(sample.Stacktrace)); err != nil {
 			return nil, fmt.Errorf("failed to append stacktrace: %v", err)
 		}
 		bld.Field(2 + numLabels).(*array.Int64Builder).Append(sample.Timestamp)
