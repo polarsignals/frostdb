@@ -53,7 +53,14 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 				row = append(row, parquet.ValueOf(v).Level(rep+1, def+1, col))
 			}
 		}); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("appendToRow: %w", err)
+		}
+	case *array.RunEndEncoded:
+		switch arr.Values().(type) {
+		case *array.List:
+			panic("appendToRow: RunEndEncoded with List values not supported")
+		default:
+			row = append(row, parquet.ValueOf(arr.GetOneForMarshal(index)).Level(rep, def, col))
 		}
 	default:
 		row = append(row, parquet.ValueOf(arr.GetOneForMarshal(index)).Level(rep, def, col))

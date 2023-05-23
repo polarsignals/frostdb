@@ -115,7 +115,28 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 						return fmt.Errorf("uknown value builder type %T", bldr)
 					}
 				}
+			default:
+				return fmt.Errorf("unsupported dict type %T", v)
 			}
+		case *array.RunEndEncoded:
+			b.Append(true)
+			switch vb := b.ValueBuilder().(type) {
+			case *OptRunEndEncodedBuilder:
+				for j := 0; j < v.Len(); j++ {
+					vb.AppendBytes(v.GetOneForMarshal(j).([]byte))
+				}
+			default:
+				return fmt.Errorf("unsupported value builder type %T", vb)
+			}
+		default:
+			return fmt.Errorf("unsupported list type %T", v)
+		}
+	case *OptRunEndEncodedBuilder:
+		v := arr.GetOneForMarshal(i)
+		if v == nil {
+			b.AppendNull()
+		} else {
+			b.AppendBytes(arr.GetOneForMarshal(i).([]byte))
 		}
 	default:
 		return fmt.Errorf("unsupported type for arrow append %T", b)
