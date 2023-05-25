@@ -3,7 +3,6 @@ package frostdb
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/apache/arrow/go/v12/arrow"
@@ -181,6 +180,89 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 		compact.head.Store(s)
 		return nil
 	default:
-		return fmt.Errorf("unimplemented")
+		compact := l.findLevel(level)
+
+		var next *Node
+		var iterErr error
+		bufs := []dynparquet.DynamicRowGroup{}
+		compact.Iterate(func(node *Node) bool {
+			if node.part == nil { // sentinel encountered
+				if node.sentinel == level+1 { // either the sentinel for the beginning of the list or the end of the list
+					next = node.next.Load() // skip the sentinel to combine the lists
+				} else {
+					next = node
+				}
+				return false
+			}
+
+			buf, err := node.part.AsSerializedBuffer(schema)
+			if err != nil {
+				iterErr = err
+				return false
+			}
+
+			bufs = append(bufs, buf.MultiDynamicRowGroup())
+			return true
+		})
+		if iterErr != nil {
+			return iterErr
+		}
+
+		if len(bufs) == 0 {
+			return nil
+		}
+
+		merged, err := schema.MergeDynamicRowGroups(bufs)
+		if err != nil {
+			return err
+		}
+
+		b := &bytes.Buffer{}
+		err = func() error {
+			w, err := schema.GetWriter(b, merged.DynamicColumns())
+			if err != nil {
+				return err
+			}
+
+			p := &parquetRowWriter{
+				w:            w,
+				schema:       schema,
+				rowsBuf:      make([]parquet.Row, 1024),
+				rowGroupSize: 4096,
+			}
+			defer p.close()
+
+			rows := merged.Rows()
+			defer rows.Close()
+			if _, err := p.writeRows(rows); err != nil {
+				return err
+			}
+
+			return nil
+		}()
+		if err != nil {
+			return err
+		}
+
+		buf, err := dynparquet.ReaderFromBytes(b.Bytes())
+		if err != nil {
+			return err
+		}
+
+		// Create new list
+		node := &Node{
+			next: &atomic.Pointer[Node]{},
+			part: parts.NewPart(0, buf),
+		}
+		s := &Node{
+			next:     &atomic.Pointer[Node]{},
+			sentinel: level + 1,
+		}
+		s.next.Store(node)
+		if next != nil {
+			node.next.Store(next)
+		}
+		compact.head.Store(s)
+		return nil
 	}
 }

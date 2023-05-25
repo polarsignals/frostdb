@@ -99,11 +99,12 @@ func Test_LSM(t *testing.T) {
 	check(1, 1)
 	lsm.Add(1, r)
 	check(2, 1)
-	fmt.Println("merge into existing l1 list")
 	require.NoError(t, lsm.merge(L0, table.Schema()))
 	check(0, 2)
 	lsm.Add(1, r)
 	check(1, 2)
 	require.NoError(t, lsm.merge(L1, table.Schema()))
 	check(1, 1)
+	require.NoError(t, lsm.merge(L0, table.Schema()))
+	check(0, 2)
 }
