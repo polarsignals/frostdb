@@ -88,12 +88,13 @@ func (l *LSM) findLevel(level SentinelType) *List {
 
 // merge will merge the given level into an arrow record for the next level.
 func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
+	bufs := []dynparquet.DynamicRowGroup{}
+	var next *Node
+	var compact *List
 	switch level {
 	case L0: // special case because L0 never has a sentinel node and is always at the front of the list
-		compact := l.levels.Sentinel(level + 1)
-		var next *Node
+		compact = l.levels.Sentinel(level + 1)
 		var iterErr error
-		bufs := []dynparquet.DynamicRowGroup{}
 		sentinelFound := false
 		compact.Iterate(func(node *Node) bool {
 			if node.part == nil { // sentinel encountered
@@ -122,69 +123,9 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 		if iterErr != nil {
 			return iterErr
 		}
-
-		if len(bufs) == 0 {
-			return nil
-		}
-
-		merged, err := schema.MergeDynamicRowGroups(bufs)
-		if err != nil {
-			return err
-		}
-
-		b := &bytes.Buffer{}
-		err = func() error {
-			w, err := schema.GetWriter(b, merged.DynamicColumns())
-			if err != nil {
-				return err
-			}
-
-			p := &parquetRowWriter{
-				w:            w,
-				schema:       schema,
-				rowsBuf:      make([]parquet.Row, 1024),
-				rowGroupSize: 4096,
-			}
-			defer p.close()
-
-			rows := merged.Rows()
-			defer rows.Close()
-			if _, err := p.writeRows(rows); err != nil {
-				return err
-			}
-
-			return nil
-		}()
-		if err != nil {
-			return err
-		}
-
-		buf, err := dynparquet.ReaderFromBytes(b.Bytes())
-		if err != nil {
-			return err
-		}
-
-		// Create new list
-		node := &Node{
-			next: &atomic.Pointer[Node]{},
-			part: parts.NewPart(0, buf),
-		}
-		s := &Node{
-			next:     &atomic.Pointer[Node]{},
-			sentinel: level + 1,
-		}
-		s.next.Store(node)
-		if next != nil {
-			node.next.Store(next)
-		}
-		compact.head.Store(s)
-		return nil
 	default:
-		compact := l.findLevel(level)
-
-		var next *Node
+		compact = l.findLevel(level)
 		var iterErr error
-		bufs := []dynparquet.DynamicRowGroup{}
 		compact.Iterate(func(node *Node) bool {
 			if node.part == nil { // sentinel encountered
 				if node.sentinel == level+1 { // either the sentinel for the beginning of the list or the end of the list
@@ -207,62 +148,62 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 		if iterErr != nil {
 			return iterErr
 		}
+	}
 
-		if len(bufs) == 0 {
-			return nil
-		}
-
-		merged, err := schema.MergeDynamicRowGroups(bufs)
-		if err != nil {
-			return err
-		}
-
-		b := &bytes.Buffer{}
-		err = func() error {
-			w, err := schema.GetWriter(b, merged.DynamicColumns())
-			if err != nil {
-				return err
-			}
-
-			p := &parquetRowWriter{
-				w:            w,
-				schema:       schema,
-				rowsBuf:      make([]parquet.Row, 1024),
-				rowGroupSize: 4096,
-			}
-			defer p.close()
-
-			rows := merged.Rows()
-			defer rows.Close()
-			if _, err := p.writeRows(rows); err != nil {
-				return err
-			}
-
-			return nil
-		}()
-		if err != nil {
-			return err
-		}
-
-		buf, err := dynparquet.ReaderFromBytes(b.Bytes())
-		if err != nil {
-			return err
-		}
-
-		// Create new list
-		node := &Node{
-			next: &atomic.Pointer[Node]{},
-			part: parts.NewPart(0, buf),
-		}
-		s := &Node{
-			next:     &atomic.Pointer[Node]{},
-			sentinel: level + 1,
-		}
-		s.next.Store(node)
-		if next != nil {
-			node.next.Store(next)
-		}
-		compact.head.Store(s)
+	if len(bufs) == 0 {
 		return nil
 	}
+
+	merged, err := schema.MergeDynamicRowGroups(bufs)
+	if err != nil {
+		return err
+	}
+
+	b := &bytes.Buffer{}
+	err = func() error {
+		w, err := schema.GetWriter(b, merged.DynamicColumns())
+		if err != nil {
+			return err
+		}
+
+		p := &parquetRowWriter{
+			w:            w,
+			schema:       schema,
+			rowsBuf:      make([]parquet.Row, 1024),
+			rowGroupSize: 4096,
+		}
+		defer p.close()
+
+		rows := merged.Rows()
+		defer rows.Close()
+		if _, err := p.writeRows(rows); err != nil {
+			return err
+		}
+
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	buf, err := dynparquet.ReaderFromBytes(b.Bytes())
+	if err != nil {
+		return err
+	}
+
+	// Create new list
+	node := &Node{
+		next: &atomic.Pointer[Node]{},
+		part: parts.NewPart(0, buf),
+	}
+	s := &Node{
+		next:     &atomic.Pointer[Node]{},
+		sentinel: level + 1,
+	}
+	s.next.Store(node)
+	if next != nil {
+		node.next.Store(next)
+	}
+	compact.head.Store(s)
+	return nil
 }
