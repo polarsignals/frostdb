@@ -82,6 +82,21 @@ func StorageWithLogger(logger log.Logger) DefaultObjstoreBucketOption {
 	}
 }
 
+func NewDefaultBucket(b storage.Bucket, options ...DefaultObjstoreBucketOption) *DefaultObjstoreBucket {
+	d := &DefaultObjstoreBucket{
+		Bucket:           b,
+		tracer:           trace.NewNoopTracerProvider().Tracer(""),
+		logger:           log.NewNopLogger(),
+		blockReaderLimit: DefaultBlockReaderLimit,
+	}
+
+	for _, option := range options {
+		option(d)
+	}
+
+	return d
+}
+
 func NewDefaultObjstoreBucket(b objstore.Bucket, options ...DefaultObjstoreBucketOption) *DefaultObjstoreBucket {
 	d := &DefaultObjstoreBucket{
 		Bucket:           storage.NewBucketReaderAt(b),
