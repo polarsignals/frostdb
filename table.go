@@ -871,7 +871,7 @@ func (t *TableBlock) Size() int64 {
 
 // Serialize the table block into a single Parquet file.
 func (t *TableBlock) Serialize(writer io.Writer) error {
-	for i := L0; i <= L2; i++ { // Lazy implementation
+	for i := L0; i < L2; i++ { // Lazy implementation
 		if err := t.index.merge(i, t.table.Schema(), nil); err != nil {
 			return err
 		}
