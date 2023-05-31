@@ -79,7 +79,7 @@ func Test_LSM(t *testing.T) {
 			switch v.(type) {
 			case arrow.Record:
 				rec++
-			case *dynparquet.SerializedBuffer:
+			case dynparquet.DynamicRowGroup:
 				buf++
 			}
 			return nil

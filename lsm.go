@@ -3,6 +3,7 @@ package frostdb
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"sync/atomic"
 
@@ -53,7 +54,11 @@ func (l *LSM) Prefixes(ctx context.Context, prefix string) ([]string, error) {
 	return []string{l.prefix}, nil
 }
 
-func (l *LSM) Scan(ctx context.Context, _ string, schema *dynparquet.Schema, _ logicalplan.Expr, _ uint64, callback func(context.Context, any) error) error {
+func (l *LSM) Scan(ctx context.Context, _ string, schema *dynparquet.Schema, filter logicalplan.Expr, _ uint64, callback func(context.Context, any) error) error {
+	booleanFilter, err := BooleanExpr(filter)
+	if err != nil {
+		return fmt.Errorf("droxtal: boolean expr: %w", err)
+	}
 	l.levels.Iterate(func(node *Node) bool {
 		if node.part == nil { // encountered a sentinel node; continue on
 			return true
@@ -71,8 +76,21 @@ func (l *LSM) Scan(ctx context.Context, _ string, schema *dynparquet.Schema, _ l
 		if err != nil {
 			panic("programming error")
 		}
-		if err := callback(ctx, buf); err != nil {
-			return false
+
+		for i := 0; i < buf.NumRowGroups(); i++ {
+			rg := buf.DynamicRowGroup(i)
+			mayContainUsefulData, err := booleanFilter.Eval(rg)
+			if err != nil {
+				// TODO return error
+				panic("return error")
+				return false
+			}
+
+			if mayContainUsefulData {
+				if err := callback(ctx, rg); err != nil {
+					return false
+				}
+			}
 		}
 		return true
 	})
