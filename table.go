@@ -21,6 +21,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v12/arrow/util"
 	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -43,7 +44,6 @@ import (
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
@@ -1261,7 +1261,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	}
 
 	// recordSizePerRow is the rough estimate of the size of each row in the record.
-	recordSizePerRow := int(arrowutils.RecordSize(record) / int64(numRows))
+	recordSizePerRow := int(util.TotalRecordSize(record) / int64(numRows))
 
 	var ascendErr error
 	t.Index().DescendLessOrEqual(
@@ -1309,7 +1309,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 
 	if idx < 0 {
 		// All rows exhausted.
-		t.size.Add(arrowutils.RecordSize(record))
+		t.size.Add(util.TotalRecordSize(record))
 		return nil
 	}
 
@@ -1326,7 +1326,7 @@ func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) erro
 	}
 	t.table.metrics.granulesCreated.Inc()
 	t.table.metrics.numParts.Add(float64(1))
-	t.size.Add(arrowutils.RecordSize(record))
+	t.size.Add(util.TotalRecordSize(record))
 	return nil
 }
 

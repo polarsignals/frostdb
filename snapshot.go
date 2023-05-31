@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow/go/v12/arrow/util"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/oklog/ulid"
@@ -28,7 +29,6 @@ import (
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/parts"
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 // This file implements writing and reading database snapshots from disk.
@@ -602,7 +602,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 							return err
 						}
 
-						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, int(arrowutils.RecordSize(record)), table.schema, partOptions))
+						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, int(util.TotalRecordSize(record)), table.schema, partOptions))
 					default:
 						return fmt.Errorf("unknown part encoding: %s", partMeta.Encoding)
 					}
