@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -66,11 +67,19 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		Value:     3,
 	}}
 
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+		"labels": {"label1", "label2"},
+	})
+	require.NoError(t, err)
+	ctx := context.Background()
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+	require.NoError(t, err)
+
 	for i := range samples {
-		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		buf, err := samples[i : i+1].ToRecord(sc)
 		require.NoError(t, err)
 
-		_, err = table.InsertBuffer(context.Background(), buf)
+		_, err = table.InsertRecord(context.Background(), buf)
 		require.NoError(t, err)
 	}
 
@@ -194,11 +203,19 @@ func TestAggregationProjection(t *testing.T) {
 		Value:     3,
 	}}
 
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+		"labels": {"label1", "label2", "label3", "label4"},
+	})
+	require.NoError(t, err)
+	ctx := context.Background()
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+	require.NoError(t, err)
+
 	for i := 0; i < len(samples); i++ {
-		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		buf, err := samples[i : i+1].ToRecord(sc)
 		require.NoError(t, err)
 
-		_, err = table.InsertBuffer(context.Background(), buf)
+		_, err = table.InsertRecord(context.Background(), buf)
 		require.NoError(t, err)
 	}
 
@@ -278,9 +295,17 @@ func BenchmarkAggregation(b *testing.B) {
 			})
 		}
 
-		buf, err := samples.ToBuffer(table.Schema())
+		ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+			"labels": {"label1", "label2"},
+		})
 		require.NoError(b, err)
-		_, err = table.InsertBuffer(ctx, buf)
+		ctx := context.Background()
+		sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+		require.NoError(b, err)
+
+		buf, err := samples.ToRecord(sc)
+		require.NoError(b, err)
+		_, err = table.InsertRecord(ctx, buf)
 		require.NoError(b, err)
 	}
 

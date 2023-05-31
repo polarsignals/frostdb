@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -417,10 +418,18 @@ func Benchmark_Serialize(b *testing.B) {
 
 	// Insert 10k rows
 	samples := NewTestSamples(10000)
-	buf, err := samples.ToBuffer(tbl.schema)
+	ps, err := tbl.Schema().GetDynamicParquetSchema(map[string][]string{
+		"labels": {"label1", "label2", "label3", "label4"},
+	})
+	require.NoError(b, err)
+	defer tbl.Schema().PutPooledParquetSchema(ps)
+
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+	require.NoError(b, err)
+	buf, err := samples.ToRecord(sc)
 	require.NoError(b, err)
 
-	_, err = tbl.InsertBuffer(ctx, buf)
+	_, err = tbl.InsertRecord(ctx, buf)
 	require.NoError(b, err)
 
 	b.ResetTimer()

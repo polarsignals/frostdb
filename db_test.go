@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,12 +13,10 @@ import (
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/memory"
 	"github.com/google/uuid"
-	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -52,11 +49,20 @@ func TestDBWithWALAndBucket(t *testing.T) {
 
 	samples := dynparquet.NewTestSamples()
 
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+		"labels": {"node", "namespace", "pod", "container"},
+	})
+	require.NoError(t, err)
+	defer table.Schema().PutPooledParquetSchema(ps)
+
 	ctx := context.Background()
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+	require.NoError(t, err)
+
 	for i := 0; i < 100; i++ {
-		buf, err := samples.ToBuffer(table.Schema())
+		buf, err := samples.ToRecord(sc)
 		require.NoError(t, err)
-		_, err = table.InsertBuffer(ctx, buf)
+		_, err = table.InsertRecord(ctx, buf)
 		require.NoError(t, err)
 	}
 	require.NoError(t, table.EnsureCompaction())
@@ -154,14 +160,6 @@ func TestDBWithWAL(t *testing.T) {
 			ctx := context.Background()
 			_, err = table.InsertRecord(ctx, rec)
 			require.NoError(t, err)
-
-		default:
-			buf, err := samples.ToBuffer(table.Schema())
-			require.NoError(t, err)
-
-			ctx := context.Background()
-			_, err = table.InsertBuffer(ctx, buf)
-			require.NoError(t, err)
 		}
 
 		samples = dynparquet.Samples{{
@@ -194,12 +192,6 @@ func TestDBWithWAL(t *testing.T) {
 
 			ctx := context.Background()
 			_, err = table.InsertRecord(ctx, rec)
-			require.NoError(t, err)
-		default:
-			buf, err := samples.ToBuffer(table.Schema())
-			require.NoError(t, err)
-
-			_, err = table.InsertBuffer(ctx, buf)
 			require.NoError(t, err)
 		}
 
@@ -234,12 +226,6 @@ func TestDBWithWAL(t *testing.T) {
 
 			ctx := context.Background()
 			_, err = table.InsertRecord(ctx, rec)
-			require.NoError(t, err)
-		default:
-			buf, err := samples.ToBuffer(table.Schema())
-			require.NoError(t, err)
-
-			_, err = table.InsertBuffer(ctx, buf)
 			require.NoError(t, err)
 		}
 
@@ -294,10 +280,6 @@ func TestDBWithWAL(t *testing.T) {
 			})
 		require.NoError(t, err)
 	}
-
-	t.Run("parquet", func(t *testing.T) {
-		test(t, false)
-	})
 	t.Run("arrow", func(t *testing.T) {
 		test(t, true)
 	})
@@ -364,11 +346,20 @@ func Test_DB_WithStorage(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf, err := samples.ToBuffer(table.Schema())
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+		"labels": {"label1", "label2", "label3", "label4"},
+	})
 	require.NoError(t, err)
+	defer table.Schema().PutPooledParquetSchema(ps)
 
 	ctx := context.Background()
-	_, err = table.InsertBuffer(ctx, buf)
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+	require.NoError(t, err)
+
+	buf, err := samples.ToRecord(sc)
+	require.NoError(t, err)
+
+	_, err = table.InsertRecord(ctx, buf)
 	require.NoError(t, err)
 
 	// Gracefully close the db to persist blocks
@@ -479,11 +470,20 @@ func Test_DB_ColdStart(t *testing.T) {
 				},
 			}
 
-			buf, err := samples.ToBuffer(table.Schema())
+			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+				"labels": {"label1", "label2"},
+			})
 			require.NoError(t, err)
+			defer table.Schema().PutPooledParquetSchema(ps)
 
 			ctx := context.Background()
-			_, err = table.InsertBuffer(ctx, buf)
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+			require.NoError(t, err)
+
+			buf, err := samples.ToRecord(sc)
+			require.NoError(t, err)
+
+			_, err = table.InsertRecord(ctx, buf)
 			require.NoError(t, err)
 
 			// Gracefully close the db to persist blocks
@@ -512,139 +512,6 @@ func Test_DB_ColdStart(t *testing.T) {
 			))
 		})
 	}
-}
-
-func Test_DB_ColdStart_MissingColumn(t *testing.T) {
-	schemaDef := &schemapb.Schema{
-		Name: "test",
-		Columns: []*schemapb.Column{
-			{
-				Name: "example_type",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				},
-				Dynamic: false,
-			},
-			{
-				Name: "labels",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Nullable: true,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				},
-				Dynamic: true,
-			},
-			{
-				Name: "pprof_labels",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Nullable: true,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				},
-				Dynamic: true,
-			},
-		},
-		SortingColumns: []*schemapb.SortingColumn{
-			{
-				Name:      "example_type",
-				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-			},
-			{
-				Name:       "labels",
-				Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
-				NullsFirst: true,
-			},
-			{
-				Name:       "pprof_labels",
-				Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
-				NullsFirst: true,
-			},
-		},
-	}
-
-	config := NewTableConfig(schemaDef)
-
-	bucket := objstore.NewInMemBucket()
-
-	sinksource := NewDefaultObjstoreBucket(bucket)
-	logger := newTestLogger(t)
-
-	c, err := New(
-		WithLogger(logger),
-		WithReadWriteStorage(sinksource),
-	)
-	require.NoError(t, err)
-
-	db, err := c.DB(context.Background(), t.Name())
-	require.NoError(t, err)
-	table, err := db.Table(t.Name(), config)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(t.Name())
-	})
-
-	buf, err := table.schema.NewBuffer(map[string][]string{
-		"labels": {
-			"label1",
-			"label2",
-		},
-		"pprof_labels": {},
-	})
-	require.NoError(t, err)
-
-	_, err = buf.WriteRows([]parquet.Row{
-		{
-			parquet.ValueOf("test").Level(0, 0, 0),
-			parquet.ValueOf("value1").Level(0, 1, 1),
-			parquet.ValueOf("value1").Level(0, 1, 2),
-		},
-	})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	_, err = table.InsertBuffer(ctx, buf)
-	require.NoError(t, err)
-
-	// Gracefully close the db to persist blocks
-	c.Close()
-
-	// Open a new database pointed to the same bucket storage
-	c, err = New(
-		WithLogger(logger),
-		WithReadWriteStorage(sinksource),
-	)
-	require.NoError(t, err)
-	defer c.Close()
-
-	// connect to our test db
-	db, err = c.DB(context.Background(), t.Name())
-	require.NoError(t, err)
-
-	// fetch new table
-	table, err = db.Table(t.Name(), config)
-	require.NoError(t, err)
-
-	buf, err = table.schema.NewBuffer(map[string][]string{
-		"labels": {
-			"label1",
-			"label2",
-		},
-		"pprof_labels": {},
-	})
-	require.NoError(t, err)
-
-	_, err = buf.WriteRows([]parquet.Row{
-		{
-			parquet.ValueOf("test").Level(0, 0, 0),
-			parquet.ValueOf("value2").Level(0, 1, 1),
-			parquet.ValueOf("value2").Level(0, 1, 2),
-		},
-	})
-	require.NoError(t, err)
-
-	_, err = table.InsertBuffer(ctx, buf)
-	require.NoError(t, err)
 }
 
 func Test_DB_Filter_Block(t *testing.T) {
@@ -754,11 +621,20 @@ func Test_DB_Filter_Block(t *testing.T) {
 				},
 			}
 
-			buf, err := samples.ToBuffer(table.Schema())
+			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+				"labels": {"label1", "label2"},
+			})
 			require.NoError(t, err)
+			defer table.Schema().PutPooledParquetSchema(ps)
 
 			ctx := context.Background()
-			_, err = table.InsertBuffer(ctx, buf)
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+			require.NoError(t, err)
+
+			buf, err := samples.ToRecord(sc)
+			require.NoError(t, err)
+
+			_, err = table.InsertRecord(ctx, buf)
 			require.NoError(t, err)
 
 			// Gracefully close the db to persist blocks
@@ -1030,11 +906,20 @@ func Test_DB_Block_Optimization(t *testing.T) {
 				},
 			}
 
-			buf, err := samples.ToBuffer(table.Schema())
+			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+				"labels": {"label1", "label2"},
+			})
 			require.NoError(t, err)
+			defer table.Schema().PutPooledParquetSchema(ps)
 
 			ctx := context.Background()
-			_, err = table.InsertBuffer(ctx, buf)
+			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+			require.NoError(t, err)
+
+			buf, err := samples.ToRecord(sc)
+			require.NoError(t, err)
+
+			_, err = table.InsertRecord(ctx, buf)
 			require.NoError(t, err)
 
 			// Gracefully close the db to persist blocks
@@ -1079,153 +964,6 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-}
-
-func Test_DB_TableWrite_FlatSchema(t *testing.T) {
-	ctx := context.Background()
-	flatDefinition := &schemapb.Schema{
-		Name: "test",
-		Columns: []*schemapb.Column{{
-			Name: "example_type",
-			StorageLayout: &schemapb.StorageLayout{
-				Type:     schemapb.StorageLayout_TYPE_STRING,
-				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-			},
-			Dynamic: false,
-		}, {
-			Name: "timestamp",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-			Dynamic: false,
-		}, {
-			Name: "value",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-			Dynamic: false,
-		}},
-		SortingColumns: []*schemapb.SortingColumn{{
-			Name:      "example_type",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}, {
-			Name:      "timestamp",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}},
-	}
-	config := NewTableConfig(flatDefinition)
-
-	c, err := New(WithLogger(newTestLogger(t)))
-	require.NoError(t, err)
-	defer c.Close()
-
-	db, err := c.DB(ctx, "flatschema")
-	require.NoError(t, err)
-
-	table, err := db.Table("test", config)
-	require.NoError(t, err)
-
-	s := struct {
-		ExampleType string
-		Timestamp   int64
-		Value       int64
-	}{
-		ExampleType: "hello-world",
-		Timestamp:   7,
-		Value:       8,
-	}
-
-	_, err = table.Write(ctx, s)
-	require.NoError(t, err)
-
-	engine := query.NewEngine(
-		memory.NewGoAllocator(),
-		db.TableProvider(),
-	)
-
-	err = engine.ScanTable("test").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
-		require.Equal(t, int64(1), ar.NumRows())
-		require.Equal(t, int64(3), ar.NumCols())
-		return nil
-	})
-	require.NoError(t, err)
-}
-
-func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
-	ctx := context.Background()
-	config := NewTableConfig(
-		dynparquet.SampleDefinition(),
-	)
-
-	c, err := New(WithLogger(newTestLogger(t)))
-	require.NoError(t, err)
-	defer c.Close()
-
-	db, err := c.DB(ctx, "sampleschema")
-	require.NoError(t, err)
-
-	table, err := db.Table("test", config)
-	require.NoError(t, err)
-
-	now := time.Now()
-	ts := now.UnixMilli()
-	samples := dynparquet.Samples{
-		{
-			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
-			},
-			Stacktrace: []uuid.UUID{
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-			},
-			Timestamp: ts,
-			Value:     1,
-		},
-		{
-			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
-				{Name: "label3", Value: "value3"},
-			},
-			Stacktrace: []uuid.UUID{
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-			},
-			Timestamp: ts,
-			Value:     2,
-		},
-		{
-			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
-			},
-			Stacktrace: []uuid.UUID{
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-			},
-			Timestamp: ts,
-			Value:     3,
-		},
-	}
-
-	_, err = table.Write(ctx, samples[0], samples[1], samples[2])
-	require.NoError(t, err)
-
-	engine := query.NewEngine(
-		memory.NewGoAllocator(),
-		db.TableProvider(),
-	)
-
-	err = engine.ScanTable("test").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
-		require.Equal(t, int64(3), ar.NumRows())
-		require.Equal(t, int64(7), ar.NumCols())
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func Test_DB_TableNotExist(t *testing.T) {
@@ -1395,11 +1133,20 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 
 	samples := dynparquet.NewTestSamples()
 
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+		"labels": {"node", "namespace", "pod", "container"},
+	})
+	require.NoError(t, err)
+	defer table.Schema().PutPooledParquetSchema(ps)
+
 	ctx := context.Background()
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+	require.NoError(t, err)
+
 	for i := 0; i < 100; i++ {
-		buf, err := samples.ToBuffer(table.Schema())
+		buf, err := samples.ToRecord(sc)
 		require.NoError(t, err)
-		_, err = table.InsertBuffer(ctx, buf)
+		_, err = table.InsertRecord(ctx, buf)
 		require.NoError(t, err)
 	}
 	require.NoError(t, table.EnsureCompaction())
@@ -1432,221 +1179,6 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 // TestDBRecover verifies correct DB recovery with both a WAL and snapshots as
 // well as a block rotation (in which case no duplicate data should be in the
 // database).
-func TestDBRecover(t *testing.T) {
-	ctx := context.Background()
-	const (
-		dbAndTableName = "test"
-		numInserts     = 3
-	)
-	setup := func(t *testing.T, blockRotation bool, options ...Option) string {
-		dir := t.TempDir()
-		c, err := New(
-			append([]Option{
-				WithLogger(newTestLogger(t)),
-				WithStoragePath(dir),
-				WithWAL(),
-				WithSnapshotTriggerSize(1),
-				// Disable reclaiming disk space on snapshot (i.e. deleting
-				// old snapshots and WAL). This allows us to modify on-disk
-				// state for some tests.
-				WithTestingNoDiskSpaceReclaimOnSnapshot(),
-			},
-				options...,
-			)...,
-		)
-		require.NoError(t, err)
-		defer c.Close()
-
-		db, err := c.DB(ctx, dbAndTableName)
-		require.NoError(t, err)
-		schema := dynparquet.SampleDefinition()
-		table, err := db.Table(dbAndTableName, NewTableConfig(schema))
-		require.NoError(t, err)
-
-		// Insert 3 txns.
-		var lastWriteTx uint64
-		for i := 0; i < numInserts; i++ {
-			samples := dynparquet.NewTestSamples()
-			for j := range samples {
-				samples[j].Timestamp = int64(i)
-			}
-			buf, err := samples.ToBuffer(table.schema)
-			require.NoError(t, err)
-			writeTx, err := table.InsertBuffer(ctx, buf)
-			require.NoError(t, err)
-			if i > 0 {
-				// Wait until a snapshot is written for each write (it is the txn
-				// immediately preceding the write). This has to be done in a loop,
-				// otherwise writes may not cause a snapshot given that there
-				// might be a snapshot in progress.
-				db.Wait(writeTx - 1)
-				lastWriteTx = writeTx
-			}
-		}
-		// At this point, there should be 2 snapshots. One was triggered before
-		// the second write, and the second was triggered before the third write.
-		if blockRotation {
-			// A block rotation should trigger the third snapshot.
-			require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
-			// Wait for both the new block txn, and the old block rotation txn.
-			db.Wait(lastWriteTx + 2)
-		}
-
-		files, err := os.ReadDir(db.snapshotsDir())
-		require.NoError(t, err)
-		snapshotTxns := make([]uint64, 0, len(files))
-		for _, f := range files {
-			tx, err := getTxFromSnapshotFileName(f.Name())
-			require.NoError(t, err)
-			snapshotTxns = append(snapshotTxns, tx)
-		}
-		expectedSnapshots := []uint64{3, 5}
-		if blockRotation {
-			expectedSnapshots = append(expectedSnapshots, 8)
-		}
-		// Verify that there are now 3 snapshots and their txns.
-		require.Equal(t, expectedSnapshots, snapshotTxns)
-		return dir
-	}
-
-	t.Run("BlockRotation", func(t *testing.T) {
-		dir := setup(t, true)
-		c, err := New(
-			WithLogger(newTestLogger(t)),
-			WithStoragePath(dir),
-			WithWAL(),
-			WithSnapshotTriggerSize(1),
-		)
-		require.NoError(t, err)
-		defer c.Close()
-
-		db, err := c.DB(ctx, dbAndTableName)
-		require.NoError(t, err)
-
-		engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
-		nrows := 0
-		require.NoError(t, engine.ScanTable(dbAndTableName).
-			Distinct(logicalplan.Col("timestamp")).
-			Execute(
-				ctx,
-				func(_ context.Context, r arrow.Record) error {
-					nrows += int(r.NumRows())
-					return nil
-				}))
-		// No more timestamps if querying in-memory only, since the data has
-		// been rotated.
-		require.Equal(t, 0, nrows)
-	})
-
-	// The ability to write and expect a WAL record to be logged is vital on
-	// database recovery. If it is not the case, writing to the WAL will be
-	// stuck.
-	newWriteAndExpectWALRecord := func(t *testing.T, db *DB, table *Table) {
-		t.Helper()
-		samples := dynparquet.NewTestSamples()
-		for i := range samples {
-			samples[i].Timestamp = numInserts
-		}
-		buf, err := samples.ToBuffer(table.schema)
-		require.NoError(t, err)
-
-		writeTx, err := table.InsertBuffer(ctx, buf)
-		require.NoError(t, err)
-
-		require.Eventually(t, func() bool {
-			lastIndex, err := db.wal.LastIndex()
-			require.NoError(t, err)
-			return lastIndex >= writeTx
-		}, time.Second, 10*time.Millisecond)
-	}
-
-	// Ensure that the WAL is written to after loading from a snapshot. This
-	// tests a regression detailed in:
-	// https://github.com/polarsignals/frostdb/issues/390
-	t.Run("Issue390", func(t *testing.T) {
-		dir := setup(t, false)
-		c, err := New(
-			WithLogger(newTestLogger(t)),
-			WithStoragePath(dir),
-			WithWAL(),
-			WithSnapshotTriggerSize(1),
-		)
-		require.NoError(t, err)
-		defer c.Close()
-
-		db, err := c.DB(ctx, dbAndTableName)
-		require.NoError(t, err)
-		table, err := db.Table(dbAndTableName, nil)
-		require.NoError(t, err)
-		newWriteAndExpectWALRecord(t, db, table)
-	})
-
-	// OutOfDateSnapshots verifies a scenario in which the WAL has records with
-	// higher txns than the latest snapshot
-	t.Run("OutOfDateSnapshots", func(t *testing.T) {
-		dir := setup(t, false)
-
-		snapshotsPath := filepath.Join(dir, "databases", dbAndTableName, "snapshots")
-		files, err := os.ReadDir(snapshotsPath)
-		require.NoError(t, err)
-		require.Equal(t, 2, len(files))
-		require.NoError(t, os.RemoveAll(filepath.Join(snapshotsPath, files[len(files)-1].Name())))
-		files, err = os.ReadDir(snapshotsPath)
-		require.NoError(t, err)
-		require.Equal(t, 1, len(files))
-
-		c, err := New(
-			WithLogger(newTestLogger(t)),
-			WithStoragePath(dir),
-			WithWAL(),
-			WithSnapshotTriggerSize(1),
-		)
-		require.NoError(t, err)
-		defer c.Close()
-	})
-
-	// WithBucket ensures normal behavior of recovery in case of graceful
-	// shutdown of a column store with bucket storage.
-	t.Run("WithBucket", func(t *testing.T) {
-		bucket := objstore.NewInMemBucket()
-		sinksource := NewDefaultObjstoreBucket(bucket)
-		dir := setup(t, true, WithReadWriteStorage(sinksource))
-
-		// The previous wal and snapshots directories should be empty since data
-		// is persisted on Close, rendering the directories useless.
-		databasesDir := filepath.Join(dir, "databases")
-		entries, err := os.ReadDir(databasesDir)
-		require.NoError(t, err)
-		for _, e := range entries {
-			dbEntries, err := os.ReadDir(filepath.Join(databasesDir, e.Name()))
-			require.NoError(t, err)
-			if len(dbEntries) > 0 {
-				entryNames := make([]string, 0, len(dbEntries))
-				for _, e := range dbEntries {
-					entryNames = append(entryNames, e.Name())
-				}
-				t.Fatalf("expected an empty dir but found the following entries: %v", entryNames)
-			}
-		}
-
-		c, err := New(
-			WithLogger(newTestLogger(t)),
-			WithStoragePath(dir),
-			WithWAL(),
-			WithSnapshotTriggerSize(1),
-			WithReadWriteStorage(sinksource),
-		)
-		require.NoError(t, err)
-		defer c.Close()
-
-		db, err := c.DB(ctx, dbAndTableName)
-		require.NoError(t, err)
-		table, err := db.Table(dbAndTableName, NewTableConfig(dynparquet.SampleDefinition()))
-		require.NoError(t, err)
-		newWriteAndExpectWALRecord(t, db, table)
-	})
-}
-
 func Test_DB_WalReplayTableConfig(t *testing.T) {
 	config := NewTableConfig(
 		dynparquet.SampleDefinition(),
@@ -1671,11 +1203,20 @@ func Test_DB_WalReplayTableConfig(t *testing.T) {
 
 	samples := dynparquet.NewTestSamples()
 
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+		"labels": {"pod", "node", "namespace", "container"},
+	})
+	require.NoError(t, err)
+	defer table.Schema().PutPooledParquetSchema(ps)
+
 	ctx := context.Background()
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+	require.NoError(t, err)
+
 	for i := 0; i < 100; i++ {
-		buf, err := samples.ToBuffer(table.Schema())
+		buf, err := samples.ToRecord(sc)
 		require.NoError(t, err)
-		_, err = table.InsertBuffer(ctx, buf)
+		_, err = table.InsertRecord(ctx, buf)
 		require.NoError(t, err)
 	}
 	require.NoError(t, c.Close())
@@ -1710,9 +1251,17 @@ func TestDBMinTXPersisted(t *testing.T) {
 	require.NoError(t, err)
 
 	samples := dynparquet.NewTestSamples()
-	buf, err := samples.ToBuffer(table.schema)
+	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
+		"labels": {"node", "namespace", "pod", "container"},
+	})
 	require.NoError(t, err)
-	writeTx, err := table.InsertBuffer(ctx, buf)
+	defer table.Schema().PutPooledParquetSchema(ps)
+
+	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
+	require.NoError(t, err)
+	buf, err := samples.ToRecord(sc)
+	require.NoError(t, err)
+	writeTx, err := table.InsertRecord(ctx, buf)
 	require.NoError(t, err)
 
 	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
