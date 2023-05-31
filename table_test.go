@@ -14,6 +14,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v12/arrow/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
@@ -25,7 +26,6 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -1450,7 +1450,7 @@ func Test_Table_Size(t *testing.T) {
 			require.NoError(t, err)
 
 			after := table.ActiveBlock().Size()
-			require.Equal(t, arrowutils.RecordSize(rec), after-before)
+			require.Equal(t, util.TotalRecordSize(rec), after-before)
 		default:
 			buf, err := samples.ToBuffer(table.Schema())
 			require.NoError(t, err)

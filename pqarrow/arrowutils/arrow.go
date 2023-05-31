@@ -3,23 +3,8 @@ package arrowutils
 import (
 	"fmt"
 
-	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 )
-
-// RecordSize returns the arrow record size in bytes.
-func RecordSize(r arrow.Record) int64 {
-	size := int64(0)
-	for _, col := range r.Columns() {
-		bufs := col.Data().Buffers()
-		for _, buf := range bufs {
-			if buf != nil {
-				size += int64(buf.Len())
-			}
-		}
-	}
-	return size
-}
 
 func ForEachValueInList(index int, arr *array.List, iterator func(int, any)) error {
 	start, end := arr.ValueOffsets(index)
