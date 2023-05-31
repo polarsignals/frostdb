@@ -17,7 +17,6 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/google/btree"
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -290,7 +289,7 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 
 type dbMetrics struct {
 	txHighWatermark prometheus.GaugeFunc
-	snapshotMetrics *snapshotMetrics
+	//snapshotMetrics *snapshotMetrics
 }
 
 type DB struct {
@@ -439,7 +438,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 			}),
 		}
 		if db.columnStore.snapshotTriggerSize != 0 {
-			db.metrics.snapshotMetrics = newSnapshotMetrics(reg)
+			//db.metrics.snapshotMetrics = newSnapshotMetrics(reg)
 		}
 		return nil
 	}(); dbSetupErr != nil {
@@ -497,13 +496,15 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		"name", db.name,
 	)
 	snapshotLoadStart := time.Now()
-	snapshotTx, err := db.loadLatestSnapshot(ctx)
-	if err != nil {
-		level.Info(db.logger).Log(
-			"msg", "failed to load latest snapshot", "db", db.name, "err", err,
-		)
-		snapshotTx = 0
-	}
+	/*
+		snapshotTx, err := db.loadLatestSnapshot(ctx)
+		if err != nil {
+			level.Info(db.logger).Log(
+				"msg", "failed to load latest snapshot", "db", db.name, "err", err,
+			)
+		}
+	*/
+	snapshotTx := uint64(0)
 	firstIndex, err := wal.FirstIndex()
 	if err != nil {
 		level.Info(db.logger).Log(
@@ -523,14 +524,16 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			"snapshot_tx", snapshotTx,
 			"snapshot_load_duration", time.Since(snapshotLoadStart),
 		)
-		if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx); err != nil {
-			// Truncation is best-effort. If it fails, move on.
-			level.Info(db.logger).Log(
-				"msg", "failed to truncate snapshots less than loaded snapshot",
-				"err", err,
-				"snapshot_tx", snapshotTx,
-			)
-		}
+		/*
+			if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx); err != nil {
+				// Truncation is best-effort. If it fails, move on.
+				level.Info(db.logger).Log(
+					"msg", "failed to truncate snapshots less than loaded snapshot",
+					"err", err,
+					"snapshot_tx", snapshotTx,
+				)
+			}
+		*/
 		if snapshotTx > firstIndex && snapshotTx <= lastIndex {
 			if err := wal.Truncate(snapshotTx); err != nil {
 				// Since this is a best-effort truncation, move on if there is an
@@ -576,7 +579,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-					table.ActiveBlock().index.Store(btree.New(table.db.columnStore.indexDegree))
+					table.ActiveBlock().index = NewLSM(table.name, L2)
 				}
 				db.mtx.Unlock()
 			}
@@ -721,14 +724,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 					return fmt.Errorf("insert record into block: %w", err)
 				}
 			default:
-				serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
-				if err != nil {
-					return fmt.Errorf("deserialize buffer: %w", err)
-				}
-
-				if err := table.active.Insert(ctx, tx, serBuf); err != nil {
-					return fmt.Errorf("insert buffer into block: %w", err)
-				}
+				panic("deprecated feature")
 			}
 
 			// After every insert we're setting the tx and highWatermark to the replayed tx.
@@ -859,20 +855,23 @@ func (db *DB) maintainWAL() {
 // reclaimDiskSpace attempts to read the latest valid snapshot txn and removes
 // any snapshots/wal entries that are older than the snapshot tx.
 func (db *DB) reclaimDiskSpace(ctx context.Context) error {
-	if db.columnStore.testingOptions.disableReclaimDiskSpaceOnSnapshot {
-		return nil
-	}
-	validSnapshotTxn, err := db.getLatestValidSnapshotTxn(ctx)
-	if err != nil {
-		return err
-	}
-	if validSnapshotTxn == 0 {
-		return nil
-	}
-	if err := db.truncateSnapshotsLessThanTX(ctx, validSnapshotTxn); err != nil {
-		return err
-	}
-	return db.wal.Truncate(validSnapshotTxn)
+	/*
+		if db.columnStore.testingOptions.disableReclaimDiskSpaceOnSnapshot {
+			return nil
+		}
+		validSnapshotTxn, err := db.getLatestValidSnapshotTxn(ctx)
+		if err != nil {
+			return err
+		}
+		if validSnapshotTxn == 0 {
+			return nil
+		}
+		if err := db.truncateSnapshotsLessThanTX(ctx, validSnapshotTxn); err != nil {
+			return err
+		}
+		return db.wal.Truncate(validSnapshotTxn)
+	*/
+	return nil
 }
 
 func (db *DB) getMinTXPersisted() uint64 {

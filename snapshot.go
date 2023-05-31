@@ -1,5 +1,6 @@
 package frostdb
 
+/*
 import (
 	"bytes"
 	"context"
@@ -680,3 +681,4 @@ func (db *DB) snapshotsDo(ctx context.Context, dir string, callback func(tx uint
 	}
 	return nil
 }
+*/

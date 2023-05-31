@@ -16,7 +16,6 @@ import (
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/memory"
-	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
@@ -33,7 +32,6 @@ import (
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
-	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/wal"
@@ -437,40 +435,42 @@ func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
 	}
 	t.mtx.Unlock()
 	t.db.maintainWAL()
-	if snapshotDB && t.db.columnStore.snapshotTriggerSize != 0 && t.db.columnStore.enableWAL {
-		func() {
-			if !t.db.snapshotInProgress.CompareAndSwap(false, true) {
-				// Snapshot already in progress. This could lead to duplicate
-				// data when replaying (refer to the snapshot design document),
-				// but discarding this data on recovery is better than a
-				// potential additional CPU spike caused by another snapshot.
-				return
-			}
-			defer t.db.snapshotInProgress.Store(false)
-			// This snapshot snapshots the new, active, table block. Refer to
-			// the snapshot design document for more details as to why this
-			// snapshot is necessary.
-			// context.Background is used here for the snapshot since callers
-			// might cancel the context when the write is finished but the
-			// snapshot is not. Note that block.Persist does the same.
-			// TODO(asubiotto): Eventually we should register a cancel function
-			// that is called with a grace period on db.Close.
-			ctx := context.Background()
-			if err := t.db.snapshotAtTX(ctx, tx); err != nil {
-				level.Error(t.logger).Log(
-					"msg", "failed to write snapshot on block rotation",
-					"err", err,
-				)
-			}
-			if err := t.db.reclaimDiskSpace(ctx); err != nil {
-				level.Error(t.logger).Log(
-					"msg", "failed to reclaim disk space after snapshot on block rotation",
-					"err", err,
-				)
-				return
-			}
-		}()
-	}
+	/*
+		if snapshotDB && t.db.columnStore.snapshotTriggerSize != 0 && t.db.columnStore.enableWAL {
+			func() {
+				if !t.db.snapshotInProgress.CompareAndSwap(false, true) {
+					// Snapshot already in progress. This could lead to duplicate
+					// data when replaying (refer to the snapshot design document),
+					// but discarding this data on recovery is better than a
+					// potential additional CPU spike caused by another snapshot.
+					return
+				}
+				defer t.db.snapshotInProgress.Store(false)
+				// This snapshot snapshots the new, active, table block. Refer to
+				// the snapshot design document for more details as to why this
+				// snapshot is necessary.
+				// context.Background is used here for the snapshot since callers
+				// might cancel the context when the write is finished but the
+				// snapshot is not. Note that block.Persist does the same.
+				// TODO(asubiotto): Eventually we should register a cancel function
+				// that is called with a grace period on db.Close.
+				ctx := context.Background()
+				if err := t.db.snapshotAtTX(ctx, tx); err != nil {
+					level.Error(t.logger).Log(
+						"msg", "failed to write snapshot on block rotation",
+						"err", err,
+					)
+				}
+				if err := t.db.reclaimDiskSpace(ctx); err != nil {
+					level.Error(t.logger).Log(
+						"msg", "failed to reclaim disk space after snapshot on block rotation",
+						"err", err,
+					)
+					return
+				}
+			}()
+		}
+	*/
 }
 
 func (t *Table) RotateBlock(ctx context.Context, block *TableBlock) error {
@@ -580,32 +580,34 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 		}
 
 		blockSize := block.Size()
-		if t.db.columnStore.snapshotTriggerSize != 0 &&
-			// If size-lastSnapshotSize > snapshotTriggerSize (a column store
-			// option), a new snapshot is triggered. This is basically the size
-			// of the new data in this block since the last snapshot.
-			blockSize-block.lastSnapshotSize.Load() > t.db.columnStore.snapshotTriggerSize {
-			// context.Background is used here for the snapshot since callers
-			// might cancel the context when the write is finished but the
-			// snapshot is not.
-			// TODO(asubiotto): Eventually we should register a cancel function
-			// that is called with a grace period on db.Close.
-			t.db.asyncSnapshot(context.Background(), func() {
-				level.Debug(t.logger).Log(
-					"msg", "successful snapshot on block size trigger",
-					"block_size", humanize.IBytes(uint64(blockSize)),
-					"last_snapshot_size", humanize.IBytes(uint64(block.lastSnapshotSize.Load())),
-				)
-				block.lastSnapshotSize.Store(blockSize)
-				if err := t.db.reclaimDiskSpace(ctx); err != nil {
-					level.Error(t.logger).Log(
-						"msg", "failed to reclaim disk space after snapshot",
-						"err", err,
+		/*
+			if t.db.columnStore.snapshotTriggerSize != 0 &&
+				// If size-lastSnapshotSize > snapshotTriggerSize (a column store
+				// option), a new snapshot is triggered. This is basically the size
+				// of the new data in this block since the last snapshot.
+				blockSize-block.lastSnapshotSize.Load() > t.db.columnStore.snapshotTriggerSize {
+				// context.Background is used here for the snapshot since callers
+				// might cancel the context when the write is finished but the
+				// snapshot is not.
+				// TODO(asubiotto): Eventually we should register a cancel function
+				// that is called with a grace period on db.Close.
+				t.db.asyncSnapshot(context.Background(), func() {
+					level.Debug(t.logger).Log(
+						"msg", "successful snapshot on block size trigger",
+						"block_size", humanize.IBytes(uint64(blockSize)),
+						"last_snapshot_size", humanize.IBytes(uint64(block.lastSnapshotSize.Load())),
 					)
-					return
-				}
-			})
-		}
+					block.lastSnapshotSize.Store(blockSize)
+					if err := t.db.reclaimDiskSpace(ctx); err != nil {
+						level.Error(t.logger).Log(
+							"msg", "failed to reclaim disk space after snapshot",
+							"err", err,
+						)
+						return
+					}
+				})
+			}
+		*/
 		if blockSize < t.db.columnStore.activeMemorySize {
 			return block, close, nil
 		}
@@ -865,52 +867,6 @@ func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.R
 // Size returns the cumulative size of all buffers in the table. This is roughly the size of the table in bytes.
 func (t *TableBlock) Size() int64 {
 	return t.size.Load()
-}
-
-// addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
-func addPartToGranule(granules []*Granule, p *parts.Part) error {
-	row, err := p.Least()
-	if err != nil {
-		return err
-	}
-
-	var prev *Granule
-	for _, g := range granules {
-		if g.schema.RowLessThan(row, g.Least()) {
-			if prev != nil {
-				if _, err := prev.Append(p); err != nil {
-					return err
-				}
-				return nil
-			}
-		} else {
-			prev = g
-		}
-	}
-
-	if prev != nil {
-		// Save part to prev
-		if _, err := prev.Append(p); err != nil {
-			return err
-		}
-	} else {
-		// NOTE: this should never happen
-		panic("programming error; unable to find granule for part")
-	}
-
-	return nil
-}
-
-// abortCompaction resets state set on compaction so that a granule may be
-// compacted again.
-func (t *TableBlock) abortCompaction(granule *Granule) {
-	t.table.metrics.granulesCompactionAborted.Inc()
-	for {
-		// Unmark pruned, so that we can compact the granule in the future.
-		if granule.metadata.pruned.CompareAndSwap(1, 0) {
-			return
-		}
-	}
 }
 
 // Serialize the table block into a single Parquet file.
