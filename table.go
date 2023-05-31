@@ -1014,13 +1014,17 @@ func (t *Table) collectRowGroups(
 			block.pendingReadersWg.Done()
 		}
 	}()
-	sources := t.db.sources
 	for _, block := range memoryBlocks {
-		sources = append(sources, block.index)
+		if err := block.index.Scan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, tx, func(ctx context.Context, v any) error {
+			rowGroups <- v
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 
 	// Collect from all data sources.
-	for _, source := range sources {
+	for _, source := range t.db.sources {
 		span.AddEvent(fmt.Sprintf("source/%s", source.String()))
 		if err := source.Scan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, lastBlockTimestamp, func(ctx context.Context, v any) error {
 			rowGroups <- v

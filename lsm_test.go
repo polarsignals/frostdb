@@ -75,7 +75,7 @@ func Test_LSM(t *testing.T) {
 		fmt.Println(lsm)
 		rec := 0
 		buf := 0
-		require.NoError(t, lsm.Scan(ctx, "", table.Schema(), nil, 0, func(ctx context.Context, v any) error {
+		require.NoError(t, lsm.Scan(ctx, "", table.Schema(), nil, 2, func(ctx context.Context, v any) error {
 			switch v.(type) {
 			case arrow.Record:
 				rec++

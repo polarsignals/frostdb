@@ -54,13 +54,17 @@ func (l *LSM) Prefixes(ctx context.Context, prefix string) ([]string, error) {
 	return []string{l.prefix}, nil
 }
 
-func (l *LSM) Scan(ctx context.Context, _ string, schema *dynparquet.Schema, filter logicalplan.Expr, _ uint64, callback func(context.Context, any) error) error {
+func (l *LSM) Scan(ctx context.Context, _ string, schema *dynparquet.Schema, filter logicalplan.Expr, tx uint64, callback func(context.Context, any) error) error {
 	booleanFilter, err := BooleanExpr(filter)
 	if err != nil {
 		return fmt.Errorf("droxtal: boolean expr: %w", err)
 	}
 	l.levels.Iterate(func(node *Node) bool {
 		if node.part == nil { // encountered a sentinel node; continue on
+			return true
+		}
+
+		if node.part.TX() > tx { // skip parts that are newer than this transaction
 			return true
 		}
 
