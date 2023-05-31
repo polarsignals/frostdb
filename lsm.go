@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/util"
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -17,6 +18,7 @@ import (
 type LSM struct {
 	prefix string
 	levels *List
+	sizes  []int64
 
 	// TODO support the final level of parquet files in remote storage?
 }
@@ -25,6 +27,7 @@ func NewLSM(prefix string, maxLevel SentinelType) *LSM {
 	lsm := &LSM{
 		prefix: prefix,
 		levels: NewList(&atomic.Pointer[Node]{}),
+		sizes:  make([]int64, maxLevel+1),
 	}
 
 	for i := maxLevel; i > 0; i-- {
@@ -36,7 +39,9 @@ func NewLSM(prefix string, maxLevel SentinelType) *LSM {
 
 func (l *LSM) Add(tx uint64, record arrow.Record) {
 	record.Retain()
-	l.levels.Prepend(parts.NewArrowPart(tx, record, 0, nil)) // TODO size and schema...
+	size := util.TotalRecordSize(record)
+	l.levels.Prepend(parts.NewArrowPart(tx, record, int(size), nil)) // TODO schema?...
+	atomic.AddInt64(&l.sizes[L0], int64(size))
 }
 
 func (l *LSM) String() string {
@@ -91,6 +96,7 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 	bufs := []dynparquet.DynamicRowGroup{}
 	var next *Node
 	var compact *List
+	size := int64(0)
 	switch level {
 	case L0: // special case because L0 never has a sentinel node and is always at the front of the list
 		compact = l.levels.Sentinel(level + 1)
@@ -117,6 +123,7 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 				return false
 			}
 
+			size += util.TotalRecordSize(node.part.Record())
 			bufs = append(bufs, buf.MultiDynamicRowGroup())
 			return true
 		})
@@ -142,6 +149,7 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 				return false
 			}
 
+			size += buf.ParquetFile().Size()
 			bufs = append(bufs, buf.MultiDynamicRowGroup())
 			return true
 		})
@@ -190,6 +198,7 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 	if err != nil {
 		return err
 	}
+	afterSize := buf.ParquetFile().Size()
 
 	// Create new list
 	node := &Node{
@@ -205,5 +214,7 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 		node.next.Store(next)
 	}
 	compact.head.Store(s)
+	atomic.AddInt64(&l.sizes[level], -int64(size))
+	atomic.AddInt64(&l.sizes[level+1], int64(afterSize))
 	return nil
 }
