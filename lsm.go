@@ -3,6 +3,7 @@ package frostdb
 import (
 	"bytes"
 	"context"
+	"io"
 	"sync/atomic"
 
 	"github.com/apache/arrow/go/v12/arrow"
@@ -92,7 +93,7 @@ func (l *LSM) findLevel(level SentinelType) *List {
 }
 
 // merge will merge the given level into an arrow record for the next level.
-func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
+func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema, externalWriter io.Writer) error {
 	bufs := []dynparquet.DynamicRowGroup{}
 	var next *Node
 	var compact *List
@@ -167,7 +168,12 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 		return err
 	}
 
-	b := &bytes.Buffer{}
+	var b io.Writer
+	if externalWriter != nil {
+		b = externalWriter
+	} else {
+		b = &bytes.Buffer{}
+	}
 	err = func() error {
 		w, err := schema.GetWriter(b, merged.DynamicColumns())
 		if err != nil {
@@ -194,7 +200,11 @@ func (l *LSM) merge(level SentinelType, schema *dynparquet.Schema) error {
 		return err
 	}
 
-	buf, err := dynparquet.ReaderFromBytes(b.Bytes())
+	if externalWriter != nil {
+		return nil
+	}
+
+	buf, err := dynparquet.ReaderFromBytes(b.(*bytes.Buffer).Bytes())
 	if err != nil {
 		return err
 	}
