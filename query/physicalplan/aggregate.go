@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/memory"
 	"github.com/apache/arrow/go/v12/arrow/scalar"
 	"github.com/dgryski/go-metro"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
@@ -549,11 +550,14 @@ func (a *HashAggregate) updateGroupByCols(row int, groupByArrays []arrow.Array, 
 
 func (a *HashAggregate) Finish(ctx context.Context) error {
 	ctx, span := a.tracer.Start(ctx, "HashAggregate/Finish")
+	span.SetAttributes(attribute.Bool("finalStage", a.finalStage))
 	defer span.End()
 
+	totalRows := 0
 	for _, aggregate := range a.aggregates {
 		numCols := len(aggregate.groupByCols) + len(aggregate.aggregations)
 		numRows := aggregate.rowCount
+		totalRows += numRows
 
 		if numRows == 0 { // skip empty aggregates
 			continue
@@ -610,6 +614,7 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 		}
 	}
 
+	span.SetAttributes(attribute.Int64("rows", int64(totalRows)))
 	return a.next.Finish(ctx)
 }
 
