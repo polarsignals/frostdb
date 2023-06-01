@@ -144,8 +144,8 @@ func (c *compactorPool) compactLoop(ctx context.Context) {
 }
 
 func (t *TableBlock) compact(cfg *CompactionConfig) error {
-	maxL0 := int64(1024 * 1024 * 50)  // 50MB
-	maxL1 := int64(1024 * 1024 * 512) // 512MB // TODO THOR make these settings
+	maxL0 := int64(1024 * 1024 * 10)  // 10MB
+	maxL1 := int64(1024 * 1024 * 100) // 100MB // TODO THOR make these settings
 	var compactionErrors errutil.MultiError
 	for i := 0; i < len(t.index.sizes); i++ {
 		switch i {
