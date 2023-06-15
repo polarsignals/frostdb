@@ -117,7 +117,7 @@ func (o *OrderedSynchronizer) mergeRecordsLocked() (arrow.Record, error) {
 	if err := o.ensureSameSchema(o.sync.data); err != nil {
 		return nil, err
 	}
-	mergedRecord, err := arrowutils.MergeRecords(o.pool, o.sync.data, o.orderByCols)
+	mergedRecord, err := arrowutils.MergeRecords(o.pool, o.sync.data, o.orderByCols, -1)
 	if err != nil {
 		return nil, err
 	}

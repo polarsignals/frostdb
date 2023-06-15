@@ -35,7 +35,7 @@ func TestMerge(t *testing.T) {
 	record3 := array.NewRecord(schema, []arrow.Array{a}, int64(a.Len()))
 
 	res, err := arrowutils.MergeRecords(
-		memory.DefaultAllocator, []arrow.Record{record1, record2, record3}, []int{0},
+		memory.DefaultAllocator, []arrow.Record{record1, record2, record3}, []int{0}, 0,
 	)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.NumCols())
@@ -47,4 +47,11 @@ func TestMerge(t *testing.T) {
 	for i := 1; i < col.Len(); i++ {
 		require.Equal(t, expected[i-1], col.Value(i))
 	}
+
+	// check that we can merge with a limit
+	res, err = arrowutils.MergeRecords(
+		memory.DefaultAllocator, []arrow.Record{record1, record2, record3}, []int{0}, 3,
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), res.NumRows())
 }

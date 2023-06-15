@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"container/heap"
 	"fmt"
+	"math"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
@@ -14,11 +15,12 @@ import (
 
 // MergeRecords merges the given records. The records must all have the same
 // schema. orderByCols is a slice of indexes into the columns that the records
-// and resulting records are ordered by. Note that the given records should
-// already be ordered by the given columns.
+// and resulting records are ordered by. While ordering the limit is checked before appending more rows.
+// If limit is 0, no limit is applied.
+// Note that the given records should already be ordered by the given columns.
 // WARNING: Only ascending ordering is currently supported.
 func MergeRecords(
-	mem memory.Allocator, records []arrow.Record, orderByCols []int,
+	mem memory.Allocator, records []arrow.Record, orderByCols []int, limit int64,
 ) (arrow.Record, error) {
 	h := cursorHeap{
 		cursors:     make([]cursor, len(records)),
@@ -32,8 +34,13 @@ func MergeRecords(
 	recordBuilder := builder.NewRecordBuilder(mem, schema)
 	defer recordBuilder.Release()
 
+	if limit < 1 {
+		limit = math.MaxInt64
+	}
+	count := int64(0)
+
 	heap.Init(&h)
-	for h.Len() > 0 {
+	for h.Len() > 0 && count < limit {
 		// Minimum cursor is always at index 0.
 		r := h.cursors[0].r
 		i := h.cursors[0].curIdx
@@ -45,10 +52,12 @@ func MergeRecords(
 		if int64(i+1) >= r.NumRows() {
 			// Pop the cursor since it has no more data.
 			_ = heap.Pop(&h)
+			count++
 			continue
 		}
 		h.cursors[0].curIdx++
 		heap.Fix(&h, 0)
+		count++
 	}
 
 	return recordBuilder.NewRecord(), nil
