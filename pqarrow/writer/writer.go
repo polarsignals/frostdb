@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v13/arrow/array"
 	"github.com/segmentio/parquet-go"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"

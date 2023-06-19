@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v13/arrow"
+	"github.com/apache/arrow/go/v13/arrow/memory"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace"
 

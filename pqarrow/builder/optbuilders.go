@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/bitutil"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v13/arrow"
+	"github.com/apache/arrow/go/v13/arrow/array"
+	"github.com/apache/arrow/go/v13/arrow/bitutil"
+	"github.com/apache/arrow/go/v13/arrow/memory"
 	"github.com/segmentio/parquet-go"
 )
 
@@ -273,6 +273,16 @@ func (b *OptBinaryBuilder) ResetToLength(n int) {
 	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
 }
 
+func (b *OptBinaryBuilder) Value(i int) []byte {
+	if i < 0 || i >= b.length {
+		panic("arrow/array: index out of range")
+	}
+	if i == b.length-1 { // last value
+		return b.data[b.offsets[i]:]
+	}
+	return b.data[b.offsets[i]:b.offsets[i+1]]
+}
+
 type OptInt64Builder struct {
 	builderBase
 
@@ -350,6 +360,20 @@ func (b *OptInt64Builder) Append(v int64) {
 	b.length++
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
 	bitutil.SetBit(b.validityBitmap, b.length-1)
+}
+
+func (b *OptInt64Builder) Set(i int, v int64) {
+	if i < 0 || i >= len(b.data) {
+		panic("arrow/array: index out of range")
+	}
+	b.data[i] = v
+}
+
+func (b *OptInt64Builder) Add(i int, v int64) {
+	if i < 0 || i >= len(b.data) {
+		panic("arrow/array: index out of range")
+	}
+	b.data[i] += v
 }
 
 func (b *OptInt64Builder) AppendParquetValues(values []parquet.Value) {
