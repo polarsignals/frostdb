@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v13/arrow"
+	"github.com/apache/arrow/go/v13/arrow/memory"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb"
@@ -16,7 +16,6 @@ import (
 
 // This example demonstrates how to create a simple FrostDB with a dynamic labels column that stores float values.
 func main() {
-
 	// Create a new column store
 	columnstore, _ := frostdb.New()
 	defer columnstore.Close()

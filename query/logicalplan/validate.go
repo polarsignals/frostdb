@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/apache/arrow/go/v12/arrow/scalar"
+	"github.com/apache/arrow/go/v13/arrow/scalar"
 	"github.com/segmentio/parquet-go/format"
 )
 

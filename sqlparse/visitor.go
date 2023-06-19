@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow/scalar"
+	"github.com/apache/arrow/go/v13/arrow/scalar"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/test_driver"

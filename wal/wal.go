@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow/go/v13/arrow"
+	"github.com/apache/arrow/go/v13/arrow/ipc"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/polarsignals/wal"

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v13/arrow"
+	"github.com/apache/arrow/go/v13/arrow/array"
+	"github.com/apache/arrow/go/v13/arrow/memory"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/pqarrow/arrowutils"

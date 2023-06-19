@@ -6,9 +6,9 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v13/arrow"
+	"github.com/apache/arrow/go/v13/arrow/array"
+	"github.com/apache/arrow/go/v13/arrow/memory"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
@@ -110,4 +110,16 @@ func Test_BuildLargeArray(t *testing.T) {
 
 	// We expect fewer rows in the array
 	require.Equal(t, n-1, newarr.Data().Len())
+}
+
+func TestOptBinaryBuilder_Value(t *testing.T) {
+	b := builder.NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
+	values := []string{"1", "2", "3"}
+	for _, v := range values {
+		require.NoError(t, b.Append([]byte(v)))
+	}
+
+	for i, value := range values {
+		require.Equal(t, value, string(b.Value(i)))
+	}
 }
