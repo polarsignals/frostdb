@@ -5,6 +5,7 @@ go 1.19
 require (
 	github.com/RoaringBitmap/roaring v0.9.4
 	github.com/apache/arrow/go/v13 v13.0.0-20230524164752-c4ea194c6880
+	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/cockroachdb/datadriven v1.0.2
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140
 	github.com/dustin/go-humanize v1.0.1
@@ -33,7 +34,6 @@ require (
 	github.com/benbjohnson/immutable v0.4.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.2.0 // indirect
-	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/coreos/etcd v3.3.27+incompatible // indirect
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
 	github.com/coreos/pkg v0.0.0-20220810130054-c7d1c02cb6cf // indirect
