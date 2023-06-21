@@ -27,6 +27,7 @@ const (
 	OpRegexNotMatch
 	OpAnd
 	OpOr
+	OpContains
 )
 
 func (o Op) String() string {
@@ -51,6 +52,8 @@ func (o Op) String() string {
 		return "&&"
 	case OpOr:
 		return "||"
+	case OpContains:
+		return "|="
 	default:
 		panic("unknown operator")
 	}
@@ -275,6 +278,14 @@ func (c *Column) RegexNotMatch(pattern string) *BinaryExpr {
 	return &BinaryExpr{
 		Left:  c,
 		Op:    OpRegexNotMatch,
+		Right: Literal(pattern),
+	}
+}
+
+func (c *Column) Contains(pattern string) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
+		Op:    OpContains,
 		Right: Literal(pattern),
 	}
 }

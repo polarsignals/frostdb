@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/memory"
 	"golang.org/x/exp/constraints"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
@@ -15,9 +15,12 @@ import (
 
 // SortRecord sorts the given record's rows by the given column. Currently only supports int64, string and binary columns.
 // TODO: We might consider supporting other types in the future, especially dynamic columns and sorting by multiple columns.
-func SortRecord(mem memory.Allocator, r arrow.Record, col int) (arrow.Record, error) {
-	if r.NumRows() < 2 {
-		return r, nil
+func SortRecord(mem memory.Allocator, r arrow.Record, col int) ([]int, error) {
+	if r.NumRows() == 0 {
+		return nil, nil
+	}
+	if r.NumRows() == 1 {
+		return []int{0}, nil
 	}
 
 	indices := make([]int, r.NumRows())
@@ -37,6 +40,11 @@ func SortRecord(mem memory.Allocator, r arrow.Record, col int) (arrow.Record, er
 		return nil, fmt.Errorf("unsupported column type for sorting %T", c)
 	}
 
+	return indices, nil
+}
+
+// ReorderRecord reorders the given record's rows by the given indices.
+func ReorderRecord(mem memory.Allocator, r arrow.Record, indices []int) (arrow.Record, error) {
 	// if the indices are already sorted, we can return the original record to save memory allocations
 	if sort.SliceIsSorted(indices, func(i, j int) bool { return indices[i] < indices[j] }) {
 		return r, nil

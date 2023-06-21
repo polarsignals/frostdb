@@ -128,6 +128,15 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 			default:
 				panic("something terrible has happened, this should have errored previously during validation")
 			}
+		case logicalplan.OpContains:
+			switch r := right.(type) {
+			case *scalar.Binary:
+				return BinaryArrayScalarContains(left.(*array.Binary), r)
+			case *scalar.String:
+				return BinaryArrayScalarContains(left.(*array.Binary), r.Binary)
+			default:
+				panic("something terrible has happened, this should have errored previously during validation")
+			}
 		default:
 			panic("something terrible has happened, this should have errored previously during validation")
 		}
@@ -347,6 +356,22 @@ func BinaryArrayScalarNotEqual(left *array.Binary, right *scalar.Binary) (*Bitma
 			continue
 		}
 		if !bytes.Equal(left.Value(i), right.Data()) {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func BinaryArrayScalarContains(left *array.Binary, right *scalar.Binary) (*Bitmap, error) {
+	rightData := right.Data()
+
+	res := NewBitmap()
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if bytes.Contains(left.Value(i), rightData) {
 			res.Add(uint32(i))
 		}
 	}

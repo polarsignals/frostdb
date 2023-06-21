@@ -3,9 +3,9 @@ package arrowutils
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,10 +35,14 @@ func TestSortRecord(t *testing.T) {
 
 	// Sort the record by the first column - int64
 	{
-		sortedByInts, err := SortRecord(mem, record, 0)
+		sortedIndices, err := SortRecord(mem, record, 0)
+		require.NoError(t, err)
+		require.Equal(t, []int{0, 3, 1, 2}, sortedIndices)
+
+		sortedByInts, err := ReorderRecord(mem, record, sortedIndices)
 		require.NoError(t, err)
 
-		// check that the column got sortedByInts
+		// check that the column got sortedIndices
 		intCol := sortedByInts.Column(0).(*array.Int64)
 		require.Equal(t, []int64{0, 1, 3, 5}, intCol.Int64Values())
 		// make sure the other column got updated too
@@ -52,7 +56,11 @@ func TestSortRecord(t *testing.T) {
 
 	// Sort the record by the second column - string
 	{
-		sortedByStrings, err := SortRecord(mem, record, 1)
+		sortedIndices, err := SortRecord(mem, record, 1)
+		require.NoError(t, err)
+		require.Equal(t, []int{3, 2, 1, 0}, sortedIndices)
+
+		sortedByStrings, err := ReorderRecord(mem, record, sortedIndices)
 		require.NoError(t, err)
 
 		// check that the column got sortedByInts
