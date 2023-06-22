@@ -45,6 +45,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/recovery"
 	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
 )
@@ -861,7 +862,7 @@ func (t *Table) Iterator(
 	errg, ctx := errgroup.WithContext(ctx)
 	for _, callback := range callbacks {
 		callback := callback
-		errg.Go(func() error {
+		errg.Go(recovery.Do(func() error {
 			converter := pqarrow.NewParquetConverter(pool, *iterOpts)
 			defer converter.Close()
 
@@ -909,7 +910,7 @@ func (t *Table) Iterator(
 					}
 				}
 			}
-		})
+		}))
 	}
 
 	errg.Go(func() error {
@@ -958,7 +959,7 @@ func (t *Table) SchemaIterator(
 	errg, ctx := errgroup.WithContext(ctx)
 	for _, callback := range callbacks {
 		callback := callback
-		errg.Go(func() error {
+		errg.Go(recovery.Do(func() error {
 			for {
 				select {
 				case <-ctx.Done():
@@ -1005,7 +1006,7 @@ func (t *Table) SchemaIterator(
 					}
 				}
 			}
-		})
+		}))
 	}
 
 	errg.Go(func() error {
