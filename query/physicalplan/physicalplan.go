@@ -120,7 +120,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		callbacks = append(callbacks, plan.Callback)
 	}
 
-	errg, ctx := errgroup.WithContext(ctx)
+	errg, _ := errgroup.WithContext(ctx)
 	errg.Go(recovery.Do(func() error {
 		return table.View(ctx, func(ctx context.Context, tx uint64) error {
 			return table.Iterator(
@@ -139,6 +139,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
+	errg, _ = errgroup.WithContext(ctx)
 	for _, plan := range s.plans {
 		plan := plan
 		errg.Go(recovery.Do(func() (err error) {
@@ -174,8 +175,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		callbacks = append(callbacks, plan.Callback)
 	}
 
-	errg, ctx := errgroup.WithContext(ctx)
-
+	errg, _ := errgroup.WithContext(ctx)
 	errg.Go(recovery.Do(func() error {
 		return table.View(ctx, func(ctx context.Context, tx uint64) error {
 			return table.SchemaIterator(
@@ -194,6 +194,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		return err
 	}
 
+	errg, _ = errgroup.WithContext(ctx)
 	for _, plan := range s.plans {
 		plan := plan
 		errg.Go(recovery.Do(func() error {
