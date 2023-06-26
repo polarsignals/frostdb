@@ -13,6 +13,7 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/recovery"
 )
 
 // TODO: Make this smarter.
@@ -119,29 +120,31 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		callbacks = append(callbacks, plan.Callback)
 	}
 
-	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		return table.Iterator(
-			ctx,
-			tx,
-			pool,
-			callbacks,
-			logicalplan.WithPhysicalProjection(s.options.PhysicalProjection...),
-			logicalplan.WithProjection(s.options.Projection...),
-			logicalplan.WithFilter(s.options.Filter),
-			logicalplan.WithDistinctColumns(s.options.Distinct...),
-		)
-	})
-	if err != nil {
+	errg, _ := errgroup.WithContext(ctx)
+	errg.Go(recovery.Do(func() error {
+		return table.View(ctx, func(ctx context.Context, tx uint64) error {
+			return table.Iterator(
+				ctx,
+				tx,
+				pool,
+				callbacks,
+				logicalplan.WithPhysicalProjection(s.options.PhysicalProjection...),
+				logicalplan.WithProjection(s.options.Projection...),
+				logicalplan.WithFilter(s.options.Filter),
+				logicalplan.WithDistinctColumns(s.options.Distinct...),
+			)
+		})
+	}))
+	if err := errg.Wait(); err != nil {
 		return err
 	}
 
-	errg, ctx := errgroup.WithContext(ctx)
-
+	errg, _ = errgroup.WithContext(ctx)
 	for _, plan := range s.plans {
 		plan := plan
-		errg.Go(func() error {
+		errg.Go(recovery.Do(func() (err error) {
 			return plan.Finish(ctx)
-		})
+		}))
 	}
 
 	return errg.Wait()
@@ -172,29 +175,31 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		callbacks = append(callbacks, plan.Callback)
 	}
 
-	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		return table.SchemaIterator(
-			ctx,
-			tx,
-			pool,
-			callbacks,
-			logicalplan.WithPhysicalProjection(s.options.PhysicalProjection...),
-			logicalplan.WithProjection(s.options.Projection...),
-			logicalplan.WithFilter(s.options.Filter),
-			logicalplan.WithDistinctColumns(s.options.Distinct...),
-		)
-	})
-	if err != nil {
+	errg, _ := errgroup.WithContext(ctx)
+	errg.Go(recovery.Do(func() error {
+		return table.View(ctx, func(ctx context.Context, tx uint64) error {
+			return table.SchemaIterator(
+				ctx,
+				tx,
+				pool,
+				callbacks,
+				logicalplan.WithPhysicalProjection(s.options.PhysicalProjection...),
+				logicalplan.WithProjection(s.options.Projection...),
+				logicalplan.WithFilter(s.options.Filter),
+				logicalplan.WithDistinctColumns(s.options.Distinct...),
+			)
+		})
+	}))
+	if err := errg.Wait(); err != nil {
 		return err
 	}
 
-	errg, ctx := errgroup.WithContext(ctx)
-
+	errg, _ = errgroup.WithContext(ctx)
 	for _, plan := range s.plans {
 		plan := plan
-		errg.Go(func() error {
+		errg.Go(recovery.Do(func() error {
 			return plan.Finish(ctx)
-		})
+		}))
 	}
 
 	return errg.Wait()
