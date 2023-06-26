@@ -119,8 +119,8 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 	for j := 0; j < int(ar.NumCols()); j++ {
 		switch j {
 		case 0:
-			require.Equal(t, `{ dictionary: []
-  indices: [(null) (null) (null) (null) (null)] }`, fmt.Sprintf("%v", ar.Column(j)))
+			require.Equal(t, `{ dictionary: [""]
+  indices: [0 0 0 0 0] }`, fmt.Sprintf("%v", ar.Column(j)))
 		case 1:
 			require.Equal(t, `{ dictionary: ["value1" "value2" "value3"]
   indices: [0 1 2 0 0] }`, fmt.Sprintf("%v", ar.Column(j)))

@@ -17,7 +17,7 @@ require (
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
 	github.com/polarsignals/wal v0.0.0-20230509073041-6731e243de20
 	github.com/prometheus/client_golang v1.15.0
-	github.com/segmentio/parquet-go v0.0.0-20230209224803-1d85e8136681
+	github.com/segmentio/parquet-go v0.0.0-20230622230624-510764ae9e80
 	github.com/stretchr/testify v1.8.2
 	github.com/thanos-io/objstore v0.0.0-20220715165016-ce338803bc1e
 	go.opentelemetry.io/otel v0.20.0
