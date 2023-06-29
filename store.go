@@ -147,7 +147,7 @@ func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynp
 	errg.SetLimit(int(b.blockReaderLimit))
 	err = b.Iter(ctx, prefix, func(blockDir string) error {
 		n++
-		errg.Go(func() error { return b.ProcessFile(ctx, blockDir, lastBlockTimestamp, f, callback) })
+		errg.Go(func() error { return b.ProcessFile(ctx, blockDir, lastBlockTimestamp, f, callback, b.filterRowGroups) })
 		return nil
 	})
 	if err != nil {
@@ -181,7 +181,14 @@ func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName str
 }
 
 // ProcessFile will process a bucket block parquet file.
-func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, callback func(context.Context, any) error) error {
+func (b *DefaultObjstoreBucket) ProcessFile(
+	ctx context.Context,
+	blockDir string,
+	lastBlockTimestamp uint64,
+	filter TrueNegativeFilter,
+	callback func(context.Context, any) error,
+	filterFunc func(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, callback func(context.Context, any) error) error,
+) error {
 	ctx, span := b.tracer.Start(ctx, "Source/IterateBucketBlocks/Iter/ProcessFile")
 	defer span.End()
 
@@ -215,7 +222,7 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 		return err
 	}
 
-	return b.filterRowGroups(ctx, buf, filter, callback)
+	return filterFunc(ctx, buf, filter, callback)
 }
 
 func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, callback func(context.Context, any) error) error {
