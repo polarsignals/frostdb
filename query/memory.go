@@ -39,7 +39,11 @@ func (a *LimitAllocator) Reallocate(size int, b []byte) []byte {
 		return b
 	}
 
-	allocated := a.allocated.Add(int64(size - len(b)))
+	diff := size - len(b)
+	if len(b) > size {
+		diff = len(b) - size
+	}
+	allocated := a.allocated.Add(int64(diff))
 	if allocated > a.limit {
 		panic(PanicMemoryLimit)
 	}
@@ -50,4 +54,8 @@ func (a *LimitAllocator) Reallocate(size int, b []byte) []byte {
 func (a *LimitAllocator) Free(b []byte) {
 	a.allocated.Add(-int64(len(b)))
 	a.allocator.Free(b)
+}
+
+func (a *LimitAllocator) Allocated() int {
+	return int(a.allocated.Load())
 }
