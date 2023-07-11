@@ -51,3 +51,7 @@ func (a *LimitAllocator) Free(b []byte) {
 	a.allocated.Add(-int64(len(b)))
 	a.allocator.Free(b)
 }
+
+func (a *LimitAllocator) Allocated() int {
+	return int(a.allocated.Load())
+}

@@ -20,6 +20,7 @@ const testdataDirectory = "testdata"
 
 type frostDB struct {
 	*frostdb.DB
+	allocator *query.LimitAllocator
 }
 
 func (db frostDB) CreateTable(name string, schema *schemapb.Schema) (Table, error) {
@@ -28,7 +29,7 @@ func (db frostDB) CreateTable(name string, schema *schemapb.Schema) (Table, erro
 
 func (db frostDB) ScanTable(name string) query.Builder {
 	queryEngine := query.NewEngine(
-		memory.NewGoAllocator(),
+		db.allocator,
 		db.DB.TableProvider(),
 		query.WithPhysicalplanOptions(
 			physicalplan.WithOrderedAggregations(),
@@ -72,28 +73,27 @@ var schemas = map[string]*schemapb.Schema{
 func TestLogic(t *testing.T) {
 	ctx := context.Background()
 	t.Parallel()
-	datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
-		columnStore, err := frostdb.New()
-		require.NoError(t, err)
-		defer columnStore.Close()
-		db, err := columnStore.DB(ctx, "test")
-		require.NoError(t, err)
-		r := NewRunner(frostDB{DB: db}, schemas)
-		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
-			return r.RunCmd(ctx, c, false)
+	isArrow := []bool{true, false}
+	for _, arrow := range isArrow {
+		datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
+			columnStore, err := frostdb.New()
+			require.NoError(t, err)
+			defer columnStore.Close()
+			db, err := columnStore.DB(ctx, "test")
+			require.NoError(t, err)
+			fdb := frostDB{
+				DB:        db,
+				allocator: query.NewLimitAllocator(1024*1024*1024, memory.DefaultAllocator),
+			}
+			r := NewRunner(fdb, schemas)
+			datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
+				return r.RunCmd(ctx, c, arrow)
+			})
+			if path != "testdata/exec/aggregate/ordered_aggregate" { // NOTE: skip checking the limit for the ordered aggregator as it still leaks memory.
+				require.Equal(t, 0, fdb.allocator.Allocated())
+			}
 		})
-	})
-	datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
-		columnStore, err := frostdb.New()
-		require.NoError(t, err)
-		defer columnStore.Close()
-		db, err := columnStore.DB(ctx, "test")
-		require.NoError(t, err)
-		r := NewRunner(frostDB{DB: db}, schemas)
-		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
-			return r.RunCmd(ctx, c, true)
-		})
-	})
+	}
 }
 
 func SchemaMust(def *schemapb.Schema) *dynparquet.Schema {
