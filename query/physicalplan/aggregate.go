@@ -556,69 +556,99 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	span.SetAttributes(attribute.Bool("finalStage", a.finalStage))
 	defer span.End()
 
+	defer func() {
+		for _, arr := range a.groupByArrays {
+			arr.Release()
+		}
+		for _, aggregate := range a.aggregates {
+			for _, aggregation := range aggregate.aggregations {
+				for _, bldr := range aggregation.arrays {
+					bldr.Release()
+				}
+			}
+			for _, bldr := range aggregate.groupByCols {
+				bldr.Release()
+			}
+		}
+	}()
+
 	totalRows := 0
 	for _, aggregate := range a.aggregates {
-		numCols := len(aggregate.groupByCols) + len(aggregate.aggregations)
-		numRows := aggregate.rowCount
-		totalRows += numRows
-
-		if numRows == 0 { // skip empty aggregates
-			continue
-		}
-
-		groupByFields := make([]arrow.Field, 0, numCols)
-		groupByArrays := make([]arrow.Array, 0, numCols)
-		for _, fieldName := range aggregate.colOrdering {
-			groupByCol, ok := aggregate.groupByCols[fieldName]
-			if !ok {
-				return fmt.Errorf("unknown field name: %s", fieldName)
-			}
-			for groupByCol.Len() < numRows {
-				// It's possible that columns that are grouped by haven't occurred
-				// in all aggregated rows which causes them to not be of equal size
-				// as the total number of rows so we need to backfill. This happens
-				// for example when there are different sets of dynamic columns in
-				// different row-groups of the table.
-				groupByCol.AppendNull()
-			}
-			arr := groupByCol.NewArray()
-			groupByFields = append(groupByFields, arrow.Field{Name: fieldName, Type: arr.DataType()})
-			groupByArrays = append(groupByArrays, arr)
-		}
-
-		// Rename to clarity upon appending aggregations later
-		aggregateColumns := groupByArrays
-		aggregateFields := groupByFields
-
-		for _, aggregation := range aggregate.aggregations {
-			arr := make([]arrow.Array, 0, numRows)
-			for _, a := range aggregation.arrays {
-				arr = append(arr, a.NewArray())
-			}
-
-			aggregateArray, err := runAggregation(a.finalStage, aggregation.function, a.pool, arr)
-			if err != nil {
-				return fmt.Errorf("aggregate batched arrays: %w", err)
-			}
-			aggregateColumns = append(aggregateColumns, aggregateArray)
-
-			aggregateFields = append(aggregateFields, arrow.Field{
-				Name: aggregation.resultName, Type: aggregateArray.DataType(),
-			})
-		}
-
-		err := a.next.Callback(ctx, array.NewRecord(
-			arrow.NewSchema(aggregateFields, nil),
-			aggregateColumns,
-			int64(numRows),
-		))
-		if err != nil {
+		if err := a.finishAggregate(ctx, aggregate); err != nil {
 			return err
 		}
+		totalRows += aggregate.rowCount
 	}
-
 	span.SetAttributes(attribute.Int64("rows", int64(totalRows)))
 	return a.next.Finish(ctx)
+}
+
+func (a *HashAggregate) finishAggregate(ctx context.Context, aggregate *hashAggregate) error {
+	numCols := len(aggregate.groupByCols) + len(aggregate.aggregations)
+	numRows := aggregate.rowCount
+
+	if numRows == 0 { // skip empty aggregates
+		return nil
+	}
+
+	groupByFields := make([]arrow.Field, 0, numCols)
+	groupByArrays := make([]arrow.Array, 0, numCols)
+	for _, fieldName := range aggregate.colOrdering {
+		groupByCol, ok := aggregate.groupByCols[fieldName]
+		if !ok {
+			return fmt.Errorf("unknown field name: %s", fieldName)
+		}
+		for groupByCol.Len() < numRows {
+			// It's possible that columns that are grouped by haven't occurred
+			// in all aggregated rows which causes them to not be of equal size
+			// as the total number of rows so we need to backfill. This happens
+			// for example when there are different sets of dynamic columns in
+			// different row-groups of the table.
+			groupByCol.AppendNull()
+		}
+		arr := groupByCol.NewArray()
+		groupByFields = append(groupByFields, arrow.Field{Name: fieldName, Type: arr.DataType()})
+		groupByArrays = append(groupByArrays, arr)
+	}
+
+	// Rename to clarity upon appending aggregations later
+	aggregateColumns := groupByArrays
+	aggregateFields := groupByFields
+
+	for _, aggregation := range aggregate.aggregations {
+		arr := make([]arrow.Array, 0, numRows)
+		for _, a := range aggregation.arrays {
+			arr = append(arr, a.NewArray())
+		}
+
+		aggregateArray, err := runAggregation(a.finalStage, aggregation.function, a.pool, arr)
+		for _, a := range arr {
+			a.Release()
+		}
+		if err != nil {
+			return fmt.Errorf("aggregate batched arrays: %w", err)
+		}
+		aggregateColumns = append(aggregateColumns, aggregateArray)
+
+		aggregateFields = append(aggregateFields, arrow.Field{
+			Name: aggregation.resultName, Type: aggregateArray.DataType(),
+		})
+	}
+	r := array.NewRecord(
+		arrow.NewSchema(aggregateFields, nil),
+		aggregateColumns,
+		int64(numRows),
+	)
+	defer r.Release()
+	for _, arr := range aggregateColumns {
+		arr.Release()
+	}
+	err := a.next.Callback(ctx, r)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type Int64SumAggregation struct{}
@@ -641,6 +671,7 @@ func (a *Int64SumAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Arra
 
 func sumInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
 	res := array.NewInt64Builder(pool)
+	defer res.Release()
 	for _, arr := range arrs {
 		res.Append(sumInt64array(arr.(*array.Int64)))
 	}
@@ -672,6 +703,7 @@ func (a *Int64MinAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Arra
 
 func minInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
 	res := array.NewInt64Builder(pool)
+	defer res.Release()
 	for _, arr := range arrs {
 		if arr.Len() == 0 {
 			res.AppendNull()
@@ -719,6 +751,7 @@ func (a *Int64MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Arra
 
 func maxInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
 	res := array.NewInt64Builder(pool)
+	defer res.Release()
 	for _, arr := range arrs {
 		if arr.Len() == 0 {
 			res.AppendNull()
@@ -754,6 +787,7 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 	}
 
 	res := array.NewInt64Builder(pool)
+	defer res.Release()
 	for _, arr := range arrs {
 		res.Append(int64(arr.Len()))
 	}

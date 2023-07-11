@@ -267,12 +267,22 @@ func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record
 
 	totalRows := int64(0)
 	recordRanges := make([]arrow.Record, len(ranges))
+	defer func() {
+		for _, r := range recordRanges {
+			r.Release()
+		}
+	}()
 	for j, r := range ranges {
 		recordRanges[j] = ar.NewSlice(int64(r.Start), int64(r.End))
 		totalRows += int64(r.End - r.Start)
 	}
 
 	cols := make([]arrow.Array, ar.NumCols())
+	defer func() {
+		for _, col := range cols {
+			col.Release()
+		}
+	}()
 	numRanges := len(recordRanges)
 	for i := range cols {
 		colRanges := make([]arrow.Array, 0, numRanges)

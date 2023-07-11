@@ -82,6 +82,11 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 	}
 
 	resBuilders := make([]builder.ColumnBuilder, 0, len(distinctArrays))
+	defer func() {
+		for _, builder := range resBuilders {
+			builder.Release()
+		}
+	}()
 	for _, arr := range distinctArrays {
 		resBuilders = append(resBuilders, builder.NewBuilder(d.pool, arr.DataType()))
 	}
@@ -137,6 +142,11 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 	}
 
 	resArrays := make([]arrow.Array, 0, len(resBuilders))
+	defer func() {
+		for _, arr := range resArrays {
+			arr.Release()
+		}
+	}()
 	for _, builder := range resBuilders {
 		resArrays = append(resArrays, builder.NewArray())
 	}
