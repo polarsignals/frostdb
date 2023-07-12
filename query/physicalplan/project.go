@@ -48,6 +48,7 @@ func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow
 		for i, field := range ar.Schema().Fields() {
 			if a.expr.MatchColumn(field.Name) {
 				field.Name = a.name
+				ar.Column(i).Retain() // Retain the column since we're keeping it.
 				return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 			}
 		}
@@ -71,6 +72,7 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 		if arr.NullN() == 0 {
 			// This means we have fully pre-computed the result of the
 			// expression in the table scan already.
+			arr.Retain()
 			return []arrow.Field{
 				{
 					Name: b.boolExpr.String(),
@@ -95,6 +97,7 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 
 	vals := make([]bool, ar.NumRows())
 	builder := array.NewBooleanBuilder(mem)
+	defer builder.Release()
 
 	// We can do this because we now the values in the array are between 0 and
 	// NumRows()-1
@@ -133,6 +136,7 @@ func (p plainProjection) Name() string {
 func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i, field := range ar.Schema().Fields() {
 		if p.expr.MatchColumn(field.Name) {
+			ar.Column(i).Retain() // Retain the column since we're keeping it.
 			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 		}
 	}
@@ -155,6 +159,7 @@ func (p dynamicProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arr
 		if p.expr.MatchColumn(field.Name) {
 			fields = append(fields, field)
 			arrays = append(arrays, ar.Column(i))
+			ar.Column(i).Retain() // Retain the column since we're keeping it.
 		}
 	}
 
@@ -249,6 +254,10 @@ func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
 		resArrays,
 		rows,
 	)
+	defer ar.Release()
+	for _, arr := range resArrays {
+		arr.Release()
+	}
 	return p.next.Callback(ctx, ar)
 }
 
@@ -317,6 +326,7 @@ func (a *averageProjection) Project(mem memory.Allocator, r arrow.Record) ([]arr
 		if i != sumIndex[0] && i != countIndex[0] {
 			fields = append(fields, field)
 			columns = append(columns, r.Column(i))
+			r.Column(i).Retain() // Retain the column since we're keeping it.
 		}
 	}
 
@@ -335,6 +345,7 @@ func avgInt64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array
 	countsInts := counts.(*array.Int64)
 
 	res := array.NewInt64Builder(pool)
+	defer res.Release()
 	for i := 0; i < sumsInts.Len(); i++ {
 		res.Append(sumsInts.Value(i) / countsInts.Value(i))
 	}

@@ -29,3 +29,10 @@ func (c *ArrayConcatenator) NewArray(mem memory.Allocator) (arrow.Array, error) 
 func (c *ArrayConcatenator) Len() int {
 	return len(c.arrs)
 }
+
+func (c *ArrayConcatenator) Release() {
+	for _, arr := range c.arrs {
+		arr.Release()
+	}
+	c.arrs = c.arrs[:0]
+}
