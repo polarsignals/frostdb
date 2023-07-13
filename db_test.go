@@ -803,12 +803,13 @@ func Test_DB_Filter_Block(t *testing.T) {
 
 // ErrorBucket is an objstore.Bucket implementation that supports error injection.
 type ErrorBucket struct {
-	iter             func(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error
-	get              func(ctx context.Context, name string) (io.ReadCloser, error)
-	getRange         func(ctx context.Context, name string, off, length int64) (io.ReadCloser, error)
-	exists           func(ctx context.Context, name string) (bool, error)
-	isObjNotFoundErr func(err error) bool
-	attributes       func(ctx context.Context, name string) (objstore.ObjectAttributes, error)
+	iter                      func(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error
+	get                       func(ctx context.Context, name string) (io.ReadCloser, error)
+	getRange                  func(ctx context.Context, name string, off, length int64) (io.ReadCloser, error)
+	exists                    func(ctx context.Context, name string) (bool, error)
+	isObjNotFoundErr          func(err error) bool
+	isCustomerManagedKeyError func(err error) bool
+	attributes                func(ctx context.Context, name string) (objstore.ObjectAttributes, error)
 
 	upload func(ctx context.Context, name string, r io.Reader) error
 	delete func(ctx context.Context, name string) error
@@ -850,6 +851,14 @@ func (e *ErrorBucket) Exists(ctx context.Context, name string) (bool, error) {
 func (e *ErrorBucket) IsObjNotFoundErr(err error) bool {
 	if e.isObjNotFoundErr != nil {
 		return e.isObjNotFoundErr(err)
+	}
+
+	return false
+}
+
+func (e *ErrorBucket) IsCustomerManagedKeyError(err error) bool {
+	if e.isCustomerManagedKeyError != nil {
+		return e.isCustomerManagedKeyError(err)
 	}
 
 	return false
