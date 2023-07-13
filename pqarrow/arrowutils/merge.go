@@ -30,6 +30,7 @@ func MergeRecords(
 
 	schema := records[0].Schema()
 	recordBuilder := builder.NewRecordBuilder(mem, schema)
+	defer recordBuilder.Release()
 
 	heap.Init(&h)
 	for h.Len() > 0 {

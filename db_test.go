@@ -1750,3 +1750,50 @@ func TestReplayBackwardsCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	defer c.Close()
 }
+
+func Test_DB_Limiter(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	c, err := New(
+		WithLogger(newTestLogger(t)),
+	)
+	defer func() {
+		_ = c.Close()
+	}()
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
+
+	pool := query.NewLimitAllocator(1024*1024*1024, memory.DefaultAllocator)
+	engine := query.NewEngine(pool, db.TableProvider())
+	err = engine.ScanTable("test").
+		Filter(
+			logicalplan.And(
+				logicalplan.Col("labels.namespace").Eq(logicalplan.Literal("default")),
+			),
+		).
+		Aggregate(
+			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
+		).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			require.Equal(t, int64(1), r.NumRows())
+			return nil
+		})
+	require.NoError(t, err)
+
+	// Expect no bytes allocated after the query has finished
+	require.Equal(t, 0, pool.Allocated())
+}
