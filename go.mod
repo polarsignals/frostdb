@@ -16,16 +16,16 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
 	github.com/polarsignals/wal v0.0.0-20230509073041-6731e243de20
-	github.com/prometheus/client_golang v1.15.0
+	github.com/prometheus/client_golang v1.16.0
 	github.com/segmentio/parquet-go v0.0.0-20230622230624-510764ae9e80
 	github.com/stretchr/testify v1.8.3
-	github.com/thanos-io/objstore v0.0.0-20230706112411-e16e78ffbf33
+	github.com/thanos-io/objstore v0.0.0-20230713070940-eb01c83b89a4
 	go.opentelemetry.io/otel v1.16.0
 	go.opentelemetry.io/otel/trace v1.16.0
 	go.uber.org/goleak v1.1.12
 	golang.org/x/exp v0.0.0-20220827204233-334a2380cb91
-	golang.org/x/sync v0.1.0
-	google.golang.org/protobuf v1.30.0
+	golang.org/x/sync v0.3.0
+	google.golang.org/protobuf v1.31.0
 )
 
 require (
@@ -39,12 +39,13 @@ require (
 	github.com/coreos/pkg v0.0.0-20220810130054-c7d1c02cb6cf // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/efficientgo/core v1.0.0-rc.0.0.20221201130417-ba593f67d2a4 // indirect
-	github.com/go-logfmt/logfmt v0.5.1 // indirect
+	github.com/efficientgo/core v1.0.0-rc.2 // indirect
+	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/goccy/go-json v0.9.11 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/flatbuffers v2.0.8+incompatible // indirect
+	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/compress v1.15.9 // indirect
 	github.com/klauspost/cpuid/v2 v2.1.0 // indirect
@@ -58,9 +59,9 @@ require (
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/prometheus/client_model v0.3.0 // indirect
-	github.com/prometheus/common v0.42.0 // indirect
-	github.com/prometheus/procfs v0.9.0 // indirect
+	github.com/prometheus/client_model v0.4.0 // indirect
+	github.com/prometheus/common v0.44.0 // indirect
+	github.com/prometheus/procfs v0.11.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/segmentio/encoding v0.3.5 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
@@ -69,8 +70,8 @@ require (
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.18.1 // indirect
 	golang.org/x/mod v0.8.0 // indirect
-	golang.org/x/sys v0.6.0 // indirect
-	golang.org/x/text v0.7.0 // indirect
+	golang.org/x/sys v0.10.0 // indirect
+	golang.org/x/text v0.9.0 // indirect
 	golang.org/x/tools v0.6.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
