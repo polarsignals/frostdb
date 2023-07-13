@@ -394,6 +394,11 @@ func (b *OptInt64Builder) Add(i int, v int64) {
 	b.data[i] += v
 }
 
+// Value returns the ith value of the builder.
+func (b *OptInt64Builder) Value(i int) int64 {
+	return b.data[i]
+}
+
 func (b *OptInt64Builder) AppendParquetValues(values []parquet.Value) {
 	b.resizeData(b.length + len(values))
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length+len(values))
