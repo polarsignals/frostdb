@@ -186,7 +186,7 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64) error {
 		defer f.Close()
 
 		if err := func() error {
-			if err := writeSnapshot(ctx, tx, db, f); err != nil {
+			if err := WriteSnapshot(ctx, tx, db, f); err != nil {
 				return err
 			}
 			if err := f.Sync(); err != nil {
@@ -243,12 +243,7 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 			if err != nil {
 				return err
 			}
-			if err := loadSnapshot(ctx, db, f, info.Size()); err != nil {
-				return err
-			}
-			db.tx.Store(parsedTx)
-			db.highWatermark.Store(parsedTx)
-			return nil
+			return LoadSnapshot(ctx, db, parsedTx, f, info.Size())
 		}(); err != nil {
 			err = fmt.Errorf("unable to read snapshot file %s: %w", entry.Name(), err)
 			level.Debug(db.logger).Log(
@@ -272,6 +267,15 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 		return 0, fmt.Errorf("%s: lastErr: %w", errString, lastErr)
 	}
 	return 0, fmt.Errorf("%s", errString)
+}
+
+func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64) error {
+	if err := loadSnapshot(ctx, db, r, size); err != nil {
+		return err
+	}
+	db.tx.Store(tx)
+	db.highWatermark.Store(tx)
+	return nil
 }
 
 func (db *DB) getLatestValidSnapshotTxn(ctx context.Context) (uint64, error) {
@@ -339,7 +343,7 @@ func (w *offsetWriter) checksum() uint32 {
 	return w.runningChecksum.Sum32()
 }
 
-func writeSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
+func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 	offW := newOffsetWriter(w)
 	w = offW
 	var tables []*Table
