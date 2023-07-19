@@ -1496,7 +1496,7 @@ func TestDBRecover(t *testing.T) {
 		// the second write, and the second was triggered before the third write.
 		if blockRotation {
 			// A block rotation should trigger the third snapshot.
-			require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
+			require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
 			// Wait for both the new block txn, and the old block rotation txn.
 			db.Wait(lastWriteTx + 2)
 		}
@@ -1724,7 +1724,7 @@ func TestDBMinTXPersisted(t *testing.T) {
 	writeTx, err := table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
-	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
+	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
 	// Writing the block is asynchronous, so wait for both the new table block
 	// txn and the block persistence txn.
 	db.Wait(writeTx + 2)
