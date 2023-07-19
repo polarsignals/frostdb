@@ -45,6 +45,7 @@ type ColumnStore struct {
 	activeMemorySize    int64
 	storagePath         string
 	enableWAL           bool
+	manualBlockRotation bool
 	compactionConfig    *CompactionConfig
 	snapshotTriggerSize int64
 	metrics             metrics
@@ -186,6 +187,13 @@ func WithReadOnlyStorage(ds DataSource) Option {
 func WithWriteOnlyStorage(ds DataSink) Option {
 	return func(s *ColumnStore) error {
 		s.sinks = append(s.sinks, ds)
+		return nil
+	}
+}
+
+func WithManualBlockRotation() Option {
+	return func(s *ColumnStore) error {
+		s.manualBlockRotation = true
 		return nil
 	}
 }
@@ -660,7 +668,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			// If we get to this point it means a block was finished but did
 			// not get persisted.
 			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(table.active, false /* snapshotDB */)
+			go table.writeBlock(table.active, false, false)
 
 			protoEqual := false
 			switch schema.(type) {
@@ -780,7 +788,7 @@ func (db *DB) Close() error {
 		if len(db.sinks) != 0 {
 			// Write the blocks but no snapshots since they are long-running
 			// jobs.
-			table.writeBlock(table.ActiveBlock(), false /* snapshotDB */)
+			table.writeBlock(table.ActiveBlock(), false, false)
 		}
 	}
 	level.Info(db.logger).Log("msg", "closed all tables")

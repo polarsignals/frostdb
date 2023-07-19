@@ -193,6 +193,11 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 	span.SetAttributes(attribute.String("ulid", blockUlid.String()))
 
 	if lastBlockTimestamp != 0 && blockUlid.Time() >= lastBlockTimestamp {
+		level.Debug(b.logger).Log(
+			"msg", "ignoring block due to last block timestamp",
+			"blockTime", blockUlid.Time(),
+			"lastBlockTimestamp", lastBlockTimestamp,
+		)
 		return nil
 	}
 

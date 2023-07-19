@@ -397,7 +397,7 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	})
 }
 
-func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
+func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 	block.pendingWritersWg.Wait()
 
@@ -406,7 +406,10 @@ func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
 	level.Debug(t.logger).Log("msg", "done syncing block")
 
 	// Persist the block
-	err := block.Persist()
+	var err error
+	if !skipPersist {
+		err = block.Persist()
+	}
 	t.dropPendingBlock(block)
 	if err != nil {
 		level.Error(t.logger).Log("msg", "failed to persist block")
@@ -492,7 +495,7 @@ func (t *Table) writeBlock(block *TableBlock, snapshotDB bool) {
 	}
 }
 
-func (t *Table) RotateBlock(ctx context.Context, block *TableBlock) error {
+func (t *Table) RotateBlock(ctx context.Context, block *TableBlock, skipPersist bool) error {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
@@ -501,7 +504,7 @@ func (t *Table) RotateBlock(ctx context.Context, block *TableBlock) error {
 		return nil
 	}
 
-	level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size())
+	level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size(), "skipPersist", skipPersist)
 	defer func() {
 		level.Debug(t.logger).Log("msg", "done rotating block")
 	}()
@@ -517,7 +520,7 @@ func (t *Table) RotateBlock(ctx context.Context, block *TableBlock) error {
 	t.metrics.numParts.Set(float64(0))
 
 	t.pendingBlocks[block] = struct{}{}
-	go t.writeBlock(block, true /* snapshotDB */)
+	go t.writeBlock(block, skipPersist, true)
 
 	return nil
 }
@@ -777,14 +780,14 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 				}
 			})
 		}
-		if blockSize < t.db.columnStore.activeMemorySize {
+		if blockSize < t.db.columnStore.activeMemorySize || t.db.columnStore.manualBlockRotation {
 			return block, close, nil
 		}
 
 		// We need to rotate the block and the writer won't actually be used.
 		close()
 
-		err = t.RotateBlock(ctx, block)
+		err = t.RotateBlock(ctx, block, false)
 		if err != nil {
 			return nil, nil, fmt.Errorf("rotate block: %w", err)
 		}
