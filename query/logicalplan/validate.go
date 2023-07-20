@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/apache/arrow/go/v13/arrow/scalar"
-	"github.com/segmentio/parquet-go/format"
+	"github.com/parquet-go/parquet-go/format"
 )
 
 // PlanValidationError is the error representing a logical plan that is not valid.

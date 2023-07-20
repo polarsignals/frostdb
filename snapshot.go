@@ -21,7 +21,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/oklog/ulid"
-	"github.com/segmentio/parquet-go"
+	"github.com/parquet-go/parquet-go"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"

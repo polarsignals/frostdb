@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	"github.com/apache/arrow/go/v13/arrow"
-	"github.com/segmentio/parquet-go"
-	"github.com/segmentio/parquet-go/format"
+	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/format"
 
 	"github.com/polarsignals/frostdb/pqarrow/writer"
 )

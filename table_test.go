@@ -18,8 +18,8 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
+	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/segmentio/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
 
