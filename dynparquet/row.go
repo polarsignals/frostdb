@@ -3,7 +3,7 @@ package dynparquet
 import (
 	"fmt"
 
-	"github.com/segmentio/parquet-go"
+	"github.com/parquet-go/parquet-go"
 )
 
 type DynamicRows struct {

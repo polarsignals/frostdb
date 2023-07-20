@@ -3,8 +3,8 @@ package dynparquet
 import (
 	"io"
 
-	"github.com/segmentio/parquet-go"
-	"github.com/segmentio/parquet-go/encoding"
+	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/encoding"
 )
 
 // NilColumnChunk is a column chunk that contains a single page with all null

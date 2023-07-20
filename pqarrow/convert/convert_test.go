@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow/go/v13/arrow"
-	"github.com/segmentio/parquet-go"
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,7 +93,7 @@ func TestParquetNodeToType(t *testing.T) {
 			msg:         "unsupported logical type: ENUM",
 		},
 		// This causes stack overflow.
-		// Fix PR: https://github.com/segmentio/parquet-go/pull/244
+		// Fix PR: https://github.com/parquet-go/parquet-go/pull/244
 		//{
 		//	parquetNode: parquet.JSON(),
 		//	msg:         "unsupported type: JSON",
@@ -114,7 +114,7 @@ func TestParquetNodeToType(t *testing.T) {
 			parquetNode: parquet.Timestamp(parquet.Millisecond),
 			msg:         "unsupported logical type: TIMESTAMP(isAdjustedToUTC=true,unit=MILLIS)",
 		},
-		// nullType is unexported by segmentio/parquet-go.
+		// nullType is unexported by parquet-go/parquet-go.
 	}
 	for _, c := range errCases {
 		t.Run(c.msg, func(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"math"
 
 	"github.com/apache/arrow/go/v13/arrow"
-	"github.com/segmentio/parquet-go"
+	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow"

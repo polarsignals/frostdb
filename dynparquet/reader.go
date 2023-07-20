@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/segmentio/parquet-go"
+	"github.com/parquet-go/parquet-go"
 )
 
 const (

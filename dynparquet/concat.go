@@ -1,6 +1,6 @@
 package dynparquet
 
-import "github.com/segmentio/parquet-go"
+import "github.com/parquet-go/parquet-go"
 
 type concatenatedDynamicRowGroup struct {
 	parquet.RowGroup

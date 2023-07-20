@@ -31,6 +31,7 @@ linters-settings:
       - github.com/stretchr/testify/assert: "Use github.com/stretchr/testify/require instead of github.com/stretchr/testify/assert"
       - github.com/go-kit/kit/log: "Use github.com/go-kit/log instead of github.com/go-kit/kit/log"
       - github.com/pkg/errors: "Use fmt.Errorf instead"
+      - github.com/segmentio/parquet-go: "Use github.com/parquet-go/parquet-go instead"
   errcheck:
     exclude: ./.errcheck_excludes.txt
   goimports:
