@@ -23,7 +23,7 @@ func main() {
 	// Open up a database in the column store
 	database, _ := columnstore.DB(context.Background(), "weather_db")
 
-	// Define our simple schema of labels and values
+	// Define our aggregation schema of labels and values
 	schema, _ := aggregationSchema()
 
 	// Create a table named snowfall_table in our database
