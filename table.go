@@ -608,6 +608,14 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 						pair := reflect.ValueOf(dynVals.Index(j).Interface())
 						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", pair.Field(0))))
 					}
+				case reflect.Map:
+					dynVals := reflect.ValueOf(cv)
+					for _, key := range dynVals.MapKeys() {
+						if key.Kind() != reflect.String {
+							return nil, fmt.Errorf("unsupported dynamic map key type for column")
+						}
+						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", key.String())))
+					}
 				default:
 					return nil, fmt.Errorf("unsupported dynamic type")
 				}
@@ -661,6 +669,30 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 						if !found {
 							row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
 							colIdx++
+						}
+					}
+				case reflect.Map:
+					dynVals := reflect.ValueOf(cv)
+					for _, key := range dynVals.MapKeys() {
+						dynVals := reflect.ValueOf(cv)
+						for _, dyncol := range dynamicColumns[col.Name] {
+							found := false
+							for _, key := range dynVals.MapKeys() {
+								if ToSnakeCase(fmt.Sprintf("%v", key.String())) == dyncol {
+									row = append(row, parquet.ValueOf(dynVals.MapIndex(key).Interface()).Level(0, 1, colIdx))
+									colIdx++
+									found = true
+									break
+								}
+							}
+
+							if !found {
+								row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
+								colIdx++
+							}
+						}
+						if key.Kind() != reflect.String {
+							return nil, fmt.Errorf("unsupported dynamic map key type")
 						}
 					}
 				default:
