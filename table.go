@@ -612,12 +612,12 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 					dynVals := reflect.ValueOf(cv)
 					for _, key := range dynVals.MapKeys() {
 						if key.Kind() != reflect.String {
-							return nil, fmt.Errorf("unsupported dynamic map key type for column")
+							return nil, fmt.Errorf("unsupported dynamic map key type for column for column '%s'", col.Name)
 						}
 						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", key.String())))
 					}
 				default:
-					return nil, fmt.Errorf("unsupported dynamic type")
+					return nil, fmt.Errorf("unsupported dynamic type for column '%s'", col.Name)
 				}
 			}
 		}
@@ -692,11 +692,11 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 							}
 						}
 						if key.Kind() != reflect.String {
-							return nil, fmt.Errorf("unsupported dynamic map key type")
+							return nil, fmt.Errorf("unsupported dynamic map key type for column '%s'", col.Name)
 						}
 					}
 				default:
-					return nil, fmt.Errorf("unsupported dynamic type")
+					return nil, fmt.Errorf("unsupported dynamic type for column '%s'", col.Name)
 				}
 			default:
 				switch t := cv.(type) {
