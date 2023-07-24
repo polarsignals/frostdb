@@ -26,7 +26,7 @@ func main() {
 	// Define our simple schema of labels and values
 	schema, _ := aggregationSchema()
 
-	// Create a table named simple in our database
+	// Create a table named snowfall_table in our database
 	table, _ := database.Table(
 		"snowfall_table",
 		frostdb.NewTableConfig(schema),
