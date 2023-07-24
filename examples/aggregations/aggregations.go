@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/apache/arrow/go/v10/arrow"
-	"github.com/apache/arrow/go/v10/arrow/memory"
+	"github.com/apache/arrow/go/v13/arrow"
+	"github.com/apache/arrow/go/v13/arrow/memory"
+
 	"github.com/polarsignals/frostdb"
-	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -24,7 +24,7 @@ func main() {
 	database, _ := columnstore.DB(context.Background(), "weather_db")
 
 	// Define our aggregation schema of labels and values
-	schema, _ := aggregationSchema()
+	schema := aggregationSchema()
 
 	// Create a table named snowfall_table in our database
 	table, _ := database.Table(
@@ -75,7 +75,7 @@ func main() {
 	// Create a new query engine to retrieve data
 	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
 
-	// Weekly snowfall statistics by city:
+	// snowfall statistics by city:
 	_ = engine.ScanTable("snowfall_table").
 		Aggregate(
 			[]logicalplan.Expr{
@@ -106,8 +106,8 @@ func main() {
 		})
 }
 
-func aggregationSchema() (*dynparquet.Schema, error) {
-	return dynparquet.SchemaFromDefinition(&schemapb.Schema{
+func aggregationSchema() *schemapb.Schema {
+	return &schemapb.Schema{
 		Name: "snowfall_table",
 		Columns: []*schemapb.Column{
 			{
@@ -145,5 +145,5 @@ func aggregationSchema() (*dynparquet.Schema, error) {
 				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
 			},
 		},
-	})
+	}
 }
