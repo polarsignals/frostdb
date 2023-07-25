@@ -24,6 +24,7 @@ type PhysicalPlan interface {
 	Finish(ctx context.Context) error
 	SetNext(next PhysicalPlan)
 	Draw() *Diagram
+	Close()
 }
 
 type ScanPhysicalPlan interface {
@@ -77,6 +78,8 @@ func (e *OutputPlan) Finish(_ context.Context) error {
 	return nil
 }
 
+func (e *OutputPlan) Close() {}
+
 func (e *OutputPlan) SetNext(_ PhysicalPlan) {
 	// OutputPlan should be the last step.
 	// If this gets called we're doing something wrong.
@@ -119,6 +122,11 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 	for _, plan := range s.plans {
 		callbacks = append(callbacks, plan.Callback)
 	}
+	defer func() { // Close all plans to ensure memory cleanup.
+		for _, plan := range s.plans {
+			plan.Close()
+		}
+	}()
 
 	errg, _ := errgroup.WithContext(ctx)
 	errg.Go(recovery.Do(func() error {
@@ -147,7 +155,11 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		}))
 	}
 
-	return errg.Wait()
+	if err := errg.Wait(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type SchemaScan struct {
@@ -207,6 +219,10 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 
 type noopOperator struct {
 	next PhysicalPlan
+}
+
+func (p *noopOperator) Close() {
+	p.next.Close()
 }
 
 func (p *noopOperator) Callback(ctx context.Context, r arrow.Record) error {

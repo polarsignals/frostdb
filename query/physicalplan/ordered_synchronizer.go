@@ -52,6 +52,10 @@ func NewOrderedSynchronizer(pool memory.Allocator, inputs int, orderByExprs []lo
 	return o
 }
 
+func (o *OrderedSynchronizer) Close() {
+	o.next.Close()
+}
+
 func (o *OrderedSynchronizer) Callback(ctx context.Context, r arrow.Record) error {
 	o.sync.mtx.Lock()
 	o.sync.data = append(o.sync.data, r)

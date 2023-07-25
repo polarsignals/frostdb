@@ -223,6 +223,10 @@ func Project(mem memory.Allocator, tracer trace.Tracer, exprs []logicalplan.Expr
 	return p, nil
 }
 
+func (p *Projection) Close() {
+	p.next.Close()
+}
+
 func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
 	// Generates high volume of spans. Comment out if needed during development.
 	// ctx, span := p.tracer.Start(ctx, "Projection/Callback")
