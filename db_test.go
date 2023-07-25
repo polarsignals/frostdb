@@ -1795,7 +1795,6 @@ func Test_DB_Limiter(t *testing.T) {
 					[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
 				).
 				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-					//require.Equal(t, int64(1), r.NumRows())
 					return nil
 				})
 
