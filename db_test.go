@@ -1778,12 +1778,6 @@ func Test_DB_Limiter(t *testing.T) {
 
 	for i := 0; i < 1024; i++ {
 		t.Run(fmt.Sprintf("limit-%v", i), func(t *testing.T) {
-			switch {
-			case i >= 512 && i <= 575:
-				t.Skip("Skipping test; requires https://github.com/apache/arrow/pull/36854 to be merged")
-			case i >= 384 && i <= 447:
-				t.Skip("Skipping test; requires https://github.com/apache/arrow/pull/36859 to be merged")
-			}
 			debug := query.NewDebugAllocator(memory.DefaultAllocator)
 			pool := query.NewLimitAllocator(int64(i), debug)
 			engine := query.NewEngine(pool, db.TableProvider())
