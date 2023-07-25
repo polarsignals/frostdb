@@ -611,10 +611,12 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 				case reflect.Map:
 					dynVals := reflect.ValueOf(cv)
 					for _, key := range dynVals.MapKeys() {
-						if key.Kind() != reflect.String {
+						switch key.Kind() {
+						case reflect.String:
+							dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", key.String())))
+						default:
 							return nil, fmt.Errorf("unsupported dynamic map key type for column for column '%s'", col.Name)
 						}
-						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", key.String())))
 					}
 				default:
 					return nil, fmt.Errorf("unsupported dynamic type for column '%s'", col.Name)
@@ -674,24 +676,25 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 				case reflect.Map:
 					dynVals := reflect.ValueOf(cv)
 					for _, key := range dynVals.MapKeys() {
-						dynVals := reflect.ValueOf(cv)
-						for _, dyncol := range dynamicColumns[col.Name] {
-							found := false
-							for _, key := range dynVals.MapKeys() {
-								if ToSnakeCase(fmt.Sprintf("%v", key.String())) == dyncol {
-									row = append(row, parquet.ValueOf(dynVals.MapIndex(key).Interface()).Level(0, 1, colIdx))
+						switch key.Kind() {
+						case reflect.String:
+							for _, dyncol := range dynamicColumns[col.Name] {
+								found := false
+								for _, key := range dynVals.MapKeys() {
+									if ToSnakeCase(fmt.Sprintf("%v", key.String())) == dyncol {
+										row = append(row, parquet.ValueOf(dynVals.MapIndex(key).Interface()).Level(0, 1, colIdx))
+										colIdx++
+										found = true
+										break
+									}
+								}
+
+								if !found {
+									row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
 									colIdx++
-									found = true
-									break
 								}
 							}
-
-							if !found {
-								row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
-								colIdx++
-							}
-						}
-						if key.Kind() != reflect.String {
+						default:
 							return nil, fmt.Errorf("unsupported dynamic map key type for column '%s'", col.Name)
 						}
 					}
