@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/RoaringBitmap/roaring v0.9.4
-	github.com/apache/arrow/go/v13 v13.0.0-20230725164226-ec2bc346b85b
+	github.com/apache/arrow/go/v13 v13.0.0-20230725201451-5a9240fd28e1
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/cockroachdb/datadriven v1.0.2
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140
