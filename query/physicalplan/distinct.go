@@ -62,6 +62,10 @@ func (d *Distinction) Finish(ctx context.Context) error {
 	return d.next.Finish(ctx)
 }
 
+func (d *Distinction) Close() {
+	d.next.Close()
+}
+
 func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 	// Generates high volume of spans. Comment out if needed during development.
 	// ctx, span := d.tracer.Start(ctx, "Distinction/Callback")
@@ -159,7 +163,6 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 		rows,
 	)
 
-	err := d.next.Callback(ctx, distinctRecord)
-	distinctRecord.Release()
-	return err
+	defer distinctRecord.Release()
+	return d.next.Callback(ctx, distinctRecord)
 }

@@ -200,6 +200,23 @@ func NewHashAggregate(
 	}
 }
 
+func (a *HashAggregate) Close() {
+	for _, arr := range a.groupByArrays {
+		arr.Release()
+	}
+	for _, aggregate := range a.aggregates {
+		for _, aggregation := range aggregate.aggregations {
+			for _, bldr := range aggregation.arrays {
+				bldr.Release()
+			}
+		}
+		for _, bldr := range aggregate.groupByCols {
+			bldr.Release()
+		}
+	}
+	a.next.Close()
+}
+
 func (a *HashAggregate) SetNext(next PhysicalPlan) {
 	a.next = next
 }
@@ -555,22 +572,6 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	ctx, span := a.tracer.Start(ctx, "HashAggregate/Finish")
 	span.SetAttributes(attribute.Bool("finalStage", a.finalStage))
 	defer span.End()
-
-	defer func() {
-		for _, arr := range a.groupByArrays {
-			arr.Release()
-		}
-		for _, aggregate := range a.aggregates {
-			for _, aggregation := range aggregate.aggregations {
-				for _, bldr := range aggregation.arrays {
-					bldr.Release()
-				}
-			}
-			for _, bldr := range aggregate.groupByCols {
-				bldr.Release()
-			}
-		}
-	}()
 
 	totalRows := 0
 	for _, aggregate := range a.aggregates {

@@ -133,6 +133,10 @@ func NewOrderedAggregate(
 	return o
 }
 
+func (a *OrderedAggregate) Close() {
+	a.next.Close()
+}
+
 func (a *OrderedAggregate) SetNext(next PhysicalPlan) {
 	a.next = next
 }

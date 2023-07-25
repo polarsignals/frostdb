@@ -231,6 +231,10 @@ func (f *PredicateFilter) SetNext(next PhysicalPlan) {
 	f.next = next
 }
 
+func (f *PredicateFilter) Close() {
+	f.next.Close()
+}
+
 func (f *PredicateFilter) Callback(ctx context.Context, r arrow.Record) error {
 	// Generates high volume of spans. Comment out if needed during development.
 	// ctx, span := f.tracer.Start(ctx, "PredicateFilter/Callback")

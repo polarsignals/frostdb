@@ -104,3 +104,7 @@ func (m *mockPhysicalPlan) SetNext(next PhysicalPlan) {
 func (m *mockPhysicalPlan) Draw() *Diagram {
 	return &Diagram{}
 }
+
+func (m *mockPhysicalPlan) Close() {
+	m.next.Close()
+}

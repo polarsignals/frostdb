@@ -914,17 +914,17 @@ func (t *Table) Iterator(
 						if r == nil || r.NumRows() == 0 {
 							return nil
 						}
+						defer r.Release()
 						if err := callback(ctx, r); err != nil {
 							return err
 						}
-						r.Release()
 						return nil
 					}
 
 					switch t := rg.(type) {
 					case arrow.Record:
+						defer t.Release()
 						err := callback(ctx, t)
-						t.Release()
 						if err != nil {
 							return err
 						}
@@ -937,11 +937,14 @@ func (t *Table) Iterator(
 							continue
 						}
 						if converter.NumRows() >= bufferSize {
-							r := converter.NewRecord()
-							if err := callback(ctx, r); err != nil {
+							err := func() error {
+								r := converter.NewRecord()
+								defer r.Release()
+								return callback(ctx, r)
+							}()
+							if err != nil {
 								return err
 							}
-							r.Release()
 						}
 					default:
 						return fmt.Errorf("unknown row group type: %T", t)
