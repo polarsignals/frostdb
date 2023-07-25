@@ -1722,3 +1722,50 @@ func Test_Compact_Repeated(t *testing.T) {
 		return nil
 	})
 }
+
+func Test_Table_DynamicColumnMap(t *testing.T) {
+	c, err := New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	schema := &schemapb.Schema{
+		Name: "dynamic_col_map",
+		Columns: []*schemapb.Column{
+			{
+				Name: "name",
+				StorageLayout: &schemapb.StorageLayout{
+					Type: schemapb.StorageLayout_TYPE_STRING,
+				},
+			},
+			{
+				Name: "attributes",
+				StorageLayout: &schemapb.StorageLayout{
+					Type: schemapb.StorageLayout_TYPE_STRING,
+				},
+				Dynamic: true,
+			},
+		},
+	}
+
+	config := NewTableConfig(schema)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	record := struct {
+		Name       string
+		Attributes map[string]string
+	}{
+		Name: "albert",
+		Attributes: map[string]string{
+			"age": "9999",
+		},
+	}
+
+	_, err = table.Write(context.Background(), record)
+	require.NoError(t, err)
+}
