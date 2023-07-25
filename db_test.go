@@ -1776,24 +1776,34 @@ func Test_DB_Limiter(t *testing.T) {
 	_, err = table.InsertBuffer(ctx, buf)
 	require.NoError(t, err)
 
-	pool := query.NewLimitAllocator(1024*1024*1024, memory.DefaultAllocator)
-	engine := query.NewEngine(pool, db.TableProvider())
-	err = engine.ScanTable("test").
-		Filter(
-			logicalplan.And(
-				logicalplan.Col("labels.namespace").Eq(logicalplan.Literal("default")),
-			),
-		).
-		Aggregate(
-			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
-			[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
-		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-			require.Equal(t, int64(1), r.NumRows())
-			return nil
-		})
-	require.NoError(t, err)
+	for i := 0; i < 1024; i++ {
+		t.Run(fmt.Sprintf("limit-%v", i), func(t *testing.T) {
+			if i >= 512 && i <= 575 {
+				t.Skip("Skipping test; requires https://github.com/apache/arrow/pull/36854 to be merged")
+			}
+			debug := query.NewDebugAllocator(memory.DefaultAllocator)
+			pool := query.NewLimitAllocator(int64(i), debug)
+			engine := query.NewEngine(pool, db.TableProvider())
+			err = engine.ScanTable("test").
+				Filter(
+					logicalplan.And(
+						logicalplan.Col("labels.namespace").Eq(logicalplan.Literal("default")),
+					),
+				).
+				Aggregate(
+					[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+					[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
+				).
+				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+					//require.Equal(t, int64(1), r.NumRows())
+					return nil
+				})
 
-	// Expect no bytes allocated after the query has finished
-	require.Equal(t, 0, pool.Allocated())
+			// Expect no bytes allocated after the query has finished
+			if pool.Allocated() != 0 {
+				fmt.Println(debug)
+			}
+			require.Equal(t, 0, pool.Allocated())
+		})
+	}
 }
