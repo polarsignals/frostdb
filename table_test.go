@@ -1769,3 +1769,47 @@ func Test_Table_DynamicColumnMap(t *testing.T) {
 	_, err = table.Write(context.Background(), record)
 	require.NoError(t, err)
 }
+
+func Test_Table_DynamicColumnNotDefined(t *testing.T) {
+	c, err := New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	schema := &schemapb.Schema{
+		Name: "dynamic_col_not_defined",
+		Columns: []*schemapb.Column{
+			{
+				Name: "name",
+				StorageLayout: &schemapb.StorageLayout{
+					Type: schemapb.StorageLayout_TYPE_STRING,
+				},
+			},
+			{
+				Name: "attributes",
+				StorageLayout: &schemapb.StorageLayout{
+					Type: schemapb.StorageLayout_TYPE_STRING,
+				},
+				Dynamic: true,
+			},
+		},
+	}
+
+	config := NewTableConfig(schema)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	// write a record where the dynamic column is not defined
+	record := struct {
+		Name string
+	}{
+		Name: "albert",
+	}
+
+	_, err = table.Write(context.Background(), record)
+	require.NoError(t, err)
+}

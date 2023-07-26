@@ -594,6 +594,9 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 		val := reflect.ValueOf(v)
 		for _, col := range schema.Columns() {
 			cv := findColumn(val, col.Name, v)
+			if cv == nil {
+				continue
+			}
 			switch col.Dynamic {
 			case true:
 				switch reflect.TypeOf(cv).Kind() {
@@ -635,6 +638,9 @@ func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer,
 		colIdx := 0
 		for _, col := range schema.Columns() {
 			cv := findColumn(val, col.Name, v)
+			if cv == nil {
+				continue
+			}
 			switch col.Dynamic {
 			case true:
 				switch reflect.TypeOf(cv).Kind() {
