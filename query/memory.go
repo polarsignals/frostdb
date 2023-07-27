@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/arrow/go/v13/arrow/memory"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 const PanicMemoryLimit = "memory limit exceeded"
@@ -18,14 +20,37 @@ type LimitAllocator struct {
 	limit     int64
 	allocated *atomic.Int64
 	allocator memory.Allocator
+	reg       prometheus.Registerer
 }
 
-func NewLimitAllocator(limit int64, allocator memory.Allocator) *LimitAllocator {
-	return &LimitAllocator{
+type AllocatorOption func(*LimitAllocator)
+
+func WithRegistry(reg prometheus.Registerer) AllocatorOption {
+	return func(a *LimitAllocator) {
+		a.reg = reg
+	}
+}
+
+func NewLimitAllocator(limit int64, allocator memory.Allocator, options ...AllocatorOption) *LimitAllocator {
+	l := &LimitAllocator{
 		limit:     limit,
 		allocated: &atomic.Int64{},
 		allocator: allocator,
+		reg:       prometheus.NewRegistry(),
 	}
+
+	for _, option := range options {
+		option(l)
+	}
+
+	promauto.With(l.reg).NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "memory_allocated_bytes",
+		Help: "The total number of bytes allocated by the allocator.",
+	}, func() float64 {
+		return float64(l.allocated.Load())
+	})
+
+	return l
 }
 
 func (a *LimitAllocator) Allocate(size int) []byte {
