@@ -520,6 +520,9 @@ func (t *Table) RotateBlock(ctx context.Context, block *TableBlock, skipPersist 
 	t.metrics.numParts.Set(float64(0))
 
 	t.pendingBlocks[block] = struct{}{}
+	// We don't check t.db.columnStore.manualBlockRotation here because this is
+	// the entry point for users to trigger a manual block rotation and they
+	// will specify through skipPersist if they want the block to be persisted.
 	go t.writeBlock(block, skipPersist, true)
 
 	return nil
