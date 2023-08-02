@@ -668,7 +668,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			// If we get to this point it means a block was finished but did
 			// not get persisted.
 			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(table.active, false, false)
+			go table.writeBlock(table.active, db.columnStore.manualBlockRotation, false)
 
 			protoEqual := false
 			switch schema.(type) {
@@ -783,11 +783,16 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 
 func (db *DB) Close() error {
 	level.Info(db.logger).Log("msg", "closing DB")
+	shouldPersist := len(db.sinks) > 0 && !db.columnStore.manualBlockRotation
 	for _, table := range db.tables {
 		table.close()
-		if len(db.sinks) != 0 {
+		if shouldPersist {
 			// Write the blocks but no snapshots since they are long-running
 			// jobs.
+			// TODO(asubiotto): Maybe we should snapshot in any case since it
+			// should be faster to write to local disk than upload to object
+			// storage. This would avoid a slow WAL replay on startup if we
+			// don't manage to persist in time.
 			table.writeBlock(table.ActiveBlock(), false, false)
 		}
 	}
@@ -797,7 +802,7 @@ func (db *DB) Close() error {
 		return err
 	}
 
-	if len(db.sinks) != 0 {
+	if shouldPersist {
 		// If we've successfully persisted all the table blocks we can remove
 		// the wal and snapshots. Move the two directories to a trash dir since
 		// it is an O(1) operation. The trash dir is cleaned up on startup in
