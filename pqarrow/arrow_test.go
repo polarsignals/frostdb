@@ -104,7 +104,9 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 
 	ctx := context.Background()
 
-	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer alloc.AssertSize(t, 0)
+	c := NewParquetConverter(alloc, logicalplan.IterOptions{})
 	defer c.Close()
 
 	require.NoError(t, c.Convert(ctx, buf0))
@@ -114,6 +116,7 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 	require.NoError(t, c.Convert(ctx, buf4))
 
 	ar := c.NewRecord()
+	defer ar.Release()
 	require.Equal(t, int64(8), ar.NumCols())
 	require.Equal(t, int64(5), ar.NumRows())
 	for j := 0; j < int(ar.NumCols()); j++ {
@@ -778,7 +781,9 @@ func Test_ParquetToArrowV2(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer alloc.AssertSize(t, 0)
+	c := NewParquetConverter(alloc, logicalplan.IterOptions{})
 	defer c.Close()
 
 	n := 10
@@ -802,7 +807,7 @@ func Test_ParquetToArrowV2(t *testing.T) {
 		require.NoError(t, c.Convert(ctx, pb))
 	}
 	r := c.NewRecord()
-	fmt.Println(r)
+	defer r.Release()
 	require.Equal(t, int64(n), r.NumRows())
 }
 
@@ -830,10 +835,13 @@ func Test_ParquetToArrow(t *testing.T) {
 
 	ctx := context.Background()
 
-	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
+	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer alloc.AssertSize(t, 0)
+	c := NewParquetConverter(alloc, logicalplan.IterOptions{})
 	defer c.Close()
 
 	require.NoError(t, c.Convert(ctx, buf))
 	r := c.NewRecord()
+	defer r.Release()
 	require.Equal(t, int64(1000), r.NumRows())
 }

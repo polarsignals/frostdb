@@ -920,10 +920,13 @@ func (t *Table) Iterator(
 				case rg, ok := <-rowGroups:
 					if !ok {
 						r := converter.NewRecord()
-						if r == nil || r.NumRows() == 0 {
+						if r == nil {
 							return nil
 						}
 						defer r.Release()
+						if r.NumRows() == 0 {
+							return nil
+						}
 						if err := callback(ctx, r); err != nil {
 							return err
 						}
