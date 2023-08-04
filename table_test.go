@@ -173,7 +173,6 @@ func TestTable(t *testing.T) {
 			pool,
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				t.Log(ar)
-				defer ar.Release()
 				return nil
 			}},
 		)
@@ -288,7 +287,6 @@ func Test_Table_Concurrency(t *testing.T) {
 					pool,
 					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 						totalrows += ar.NumRows()
-						defer ar.Release()
 
 						return nil
 					}},
@@ -570,7 +568,6 @@ func Test_Table_ReadIsolation(t *testing.T) {
 			pool,
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
-				defer ar.Release()
 
 				return nil
 			}},
@@ -593,7 +590,6 @@ func Test_Table_ReadIsolation(t *testing.T) {
 			pool,
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
-				defer ar.Release()
 
 				return nil
 			}},
@@ -841,7 +837,6 @@ func Test_Table_Bloomfilter(t *testing.T) {
 			tx,
 			pool,
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-				defer ar.Release()
 				iterations++
 				return nil
 			}},
@@ -917,7 +912,6 @@ func Test_DoubleTable(t *testing.T) {
 			tx,
 			pool,
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-				defer ar.Release()
 				require.Equal(t, value, ar.Column(1).(*array.Float64).Value(0))
 				return nil
 			}},

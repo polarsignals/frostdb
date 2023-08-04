@@ -16,6 +16,7 @@ import (
 type Synchronizer struct {
 	next    PhysicalPlan
 	nextMtx sync.Mutex
+	closed  bool
 	running *atomic.Int64
 }
 
@@ -62,5 +63,12 @@ func (m *Synchronizer) Draw() *Diagram {
 }
 
 func (m *Synchronizer) Close() {
-	m.next.Close()
+	if !m.closed {
+		m.nextMtx.Lock()
+		defer m.nextMtx.Unlock()
+		if !m.closed {
+			m.next.Close()
+			m.closed = true
+		}
+	}
 }
