@@ -123,7 +123,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 		return
 	}
 
-	tx, _, commit := db.begin()
+	tx, _, metadata, commit := db.begin()
 	level.Debug(db.logger).Log(
 		"msg", "starting a new snapshot",
 		"tx", tx,
@@ -144,6 +144,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 					Entry: &walpb.Entry{
 						EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
 					},
+					TxnMetadata: metadata,
 				},
 			); err != nil {
 				level.Error(db.logger).Log(
@@ -153,7 +154,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 			}
 		}
 
-		if err := db.snapshotAtTX(ctx, tx); err != nil {
+		if err := db.snapshotAtTX(ctx, tx, metadata); err != nil {
 			level.Error(db.logger).Log(
 				"msg", "failed to snapshot database", "err", err,
 			)
@@ -169,7 +170,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 }
 
 // snapshotAtTX takes a snapshot of the state of the database at transaction tx.
-func (db *DB) snapshotAtTX(ctx context.Context, tx uint64) error {
+func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, txnMetadata []byte) error {
 	var fileSize int64
 	start := time.Now()
 	if err := func() error {
@@ -186,7 +187,7 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64) error {
 		defer f.Close()
 
 		if err := func() error {
-			if err := WriteSnapshot(ctx, tx, db, f); err != nil {
+			if err := WriteSnapshot(ctx, tx, txnMetadata, db, f); err != nil {
 				return err
 			}
 			if err := f.Sync(); err != nil {
@@ -343,7 +344,7 @@ func (w *offsetWriter) checksum() uint32 {
 	return w.runningChecksum.Sum32()
 }
 
-func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
+func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w io.Writer) error {
 	offW := newOffsetWriter(w)
 	w = offW
 	var tables []*Table
@@ -357,7 +358,7 @@ func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 		return err
 	}
 
-	metadata := &snapshotpb.FooterData{}
+	metadata := &snapshotpb.FooterData{TxnMetadata: txnMetadata}
 	for _, t := range tables {
 		if err := func() error {
 			// Obtain a write block to prevent racing with

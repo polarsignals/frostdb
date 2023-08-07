@@ -321,14 +321,14 @@ type DB struct {
 
 	// Databases monotonically increasing transaction id
 	tx *atomic.Uint64
+	// highWatermark maintains the highest consecutively completed tx number
+	highWatermark       *atomic.Uint64
+	txnMetadataProvider func(uint64) []byte
 
 	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
 	txPool *TxPool
 
 	compactorPool *compactorPool
-
-	// highWatermark maintains the highest consecutively completed tx number
-	highWatermark *atomic.Uint64
 
 	snapshotInProgress atomic.Bool
 
@@ -348,13 +348,24 @@ type DataSource interface {
 	Prefixes(ctx context.Context, prefix string) ([]string, error)
 }
 
-// Datasink is a remote destination for data.
+// DataSink is a remote destination for data.
 type DataSink interface {
 	fmt.Stringer
 	storage.Bucket
 }
 
-func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
+type DBOption func(*DB) error
+
+// WithUserDefinedTxnMetadataProvider enables the user to provide custom
+// metadata associated with any txn.
+func WithUserDefinedTxnMetadataProvider(f func(tx uint64) []byte) DBOption {
+	return func(db *DB) error {
+		db.txnMetadataProvider = f
+		return nil
+	}
+}
+
+func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*DB, error) {
 	if !validateName(name) {
 		return nil, errors.New("invalid database name")
 	}
@@ -392,6 +403,11 @@ func (s *ColumnStore) DB(ctx context.Context, name string) (*DB, error) {
 		wal:           &wal.NopWAL{},
 		sources:       s.sources,
 		sinks:         s.sinks,
+	}
+	for _, opt := range opts {
+		if err := opt(db); err != nil {
+			return nil, err
+		}
 	}
 
 	if dbSetupErr := func() error {
@@ -989,11 +1005,11 @@ func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 		}
 	}
 
-	tx, _, commit := db.begin()
+	tx, _, metadata, commit := db.begin()
 	defer commit()
 
 	id := generateULID()
-	if err := table.newTableBlock(0, tx, id); err != nil {
+	if err := table.newTableBlock(0, tx, metadata, id); err != nil {
 		return nil, err
 	}
 
@@ -1060,10 +1076,14 @@ func (db *DB) beginRead() uint64 {
 //	the write tx id
 //	The current high watermark
 //	A function to complete the transaction
-func (db *DB) begin() (uint64, uint64, func()) {
+func (db *DB) begin() (uint64, uint64, []byte, func()) {
 	tx := db.tx.Add(1)
 	watermark := db.highWatermark.Load()
-	return tx, watermark, func() {
+	var txnMetadata []byte
+	if db.txnMetadataProvider != nil {
+		txnMetadata = db.txnMetadataProvider(tx)
+	}
+	return tx, watermark, txnMetadata, func() {
 		if mark := db.highWatermark.Load(); mark+1 == tx { // This is the next consecutive transaction; increate the watermark
 			db.highWatermark.Add(1)
 		}

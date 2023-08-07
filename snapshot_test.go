@@ -37,10 +37,10 @@ func TestSnapshot(t *testing.T) {
 
 		// Complete a txn so that the snapshot is created at txn 1, snapshots at
 		// txn 0 are considered empty so ignored.
-		_, _, commit := db.begin()
+		_, _, metadata, commit := db.begin()
 		commit()
 
-		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load()))
+		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load(), metadata))
 
 		txBefore := db.highWatermark.Load()
 		tx, err := db.loadLatestSnapshot(ctx)
@@ -86,7 +86,7 @@ func TestSnapshot(t *testing.T) {
 
 		// Insert a sample that should not be snapshot.
 		insertSamples(ctx, t, table, 10)
-		require.NoError(t, db.snapshotAtTX(ctx, highWatermark))
+		require.NoError(t, db.snapshotAtTX(ctx, highWatermark, nil))
 
 		// Create another db and verify.
 		snapshotDB, err := c.DB(ctx, "testsnapshot")
@@ -186,7 +186,7 @@ func TestSnapshot(t *testing.T) {
 		defer cancelWrites()
 		snapshotDB, err := c.DB(ctx, "testsnapshot")
 		require.NoError(t, err)
-		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load()))
+		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load(), nil))
 		snapshotTx, err := snapshotDB.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
 		require.NoError(t, err)
 		require.NoError(
