@@ -8,6 +8,9 @@ import "frostdb/table/v1alpha1/config.proto";
 // data about the rest of the file.
 message FooterData {
   repeated Table table_metadata = 1;
+  // TxnMetadata is the user-defined metadata associated with the txn at which
+  // this snapshot was performed.
+  bytes txn_metadata = 2;
 }
 
 message Table {
