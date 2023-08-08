@@ -9,6 +9,9 @@ message Record {
   // Data of the record. This is intentionally nested so the only thing in
   // the entry can be a protobuf `oneof` and have forward compatilibity.
   Entry entry = 1;
+  // TxnMetadata is the user-defined metadata associated with the txn at which
+  // this record was logged to the WAL.
+  bytes txn_metadata = 2;
 }
 
 // The data of a WAL Record. This is intentionally separate to allow using the

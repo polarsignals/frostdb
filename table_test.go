@@ -558,7 +558,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 
 	// Now we cheat and reset our tx and watermark
 	table.db.tx.Store(2)
-	table.db.highWatermark.Store(2)
+	table.db.highWatermark.Store(Txn{TxnID: 2})
 
 	pool := memory.NewGoAllocator()
 
@@ -583,13 +583,13 @@ func Test_Table_ReadIsolation(t *testing.T) {
 
 	// Now set the tx back to what it was, and perform the same read, we should return all 4 rows
 	table.db.tx.Store(3)
-	table.db.highWatermark.Store(3)
+	table.db.highWatermark.Store(Txn{TxnID: 3})
 
 	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
 		rows := int64(0)
 		err = table.Iterator(
 			ctx,
-			table.db.highWatermark.Load(),
+			table.db.highWatermark.Load().TxnID,
 			pool,
 			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()

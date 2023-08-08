@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -37,15 +38,15 @@ func TestSnapshot(t *testing.T) {
 
 		// Complete a txn so that the snapshot is created at txn 1, snapshots at
 		// txn 0 are considered empty so ignored.
-		_, _, commit := db.begin()
+		_, _, metadata, commit := db.begin()
 		commit()
 
-		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load()))
+		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load().TxnID, metadata))
 
-		txBefore := db.highWatermark.Load()
+		txBefore := db.highWatermark.Load().TxnID
 		tx, err := db.loadLatestSnapshot(ctx)
 		require.NoError(t, err)
-		require.Equal(t, txBefore, tx)
+		require.Equal(t, txBefore, tx.TxnID)
 	})
 
 	t.Run("WithData", func(t *testing.T) {
@@ -82,11 +83,11 @@ func TestSnapshot(t *testing.T) {
 		_, err = db.Table("empty", config)
 		require.NoError(t, err)
 
-		highWatermark := db.highWatermark.Load()
+		highWatermark := db.highWatermark.Load().TxnID
 
 		// Insert a sample that should not be snapshot.
 		insertSamples(ctx, t, table, 10)
-		require.NoError(t, db.snapshotAtTX(ctx, highWatermark))
+		require.NoError(t, db.snapshotAtTX(ctx, highWatermark, nil))
 
 		// Create another db and verify.
 		snapshotDB, err := c.DB(ctx, "testsnapshot")
@@ -96,8 +97,8 @@ func TestSnapshot(t *testing.T) {
 		// Load the other db's latest snapshot.
 		tx, err := snapshotDB.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
 		require.NoError(t, err)
-		require.Equal(t, highWatermark, tx)
-		require.Equal(t, highWatermark, snapshotDB.highWatermark.Load())
+		require.Equal(t, highWatermark, tx.TxnID)
+		require.Equal(t, highWatermark, snapshotDB.highWatermark.Load().TxnID)
 
 		require.Equal(t, len(db.tables), len(snapshotDB.tables))
 
@@ -162,7 +163,7 @@ func TestSnapshot(t *testing.T) {
 		table, err := db.Table(tableName, config)
 		require.NoError(t, err)
 
-		highWatermarkAtStart := db.highWatermark.Load()
+		highWatermarkAtStart := db.highWatermark.Load().TxnID
 		shouldStartSnapshotChan := make(chan struct{})
 		var errg errgroup.Group
 		errg.Go(func() error {
@@ -186,7 +187,7 @@ func TestSnapshot(t *testing.T) {
 		defer cancelWrites()
 		snapshotDB, err := c.DB(ctx, "testsnapshot")
 		require.NoError(t, err)
-		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load()))
+		require.NoError(t, db.snapshotAtTX(ctx, db.highWatermark.Load().TxnID, nil))
 		snapshotTx, err := snapshotDB.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
 		require.NoError(t, err)
 		require.NoError(
@@ -197,7 +198,7 @@ func TestSnapshot(t *testing.T) {
 				[]logicalplan.Expr{logicalplan.Max(logicalplan.Col("timestamp"))}, nil,
 			).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 				require.Equal(
-					t, int(snapshotTx-highWatermarkAtStart), int(r.Column(0).(*array.Int64).Int64Values()[0]),
+					t, int(snapshotTx.TxnID-highWatermarkAtStart), int(r.Column(0).(*array.Int64).Int64Values()[0]),
 				)
 				return nil
 			}),
@@ -218,6 +219,9 @@ func TestSnapshotWithWAL(t *testing.T) {
 		snapshotTx          uint64
 		firstWriteTimestamp int64
 	)
+	txnMetadataProvider := func(tx uint64) []byte {
+		return []byte(fmt.Sprintf("%d-metadata", tx))
+	}
 	func() {
 		c, err := New(
 			WithWAL(),
@@ -227,7 +231,7 @@ func TestSnapshotWithWAL(t *testing.T) {
 		require.NoError(t, err)
 		defer c.Close()
 
-		db, err := c.DB(ctx, dbAndTableName)
+		db, err := c.DB(ctx, dbAndTableName, WithUserDefinedTxnMetadataProvider(txnMetadataProvider))
 		require.NoError(t, err)
 
 		schema := dynparquet.SampleDefinition()
@@ -282,6 +286,10 @@ func TestSnapshotWithWAL(t *testing.T) {
 
 	verifyDB, err := verifyC.DB(ctx, dbAndTableName)
 	require.NoError(t, err)
+
+	// Verify txn metadata is persisted.
+	watermark := verifyDB.highWatermark.Load()
+	require.Equal(t, txnMetadataProvider(watermark.TxnID), watermark.TxnMetadata)
 
 	// Truncate all entries from the WAL up to but not including the second
 	// insert.

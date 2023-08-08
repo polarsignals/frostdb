@@ -1447,6 +1447,9 @@ func TestDBRecover(t *testing.T) {
 		dbAndTableName = "test"
 		numInserts     = 3
 	)
+	txnMetadataProvider := func(tx uint64) []byte {
+		return []byte(fmt.Sprintf("%d-metadata", tx))
+	}
 	setup := func(t *testing.T, blockRotation bool, options ...Option) string {
 		dir := t.TempDir()
 		c, err := New(
@@ -1466,7 +1469,7 @@ func TestDBRecover(t *testing.T) {
 		require.NoError(t, err)
 		defer c.Close()
 
-		db, err := c.DB(ctx, dbAndTableName)
+		db, err := c.DB(ctx, dbAndTableName, WithUserDefinedTxnMetadataProvider(txnMetadataProvider))
 		require.NoError(t, err)
 		schema := dynparquet.SampleDefinition()
 		table, err := db.Table(dbAndTableName, NewTableConfig(schema))
@@ -1501,20 +1504,30 @@ func TestDBRecover(t *testing.T) {
 			db.Wait(lastWriteTx + 2)
 		}
 
-		files, err := os.ReadDir(db.snapshotsDir())
-		require.NoError(t, err)
-		snapshotTxns := make([]uint64, 0, len(files))
-		for _, f := range files {
-			tx, err := getTxFromSnapshotFileName(f.Name())
-			require.NoError(t, err)
-			snapshotTxns = append(snapshotTxns, tx)
-		}
-		expectedSnapshots := []uint64{3, 5}
-		if blockRotation {
-			expectedSnapshots = append(expectedSnapshots, 8)
-		}
 		// Verify that there are now 3 snapshots and their txns.
-		require.Equal(t, expectedSnapshots, snapshotTxns)
+		require.Eventually(t, func() bool {
+			files, err := os.ReadDir(db.snapshotsDir())
+			require.NoError(t, err)
+			snapshotTxns := make([]uint64, 0, len(files))
+			for _, f := range files {
+				tx, err := getTxFromSnapshotFileName(f.Name())
+				require.NoError(t, err)
+				snapshotTxns = append(snapshotTxns, tx)
+			}
+			expectedSnapshots := []uint64{3, 5}
+			if blockRotation {
+				expectedSnapshots = append(expectedSnapshots, 8)
+			}
+			if len(snapshotTxns) != len(expectedSnapshots) {
+				return false
+			}
+			for i, txID := range expectedSnapshots {
+				if txID != snapshotTxns[i] {
+					return false
+				}
+			}
+			return true
+		}, 2*time.Second, 10*time.Millisecond)
 		return dir
 	}
 
@@ -1531,6 +1544,10 @@ func TestDBRecover(t *testing.T) {
 
 		db, err := c.DB(ctx, dbAndTableName)
 		require.NoError(t, err)
+
+		// Verify metadata is stored.
+		watermark := db.highWatermark.Load()
+		require.Equal(t, txnMetadataProvider(watermark.TxnID), watermark.TxnMetadata)
 
 		engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
 		nrows := 0

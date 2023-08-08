@@ -8,7 +8,7 @@ import (
 type TxNode struct {
 	next     *atomic.Pointer[TxNode]
 	original *atomic.Pointer[TxNode]
-	tx       uint64
+	tx       Txn
 }
 
 type TxPool struct {
@@ -52,16 +52,14 @@ type TxPool struct {
 //
 // TxPool is a sorted lockless linked-list described in
 // https://timharris.uk/papers/2001-disc.pdf
-func NewTxPool(watermark *atomic.Uint64) *TxPool {
+func NewTxPool(watermark *atomicTxn) *TxPool {
 	tail := &TxNode{
 		next:     &atomic.Pointer[TxNode]{},
 		original: &atomic.Pointer[TxNode]{},
-		tx:       0,
 	}
 	head := &TxNode{
 		next:     &atomic.Pointer[TxNode]{},
 		original: &atomic.Pointer[TxNode]{},
-		tx:       0,
 	}
 	txpool := &TxPool{
 		head:  &atomic.Pointer[TxNode]{},
@@ -81,7 +79,7 @@ func NewTxPool(watermark *atomic.Uint64) *TxPool {
 }
 
 // Insert performs an insertion sort of the given tx.
-func (l *TxPool) Insert(tx uint64) {
+func (l *TxPool) Insert(tx Txn) {
 	n := &TxNode{
 		tx:       tx,
 		next:     &atomic.Pointer[TxNode]{},
@@ -91,7 +89,7 @@ func (l *TxPool) Insert(tx uint64) {
 	tryInsert := func() bool {
 		prev := l.head.Load()
 		for node := l.head.Load().next.Load(); node != nil; node = getUnmarked(node) {
-			if node.tx == 0 { // end of list
+			if node.tx.TxnID == 0 { // end of list
 				return l.insert(n, prev, node)
 			}
 
@@ -101,7 +99,7 @@ func (l *TxPool) Insert(tx uint64) {
 				return false
 			}
 
-			if node.tx > tx {
+			if node.tx.TxnID > tx.TxnID {
 				return l.insert(n, prev, node)
 			}
 			prev = node
@@ -125,8 +123,8 @@ func (l *TxPool) insert(node, prev, next *TxNode) bool {
 	return success
 }
 
-func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
-	for node := l.head.Load().next.Load(); node.tx != 0; node = getUnmarked(node) {
+func (l *TxPool) Iterate(iterate func(txn Txn) bool) {
+	for node := l.head.Load().next.Load(); node.tx.TxnID != 0; node = getUnmarked(node) {
 		if isMarked(node) == nil && !iterate(node.tx) {
 			return
 		}
@@ -134,8 +132,8 @@ func (l *TxPool) Iterate(iterate func(tx uint64) bool) {
 }
 
 // delete iterates over the list and deletes until the delete function returns false.
-func (l *TxPool) delete(deleteFunc func(tx uint64) bool) {
-	for node := l.head.Load().next.Load(); node.tx != 0; node = getUnmarked(node) {
+func (l *TxPool) delete(deleteFunc func(txn Txn) bool) {
+	for node := l.head.Load().next.Load(); node.tx.TxnID != 0; node = getUnmarked(node) {
 		if !deleteFunc(node.tx) {
 			return
 		}
@@ -163,7 +161,7 @@ func isMarked(node *TxNode) *TxNode {
 	return og
 }
 
-func getMarked(node *TxNode) *TxNode {
+func getMarked(_ *TxNode) *TxNode {
 	// using nil as the marker
 	return nil
 }
@@ -184,19 +182,19 @@ func getUnmarked(node *TxNode) *TxNode {
 
 // cleaner sweeps the pool periodically, and bubbles up the given watermark.
 // this function does not return.
-func (l *TxPool) cleaner(ctx context.Context, watermark *atomic.Uint64) {
+func (l *TxPool) cleaner(ctx context.Context, watermark *atomicTxn) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-l.drain:
-			l.delete(func(tx uint64) bool {
-				mark := watermark.Load()
+			l.delete(func(txn Txn) bool {
+				mark := watermark.Load().TxnID
 				switch {
-				case mark+1 == tx:
-					watermark.Add(1)
+				case mark+1 == txn.TxnID:
+					watermark.Store(txn)
 					return true // return true to indicate that this node should be removed from the tx list.
-				case mark >= tx:
+				case mark >= txn.TxnID:
 					return true
 				default:
 					return false

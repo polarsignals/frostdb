@@ -37,7 +37,7 @@ func (w *NopWAL) Replay(_ uint64, _ ReplayHandlerFunc) error {
 	return nil
 }
 
-func (w *NopWAL) LogRecord(_ uint64, _ string, _ arrow.Record) error {
+func (w *NopWAL) LogRecord(_ uint64, _ []byte, _ string, _ arrow.Record) error {
 	return nil
 }
 
@@ -352,7 +352,7 @@ func (w *FileWAL) writeRecord(buf *bytes.Buffer, record arrow.Record) error {
 	return writer.Write(record)
 }
 
-func (w *FileWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
+func (w *FileWAL) LogRecord(tx uint64, txnMetadata []byte, table string, record arrow.Record) error {
 	buf := w.getArrowBuf()
 	defer w.putArrowBuf(buf)
 	if err := w.writeRecord(buf, record); err != nil {
@@ -369,6 +369,7 @@ func (w *FileWAL) LogRecord(tx uint64, table string, record arrow.Record) error 
 				},
 			},
 		},
+		TxnMetadata: txnMetadata,
 	}
 
 	r := w.logRequestPool.Get().(*logRequest)

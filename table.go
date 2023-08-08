@@ -169,7 +169,7 @@ type Table struct {
 type WAL interface {
 	Close() error
 	Log(tx uint64, record *walpb.Record) error
-	LogRecord(tx uint64, table string, record arrow.Record) error
+	LogRecord(tx uint64, txnMetadata []byte, table string, record arrow.Record) error
 	// Replay replays WAL records from the given first index. If firstIndex is
 	// 0, the first index read from the WAL is used (i.e. given a truncation,
 	// using 0 is still valid). If the given firstIndex is less than the WAL's
@@ -349,7 +349,7 @@ func newTable(
 	return t, nil
 }
 
-func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
+func (t *Table) newTableBlock(prevTx, tx uint64, txnMetadata []byte, id ulid.ULID) error {
 	b, err := id.MarshalBinary()
 	if err != nil {
 		return err
@@ -365,6 +365,7 @@ func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
 				},
 			},
 		},
+		TxnMetadata: txnMetadata,
 	}); err != nil {
 		return err
 	}
@@ -417,7 +418,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 		return
 	}
 
-	tx, _, commit := t.db.begin()
+	tx, _, metadata, commit := t.db.begin()
 	defer commit()
 
 	buf, err := block.ulid.MarshalBinary()
@@ -435,6 +436,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 				},
 			},
 		},
+		TxnMetadata: metadata,
 	}); err != nil {
 		level.Error(t.logger).Log("msg", "failed to record block persistence in WAL", "err", err)
 		return
@@ -478,7 +480,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 			// TODO(asubiotto): Eventually we should register a cancel function
 			// that is called with a grace period on db.Close.
 			ctx := context.Background()
-			if err := t.db.snapshotAtTX(ctx, tx); err != nil {
+			if err := t.db.snapshotAtTX(ctx, tx, metadata); err != nil {
 				level.Error(t.logger).Log(
 					"msg", "failed to write snapshot on block rotation",
 					"err", err,
@@ -509,11 +511,11 @@ func (t *Table) RotateBlock(ctx context.Context, block *TableBlock, skipPersist 
 		level.Debug(t.logger).Log("msg", "done rotating block")
 	}()
 
-	tx, _, commit := t.db.begin()
+	tx, _, metadata, commit := t.db.begin()
 	defer commit()
 
 	id := generateULID()
-	if err := t.newTableBlock(t.active.minTx, tx, id); err != nil {
+	if err := t.newTableBlock(t.active.minTx, tx, metadata, id); err != nil {
 		return err
 	}
 	t.metrics.blockRotated.Inc()
@@ -744,10 +746,10 @@ func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, 
 	}
 	defer close()
 
-	tx, _, commit := t.db.begin()
+	tx, _, metadata, commit := t.db.begin()
 	defer commit()
 
-	if err := t.wal.LogRecord(tx, t.name, record); err != nil {
+	if err := t.wal.LogRecord(tx, metadata, t.name, record); err != nil {
 		return tx, fmt.Errorf("append to log: %w", err)
 	}
 
@@ -772,7 +774,7 @@ func (t *Table) Insert(ctx context.Context, buf []byte) (uint64, error) {
 	return t.insert(ctx, buf)
 }
 
-func (t *Table) appendToLog(ctx context.Context, tx uint64, buf []byte) error {
+func (t *Table) appendToLog(ctx context.Context, tx uint64, txnMetadata, buf []byte) error {
 	if err := t.wal.Log(tx, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_Write_{
@@ -782,6 +784,7 @@ func (t *Table) appendToLog(ctx context.Context, tx uint64, buf []byte) error {
 				},
 			},
 		},
+		TxnMetadata: txnMetadata,
 	}); err != nil {
 		return err
 	}
@@ -845,10 +848,10 @@ func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
 	}
 	defer close()
 
-	tx, _, commit := t.db.begin()
+	tx, _, metadata, commit := t.db.begin()
 	defer commit()
 
-	if err := t.appendToLog(ctx, tx, buf); err != nil {
+	if err := t.appendToLog(ctx, tx, metadata, buf); err != nil {
 		return tx, fmt.Errorf("append to log: %w", err)
 	}
 

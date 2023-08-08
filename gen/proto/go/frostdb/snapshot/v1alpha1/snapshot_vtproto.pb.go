@@ -49,6 +49,13 @@ func (m *FooterData) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.TxnMetadata) > 0 {
+		i -= len(m.TxnMetadata)
+		copy(dAtA[i:], m.TxnMetadata)
+		i = encodeVarint(dAtA, i, uint64(len(m.TxnMetadata)))
+		i--
+		dAtA[i] = 0x12
+	}
 	if len(m.TableMetadata) > 0 {
 		for iNdEx := len(m.TableMetadata) - 1; iNdEx >= 0; iNdEx-- {
 			size, err := m.TableMetadata[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
@@ -317,6 +324,10 @@ func (m *FooterData) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
+	l = len(m.TxnMetadata)
+	if l > 0 {
+		n += 1 + l + sov(uint64(l))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -480,6 +491,40 @@ func (m *FooterData) UnmarshalVT(dAtA []byte) error {
 			m.TableMetadata = append(m.TableMetadata, &Table{})
 			if err := m.TableMetadata[len(m.TableMetadata)-1].UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
 				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TxnMetadata", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLength
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.TxnMetadata = append(m.TxnMetadata[:0], dAtA[iNdEx:postIndex]...)
+			if m.TxnMetadata == nil {
+				m.TxnMetadata = []byte{}
 			}
 			iNdEx = postIndex
 		default:
