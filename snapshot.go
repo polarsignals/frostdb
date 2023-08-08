@@ -223,14 +223,14 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, txnMetadata []byte) e
 
 // loadLatestSnapshot loads the latest snapshot (i.e. the snapshot with the
 // highest txn) from the snapshots dir into the database.
-func (db *DB) loadLatestSnapshot(ctx context.Context) (uint64, error) {
+func (db *DB) loadLatestSnapshot(ctx context.Context) (Txn, error) {
 	return db.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
 }
 
-func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64, error) {
+func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (Txn, error) {
 	var (
 		lastErr   error
-		loadedTxn uint64
+		loadedTxn Txn
 	)
 	// No error should be returned from snapshotsDo.
 	_ = db.snapshotsDo(ctx, dir, func(parsedTx uint64, entry os.DirEntry) (bool, error) {
@@ -244,7 +244,13 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 			if err != nil {
 				return err
 			}
-			return LoadSnapshot(ctx, db, parsedTx, f, info.Size())
+			watermark, err := LoadSnapshot(ctx, db, parsedTx, f, info.Size())
+			if err != nil {
+				return err
+			}
+			// Success.
+			loadedTxn = watermark
+			return nil
 		}(); err != nil {
 			err = fmt.Errorf("unable to read snapshot file %s: %w", entry.Name(), err)
 			level.Debug(db.logger).Log(
@@ -254,29 +260,29 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 			lastErr = err
 			return true, nil
 		}
-		// Success.
-		loadedTxn = parsedTx
 		return false, nil
 	})
-	if loadedTxn != 0 {
+	if loadedTxn.TxnID != 0 {
 		// Successfully loaded a snapshot.
 		return loadedTxn, nil
 	}
 
 	errString := "no valid snapshots found"
 	if lastErr != nil {
-		return 0, fmt.Errorf("%s: lastErr: %w", errString, lastErr)
+		return Txn{}, fmt.Errorf("%s: lastErr: %w", errString, lastErr)
 	}
-	return 0, fmt.Errorf("%s", errString)
+	return Txn{}, fmt.Errorf("%s", errString)
 }
 
-func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64) error {
-	if err := loadSnapshot(ctx, db, r, size); err != nil {
-		return err
+func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64) (Txn, error) {
+	txnMetadata, err := loadSnapshot(ctx, db, r, size)
+	if err != nil {
+		return Txn{}, err
 	}
 	db.tx.Store(tx)
-	db.highWatermark.Store(tx)
-	return nil
+	watermark := Txn{TxnID: tx, TxnMetadata: txnMetadata}
+	db.highWatermark.Store(watermark)
+	return watermark, nil
 }
 
 func (db *DB) getLatestValidSnapshotTxn(ctx context.Context) (uint64, error) {
@@ -520,10 +526,13 @@ func readFooter(r io.ReaderAt, size int64) (*snapshotpb.FooterData, error) {
 	return footer, nil
 }
 
-func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error {
+// loadSnapshot loads a snapshot from the given io.ReaderAt and returns the
+// txnMetadata (if any) the snapshot was created with and an error if any
+// occurred.
+func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byte, error) {
 	footer, err := readFooter(r, size)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	db.compactorPool.pause()
@@ -632,11 +641,11 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				delete(db.tables, cleanupTable.Name)
 			}
 			db.mtx.Unlock()
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	return footer.TxnMetadata, nil
 }
 
 // truncateSnapshotsLessThanTX deletes all snapshots taken at a transaction less

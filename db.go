@@ -320,9 +320,9 @@ type DB struct {
 	sinks   []DataSink
 
 	// Databases monotonically increasing transaction id
-	tx *atomic.Uint64
-	// highWatermark maintains the highest consecutively completed tx number
-	highWatermark       *atomic.Uint64
+	tx atomic.Uint64
+	// highWatermark maintains the highest consecutively completed txn.
+	highWatermark       atomicTxn
 	txnMetadataProvider func(uint64) []byte
 
 	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
@@ -389,20 +389,18 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 	reg := prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg)
 	logger := log.WithPrefix(s.logger, "db", name)
 	db = &DB{
-		columnStore:   s,
-		name:          name,
-		mtx:           &sync.RWMutex{},
-		tables:        map[string]*Table{},
-		roTables:      map[string]*Table{},
-		reg:           reg,
-		logger:        logger,
-		tracer:        s.tracer,
-		tx:            &atomic.Uint64{},
-		highWatermark: &atomic.Uint64{},
-		storagePath:   filepath.Join(s.DatabasesDir(), name),
-		wal:           &wal.NopWAL{},
-		sources:       s.sources,
-		sinks:         s.sinks,
+		columnStore: s,
+		name:        name,
+		mtx:         &sync.RWMutex{},
+		tables:      map[string]*Table{},
+		roTables:    map[string]*Table{},
+		reg:         reg,
+		logger:      logger,
+		tracer:      s.tracer,
+		storagePath: filepath.Join(s.DatabasesDir(), name),
+		wal:         &wal.NopWAL{},
+		sources:     s.sources,
+		sinks:       s.sinks,
 	}
 	for _, opt := range opts {
 		if err := opt(db); err != nil {
@@ -414,7 +412,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		if err := os.RemoveAll(db.trashDir()); err != nil {
 			return err
 		}
-		db.txPool = NewTxPool(db.highWatermark)
+		db.txPool = NewTxPool(&db.highWatermark)
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
 		if len(db.sources) != 0 {
 			for _, source := range db.sources {
@@ -459,7 +457,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 				Name: "frostdb_tx_high_watermark",
 				Help: "The highest transaction number that has been released to be read",
 			}, func() float64 {
-				return float64(db.highWatermark.Load())
+				return float64(db.highWatermark.Load().TxnID)
 			}),
 		}
 		if db.columnStore.snapshotTriggerSize != 0 {
@@ -526,7 +524,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		level.Info(db.logger).Log(
 			"msg", "failed to load latest snapshot", "db", db.name, "err", err,
 		)
-		snapshotTx = 0
+		snapshotTx.TxnID = 0
 	}
 	firstIndex, err := wal.FirstIndex()
 	if err != nil {
@@ -541,13 +539,13 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			"err", err)
 	}
 	snapshotLogArgs := make([]any, 0)
-	if snapshotTx != 0 {
+	if snapshotTx.TxnID != 0 {
 		snapshotLogArgs = append(
 			snapshotLogArgs,
 			"snapshot_tx", snapshotTx,
 			"snapshot_load_duration", time.Since(snapshotLoadStart),
 		)
-		if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx); err != nil {
+		if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx.TxnID); err != nil {
 			// Truncation is best-effort. If it fails, move on.
 			level.Info(db.logger).Log(
 				"msg", "failed to truncate snapshots less than loaded snapshot",
@@ -555,8 +553,8 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				"snapshot_tx", snapshotTx,
 			)
 		}
-		if snapshotTx > firstIndex && snapshotTx <= lastIndex {
-			if err := wal.Truncate(snapshotTx); err != nil {
+		if snapshotTx.TxnID > firstIndex && snapshotTx.TxnID <= lastIndex {
+			if err := wal.Truncate(snapshotTx.TxnID); err != nil {
 				// Since this is a best-effort truncation, move on if there is an
 				// error.
 				level.Info(db.logger).Log(
@@ -571,7 +569,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 					snapshotLogArgs,
 					"wal_truncated", "true",
 					"wal_first_index_pre_truncation", firstIndex)
-				firstIndex = snapshotTx
+				firstIndex = snapshotTx.TxnID
 			}
 		} else {
 			snapshotLogArgs = append(
@@ -584,17 +582,17 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
 	persistedTables := map[string]uint64{}
-	lastTx := uint64(0)
+	var lastTx Txn
 
 	start := time.Now()
-	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx.TxnID, func(tx uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
 			persistedTables[e.TableBlockPersisted.TableName] = tx
-			if tx > snapshotTx {
+			if tx > snapshotTx.TxnID {
 				// The loaded snapshot has data in a table that has been
 				// persisted. Delete all data in this table, since it has
 				// already been persisted.
@@ -612,11 +610,11 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
-	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx.TxnID, func(tx uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		lastTx = tx
+		lastTx = Txn{TxnID: tx, TxnMetadata: record.TxnMetadata}
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
 			entry := e.NewTableBlock
@@ -758,7 +756,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			// After every insert we're setting the tx and highWatermark to the replayed tx.
 			// This allows the block's compaction to start working on the inserted data.
 			db.tx.Store(tx)
-			db.highWatermark.Store(tx)
+			db.highWatermark.Store(Txn{TxnID: tx, TxnMetadata: record.TxnMetadata})
 		case *walpb.Entry_TableBlockPersisted_:
 			return nil
 		case *walpb.Entry_Snapshot_:
@@ -771,8 +769,8 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
-	if lastTx >= snapshotTx {
-		db.tx.Store(lastTx)
+	if lastTx.TxnID >= snapshotTx.TxnID {
+		db.tx.Store(lastTx.TxnID)
 		db.highWatermark.Store(lastTx)
 	}
 	if lastTxn := db.tx.Load(); lastTxn != lastIndex {
@@ -1067,7 +1065,7 @@ func (p *DBTableProvider) GetTable(name string) (logicalplan.TableReader, error)
 
 // beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.
 func (db *DB) beginRead() uint64 {
-	return db.highWatermark.Load()
+	return db.highWatermark.Load().TxnID
 }
 
 // begin is an internal function that Tables call to start a transaction for writes.
@@ -1077,19 +1075,21 @@ func (db *DB) beginRead() uint64 {
 //	The current high watermark
 //	A function to complete the transaction
 func (db *DB) begin() (uint64, uint64, []byte, func()) {
-	tx := db.tx.Add(1)
+	txnID := db.tx.Add(1)
 	watermark := db.highWatermark.Load()
 	var txnMetadata []byte
 	if db.txnMetadataProvider != nil {
-		txnMetadata = db.txnMetadataProvider(tx)
+		txnMetadata = db.txnMetadataProvider(txnID)
 	}
-	return tx, watermark, txnMetadata, func() {
-		if mark := db.highWatermark.Load(); mark+1 == tx { // This is the next consecutive transaction; increate the watermark
-			db.highWatermark.Add(1)
+	return txnID, watermark.TxnID, txnMetadata, func() {
+		txn := Txn{TxnID: txnID, TxnMetadata: txnMetadata}
+		if mark := db.highWatermark.Load().TxnID; mark+1 == txnID {
+			// This is the next consecutive transaction; increase the watermark.
+			db.highWatermark.Store(txn)
 		}
 
 		// place completed transaction in the waiting pool
-		db.txPool.Insert(tx)
+		db.txPool.Insert(txn)
 	}
 }
 
@@ -1097,7 +1097,7 @@ func (db *DB) begin() (uint64, uint64, []byte, func()) {
 // Wait makes no differentiation between completed and aborted transactions.
 func (db *DB) Wait(tx uint64) {
 	for {
-		if db.highWatermark.Load() >= tx {
+		if db.highWatermark.Load().TxnID >= tx {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
