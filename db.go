@@ -1104,6 +1104,11 @@ func (db *DB) Wait(tx uint64) {
 	}
 }
 
+// HighWatermark returns the current high watermark.
+func (db *DB) HighWatermark() Txn {
+	return db.highWatermark.Load()
+}
+
 // validateName ensures that the passed in name doesn't violate any constrainsts.
 func validateName(name string) bool {
 	return !strings.Contains(name, "/")
