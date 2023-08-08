@@ -120,6 +120,9 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 	}
 	if !db.snapshotInProgress.CompareAndSwap(false, true) {
 		// Snapshot already in progress.
+		level.Debug(db.logger).Log(
+			"msg", "cannot start snapshot; snapshot already in progress",
+		)
 		return
 	}
 

@@ -1505,29 +1505,19 @@ func TestDBRecover(t *testing.T) {
 		}
 
 		// Verify that there are now 3 snapshots and their txns.
-		require.Eventually(t, func() bool {
-			files, err := os.ReadDir(db.snapshotsDir())
+		files, err := os.ReadDir(db.snapshotsDir())
+		require.NoError(t, err)
+		snapshotTxns := make([]uint64, 0, len(files))
+		for _, f := range files {
+			tx, err := getTxFromSnapshotFileName(f.Name())
 			require.NoError(t, err)
-			snapshotTxns := make([]uint64, 0, len(files))
-			for _, f := range files {
-				tx, err := getTxFromSnapshotFileName(f.Name())
-				require.NoError(t, err)
-				snapshotTxns = append(snapshotTxns, tx)
-			}
-			expectedSnapshots := []uint64{3, 5}
-			if blockRotation {
-				expectedSnapshots = append(expectedSnapshots, 8)
-			}
-			if len(snapshotTxns) != len(expectedSnapshots) {
-				return false
-			}
-			for i, txID := range expectedSnapshots {
-				if txID != snapshotTxns[i] {
-					return false
-				}
-			}
-			return true
-		}, 2*time.Second, 10*time.Millisecond)
+			snapshotTxns = append(snapshotTxns, tx)
+		}
+		expectedSnapshots := []uint64{3, 5}
+		if blockRotation {
+			expectedSnapshots = append(expectedSnapshots, 8)
+		}
+		require.Equal(t, expectedSnapshots, snapshotTxns)
 		return dir
 	}
 
