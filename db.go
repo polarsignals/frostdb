@@ -365,14 +365,30 @@ func WithUserDefinedTxnMetadataProvider(f func(tx uint64) []byte) DBOption {
 	}
 }
 
+// DB gets or creates a database on the given ColumnStore with the given
+// options. Note that if the database already exists, the options will be
+// applied cumulatively to the database.
 func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*DB, error) {
 	if !validateName(name) {
 		return nil, errors.New("invalid database name")
+	}
+	applyOptsToDB := func(db *DB) error {
+		db.mtx.Lock()
+		defer db.mtx.Unlock()
+		for _, opt := range opts {
+			if err := opt(db); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	s.mtx.RLock()
 	db, ok := s.dbs[name]
 	s.mtx.RUnlock()
 	if ok {
+		if err := applyOptsToDB(db); err != nil {
+			return nil, err
+		}
 		return db, nil
 	}
 
@@ -383,6 +399,9 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 	// wasn't concurrently created.
 	db, ok = s.dbs[name]
 	if ok {
+		if err := applyOptsToDB(db); err != nil {
+			return nil, err
+		}
 		return db, nil
 	}
 
@@ -402,10 +421,9 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		sources:     s.sources,
 		sinks:       s.sinks,
 	}
-	for _, opt := range opts {
-		if err := opt(db); err != nil {
-			return nil, err
-		}
+
+	if err := applyOptsToDB(db); err != nil {
+		return nil, err
 	}
 
 	if dbSetupErr := func() error {
