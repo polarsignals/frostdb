@@ -159,6 +159,18 @@ func TestUnexpectedTxn(t *testing.T) {
 }
 
 func TestWALTruncate(t *testing.T) {
+	logRecord := func(data string) *walpb.Record {
+		return &walpb.Record{
+			Entry: &walpb.Entry{
+				EntryType: &walpb.Entry_Write_{
+					Write: &walpb.Entry_Write{
+						Data:      []byte(data),
+						TableName: "test-table",
+					},
+				},
+			},
+		}
+	}
 	for i, tc := range []string{"BeforeLog", "AfterLog"} {
 		t.Run(tc, func(t *testing.T) {
 			dir := t.TempDir()
@@ -171,17 +183,8 @@ func TestWALTruncate(t *testing.T) {
 			defer w.Close()
 			w.RunAsync()
 
-			for i := uint64(0); i < 10; i++ {
-				require.NoError(t, w.Log(i, &walpb.Record{
-					Entry: &walpb.Entry{
-						EntryType: &walpb.Entry_Write_{
-							Write: &walpb.Entry_Write{
-								Data:      []byte(fmt.Sprintf("test-data-%d", i)),
-								TableName: "test-table",
-							},
-						},
-					},
-				}))
+			for j := uint64(1); j < 10; j++ {
+				require.NoError(t, w.Log(j, logRecord(fmt.Sprintf("test-data-%d", j))))
 			}
 			if i == 1 {
 				// Wait until the last entry is written before issuing the
@@ -212,4 +215,57 @@ func TestWALTruncate(t *testing.T) {
 			require.Equal(t, 1, numRecords)
 		})
 	}
+
+	t.Run("Reset", func(t *testing.T) {
+		dir := t.TempDir()
+		w, err := Open(
+			log.NewNopLogger(),
+			prometheus.NewRegistry(),
+			dir,
+		)
+		require.NoError(t, err)
+		defer w.Close()
+		w.RunAsync()
+
+		for i := uint64(1); i < 10; i++ {
+			require.NoError(t, w.Log(i, logRecord("test-data-%d")))
+		}
+
+		// Truncate way past the current last index, which should be 9.
+		const truncateIdx = 20
+		require.NoError(t, w.Truncate(truncateIdx))
+
+		require.Eventually(t, func() bool {
+			first, _ := w.FirstIndex()
+			last, _ := w.LastIndex()
+			return first == 0 && last == 0
+		}, time.Second, 10*time.Millisecond)
+
+		// Even though the WAL has been reset, we should not allow logging a
+		// record with a txn lower than the last truncation. This will only
+		// be observed on replay.
+		require.NoError(t, w.Log(1, logRecord("should-not-be-logged")))
+
+		// The only valid record to log is the one after truncateIdx.
+		require.NoError(t, w.Log(truncateIdx+1, logRecord("should-be-logged")))
+
+		// Wait for record to be logged.
+		require.Eventually(t, func() bool {
+			first, _ := w.FirstIndex()
+			last, _ := w.LastIndex()
+			return first == truncateIdx+1 && last == truncateIdx+1
+		}, time.Second, 10*time.Millisecond)
+
+		numRecords := 0
+		require.NoError(
+			t,
+			w.Replay(0, func(tx uint64, r *walpb.Record) error {
+				numRecords++
+				require.Equal(t, uint64(truncateIdx+1), tx)
+				require.Equal(t, []byte("should-be-logged"), r.Entry.GetWrite().Data)
+				return nil
+			}),
+		)
+		require.Equal(t, 1, numRecords)
+	})
 }

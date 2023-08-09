@@ -247,7 +247,7 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (Txn, e
 			if err != nil {
 				return err
 			}
-			watermark, err := LoadSnapshot(ctx, db, parsedTx, f, info.Size())
+			watermark, err := LoadSnapshot(ctx, db, parsedTx, f, info.Size(), false)
 			if err != nil {
 				return err
 			}
@@ -277,14 +277,17 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (Txn, e
 	return Txn{}, fmt.Errorf("%s", errString)
 }
 
-func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64) (Txn, error) {
+func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64, truncateWAL bool) (Txn, error) {
 	txnMetadata, err := loadSnapshot(ctx, db, r, size)
 	if err != nil {
 		return Txn{}, err
 	}
-	db.tx.Store(tx)
 	watermark := Txn{TxnID: tx, TxnMetadata: txnMetadata}
-	db.highWatermark.Store(watermark)
+	var wal WAL
+	if truncateWAL {
+		wal = db.wal
+	}
+	db.resetToTxn(watermark, wal)
 	return watermark, nil
 }
 
