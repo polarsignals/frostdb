@@ -79,6 +79,9 @@ type FileWAL struct {
 		// then perform a truncation. If another truncate call occurs in the
 		// meantime, the highest txn will be used.
 		truncateTx uint64
+		// nextTx is the next expected txn. The FileWAL will only log a record
+		// with this txn.
+		nextTx uint64
 	}
 
 	cancel     func()
@@ -127,6 +130,11 @@ func Open(
 		return nil, err
 	}
 
+	lastIndex, err := logStore.LastIndex()
+	if err != nil {
+		return nil, err
+	}
+
 	w := &FileWAL{
 		logger:       logger,
 		path:         path,
@@ -164,6 +172,8 @@ func Open(
 		},
 		shutdownCh: make(chan struct{}),
 	}
+
+	w.protected.nextTx = lastIndex + 1
 
 	return w, nil
 }
@@ -207,26 +217,16 @@ func (w *FileWAL) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			batch := batch[:0]
-			nextTx, err := w.log.LastIndex()
-			if err != nil {
-				// TODO(asubiotto): Should we do something else here? This
-				// most likely indicates that the WAL is corrupt.
-				level.Error(w.logger).Log(
-					"msg", "WAL failed to get last index",
-					"err", err,
-				)
-			}
-			nextTx++
 			w.protected.Lock()
 			for w.protected.queue.Len() > 0 {
-				if minTx := w.protected.queue[0].tx; minTx != nextTx {
-					if minTx < nextTx {
+				if minTx := w.protected.queue[0].tx; minTx != w.protected.nextTx {
+					if minTx < w.protected.nextTx {
 						// The next entry must be dropped otherwise progress
 						// will never be made. Log a warning given this could
 						// lead to missing data.
 						level.Warn(w.logger).Log(
 							"msg", "WAL cannot log a txn id that has already been seen; dropping entry",
-							"expected", nextTx,
+							"expected", w.protected.nextTx,
 							"found", minTx,
 						)
 						_ = heap.Pop(&w.protected.queue)
@@ -235,13 +235,13 @@ func (w *FileWAL) run(ctx context.Context) {
 				}
 				r := heap.Pop(&w.protected.queue).(*logRequest)
 				batch = append(batch, r)
-				nextTx++
+				w.protected.nextTx++
 			}
 			// truncateTx will be non-zero if we either are about to log a
 			// record with a txn past the txn to truncate, or we have logged one
 			// in the past.
 			truncateTx := uint64(0)
-			if w.protected.truncateTx < nextTx {
+			if w.protected.truncateTx != 0 {
 				truncateTx = w.protected.truncateTx
 				w.protected.truncateTx = 0
 			}
@@ -280,6 +280,17 @@ func (w *FileWAL) run(ctx context.Context) {
 				if err := w.log.TruncateFront(truncateTx); err != nil {
 					level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", truncateTx, "err", err)
 				} else {
+					w.protected.Lock()
+					if truncateTx > w.protected.nextTx {
+						// truncateTx is the new firstIndex of the WAL. If it is
+						// greater than the next expected transaction, this was
+						// a full WAL truncation/reset so both the first and
+						// last index are now 0. The underlying WAL will allow a
+						// record with any index to be written, however we only
+						// want to allow the next index to be logged.
+						w.protected.nextTx = truncateTx + 1
+					}
+					w.protected.Unlock()
 					level.Debug(w.logger).Log("msg", "truncated WAL", "tx", truncateTx)
 				}
 			}
