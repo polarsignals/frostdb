@@ -544,18 +544,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		)
 		snapshotTx.TxnID = 0
 	}
-	firstIndex, err := wal.FirstIndex()
-	if err != nil {
-		level.Info(db.logger).Log(
-			"msg", "failed to get WAL first index",
-			"err", err)
-	}
-	lastIndex, err := wal.LastIndex()
-	if err != nil {
-		level.Info(db.logger).Log(
-			"msg", "failed to get WAL last index",
-			"err", err)
-	}
 	snapshotLogArgs := make([]any, 0)
 	if snapshotTx.TxnID != 0 {
 		snapshotLogArgs = append(
@@ -571,30 +559,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				"snapshot_tx", snapshotTx,
 			)
 		}
-		if snapshotTx.TxnID > firstIndex && snapshotTx.TxnID <= lastIndex {
-			if err := wal.Truncate(snapshotTx.TxnID); err != nil {
-				// Since this is a best-effort truncation, move on if there is an
-				// error.
-				level.Info(db.logger).Log(
-					"msg", "WAL truncation after successful snapshot load encountered error",
-					"err", err,
-					"first_index", firstIndex,
-					"last_index", lastIndex,
-					"snapshot_tx", snapshotTx,
-				)
-			} else {
-				snapshotLogArgs = append(
-					snapshotLogArgs,
-					"wal_truncated", "true",
-					"wal_first_index_pre_truncation", firstIndex)
-				firstIndex = snapshotTx.TxnID
-			}
-		} else {
-			snapshotLogArgs = append(
-				snapshotLogArgs,
-				"wal_truncated", "false",
-			)
-		}
+		db.resetToTxn(snapshotTx, wal)
 	}
 
 	// persistedTables is a map from a table name to the last transaction
@@ -771,10 +736,11 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				}
 			}
 
-			// After every insert we're setting the tx and highWatermark to the replayed tx.
-			// This allows the block's compaction to start working on the inserted data.
-			db.tx.Store(tx)
-			db.highWatermark.Store(Txn{TxnID: tx, TxnMetadata: record.TxnMetadata})
+			// After every insert we're setting the tx and highWatermark to the
+			// replayed tx.
+			// This allows the block's compaction to start working on the
+			// inserted data.
+			db.resetToTxn(Txn{TxnID: tx, TxnMetadata: record.TxnMetadata}, nil)
 		case *walpb.Entry_TableBlockPersisted_:
 			return nil
 		case *walpb.Entry_Snapshot_:
@@ -788,23 +754,12 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	}
 
 	if lastTx.TxnID >= snapshotTx.TxnID {
-		db.tx.Store(lastTx.TxnID)
-		db.highWatermark.Store(lastTx)
+		db.resetToTxn(lastTx, nil)
 	}
-	if lastTxn := db.tx.Load(); lastTxn != lastIndex {
-		level.Warn(db.logger).Log(
-			"msg", "WAL last index is != db last txn, won't be able to log records to WAL",
-			"wal_last_index", lastIndex,
-			"last_tx", lastTxn,
-		)
-	}
-
 	level.Info(db.logger).Log(
 		append(
 			[]any{
 				"msg", "db recovered",
-				"wal_first_index", firstIndex,
-				"wal_last_index", lastIndex,
 				"wal_replay_duration", time.Since(start),
 			},
 			snapshotLogArgs...,
@@ -1125,6 +1080,25 @@ func (db *DB) Wait(tx uint64) {
 // HighWatermark returns the current high watermark.
 func (db *DB) HighWatermark() Txn {
 	return db.highWatermark.Load()
+}
+
+// resetToTxn resets the DB's internal state to resume from the given
+// transaction. If the given wal is non-nil, it is also reset so that the next
+// expected transaction will log correctly to the WAL. Note that db.wal is not
+// used since callers might be calling resetToTxn before db.wal has been
+// initialized or might not want the WAL to be reset.
+func (db *DB) resetToTxn(txn Txn, wal WAL) {
+	db.tx.Store(txn.TxnID)
+	db.highWatermark.Store(txn)
+	if wal != nil {
+		if err := wal.Truncate(txn.TxnID); err != nil {
+			level.Warn(db.logger).Log(
+				"msg", "failed to truncate WAL when resetting DB to txn",
+				"txnID", txn.TxnID,
+				"err", err,
+			)
+		}
+	}
 }
 
 // validateName ensures that the passed in name doesn't violate any constrainsts.
