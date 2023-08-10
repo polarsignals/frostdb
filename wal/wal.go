@@ -204,6 +204,7 @@ func (w *FileWAL) run(ctx context.Context) {
 			if n > 0 {
 				// force the WAL to close after some a timeout.
 				if w.closeTimeout > 0 && time.Since(lastBatchWrite) > w.closeTimeout {
+					w.metrics.walCloseTimeouts.Inc()
 					level.Error(w.logger).Log(
 						"msg", "WAL timed out attempting to close",
 					)
