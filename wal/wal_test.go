@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -268,4 +269,44 @@ func TestWALTruncate(t *testing.T) {
 		)
 		require.Equal(t, 1, numRecords)
 	})
+}
+
+func TestWALCloseTimeout(t *testing.T) {
+	dir := t.TempDir()
+	w, err := Open(
+		log.NewNopLogger(),
+		prometheus.NewRegistry(),
+		dir,
+	)
+	w.closeTimeout = 1 * time.Second
+	require.NoError(t, err)
+	defer w.Close()
+
+	closed := false
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		w.run(ctx)
+		closed = true
+	}()
+
+	// This will cause the WAL to enter a state where it will not close
+	// b/c it was expecting the
+	require.NoError(t, w.Log(2, &walpb.Record{
+		Entry: &walpb.Entry{
+			EntryType: &walpb.Entry_Write_{
+				Write: &walpb.Entry_Write{
+					Data:      []byte("test-data"),
+					TableName: "test-table",
+				},
+			},
+		},
+	}))
+
+	// have the WAL attempt to close
+	cancel()
+	w.log.Close()
+
+	require.Eventually(t, func() bool {
+		return closed
+	}, 5*time.Second, 10*time.Millisecond)
 }
