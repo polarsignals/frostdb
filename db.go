@@ -548,7 +548,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	if snapshotTx.TxnID != 0 {
 		snapshotLogArgs = append(
 			snapshotLogArgs,
-			"snapshot_tx", snapshotTx,
+			"snapshot_tx", snapshotTx.TxnID,
 			"snapshot_load_duration", time.Since(snapshotLoadStart),
 		)
 		if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx.TxnID); err != nil {
