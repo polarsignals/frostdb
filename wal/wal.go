@@ -154,7 +154,7 @@ func Open(
 				return &bytes.Buffer{}
 			},
 		},
-		closeTimeout: 5 * time.Second,
+		closeTimeout: 1 * time.Second,
 		metrics: &fileWALMetrics{
 			failedLogs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "failed_logs_total",
@@ -192,7 +192,8 @@ func (w *FileWAL) run(ctx context.Context) {
 	batch := make([]*logRequest, 0, 128)
 	// lastQueueSize is only used on shutdown to reduce debug logging verbosity.
 	lastQueueSize := 0
-	var closeStarted time.Time
+	// lastBatchWrite is used to determine when to force a close of the WAL.
+	lastBatchWrite := time.Now()
 
 	for {
 		select {
@@ -202,10 +203,7 @@ func (w *FileWAL) run(ctx context.Context) {
 			w.protected.Unlock()
 			if n > 0 {
 				// force the WAL to close after some a timeout.
-				if closeStarted.IsZero() {
-					closeStarted = time.Now()
-				}
-				if w.closeTimeout > 0 && time.Since(closeStarted) > w.closeTimeout {
+				if w.closeTimeout > 0 && time.Since(lastBatchWrite) > w.closeTimeout {
 					level.Error(w.logger).Log(
 						"msg", "WAL timed out attempting to close",
 					)
@@ -318,6 +316,8 @@ func (w *FileWAL) run(ctx context.Context) {
 			for _, r := range batch {
 				w.logRequestPool.Put(r)
 			}
+
+			lastBatchWrite = time.Now()
 		}
 	}
 }

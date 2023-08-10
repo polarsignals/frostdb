@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -278,19 +279,19 @@ func TestWALCloseTimeout(t *testing.T) {
 		prometheus.NewRegistry(),
 		dir,
 	)
-	w.closeTimeout = 1 * time.Second
 	require.NoError(t, err)
 	defer w.Close()
 
-	closed := false
+	closed := atomic.Bool{}
+	closed.Store(false)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		w.run(ctx)
-		closed = true
+		closed.Store(true)
 	}()
 
 	// This will cause the WAL to enter a state where it will not close
-	// b/c it was expecting the
+	// b/c it was expecting the next transaction to be 1.
 	require.NoError(t, w.Log(2, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_Write_{
@@ -307,6 +308,6 @@ func TestWALCloseTimeout(t *testing.T) {
 	w.log.Close()
 
 	require.Eventually(t, func() bool {
-		return closed
-	}, 5*time.Second, 10*time.Millisecond)
+		return closed.Load()
+	}, 1*time.Second, 10*time.Millisecond)
 }
