@@ -1,5 +1,5 @@
 test:
-	go test -tags debug -race ./...
+	go test -tags assert,debug -race ./...
 
 .PHONY: gen/proto
 gen/proto:
