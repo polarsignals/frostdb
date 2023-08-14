@@ -157,7 +157,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 			}
 		}
 
-		if err := db.snapshotAtTX(ctx, tx, metadata); err != nil {
+		if err := db.snapshotAtTX(ctx, tx, metadata, db.snapshotWriter(tx, metadata)); err != nil {
 			level.Error(db.logger).Log(
 				"msg", "failed to snapshot database", "err", err,
 			)
@@ -173,7 +173,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 }
 
 // snapshotAtTX takes a snapshot of the state of the database at transaction tx.
-func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, txnMetadata []byte) error {
+func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, txnMetadata []byte, writeSnapshot func(context.Context, io.Writer) error) error {
 	var fileSize int64
 	start := time.Now()
 	if err := func() error {
@@ -190,7 +190,7 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, txnMetadata []byte) e
 		defer f.Close()
 
 		if err := func() error {
-			if err := WriteSnapshot(ctx, tx, txnMetadata, db, f); err != nil {
+			if err := writeSnapshot(ctx, f); err != nil {
 				return err
 			}
 			if err := f.Sync(); err != nil {
@@ -354,6 +354,12 @@ func (w *offsetWriter) Write(p []byte) (int, error) {
 
 func (w *offsetWriter) checksum() uint32 {
 	return w.runningChecksum.Sum32()
+}
+
+func (db *DB) snapshotWriter(tx uint64, txnMetadata []byte) func(context.Context, io.Writer) error {
+	return func(ctx context.Context, w io.Writer) error {
+		return WriteSnapshot(ctx, tx, txnMetadata, db, w)
+	}
 }
 
 func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w io.Writer) error {
