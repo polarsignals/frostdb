@@ -706,3 +706,10 @@ func (db *DB) snapshotsDo(ctx context.Context, dir string, callback func(tx uint
 	}
 	return nil
 }
+
+func StoreSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, snapshot io.Reader) error {
+	return db.snapshotAtTX(ctx, tx, txnMetadata, func(ctx context.Context, w io.Writer) error {
+		_, err := io.Copy(w, snapshot)
+		return err
+	})
+}
