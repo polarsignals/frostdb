@@ -178,6 +178,7 @@ type WAL interface {
 	// the last valid index.
 	Replay(tx uint64, handler wal.ReplayHandlerFunc) error
 	Truncate(tx uint64) error
+	Reset(nextTx uint64) error
 	FirstIndex() (uint64, error)
 	LastIndex() (uint64, error)
 }
