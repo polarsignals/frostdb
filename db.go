@@ -477,9 +477,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 			}, func() float64 {
 				return float64(db.highWatermark.Load().TxnID)
 			}),
-		}
-		if db.columnStore.snapshotTriggerSize != 0 {
-			db.metrics.snapshotMetrics = newSnapshotMetrics(reg)
+			snapshotMetrics: newSnapshotMetrics(reg),
 		}
 		return nil
 	}(); dbSetupErr != nil {
