@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 	"time"
@@ -42,6 +43,10 @@ func (w *NopWAL) LogRecord(_ uint64, _ []byte, _ string, _ arrow.Record) error {
 }
 
 func (w *NopWAL) Truncate(_ uint64) error {
+	return nil
+}
+
+func (w *NopWAL) Reset(_ uint64) error {
 	return nil
 }
 
@@ -312,6 +317,21 @@ func (w *FileWAL) Truncate(tx uint64) error {
 		w.protected.truncateTx = tx
 	}
 	return nil
+}
+
+func (w *FileWAL) Reset(nextTx uint64) error {
+	w.protected.Lock()
+	defer w.protected.Unlock()
+	// Drain any pending records.
+	for w.protected.queue.Len() > 0 {
+		_ = heap.Pop(&w.protected.queue)
+	}
+	// Set the next expected transaction.
+	w.protected.nextTx = nextTx
+	// This truncation will fully reset the underlying WAL. Any index can be
+	// logged, but setting the nextTx above will ensure that only a record with
+	// a matching txn will be accepted as the first record.
+	return w.log.TruncateFront(math.MaxUint64)
 }
 
 func (w *FileWAL) Close() error {

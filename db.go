@@ -556,10 +556,16 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			level.Info(db.logger).Log(
 				"msg", "failed to truncate snapshots less than loaded snapshot",
 				"err", err,
-				"snapshot_tx", snapshotTx,
+				"snapshot_tx", snapshotTx.TxnID,
 			)
 		}
-		db.resetToTxn(snapshotTx, wal)
+		if err := wal.Truncate(snapshotTx.TxnID); err != nil {
+			level.Info(db.logger).Log(
+				"msg", "failed to truncate WAL after loading snapshot",
+				"err", err,
+				"snapshot_tx", snapshotTx.TxnID,
+			)
+		}
 	}
 
 	// persistedTables is a map from a table name to the last transaction
@@ -753,14 +759,17 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
-	if lastTx.TxnID >= snapshotTx.TxnID {
-		db.resetToTxn(lastTx, nil)
+	resetTxn := snapshotTx
+	if lastTx.TxnID > resetTxn.TxnID {
+		resetTxn = lastTx
 	}
+	db.resetToTxn(resetTxn, nil)
 	level.Info(db.logger).Log(
 		append(
 			[]any{
 				"msg", "db recovered",
 				"wal_replay_duration", time.Since(start),
+				"watermark", resetTxn.TxnID,
 			},
 			snapshotLogArgs...,
 		)...,
@@ -1091,9 +1100,11 @@ func (db *DB) resetToTxn(txn Txn, wal WAL) {
 	db.tx.Store(txn.TxnID)
 	db.highWatermark.Store(txn)
 	if wal != nil {
-		if err := wal.Truncate(txn.TxnID); err != nil {
+		// This call resets the WAL to a zero state so that new records can be
+		// logged.
+		if err := wal.Reset(txn.TxnID + 1); err != nil {
 			level.Warn(db.logger).Log(
-				"msg", "failed to truncate WAL when resetting DB to txn",
+				"msg", "failed to reset WAL when resetting DB to txn",
 				"txnID", txn.TxnID,
 				"err", err,
 			)
