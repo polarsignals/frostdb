@@ -1,11 +1,9 @@
 package wal
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -280,15 +278,8 @@ func TestWALCloseTimeout(t *testing.T) {
 		dir,
 	)
 	require.NoError(t, err)
-	defer w.Close()
 
-	closed := atomic.Bool{}
-	closed.Store(false)
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		w.run(ctx)
-		closed.Store(true)
-	}()
+	w.RunAsync()
 
 	// This will cause the WAL to enter a state where it will not close
 	// b/c it was expecting the next transaction to be 1.
@@ -303,11 +294,7 @@ func TestWALCloseTimeout(t *testing.T) {
 		},
 	}))
 
-	// have the WAL attempt to close
-	cancel()
-	w.log.Close()
-
-	require.Eventually(t, func() bool {
-		return closed.Load()
-	}, 5*time.Second, 10*time.Millisecond)
+	// This should not block forever, otherwise the test will fail by timeout
+	err = w.Close()
+	require.NoError(t, err)
 }
