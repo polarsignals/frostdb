@@ -269,3 +269,32 @@ func TestWALTruncate(t *testing.T) {
 		require.Equal(t, 1, numRecords)
 	})
 }
+
+func TestWALCloseTimeout(t *testing.T) {
+	dir := t.TempDir()
+	w, err := Open(
+		log.NewNopLogger(),
+		prometheus.NewRegistry(),
+		dir,
+	)
+	require.NoError(t, err)
+
+	w.RunAsync()
+
+	// This will cause the WAL to enter a state where it will not close
+	// b/c it was expecting the next transaction to be 1.
+	require.NoError(t, w.Log(2, &walpb.Record{
+		Entry: &walpb.Entry{
+			EntryType: &walpb.Entry_Write_{
+				Write: &walpb.Entry_Write{
+					Data:      []byte("test-data"),
+					TableName: "test-table",
+				},
+			},
+		},
+	}))
+
+	// This should not block forever, otherwise the test will fail by timeout
+	err = w.Close()
+	require.NoError(t, err)
+}

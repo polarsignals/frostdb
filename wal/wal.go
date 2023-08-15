@@ -63,6 +63,7 @@ type fileWALMetrics struct {
 	lastTruncationAt      prometheus.Gauge
 	walRepairs            prometheus.Counter
 	walRepairsLostRecords prometheus.Counter
+	walCloseTimeouts      prometheus.Counter
 }
 
 const dirPerms = os.FileMode(0o750)
@@ -89,8 +90,9 @@ type FileWAL struct {
 		nextTx uint64
 	}
 
-	cancel     func()
-	shutdownCh chan struct{}
+	cancel       func()
+	shutdownCh   chan struct{}
+	closeTimeout time.Duration
 }
 
 type logRequest struct {
@@ -157,6 +159,7 @@ func Open(
 				return &bytes.Buffer{}
 			},
 		},
+		closeTimeout: 1 * time.Second,
 		metrics: &fileWALMetrics{
 			failedLogs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "failed_logs_total",
@@ -174,6 +177,10 @@ func Open(
 				Name: "repairs_lost_records_total",
 				Help: "The number of WAL records lost due to WAL repairs (truncations)",
 			}),
+			walCloseTimeouts: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "close_timeouts_total",
+				Help: "The number of times the WAL failed to close due to a timeout",
+			}),
 		},
 		shutdownCh: make(chan struct{}),
 	}
@@ -190,6 +197,9 @@ func (w *FileWAL) run(ctx context.Context) {
 	batch := make([]*logRequest, 0, 128)
 	// lastQueueSize is only used on shutdown to reduce debug logging verbosity.
 	lastQueueSize := 0
+	// lastBatchWrite is used to determine when to force a close of the WAL.
+	lastBatchWrite := time.Now()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -197,6 +207,15 @@ func (w *FileWAL) run(ctx context.Context) {
 			n := w.protected.queue.Len()
 			w.protected.Unlock()
 			if n > 0 {
+				// force the WAL to close after some a timeout.
+				if w.closeTimeout > 0 && time.Since(lastBatchWrite) > w.closeTimeout {
+					w.metrics.walCloseTimeouts.Inc()
+					level.Error(w.logger).Log(
+						"msg", "WAL timed out attempting to close",
+					)
+					return
+				}
+
 				// Need to drain the queue before we can shutdown.
 				if n == lastQueueSize {
 					continue
@@ -303,6 +322,8 @@ func (w *FileWAL) run(ctx context.Context) {
 			for _, r := range batch {
 				w.logRequestPool.Put(r)
 			}
+
+			lastBatchWrite = time.Now()
 		}
 	}
 }
