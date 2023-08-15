@@ -157,7 +157,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 			}
 		}
 
-		if err := db.snapshotAtTX(ctx, tx, metadata, db.snapshotWriter(tx, metadata)); err != nil {
+		if err := db.snapshotAtTX(ctx, tx, db.snapshotWriter(tx, metadata)); err != nil {
 			level.Error(db.logger).Log(
 				"msg", "failed to snapshot database", "err", err,
 			)
@@ -173,7 +173,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 }
 
 // snapshotAtTX takes a snapshot of the state of the database at transaction tx.
-func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, txnMetadata []byte, writeSnapshot func(context.Context, io.Writer) error) error {
+func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, writeSnapshot func(context.Context, io.Writer) error) error {
 	var fileSize int64
 	start := time.Now()
 	if err := func() error {
@@ -707,8 +707,8 @@ func (db *DB) snapshotsDo(ctx context.Context, dir string, callback func(tx uint
 	return nil
 }
 
-func StoreSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, snapshot io.Reader) error {
-	return db.snapshotAtTX(ctx, tx, txnMetadata, func(ctx context.Context, w io.Writer) error {
+func StoreSnapshot(ctx context.Context, tx uint64, db *DB, snapshot io.Reader) error {
+	return db.snapshotAtTX(ctx, tx, func(ctx context.Context, w io.Writer) error {
 		_, err := io.Copy(w, snapshot)
 		return err
 	})

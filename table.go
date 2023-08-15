@@ -481,7 +481,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 			// TODO(asubiotto): Eventually we should register a cancel function
 			// that is called with a grace period on db.Close.
 			ctx := context.Background()
-			if err := t.db.snapshotAtTX(ctx, tx, metadata, t.db.snapshotWriter(tx, metadata)); err != nil {
+			if err := t.db.snapshotAtTX(ctx, tx, t.db.snapshotWriter(tx, metadata)); err != nil {
 				level.Error(t.logger).Log(
 					"msg", "failed to write snapshot on block rotation",
 					"err", err,
