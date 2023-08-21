@@ -74,6 +74,14 @@ func (b *builderBase) AppendNulls(n int) {
 	b.length += n
 }
 
+func (b *builderBase) IsValid(n int) bool {
+	if n < 0 || n >= b.length {
+		panic(fmt.Sprintf("IsValid: invalid index %d", n))
+	}
+
+	return bitutil.BitIsSet(b.validityBitmap, n)
+}
+
 // appendValid does the opposite of appendNulls.
 func (b *builderBase) appendValid(n int) {
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length+n)
@@ -524,5 +532,150 @@ func (b *OptBooleanBuilder) ResetToLength(n int) {
 
 	b.length = n
 	b.data = resizeBitmap(b.data, n)
+	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
+}
+
+type OptInt32Builder struct {
+	builderBase
+
+	data []int32
+}
+
+func NewOptInt32Builder(dtype arrow.DataType) *OptInt32Builder {
+	b := &OptInt32Builder{}
+	b.dtype = dtype
+	return b
+}
+
+func (b *OptInt32Builder) resizeData(neededLength int) {
+	if cap(b.data) < neededLength {
+		oldData := b.data
+		b.data = make([]int32, bitutil.NextPowerOf2(neededLength))
+		copy(b.data, oldData)
+	}
+	b.data = b.data[:neededLength]
+}
+
+func (b *OptInt32Builder) Release() {
+	if atomic.AddInt64(&b.refCount, -1) == 0 {
+		b.data = nil
+		b.releaseInternal()
+	}
+}
+
+func (b *OptInt32Builder) AppendNull() {
+	b.AppendNulls(1)
+}
+
+func (b *OptInt32Builder) AppendNulls(n int) {
+	b.resizeData(b.length + n)
+	b.builderBase.AppendNulls(n)
+}
+
+func (b *OptInt32Builder) NewArray() arrow.Array {
+	var dataAsBytes []byte
+
+	fromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&b.data))
+	toHeader := (*reflect.SliceHeader)(unsafe.Pointer(&dataAsBytes))
+	toHeader.Data = fromHeader.Data
+	toHeader.Len = fromHeader.Len * arrow.Int32SizeBytes
+	toHeader.Cap = fromHeader.Cap * arrow.Int32SizeBytes
+
+	data := array.NewData(
+		b.dtype,
+		b.length,
+		[]*memory.Buffer{
+			memory.NewBufferBytes(b.validityBitmap),
+			memory.NewBufferBytes(dataAsBytes),
+		},
+		nil,
+		b.length-bitutil.CountSetBits(b.validityBitmap, 0, b.length),
+		0,
+	)
+	b.reset()
+	b.data = b.data[:0]
+	return array.NewInt32Data(data)
+}
+
+// AppendData appends a slice of int32s to the builder. This data is considered
+// to be non-null.
+func (b *OptInt32Builder) AppendData(data []int32) {
+	oldLength := b.length
+	b.data = append(b.data, data...)
+	b.length += len(data)
+	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
+	bitutil.SetBitsTo(b.validityBitmap, int64(oldLength), int64(len(data)), true)
+}
+
+func (b *OptInt32Builder) Append(v int32) {
+	b.data = append(b.data, v)
+	b.length++
+	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length)
+	bitutil.SetBit(b.validityBitmap, b.length-1)
+}
+
+func (b *OptInt32Builder) Set(i int, v int32) {
+	if i < 0 || i >= len(b.data) {
+		panic("arrow/array: index out of range")
+	}
+	b.data[i] = v
+}
+
+func (b *OptInt32Builder) SetNull(i int) {
+	if i < 0 || i >= b.length {
+		panic("arrow/array: index out of range")
+	}
+	bitutil.ClearBit(b.validityBitmap, i)
+}
+
+func (b *OptInt32Builder) Add(i int, v int32) {
+	if i < 0 || i >= len(b.data) {
+		panic("arrow/array: index out of range")
+	}
+	b.data[i] += v
+}
+
+func (b *OptInt32Builder) Value(i int) int32 {
+	if i < 0 || i >= len(b.data) {
+		panic("arrow/array: index out of range")
+	}
+	return b.data[i]
+}
+
+func (b *OptInt32Builder) AppendParquetValues(values []parquet.Value) {
+	b.resizeData(b.length + len(values))
+	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length+len(values))
+	for i, j := b.length, 0; i < b.length+len(values) && j < len(values); {
+		b.data[i] = values[j].Int32()
+		bitutil.SetBitTo(b.validityBitmap, i, !values[j].IsNull())
+		i++
+		j++
+	}
+	b.length += len(values)
+}
+
+func (b *OptInt32Builder) RepeatLastValue(n int) error {
+	if bitutil.BitIsNotSet(b.validityBitmap, b.length-1) {
+		b.AppendNulls(n)
+		return nil
+	}
+
+	lastValue := b.data[b.length-1]
+	b.resizeData(b.length + n)
+	for i := b.length; i < b.length+n; i++ {
+		b.data[i] = lastValue
+	}
+	b.appendValid(n)
+	return nil
+}
+
+// ResetToLength is specific to distinct optimizations in FrostDB.
+func (b *OptInt32Builder) ResetToLength(n int) {
+	if n == b.length {
+		return
+	}
+
+	b.length = n
+	b.data = b.data[:n]
 	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
 }
