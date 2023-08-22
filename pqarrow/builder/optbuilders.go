@@ -487,6 +487,20 @@ func (b *OptBooleanBuilder) Append(data []byte, valid int) {
 	}
 }
 
+func (b *OptBooleanBuilder) Set(i int, v bool) {
+	if i < 0 || i >= len(b.data) {
+		panic("arrow/array: index out of range")
+	}
+	bitutil.SetBitTo(b.data, i, v)
+}
+
+func (b *OptBooleanBuilder) Value(i int) bool {
+	if i < 0 || i >= len(b.data) {
+		panic("arrow/array: index out of range")
+	}
+	return bitutil.BitIsSet(b.data, i)
+}
+
 func (b *OptBooleanBuilder) AppendData(data []byte) {
 	panic("do not use AppendData for opt boolean builder, use Append instead")
 }
