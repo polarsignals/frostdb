@@ -1114,3 +1114,8 @@ func (db *DB) resetToTxn(txn Txn, wal WAL) {
 func validateName(name string) bool {
 	return !strings.Contains(name, "/")
 }
+
+// DropStorage drops all data in the storage.
+func (db *DB) DropStorage() error {
+	return os.Remove(db.storagePath)
+}
