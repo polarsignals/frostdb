@@ -1117,5 +1117,5 @@ func validateName(name string) bool {
 
 // DropStorage drops all data in the storage.
 func (db *DB) DropStorage() error {
-	return os.Remove(db.storagePath)
+	return os.RemoveAll(db.storagePath)
 }
