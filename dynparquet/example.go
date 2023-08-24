@@ -94,7 +94,6 @@ func (s Samples) ToRecord() (arrow.Record, error) {
 	fields = append(fields, arrow.Field{Name: "timestamp", Type: arrow.PrimitiveTypes.Int64})
 	fields = append(fields, arrow.Field{Name: "value", Type: arrow.PrimitiveTypes.Int64})
 	schema := arrow.NewSchema(fields, nil)
-	fmt.Println(schema)
 
 	bld := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
 	defer bld.Release()
