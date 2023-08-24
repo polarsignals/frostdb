@@ -31,6 +31,8 @@ type OptimizedBuilder interface {
 	AppendNulls(int)
 	ResetToLength(int)
 	RepeatLastValue(int) error
+	IsNull(i int) bool
+	IsValid(i int) bool
 }
 
 type builderBase struct {
@@ -87,6 +89,14 @@ func (b *builderBase) appendValid(n int) {
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length+n)
 	bitutil.SetBitsTo(b.validityBitmap, int64(b.length), int64(n), true)
 	b.length += n
+}
+
+func (b *builderBase) IsNull(n int) bool {
+	if n < 0 || n >= b.length {
+		panic(fmt.Sprintf("IsValid: invalid index %d", n))
+	}
+
+	return bitutil.BitIsNotSet(b.validityBitmap, n)
 }
 
 func resizeBitmap(bitmap []byte, valuesToRepresent int) []byte {
