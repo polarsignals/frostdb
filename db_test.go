@@ -1792,7 +1792,9 @@ func Test_DB_DropStorage(t *testing.T) {
 		WithStoragePath(dir),
 		WithActiveMemorySize(1024*1024),
 	)
-	defer c.Close()
+	defer func() {
+		_ = c.Close()
+	}()
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -1832,12 +1834,14 @@ func Test_DB_DropStorage(t *testing.T) {
 		WithStoragePath(dir),
 		WithActiveMemorySize(1024*1024),
 	)
-	defer c.Close()
+	defer func() {
+		_ = c.Close()
+	}()
 	require.NoError(t, err)
 	level.Debug(logger).Log("msg", "opening new db")
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
-	table, err = db.Table("test", config)
+	_, err = db.Table("test", config)
 	require.NoError(t, err)
 	countRows(0)
 }
