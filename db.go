@@ -775,7 +775,23 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	return nil
 }
 
-func (db *DB) Close() error {
+type CloseOption func(*closeOptions)
+
+type closeOptions struct {
+	clearStorage bool
+}
+
+func WithClearStorage() CloseOption {
+	return func(o *closeOptions) {
+		o.clearStorage = true
+	}
+}
+
+func (db *DB) Close(options ...CloseOption) error {
+	opts := &closeOptions{}
+	for _, opt := range options {
+		opt(opts)
+	}
 	level.Info(db.logger).Log("msg", "closing DB")
 	shouldPersist := len(db.sinks) > 0 && !db.columnStore.manualBlockRotation
 	for _, table := range db.tables {
@@ -796,8 +812,8 @@ func (db *DB) Close() error {
 		return err
 	}
 
-	if shouldPersist {
-		if err := db.DropStorage(false); err != nil {
+	if shouldPersist || opts.clearStorage {
+		if err := db.dropStorage(); err != nil {
 			return err
 		}
 		level.Info(db.logger).Log("msg", "cleaned up wal & snapshots")
@@ -1082,11 +1098,8 @@ func validateName(name string) bool {
 	return !strings.Contains(name, "/")
 }
 
-// DropStorage removes snapshots and WAL data from the storage directory.
-func (db *DB) DropStorage(newwal bool) error {
-	if newwal {
-		defer db.wal.Reset(0) // TODO: can we reset to 0, or do we need to reset to the last txn?
-	}
+// dropStorage removes snapshots and WAL data from the storage directory.
+func (db *DB) dropStorage() error {
 	trashDir := db.trashDir()
 
 	if moveErr := func() error {
