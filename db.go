@@ -797,40 +797,7 @@ func (db *DB) Close() error {
 	}
 
 	if shouldPersist {
-		// If we've successfully persisted all the table blocks we can remove
-		// the wal and snapshots. Move the two directories to a trash dir since
-		// it is an O(1) operation. The trash dir is cleaned up on startup in
-		// case we cannot delete the WAL/snapshots in time.
-		trashDir := db.trashDir()
-
-		if moveErr := func() error {
-			_ = os.Mkdir(trashDir, os.FileMode(0o755))
-			// Create a temporary directory in the trash dir to avoid clashing
-			// with other wal/snapshot dirs that might not have been removed
-			// previously.
-			tmpPath, err := os.MkdirTemp(trashDir, "")
-			if err != nil {
-				return err
-			}
-			if err := os.Rename(db.snapshotsDir(), filepath.Join(tmpPath, snapshotsPath)); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			if err := os.Rename(db.walDir(), filepath.Join(tmpPath, walPath)); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			return nil
-		}(); moveErr != nil {
-			// If we failed to move the wal/snapshots to the trash dir, fall
-			// back to attempting to remove them with RemoveAll.
-			if err := os.RemoveAll(db.snapshotsDir()); err != nil {
-				return fmt.Errorf("%v: %v", moveErr, err)
-			}
-			if err := os.RemoveAll(db.walDir()); err != nil {
-				return fmt.Errorf("%v: %v", moveErr, err)
-			}
-			return moveErr
-		}
-		if err := os.RemoveAll(trashDir); err != nil {
+		if err := db.DropStorage(); err != nil {
 			return err
 		}
 		level.Info(db.logger).Log("msg", "cleaned up wal & snapshots")
@@ -1115,7 +1082,36 @@ func validateName(name string) bool {
 	return !strings.Contains(name, "/")
 }
 
-// DropStorage drops all data in the storage.
+// DropStorage removes snapshots and WAL data from the storage directory.
 func (db *DB) DropStorage() error {
-	return os.RemoveAll(db.storagePath)
+	trashDir := db.trashDir()
+
+	if moveErr := func() error {
+		_ = os.Mkdir(trashDir, os.FileMode(0o755))
+		// Create a temporary directory in the trash dir to avoid clashing
+		// with other wal/snapshot dirs that might not have been removed
+		// previously.
+		tmpPath, err := os.MkdirTemp(trashDir, "")
+		if err != nil {
+			return err
+		}
+		if err := os.Rename(db.snapshotsDir(), filepath.Join(tmpPath, snapshotsPath)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Rename(db.walDir(), filepath.Join(tmpPath, walPath)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}(); moveErr != nil {
+		// If we failed to move the wal/snapshots to the trash dir, fall
+		// back to attempting to remove them with RemoveAll.
+		if err := os.RemoveAll(db.snapshotsDir()); err != nil {
+			return fmt.Errorf("%v: %v", moveErr, err)
+		}
+		if err := os.RemoveAll(db.walDir()); err != nil {
+			return fmt.Errorf("%v: %v", moveErr, err)
+		}
+		return moveErr
+	}
+	return os.RemoveAll(trashDir)
 }
