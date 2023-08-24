@@ -13,6 +13,7 @@ import (
 
 	"github.com/apache/arrow/go/v13/arrow"
 	"github.com/apache/arrow/go/v13/arrow/memory"
+	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
@@ -1775,8 +1776,9 @@ func Test_DB_Limiter(t *testing.T) {
 
 // DropStorage ensures that a database can continue on after drop storage is called.
 func Test_DB_DropStorage(t *testing.T) {
-	t.Skip()
 	logger := newTestLogger(t)
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
 
 	config := NewTableConfig(
 		dynparquet.SampleDefinition(),
@@ -1790,6 +1792,7 @@ func Test_DB_DropStorage(t *testing.T) {
 		WithStoragePath(dir),
 		WithActiveMemorySize(1024*1024),
 	)
+	defer c.Close()
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
@@ -1806,12 +1809,35 @@ func Test_DB_DropStorage(t *testing.T) {
 		_, err = table.InsertRecord(ctx, r)
 		require.NoError(t, err)
 	}
+	countRows := func(expected int) {
+		rows := 0
+		engine := query.NewEngine(mem, db.TableProvider())
+		err = engine.ScanTable("test").
+			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+				rows += int(r.NumRows())
+				return nil
+			})
+		require.NoError(t, err)
+		require.Equal(t, expected, rows)
+	}
+	countRows(300)
 
+	level.Debug(logger).Log("msg", "dropping storage")
 	require.NoError(t, db.DropStorage(true))
 
-	// Expect to be able to continue to write/read after this
-	buf, err := samples.ToBuffer(table.Schema())
+	// Open a new store against the dropped storage, and expect empty db
+	c, err = New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithActiveMemorySize(1024*1024),
+	)
+	defer c.Close()
 	require.NoError(t, err)
-	_, err = table.InsertBuffer(ctx, buf)
+	level.Debug(logger).Log("msg", "opening new db")
+	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
+	table, err = db.Table("test", config)
+	require.NoError(t, err)
+	countRows(0)
 }
