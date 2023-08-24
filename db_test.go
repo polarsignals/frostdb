@@ -20,7 +20,6 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -138,17 +137,7 @@ func TestDBWithWAL(t *testing.T) {
 
 		switch isArrow {
 		case true:
-
-			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-				"labels": {"label1", "label2", "label3", "label4"},
-			})
-			require.NoError(t, err)
-			defer table.Schema().PutPooledParquetSchema(ps)
-
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-			require.NoError(t, err)
-
-			rec, err := samples.ToRecord(sc)
+			rec, err := samples.ToRecord()
 			require.NoError(t, err)
 
 			ctx := context.Background()
@@ -180,16 +169,7 @@ func TestDBWithWAL(t *testing.T) {
 
 		switch isArrow {
 		case true:
-			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-				"labels": {"label1", "label2"},
-			})
-			require.NoError(t, err)
-			defer table.Schema().PutPooledParquetSchema(ps)
-
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-			require.NoError(t, err)
-
-			rec, err := samples.ToRecord(sc)
+			rec, err := samples.ToRecord()
 			require.NoError(t, err)
 
 			ctx := context.Background()
@@ -220,16 +200,7 @@ func TestDBWithWAL(t *testing.T) {
 
 		switch isArrow {
 		case true:
-			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-				"labels": {"label1", "label2", "label3"},
-			})
-			require.NoError(t, err)
-			defer table.Schema().PutPooledParquetSchema(ps)
-
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-			require.NoError(t, err)
-
-			rec, err := samples.ToRecord(sc)
+			rec, err := samples.ToRecord()
 			require.NoError(t, err)
 
 			ctx := context.Background()
@@ -1317,16 +1288,7 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 		},
 	}
 
-	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-		"labels": {"label1", "label2", "label3"},
-	})
-	require.NoError(t, err)
-	defer table.Schema().PutPooledParquetSchema(ps)
-
-	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-	require.NoError(t, err)
-
-	r, err := samples.ToRecord(sc)
+	r, err := samples.ToRecord()
 	require.NoError(t, err)
 
 	_, err = table.InsertRecord(ctx, r)
@@ -1809,4 +1771,47 @@ func Test_DB_Limiter(t *testing.T) {
 			require.Equal(t, 0, pool.Allocated())
 		})
 	}
+}
+
+// DropStorage ensures that a database can continue on after drop storage is called.
+func Test_DB_DropStorage(t *testing.T) {
+	t.Skip()
+	logger := newTestLogger(t)
+
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	dir := t.TempDir()
+
+	c, err := New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithActiveMemorySize(1024*1024),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		defer r.Release()
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, db.DropStorage(true))
+
+	// Expect to be able to continue to write/read after this
+	buf, err := samples.ToBuffer(table.Schema())
+	require.NoError(t, err)
+	_, err = table.InsertBuffer(ctx, buf)
+	require.NoError(t, err)
 }

@@ -12,8 +12,6 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
-	"github.com/polarsignals/frostdb/pqarrow"
-	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 // insertSamples is a helper function to insert a deterministic sample with a
@@ -53,16 +51,7 @@ func insertSampleRecords(ctx context.Context, t *testing.T, table *Table, timest
 		})
 	}
 
-	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-		"labels": {"label1"},
-	})
-	require.NoError(t, err)
-	defer table.Schema().PutPooledParquetSchema(ps)
-
-	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-	require.NoError(t, err)
-
-	ar, err := samples.ToRecord(sc)
+	ar, err := samples.ToRecord()
 	require.NoError(t, err)
 
 	tx, err := table.InsertRecord(ctx, ar)

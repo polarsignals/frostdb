@@ -797,7 +797,7 @@ func (db *DB) Close() error {
 	}
 
 	if shouldPersist {
-		if err := db.DropStorage(); err != nil {
+		if err := db.DropStorage(false); err != nil {
 			return err
 		}
 		level.Info(db.logger).Log("msg", "cleaned up wal & snapshots")
@@ -1083,7 +1083,10 @@ func validateName(name string) bool {
 }
 
 // DropStorage removes snapshots and WAL data from the storage directory.
-func (db *DB) DropStorage() error {
+func (db *DB) DropStorage(newwal bool) error {
+	if newwal {
+		defer db.wal.Reset(0) // TODO: can we reset to 0, or do we need to reset to the last txn?
+	}
 	trashDir := db.trashDir()
 
 	if moveErr := func() error {
