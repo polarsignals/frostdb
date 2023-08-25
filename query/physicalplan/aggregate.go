@@ -123,6 +123,8 @@ func chooseAggregationFunction(
 		}
 	case logicalplan.AggFuncCount:
 		return &CountAggregation{}, nil
+	case logicalplan.AggFuncFirst:
+		return &FirstAggregation{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
 	}
@@ -835,6 +837,21 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 	defer res.Release()
 	for _, arr := range arrs {
 		res.Append(int64(arr.Len()))
+	}
+	return res.NewArray(), nil
+}
+
+type FirstAggregation struct{}
+
+func (a *FirstAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	res := array.NewBuilder(pool, arrs[0].DataType())
+	defer res.Release()
+	for _, arr := range arrs {
+		if arr.Len() == 0 {
+			res.AppendNull()
+			continue
+		}
+		res.AppendValueFromString(arr.ValueStr(0))
 	}
 	return res.NewArray(), nil
 }

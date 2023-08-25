@@ -485,6 +485,7 @@ const (
 	AggFuncMax
 	AggFuncCount
 	AggFuncAvg
+	AggFuncFirst
 )
 
 func (f AggFunc) String() string {
@@ -499,6 +500,8 @@ func (f AggFunc) String() string {
 		return "count"
 	case AggFuncAvg:
 		return "avg"
+	case AggFuncFirst:
+		return "first"
 	default:
 		panic("unknown aggregation function")
 	}
@@ -535,6 +538,13 @@ func Count(expr Expr) *AggregationFunction {
 func Avg(expr Expr) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncAvg,
+		Expr: expr,
+	}
+}
+
+func First(expr Expr) *AggregationFunction {
+	return &AggregationFunction{
+		Func: AggFuncFirst,
 		Expr: expr,
 	}
 }
