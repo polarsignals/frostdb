@@ -46,6 +46,10 @@ func Aggregate(
 			case *logicalplan.Column:
 				aggregation.expr = e
 				aggColumnFound = true
+			case *logicalplan.DynamicColumn:
+				aggregation.expr = e
+				aggregation.dynamic = true
+				aggColumnFound = true
 			}
 
 			return true
@@ -127,6 +131,7 @@ func chooseAggregationFunction(
 // Aggregation groups together some lower level primitives to for the column to be aggregated by its function.
 type Aggregation struct {
 	expr       logicalplan.Expr
+	dynamic    bool // dynamic indicates that this aggregation is performed against a dynamic column.
 	resultName string
 	function   logicalplan.AggFunc
 	arrays     []builder.ColumnBuilder // TODO: These can actually live outside this struct and be shared. Only at the very end will they be read by each column and then aggregated separately.
@@ -164,8 +169,9 @@ type hashtuple struct {
 
 // hashAggregate represents a single hash aggregation.
 type hashAggregate struct {
-	aggregations []Aggregation
-	groupByCols  map[string]builder.ColumnBuilder
+	dynamicAggregations []Aggregation
+	aggregations        []Aggregation
+	groupByCols         map[string]builder.ColumnBuilder
 
 	colOrdering []string
 	rowCount    int
@@ -178,6 +184,17 @@ func NewHashAggregate(
 	groupByColumnMatchers []logicalplan.Expr,
 	finalStage bool,
 ) *HashAggregate {
+
+	dynamic := []Aggregation{}
+	static := []Aggregation{}
+	for _, agg := range aggregations {
+		if agg.dynamic {
+			dynamic = append(dynamic, agg)
+		} else {
+			static = append(static, agg)
+		}
+	}
+
 	return &HashAggregate{
 		pool:   pool,
 		tracer: tracer,
@@ -192,9 +209,10 @@ func NewHashAggregate(
 		hashToAggregate:    map[uint64]hashtuple{},
 		aggregates: []*hashAggregate{ // initialize a single hash aggregate; we expect this array to only every grow during very large aggregations.
 			{
-				aggregations: aggregations,
-				groupByCols:  map[string]builder.ColumnBuilder{},
-				colOrdering:  []string{},
+				dynamicAggregations: dynamic,
+				aggregations:        static,
+				groupByCols:         map[string]builder.ColumnBuilder{},
+				colOrdering:         []string{},
 			},
 		},
 	}
@@ -398,7 +416,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		groupByArrays = groupByArrays[:0]
 	}()
 
-	columnToAggregate := make([]arrow.Array, len(aggregate.aggregations))
+	columnToAggregate := make([]arrow.Array, 0, len(aggregate.aggregations))
 	aggregateFieldsFound := 0
 
 	for i, field := range r.Schema().Fields() {
@@ -421,18 +439,41 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			}
 		}
 
-		for j, col := range aggregate.aggregations {
+		for _, col := range aggregate.dynamicAggregations {
+			if a.finalStage {
+				if col.expr.MatchColumn(field.Name) {
+					// expand the aggregate.aggregations with a final concrete column aggregation.
+					aggregate.aggregations = append(aggregate.aggregations, Aggregation{
+						expr:       logicalplan.Col(field.Name),
+						resultName: resultNameWithConcreteColumn(col.function, field.Name),
+						function:   col.function,
+					})
+				}
+			} else {
+				// If we're aggregating the raw data we need to find the columns by their actual names for now.
+				if col.expr.MatchColumn(field.Name) {
+					// expand the aggregate.aggregations with a concrete column aggregation.
+					aggregate.aggregations = append(aggregate.aggregations, Aggregation{
+						expr:       logicalplan.Col(field.Name),
+						resultName: field.Name, // Don't rename the column yet, we'll do that in the final stage. Dynamic aggregations can't match agains't the pre-computed name.
+						function:   col.function,
+					})
+				}
+			}
+		}
+
+		for _, col := range aggregate.aggregations {
 			// If we're aggregating at the final stage we have previously
 			// renamed the pre-aggregated columns to their result names.
 			if a.finalStage {
-				if col.resultName == field.Name {
-					columnToAggregate[j] = r.Column(i)
+				if col.resultName == field.Name || col.expr.MatchColumn(field.Name) {
+					columnToAggregate = append(columnToAggregate, r.Column(i))
 					aggregateFieldsFound++
 				}
 			} else {
 				// If we're aggregating the raw data we need to find the columns by their actual names for now.
 				if col.expr.MatchColumn(field.Name) {
-					columnToAggregate[j] = r.Column(i)
+					columnToAggregate = append(columnToAggregate, r.Column(i))
 					aggregateFieldsFound++
 				}
 			}
@@ -814,4 +855,21 @@ func runAggregation(finalStage bool, fn logicalplan.AggFunc, pool memory.Allocat
 		return (&Int64SumAggregation{}).Aggregate(pool, arrs)
 	}
 	return aggFunc.Aggregate(pool, arrs)
+}
+
+func resultNameWithConcreteColumn(function logicalplan.AggFunc, col string) string {
+	switch function {
+	case logicalplan.AggFuncSum:
+		return logicalplan.Sum(logicalplan.Col(col)).Name()
+	case logicalplan.AggFuncMin:
+		return logicalplan.Min(logicalplan.Col(col)).Name()
+	case logicalplan.AggFuncMax:
+		return logicalplan.Max(logicalplan.Col(col)).Name()
+	case logicalplan.AggFuncCount:
+		return logicalplan.Count(logicalplan.Col(col)).Name()
+	case logicalplan.AggFuncAvg:
+		return logicalplan.Avg(logicalplan.Col(col)).Name()
+	default:
+		return ""
+	}
 }

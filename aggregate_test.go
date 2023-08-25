@@ -2,7 +2,6 @@ package frostdb
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -404,7 +403,8 @@ func Test_Aggregation_DynCol(t *testing.T) {
 			nil,
 		).
 		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
-			fmt.Println(ar)
+			require.Equal(t, 3, int(ar.NumCols()))
+			require.Equal(t, 1, int(ar.NumRows()))
 			return nil
 		})
 	require.NoError(t, err)
