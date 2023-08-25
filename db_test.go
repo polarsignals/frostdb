@@ -13,6 +13,7 @@ import (
 
 	"github.com/apache/arrow/go/v13/arrow"
 	"github.com/apache/arrow/go/v13/arrow/memory"
+	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
@@ -20,7 +21,6 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -138,17 +138,7 @@ func TestDBWithWAL(t *testing.T) {
 
 		switch isArrow {
 		case true:
-
-			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-				"labels": {"label1", "label2", "label3", "label4"},
-			})
-			require.NoError(t, err)
-			defer table.Schema().PutPooledParquetSchema(ps)
-
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-			require.NoError(t, err)
-
-			rec, err := samples.ToRecord(sc)
+			rec, err := samples.ToRecord()
 			require.NoError(t, err)
 
 			ctx := context.Background()
@@ -180,16 +170,7 @@ func TestDBWithWAL(t *testing.T) {
 
 		switch isArrow {
 		case true:
-			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-				"labels": {"label1", "label2"},
-			})
-			require.NoError(t, err)
-			defer table.Schema().PutPooledParquetSchema(ps)
-
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-			require.NoError(t, err)
-
-			rec, err := samples.ToRecord(sc)
+			rec, err := samples.ToRecord()
 			require.NoError(t, err)
 
 			ctx := context.Background()
@@ -220,16 +201,7 @@ func TestDBWithWAL(t *testing.T) {
 
 		switch isArrow {
 		case true:
-			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-				"labels": {"label1", "label2", "label3"},
-			})
-			require.NoError(t, err)
-			defer table.Schema().PutPooledParquetSchema(ps)
-
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-			require.NoError(t, err)
-
-			rec, err := samples.ToRecord(sc)
+			rec, err := samples.ToRecord()
 			require.NoError(t, err)
 
 			ctx := context.Background()
@@ -1317,16 +1289,7 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 		},
 	}
 
-	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-		"labels": {"label1", "label2", "label3"},
-	})
-	require.NoError(t, err)
-	defer table.Schema().PutPooledParquetSchema(ps)
-
-	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-	require.NoError(t, err)
-
-	r, err := samples.ToRecord(sc)
+	r, err := samples.ToRecord()
 	require.NoError(t, err)
 
 	_, err = table.InsertRecord(ctx, r)
@@ -1809,4 +1772,76 @@ func Test_DB_Limiter(t *testing.T) {
 			require.Equal(t, 0, pool.Allocated())
 		})
 	}
+}
+
+// DropStorage ensures that a database can continue on after drop storage is called.
+func Test_DB_DropStorage(t *testing.T) {
+	logger := newTestLogger(t)
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	dir := t.TempDir()
+
+	c, err := New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithActiveMemorySize(1024*1024),
+	)
+	defer func() {
+		_ = c.Close()
+	}()
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		defer r.Release()
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+	countRows := func(expected int) {
+		rows := 0
+		engine := query.NewEngine(mem, db.TableProvider())
+		err = engine.ScanTable("test").
+			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+				rows += int(r.NumRows())
+				return nil
+			})
+		require.NoError(t, err)
+		require.Equal(t, expected, rows)
+	}
+	countRows(300)
+
+	level.Debug(logger).Log("msg", "dropping storage")
+	require.NoError(t, db.Close(WithClearStorage()))
+
+	// Open a new store against the dropped storage, and expect empty db
+	c, err = New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithActiveMemorySize(1024*1024),
+	)
+	defer func() {
+		_ = c.Close()
+	}()
+	require.NoError(t, err)
+	level.Debug(logger).Log("msg", "opening new db")
+	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	_, err = db.Table("test", config)
+	require.NoError(t, err)
+	countRows(0)
 }

@@ -1172,19 +1172,10 @@ func Test_L0Query(t *testing.T) {
 		Value:     3,
 	}}
 
-	ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-		"labels": {"label1", "label2", "label3", "label4"},
-	})
+	r, err := samples.ToRecord()
 	require.NoError(t, err)
-	defer table.Schema().PutPooledParquetSchema(ps)
 
 	ctx := context.Background()
-	sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-	require.NoError(t, err)
-
-	r, err := samples.ToRecord(sc)
-	require.NoError(t, err)
-
 	_, err = table.InsertRecord(ctx, r)
 	require.NoError(t, err)
 
@@ -1427,19 +1418,10 @@ func Test_Table_Size(t *testing.T) {
 		samples := dynparquet.NewTestSamples()
 		switch isArrow {
 		case true:
-			ps, err := table.Schema().GetDynamicParquetSchema(map[string][]string{
-				"labels": {"node", "namespace", "container"},
-			})
+			rec, err := samples.ToRecord()
 			require.NoError(t, err)
-			defer table.Schema().PutPooledParquetSchema(ps)
 
 			ctx := context.Background()
-			sc, err := pqarrow.ParquetSchemaToArrowSchema(ctx, ps.Schema, logicalplan.IterOptions{})
-			require.NoError(t, err)
-
-			rec, err := samples.ToRecord(sc)
-			require.NoError(t, err)
-
 			_, err = table.InsertRecord(ctx, rec)
 			require.NoError(t, err)
 

@@ -54,7 +54,47 @@ func (s Samples) ToBuffer(schema *Schema) (*Buffer, error) {
 	return pb, nil
 }
 
-func (s Samples) ToRecord(schema *arrow.Schema) (arrow.Record, error) {
+func (s Samples) ToRecord() (arrow.Record, error) {
+	fields := []arrow.Field{
+		{
+			Name: "example_type",
+			Type: &arrow.DictionaryType{
+				IndexType: &arrow.Int32Type{},
+				ValueType: &arrow.BinaryType{},
+			},
+		},
+	}
+	seen := map[string]struct{}{}
+	for _, smpl := range s {
+		for _, lbl := range smpl.Labels {
+			if _, ok := seen[lbl.Name]; ok {
+				continue
+			}
+			seen[lbl.Name] = struct{}{}
+			fields = append(fields,
+				arrow.Field{
+					Name:     "labels." + lbl.Name,
+					Nullable: true,
+					Type: &arrow.DictionaryType{
+						IndexType: &arrow.Int32Type{},
+						ValueType: &arrow.BinaryType{},
+					},
+				},
+			)
+		}
+	}
+	fields = append(fields, arrow.Field{
+		Name: "stacktrace",
+		Type: &arrow.DictionaryType{
+			IndexType: &arrow.Int32Type{},
+			ValueType: &arrow.BinaryType{},
+		},
+	},
+	)
+	fields = append(fields, arrow.Field{Name: "timestamp", Type: arrow.PrimitiveTypes.Int64})
+	fields = append(fields, arrow.Field{Name: "value", Type: arrow.PrimitiveTypes.Int64})
+	schema := arrow.NewSchema(fields, nil)
+
 	bld := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
 	defer bld.Release()
 
