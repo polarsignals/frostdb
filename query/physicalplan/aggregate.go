@@ -454,6 +454,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 					// expand the aggregate.aggregations with a concrete column aggregation.
 					aggregate.aggregations = append(aggregate.aggregations, Aggregation{
 						expr:       logicalplan.Col(field.Name),
+						dynamic:    true,
 						resultName: field.Name, // Don't rename the column yet, we'll do that in the final stage. Dynamic aggregations can't match agains't the pre-computed name.
 						function:   col.function,
 					})
@@ -465,7 +466,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			// If we're aggregating at the final stage we have previously
 			// renamed the pre-aggregated columns to their result names.
 			if a.finalStage {
-				if col.resultName == field.Name || col.expr.MatchColumn(field.Name) {
+				if col.resultName == field.Name || (col.dynamic && col.expr.MatchColumn(field.Name)) {
 					columnToAggregate = append(columnToAggregate, r.Column(i))
 					aggregateFieldsFound++
 				}
