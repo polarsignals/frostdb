@@ -184,7 +184,6 @@ func NewHashAggregate(
 	groupByColumnMatchers []logicalplan.Expr,
 	finalStage bool,
 ) *HashAggregate {
-
 	dynamic := []Aggregation{}
 	static := []Aggregation{}
 	for _, agg := range aggregations {
