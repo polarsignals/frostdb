@@ -415,7 +415,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		groupByArrays = groupByArrays[:0]
 	}()
 
-	columnToAggregate := make([]arrow.Array, 0, len(aggregate.aggregations))
+	columnToAggregate := make([]arrow.Array, len(aggregate.aggregations))
 	aggregateFieldsFound := 0
 
 	for i, field := range r.Schema().Fields() {
@@ -442,8 +442,10 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			if a.finalStage {
 				if col.expr.MatchColumn(field.Name) {
 					// expand the aggregate.aggregations with a final concrete column aggregation.
+					columnToAggregate = append(columnToAggregate, nil)
 					aggregate.aggregations = append(aggregate.aggregations, Aggregation{
 						expr:       logicalplan.Col(field.Name),
+						dynamic:    true,
 						resultName: resultNameWithConcreteColumn(col.function, field.Name),
 						function:   col.function,
 					})
@@ -452,6 +454,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 				// If we're aggregating the raw data we need to find the columns by their actual names for now.
 				if col.expr.MatchColumn(field.Name) {
 					// expand the aggregate.aggregations with a concrete column aggregation.
+					columnToAggregate = append(columnToAggregate, nil)
 					aggregate.aggregations = append(aggregate.aggregations, Aggregation{
 						expr:       logicalplan.Col(field.Name),
 						dynamic:    true,
@@ -462,18 +465,18 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			}
 		}
 
-		for _, col := range aggregate.aggregations {
+		for j, col := range aggregate.aggregations {
 			// If we're aggregating at the final stage we have previously
 			// renamed the pre-aggregated columns to their result names.
 			if a.finalStage {
 				if col.resultName == field.Name || (col.dynamic && col.expr.MatchColumn(field.Name)) {
-					columnToAggregate = append(columnToAggregate, r.Column(i))
+					columnToAggregate[j] = r.Column(i)
 					aggregateFieldsFound++
 				}
 			} else {
 				// If we're aggregating the raw data we need to find the columns by their actual names for now.
 				if col.expr.MatchColumn(field.Name) {
-					columnToAggregate = append(columnToAggregate, r.Column(i))
+					columnToAggregate[j] = r.Column(i)
 					aggregateFieldsFound++
 				}
 			}
