@@ -1000,6 +1000,18 @@ func (db *DB) TableProvider() *DBTableProvider {
 	return NewDBTableProvider(db)
 }
 
+// IterateTables iterates over all the tables in the database in no particular
+// order. Iteration is cut short if the given iterator returns false.
+func (db *DB) IterateTables(i func(name string) bool) {
+	db.mtx.RLock()
+	defer db.mtx.RUnlock()
+	for name := range db.tables {
+		if !i(name) {
+			return
+		}
+	}
+}
+
 type DBTableProvider struct {
 	db *DB
 }
