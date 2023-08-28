@@ -251,6 +251,7 @@ func TestAggregationProjection(t *testing.T) {
 func TestDurationAggregation(t *testing.T) {
 	c, err := New()
 	require.NoError(t, err)
+	defer c.Close()
 
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
