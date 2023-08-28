@@ -146,6 +146,13 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 		default:
 			panic("something terrible has happened, this should have errored previously during validation")
 		}
+	case arrow.PrimitiveTypes.Uint64:
+		switch operator {
+		case logicalplan.OpGt:
+			return Uint64ArrayScalarGreaterThan(left.(*array.Uint64), right.(*scalar.Uint64))
+		default:
+			panic("something terrible has happened, this should have errored previously during validation")
+		}
 	}
 
 	switch arr := left.(type) {
@@ -419,6 +426,21 @@ func Int64ArrayScalarGreaterThanOrEqual(left *array.Int64, right *scalar.Int64) 
 			continue
 		}
 		if left.Value(i) >= right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func Uint64ArrayScalarGreaterThan(left *array.Uint64, right *scalar.Uint64) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if left.Value(i) > right.Value {
 			res.Add(uint32(i))
 		}
 	}
