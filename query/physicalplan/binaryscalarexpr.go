@@ -61,6 +61,8 @@ func (e BinaryScalarExpr) Eval(r arrow.Record) (*Bitmap, error) {
 			if !e.Right.IsValid() {
 				return res, nil
 			}
+		case logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq:
+			return res, nil
 		}
 
 		res.AddRange(0, uint64(r.NumRows()))
