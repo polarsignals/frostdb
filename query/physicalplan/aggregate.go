@@ -851,7 +851,10 @@ func (a *FirstAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 			res.AppendNull()
 			continue
 		}
-		res.AppendValueFromString(arr.ValueStr(0))
+		err := res.AppendValueFromString(arr.ValueStr(0))
+		if err != nil {
+			return nil, err
+		}
 	}
 	return res.NewArray(), nil
 }
