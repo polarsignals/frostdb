@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"math/rand"
 	"sort"
 	"strconv"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -334,4 +336,76 @@ func BenchmarkAggregation(b *testing.B) {
 			}
 		})
 	}
+}
+
+func Test_Aggregation_DynCol(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	config := NewTableConfig(
+		&schemapb.Schema{
+			Name: "test",
+			Columns: []*schemapb.Column{{
+				Name: "foo",
+				StorageLayout: &schemapb.StorageLayout{
+					Type:     schemapb.StorageLayout_TYPE_INT64,
+					Nullable: true,
+				},
+				Dynamic: false,
+			}},
+			SortingColumns: []*schemapb.SortingColumn{{
+				Name:      "foo",
+				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+			}},
+		},
+	)
+
+	logger := newTestLogger(t)
+
+	c, err := New(
+		WithLogger(logger),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "foo.bar", Type: arrow.PrimitiveTypes.Int64},
+		{Name: "foo.baz", Type: arrow.PrimitiveTypes.Int64},
+		{Name: "foo.bah", Type: arrow.PrimitiveTypes.Int64},
+	}, nil)
+
+	bldr := array.NewRecordBuilder(memory.DefaultAllocator, schema)
+	defer bldr.Release()
+
+	n := 3
+	for i := 0; i < schema.NumFields(); i++ {
+		for j := 0; j < n; j++ {
+			bldr.Field(i).(*array.Int64Builder).Append(int64(rand.Intn(100)))
+		}
+	}
+
+	r := bldr.NewRecord()
+	defer r.Release()
+
+	ctx := context.Background()
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	engine := query.NewEngine(mem, db.TableProvider())
+
+	err = engine.ScanTable("test").
+		Aggregate(
+			[]logicalplan.Expr{logicalplan.Max(logicalplan.DynCol("foo"))},
+			nil,
+		).
+		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+			require.Equal(t, 3, int(ar.NumCols()))
+			require.Equal(t, 1, int(ar.NumRows()))
+			return nil
+		})
+	require.NoError(t, err)
 }

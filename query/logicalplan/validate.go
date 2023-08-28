@@ -166,6 +166,10 @@ func ValidateAggregation(plan *LogicalPlan) *PlanValidationError {
 	return nil
 }
 
+type Named interface {
+	Name() string
+}
+
 func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 	aliases := map[string]struct{}{}
 
@@ -174,10 +178,13 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 		colFinder := newTypeFinder((*Column)(nil))
 		expr.Accept(&colFinder)
 
+		dynColFinder := newTypeFinder((*DynamicColumn)(nil))
+		expr.Accept(&dynColFinder)
+
 		aggFuncFinder := newTypeFinder((*AggregationFunction)(nil))
 		expr.Accept(&aggFuncFinder)
 
-		if colFinder.result == nil || aggFuncFinder.result == nil {
+		if (colFinder.result == nil && dynColFinder.result == nil) || aggFuncFinder.result == nil {
 			return &ExprValidationError{
 				message: "aggregation expression is invalid. must contain AggregationFunction and Column",
 				expr:    expr,
@@ -185,16 +192,21 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 		}
 
 		// check that column being aggregated on exists in the schema
-		colExpr := colFinder.result.(*Column)
 		schema := plan.InputSchema()
 		if schema == nil {
 			return nil // cannot check column type if there's no input schema
 		}
 
-		column, found := schema.ColumnByName(colExpr.ColumnName)
+		var named Named
+		named = colFinder.result
+		if named == nil {
+			named = dynColFinder.result
+		}
+
+		column, found := schema.ColumnByName(named.Name())
 		if !found {
 			return &ExprValidationError{
-				message: fmt.Sprintf("column not found: %s", colExpr.ColumnName),
+				message: fmt.Sprintf("column not found: %s", named.Name()),
 				expr:    expr,
 			}
 		}
