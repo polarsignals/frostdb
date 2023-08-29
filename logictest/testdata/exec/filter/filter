@@ -112,3 +112,20 @@ exec
 select labels, stacktrace, timestamp, value where labels.label4 != null
 ----
 value3  value2  null    value4  stack1  3       3
+
+# filter column that doesn't exist
+exec
+select labels, timestamp, value where doesntexist > 4
+----
+
+exec
+select labels, timestamp, value where doesntexist < 4
+----
+
+exec
+select labels, timestamp, value where doesntexist >= 4
+----
+
+exec
+select labels, timestamp, value where doesntexist <= 4
+----
