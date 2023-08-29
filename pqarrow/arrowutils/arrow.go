@@ -3,7 +3,7 @@ package arrowutils
 import (
 	"fmt"
 
-	"github.com/apache/arrow/go/v13/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/array"
 )
 
 func ForEachValueInList(index int, arr *array.List, iterator func(int, any)) error {

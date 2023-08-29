@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v13/arrow"
-	"github.com/apache/arrow/go/v13/arrow/memory"
+	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
