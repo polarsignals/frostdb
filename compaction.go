@@ -29,6 +29,9 @@ type CompactionConfig struct {
 	concurrency          int
 	interval             time.Duration
 	l1ToGranuleSizeRatio float64
+
+	// compactAfterRecovery specifies to run compaction on all tables after recovery.
+	compactAfterRecovery bool
 }
 
 // NewCompactionConfig creates a new compaction config with the given options.
@@ -49,6 +52,13 @@ func NewCompactionConfig(options ...CompactionOption) *CompactionConfig {
 		o(c)
 	}
 	return c
+}
+
+// WithCompactionAfterRecovery specifies to run compaction on all tables after recovery.
+func WithCompactionAfterRecovery() CompactionOption {
+	return func(c *CompactionConfig) {
+		c.compactAfterRecovery = true
+	}
 }
 
 // WithConcurrency specifies the number of concurrent goroutines compacting data

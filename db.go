@@ -288,8 +288,28 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 		databaseName := f.Name()
 		g.Go(func() error {
 			// Open the DB for the side effect of the snapshot and WALs being loaded as part of the open operation.
-			_, err := s.DB(ctx, databaseName)
-			return err
+			db, err := s.DB(ctx, databaseName)
+			if err != nil {
+				return err
+			}
+
+			// Optionally compact the database after recovery.
+			if s.compactionConfig.compactAfterRecovery {
+				db.IterateTables(func(name string) bool {
+					tbl, err := db.GetTable(name)
+					if err != nil {
+						level.Warn(s.logger).Log("msg", "error getting table during recovery", "table", name, "err", err)
+						return true
+					}
+
+					if err := tbl.EnsureCompaction(); err != nil {
+						level.Warn(s.logger).Log("msg", "error ensuring compaction during recovery", "table", name, "err", err)
+					}
+					return true
+				})
+			}
+
+			return nil
 		})
 	}
 
