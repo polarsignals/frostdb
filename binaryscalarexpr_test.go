@@ -57,93 +57,132 @@ func Test_MinMax_EmptyColumnChunk(t *testing.T) {
 }
 
 func TestBinaryScalarOperation(t *testing.T) {
+	const numValues = 10
 	for _, tc := range []struct {
 		name string
 		min  int
 		max  int
 		// -1 is interpreted as a null value.
-		right       int
-		nullCount   int64
-		op          logicalplan.Op
-		expectFalse bool
+		right     int
+		nullCount int64
+		op        logicalplan.Op
+		// expectSatisfies is true if the predicate should be satisfied by the
+		// column chunk.
+		expectSatisfies bool
 	}{
 		{
-			name:  "OpEqValueContained",
-			min:   1,
-			max:   10,
-			right: 5,
-			op:    logicalplan.OpEq,
+			name:            "OpEqValueContained",
+			min:             1,
+			max:             10,
+			right:           5,
+			op:              logicalplan.OpEq,
+			expectSatisfies: true,
 		},
 		{
-			name:        "OpEqValueGt",
-			min:         1,
-			max:         10,
-			right:       11,
-			op:          logicalplan.OpEq,
-			expectFalse: true,
+			name:            "OpEqValueGt",
+			min:             1,
+			max:             10,
+			right:           11,
+			op:              logicalplan.OpEq,
+			expectSatisfies: false,
 		},
 		{
-			name:        "OpEqValueLt",
-			min:         1,
-			max:         10,
-			right:       0,
-			op:          logicalplan.OpEq,
-			expectFalse: true,
+			name:            "OpEqValueLt",
+			min:             1,
+			max:             10,
+			right:           0,
+			op:              logicalplan.OpEq,
+			expectSatisfies: false,
 		},
 		{
-			name:  "OpEqMaxBound",
-			min:   1,
-			max:   10,
-			right: 10,
-			op:    logicalplan.OpEq,
+			name:            "OpEqMaxBound",
+			min:             1,
+			max:             10,
+			right:           10,
+			op:              logicalplan.OpEq,
+			expectSatisfies: true,
 		},
 		{
-			name:  "OpEqMinBound",
-			min:   1,
-			max:   10,
-			right: 1,
-			op:    logicalplan.OpEq,
+			name:            "OpEqMinBound",
+			min:             1,
+			max:             10,
+			right:           1,
+			op:              logicalplan.OpEq,
+			expectSatisfies: true,
 		},
 		{
-			name:        "OpEqNullValueNoMatch",
-			right:       -1,
-			nullCount:   0,
-			op:          logicalplan.OpEq,
-			expectFalse: true,
+			name:            "OpEqNullValueNoMatch",
+			right:           -1,
+			nullCount:       0,
+			op:              logicalplan.OpEq,
+			expectSatisfies: false,
 		},
 		{
-			name:      "OpEqNullValueMatch",
+			name:            "OpEqNullValueMatch",
+			right:           -1,
+			nullCount:       1,
+			op:              logicalplan.OpEq,
+			expectSatisfies: true,
+		},
+		{
+			name:            "OpEqNullColumn",
+			right:           1,
+			nullCount:       1,
+			op:              logicalplan.OpEq,
+			expectSatisfies: false,
+		},
+		{
+			name:            "OpEqFullNullColumn",
+			right:           1,
+			nullCount:       10,
+			op:              logicalplan.OpEq,
+			expectSatisfies: false,
+		},
+		{
+			name:      "OpGtFullNullColumn",
+			right:     1,
+			nullCount: 10,
+			op:        logicalplan.OpGt,
+			// expectSatisfies should probably be false once we optimize this.
+			expectSatisfies: true,
+		},
+		{
+			name:            "OpGtNullValueMatch",
+			right:           -1,
+			nullCount:       0,
+			op:              logicalplan.OpGt,
+			expectSatisfies: true,
+		},
+		{
+			name:      "OpGtNullValueNoMatch",
 			right:     -1,
 			nullCount: 1,
-			op:        logicalplan.OpEq,
-		},
-		{
-			name:        "OpEqNullColumn",
-			right:       1,
-			nullCount:   1,
-			op:          logicalplan.OpEq,
-			expectFalse: true,
-		},
-		{
-			name:        "OpEqFullNullColumn",
-			right:       1,
-			nullCount:   10,
-			op:          logicalplan.OpEq,
-			expectFalse: true,
+			op:        logicalplan.OpGt,
+			// expectSatisfies should probably be false once we optimize this.
+			expectSatisfies: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.op == logicalplan.OpUnknown {
 				t.Fatal("test programming error: remember to set operator")
 			}
+			minV := parquet.ValueOf(tc.min)
+			maxV := parquet.ValueOf(tc.max)
+			if tc.nullCount == numValues {
+				// All values in page are null. Parquet doesn't have
+				// well-defined min/max values in this case, but setting them
+				// explicitly to null here will tickle some edge cases.
+				minV = parquet.ValueOf(nil)
+				maxV = parquet.ValueOf(nil)
+			}
 			fakeChunk := &FakeColumnChunk{
 				index: &FakeColumnIndex{
 					numPages:  1,
-					min:       parquet.ValueOf(tc.min),
-					max:       parquet.ValueOf(tc.max),
+					min:       minV,
+					max:       maxV,
 					nullCount: tc.nullCount,
 				},
-				numValues: 10,
+				numValues: numValues,
 			}
 			var v parquet.Value
 			if tc.right == -1 {
@@ -153,7 +192,7 @@ func TestBinaryScalarOperation(t *testing.T) {
 			}
 			res, err := BinaryScalarOperation(fakeChunk, v, tc.op)
 			require.NoError(t, err)
-			require.Equal(t, !tc.expectFalse, res)
+			require.Equal(t, tc.expectSatisfies, res)
 		})
 	}
 }
