@@ -288,28 +288,8 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 		databaseName := f.Name()
 		g.Go(func() error {
 			// Open the DB for the side effect of the snapshot and WALs being loaded as part of the open operation.
-			db, err := s.DB(ctx, databaseName)
-			if err != nil {
-				return err
-			}
-
-			// Optionally compact the database after recovery.
-			if s.compactionConfig.compactAfterRecovery {
-				db.IterateTables(func(name string) bool {
-					tbl, err := db.GetTable(name)
-					if err != nil {
-						level.Warn(s.logger).Log("msg", "error getting table during recovery", "table", name, "err", err)
-						return true
-					}
-
-					if err := tbl.EnsureCompaction(); err != nil {
-						level.Warn(s.logger).Log("msg", "error ensuring compaction during recovery", "table", name, "err", err)
-					}
-					return true
-				})
-			}
-
-			return nil
+			_, err := s.DB(ctx, databaseName, WithCompactionAfterOpen(s.compactionConfig.compactAfterRecovery))
+			return err
 		})
 	}
 
@@ -348,7 +328,8 @@ type DB struct {
 	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
 	txPool *TxPool
 
-	compactorPool *compactorPool
+	compactAfterRecovery bool
+	compactorPool        *compactorPool
 
 	snapshotInProgress atomic.Bool
 
@@ -381,6 +362,13 @@ type DBOption func(*DB) error
 func WithUserDefinedTxnMetadataProvider(f func(tx uint64) []byte) DBOption {
 	return func(db *DB) error {
 		db.txnMetadataProvider = f
+		return nil
+	}
+}
+
+func WithCompactionAfterOpen(compact bool) DBOption {
+	return func(db *DB) error {
+		db.compactAfterRecovery = compact
 		return nil
 	}
 }
@@ -505,6 +493,21 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		// rotating blocks etc... that the public Close method does.
 		_ = db.closeInternal()
 		return nil, dbSetupErr
+	}
+
+	// Compact tables after recovery if requested. Perform this before starting the compactor pool so there is no race between compactions.
+	if db.compactAfterRecovery {
+		for name := range db.tables {
+			tbl, err := db.GetTable(name)
+			if err != nil {
+				level.Warn(db.logger).Log("msg", "get table during db setup", "err", err)
+				continue
+			}
+
+			if err := tbl.EnsureCompaction(); err != nil {
+				level.Warn(db.logger).Log("msg", "compaction during setup", "err", err)
+			}
+		}
 	}
 
 	db.compactorPool.start()
