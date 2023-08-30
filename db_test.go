@@ -1748,7 +1748,8 @@ func Test_DB_Limiter(t *testing.T) {
 
 	for i := 0; i < 1024; i++ {
 		t.Run(fmt.Sprintf("limit-%v", i), func(t *testing.T) {
-			debug := query.NewDebugAllocator(memory.DefaultAllocator)
+			debug := memory.NewCheckedAllocator(memory.DefaultAllocator)
+			defer debug.AssertSize(t, 0)
 			pool := query.NewLimitAllocator(int64(i), debug)
 			engine := query.NewEngine(pool, db.TableProvider())
 			err = engine.ScanTable("test").
@@ -1764,12 +1765,6 @@ func Test_DB_Limiter(t *testing.T) {
 				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 					return nil
 				})
-
-			// Expect no bytes allocated after the query has finished
-			if pool.Allocated() != 0 {
-				fmt.Println(debug)
-			}
-			require.Equal(t, 0, pool.Allocated())
 		})
 	}
 }
