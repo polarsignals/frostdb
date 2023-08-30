@@ -81,14 +81,15 @@ var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 // returns false, it means that the operator will definitely not be satisfied
 // by any value in the column chunk.
 func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Op) (bool, error) {
-	switch operator {
-	case logicalplan.OpEq:
-		numNulls := NullCount(left)
+	numNulls := NullCount(left)
+	fullOfNulls := numNulls == left.NumValues()
+	if operator == logicalplan.OpEq {
 		if right.IsNull() {
 			return numNulls > 0, nil
 		}
-		if numNulls == left.NumValues() {
-			// No non-null values, so there is definitely not a match.
+		if fullOfNulls {
+			// Right value is not null and there are no non-null values, so
+			// there is definitely not a match.
 			return false, nil
 		}
 
@@ -109,6 +110,19 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		}
 
 		return true, nil
+	}
+
+	// The following operators are not optimized. If there is at least one null
+	// in the page, return true for safety since min/max values are not
+	// guaranteed to be set correctly. We can definitely improve this in the
+	// future for better performance. This is not a correctness issue because
+	// the execution engine will take care of correctly applying the operator.
+	// This applies if the right value is null as well, since it cannot be
+	// compared.
+	if numNulls > 0 || right.IsNull() {
+		return true, nil
+	}
+	switch operator {
 	case logicalplan.OpLtEq:
 		return compare(Min(left), right) <= 0, nil
 	case logicalplan.OpLt:
