@@ -169,6 +169,7 @@ func (g *Granule) Collect(ctx context.Context, tx uint64, filter TrueNegativeFil
 		for _, r := range records {
 			select {
 			case <-ctx.Done():
+				return
 			case collector <- r:
 			}
 		}
