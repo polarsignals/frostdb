@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/exp/maps"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 
@@ -1023,16 +1024,12 @@ func (db *DB) TableProvider() *DBTableProvider {
 	return NewDBTableProvider(db)
 }
 
-// IterateTables iterates over all the tables in the database in no particular
-// order. Iteration is cut short if the given iterator returns false.
-func (db *DB) IterateTables(i func(name string) bool) {
+// TableNames returns the names of all the db's tables.
+func (db *DB) TableNames() []string {
 	db.mtx.RLock()
-	defer db.mtx.RUnlock()
-	for name := range db.tables {
-		if !i(name) {
-			return
-		}
-	}
+	tables := maps.Keys(db.tables)
+	db.mtx.RUnlock()
+	return tables
 }
 
 type DBTableProvider struct {
