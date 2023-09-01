@@ -205,6 +205,7 @@ type TableBlock struct {
 }
 
 type tableMetrics struct {
+	blockPersisted            prometheus.Counter
 	blockRotated              prometheus.Counter
 	granulesCreated           prometheus.Counter
 	compactions               prometheus.Counter
@@ -274,6 +275,10 @@ func newTable(
 			numParts: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
 				Name: "frostdb_table_num_parts",
 				Help: "Number of parts currently active.",
+			}),
+			blockPersisted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "frostdb_table_blocks_persisted_total",
+				Help: "Number of table blocks that have been persisted.",
 			}),
 			blockRotated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "frostdb_table_blocks_rotated_total",
