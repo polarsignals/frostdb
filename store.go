@@ -50,6 +50,8 @@ func (t *TableBlock) Persist() error {
 			return fmt.Errorf("failed to serialize block: %v", err)
 		}
 	}
+
+	t.table.metrics.blockPersisted.Inc()
 	return nil
 }
 
