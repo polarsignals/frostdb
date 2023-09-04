@@ -285,6 +285,8 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
+	// Limit this operation since WAL recovery could be very memory intensive.
+	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, f := range files {
 		databaseName := f.Name()
 		g.Go(func() error {
@@ -458,9 +460,16 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		}
 
 		if s.enableWAL {
-			var err error
-			db.wal, err = db.openWAL(ctx)
-			if err != nil {
+			if err := func() error {
+				// Unlock the store mutex while the WAL is replayed, otherwise
+				// if multiple DBs are opened in parallel, WAL replays will not
+				// happen in parallel.
+				s.mtx.Unlock()
+				defer s.mtx.Lock()
+				var err error
+				db.wal, err = db.openWAL(ctx)
+				return err
+			}(); err != nil {
 				return err
 			}
 			// WAL pointers of tables need to be updated to the DB WAL since
