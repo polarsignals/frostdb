@@ -1771,8 +1771,12 @@ func (t *Table) collectRowGroups(
 	for _, source := range t.db.sources {
 		span.AddEvent(fmt.Sprintf("source/%s", source.String()))
 		if err := source.Scan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, lastBlockTimestamp, func(ctx context.Context, v any) error {
-			rowGroups <- v
-			return nil
+			select {
+			case rowGroups <- v:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}); err != nil {
 			return err
 		}
