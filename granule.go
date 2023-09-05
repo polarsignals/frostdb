@@ -93,14 +93,37 @@ func (g *Granule) Append(p *parts.Part) (uint64, error) {
 
 // PartsForTx returns the parts for the given transaction constraints.
 func (g *Granule) PartsForTx(watermark uint64, iterator func(*parts.Part) bool) {
+	collected := []*parts.Part{}
+	containsRecords := false
 	g.parts.Iterate(func(p *parts.Part) bool {
 		// Don't iterate over parts from an uncompleted transaction
 		if p.TX() > watermark {
 			return true
 		}
 
-		return iterator(p)
+		if r := p.Record(); r != nil {
+			containsRecords = true
+			r.Retain()
+		}
+
+		collected = append(collected, p)
+		return true
 	})
+
+	if len(*g.newGranules.Load()) != 0 && containsRecords { // This granule was pruned while we were retaining Records; it's not safe to use them anymore
+		for _, p := range collected {
+			if r := p.Record(); r != nil {
+				r.Release()
+			}
+		}
+		for _, newGran := range *g.newGranules.Load() {
+			newGran.PartsForTx(watermark, iterator)
+		}
+	} else {
+		for _, r := range collected {
+			iterator(r)
+		}
+	}
 }
 
 // Less implements the btree.Item interface.
@@ -125,7 +148,12 @@ func (g *Granule) Least() *dynparquet.DynamicRow {
 // Collect will filter row groups or arrow records into the collector. Arrow records passed to the collector must be Released().
 func (g *Granule) Collect(ctx context.Context, tx uint64, filter TrueNegativeFilter, collector chan<- any) {
 	records := []arrow.Record{}
-	g.PartsForTx(tx, func(p *parts.Part) bool {
+	g.parts.Iterate(func(p *parts.Part) bool {
+		// Don't iterate over parts from an uncompleted transaction
+		if p.TX() > tx {
+			return true
+		}
+
 		if r := p.Record(); r != nil {
 			r.Retain()
 			records = append(records, r)

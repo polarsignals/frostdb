@@ -389,8 +389,9 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	defer t.mtx.Unlock()
 	delete(t.pendingBlocks, block)
 
-	// Wait for outstanding readers to finish with the block before releasing underlying resources.
+	// Wait for outstanding readers/writers to finish with the block before releasing underlying resources.
 	block.pendingReadersWg.Wait()
+	block.pendingWritersWg.Wait()
 
 	block.Index().Ascend(func(i btree.Item) bool {
 		g := i.(*Granule)
