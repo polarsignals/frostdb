@@ -61,6 +61,14 @@ type BinaryExpr struct {
 	Right Expr
 }
 
+func (e *BinaryExpr) Clone() Expr {
+	return &BinaryExpr{
+		Left:  e.Left.Clone(),
+		Op:    e.Op,
+		Right: e.Right.Clone(),
+	}
+}
+
 func (e *BinaryExpr) Accept(visitor Visitor) bool {
 	continu := visitor.PreVisit(e)
 	if !continu {
@@ -115,6 +123,10 @@ func (e *BinaryExpr) Alias(alias string) *AliasExpr {
 
 type Column struct {
 	ColumnName string
+}
+
+func (c *Column) Clone() Expr {
+	return &Column{ColumnName: c.ColumnName}
 }
 
 func (c *Column) Computed() bool {
@@ -315,6 +327,10 @@ type DynamicColumn struct {
 	ColumnName string
 }
 
+func (c *DynamicColumn) Clone() Expr {
+	return &DynamicColumn{ColumnName: c.ColumnName}
+}
+
 func (c *DynamicColumn) Computed() bool {
 	return false
 }
@@ -367,6 +383,12 @@ type LiteralExpr struct {
 	Value scalar.Scalar
 }
 
+func (e *LiteralExpr) Clone() Expr {
+	return &LiteralExpr{
+		Value: e.Value,
+	}
+}
+
 func (e *LiteralExpr) Computed() bool {
 	return false
 }
@@ -407,6 +429,13 @@ func (e *LiteralExpr) MatchColumn(columnName string) bool {
 type AggregationFunction struct {
 	Func AggFunc
 	Expr Expr
+}
+
+func (f *AggregationFunction) Clone() Expr {
+	return &AggregationFunction{
+		Func: f.Func,
+		Expr: f.Expr.Clone(),
+	}
 }
 
 func (f *AggregationFunction) DataType(s *parquet.Schema) (arrow.DataType, error) {
@@ -515,6 +544,13 @@ type AliasExpr struct {
 	Alias string
 }
 
+func (e *AliasExpr) Clone() Expr {
+	return &AliasExpr{
+		Expr:  e.Expr.Clone(),
+		Alias: e.Alias,
+	}
+}
+
 func (e *AliasExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
 	return e.Expr.DataType(s)
 }
@@ -568,6 +604,12 @@ type DurationExpr struct {
 	duration time.Duration
 }
 
+func (d *DurationExpr) Clone() Expr {
+	return &DurationExpr{
+		duration: d.duration,
+	}
+}
+
 func (d *DurationExpr) DataType(schema *parquet.Schema) (arrow.DataType, error) {
 	return &arrow.DurationType{}, nil
 }
@@ -608,6 +650,12 @@ func (d *DurationExpr) Value() time.Duration {
 
 type AverageExpr struct {
 	Expr Expr
+}
+
+func (a *AverageExpr) Clone() Expr {
+	return &AverageExpr{
+		Expr: a.Expr.Clone(),
+	}
 }
 
 func (a *AverageExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {

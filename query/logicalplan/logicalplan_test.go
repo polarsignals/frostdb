@@ -91,3 +91,13 @@ func TestInputSchemaGetter(t *testing.T) {
 		Build()
 	require.Nil(t, plan.InputSchema())
 }
+
+func Test_ExprClone(t *testing.T) {
+	expr := Col("labels.test").Eq(Literal("abc"))
+	expr2 := expr.Clone()
+	require.Equal(t, expr, expr2)
+
+	// Modify the original expr and make sure the clone is not affected
+	expr.Op = OpGt
+	require.NotEqual(t, expr, expr2)
+}
