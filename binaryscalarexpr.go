@@ -112,25 +112,58 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		return true, nil
 	}
 
-	// The following operators are not optimized. If there is at least one null
-	// in the page, return true for safety since min/max values are not
-	// guaranteed to be set correctly. We can definitely improve this in the
-	// future for better performance. This is not a correctness issue because
-	// the execution engine will take care of correctly applying the operator.
-	// This applies if the right value is null as well, since it cannot be
-	// compared.
-	if numNulls > 0 || right.IsNull() {
+	// If right is NULL automatically return that the column chunk needs further
+	// processing. According to SQL semantics we might be able to elide column
+	// chunks in these cases since NULL is not comparable to anything else, but
+	// play it safe (delegate to execution engine) for now since we shouldn't
+	// have many of these cases.
+	if right.IsNull() {
 		return true, nil
 	}
+
+	if numNulls == left.NumValues() {
+		// In this case min/max values are meaningless and not comparable to the
+		// right expression, so we can automatically discard the column chunk.
+		return false, nil
+	}
+
 	switch operator {
 	case logicalplan.OpLtEq:
-		return compare(Min(left), right) <= 0, nil
+		min := Min(left)
+		if min.IsNull() {
+			// If min is null, we don't know what the non-null min value is, so
+			// we need to let the execution engine scan this column chunk
+			// further.
+			return true, nil
+		}
+		return compare(min, right) <= 0, nil
 	case logicalplan.OpLt:
-		return compare(Min(left), right) < 0, nil
+		min := Min(left)
+		if min.IsNull() {
+			// If min is null, we don't know what the non-null min value is, so
+			// we need to let the execution engine scan this column chunk
+			// further.
+			return true, nil
+		}
+		return compare(min, right) < 0, nil
 	case logicalplan.OpGt:
-		return compare(Max(left), right) > 0, nil
+		max := Max(left)
+		if max.IsNull() {
+			// If max is null, we don't know what the non-null max value is, so
+			// we need to let the execution engine scan this column chunk
+			// further.
+			return true, nil
+		}
+		return compare(max, right) > 0, nil
 	case logicalplan.OpGtEq:
-		return compare(Max(left), right) >= 0, nil
+		max := Max(left)
+		if max.IsNull() {
+			// If max is null, we don't know what the non-null max value is, so
+			// we need to let the execution engine scan this column chunk
+			// further.
+			return true, nil
+		}
+		return compare(max, right) >= 0, nil
 	default:
 		return true, nil
 	}
