@@ -20,6 +20,8 @@ message Column {
     StorageLayout storage_layout = 2;
     // Whether the column can dynamically expand.
     bool dynamic = 3;
+    // Prehash the column before storing it. This is an optimization to speed up aggregation queries when this column is often aggregated. 
+    bool prehash = 4;
 }
 
 // Storage layout describes the physical storage properties of a column.
