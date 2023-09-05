@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/scalar"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -100,7 +101,7 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 
 	colHashes := make([][]uint64, len(distinctFields))
 	for i, arr := range distinctArrays {
-		colHashes[i] = hashArray(arr)
+		colHashes[i] = dynparquet.HashArray(arr)
 	}
 
 	for i := 0; i < numRows; i++ {

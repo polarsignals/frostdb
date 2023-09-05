@@ -3,6 +3,7 @@ package physicalplan
 import (
 	"context"
 	"fmt"
+	"hash/maphash"
 	"runtime"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -418,8 +419,9 @@ func Build(
 					sync = Synchronize(len(prev))
 				}
 			}
+			seed := maphash.MakeSeed()
 			for i := 0; i < len(prev); i++ {
-				a, err := Aggregate(pool, tracer, plan.Aggregation, sync == nil, ordered)
+				a, err := Aggregate(pool, tracer, plan.Aggregation, sync == nil, ordered, seed)
 				if err != nil {
 					visitErr = err
 					return false
@@ -433,7 +435,7 @@ func Build(
 			if sync != nil {
 				// Plan an aggregate operator to run an aggregation on all the
 				// aggregations.
-				a, err := Aggregate(pool, tracer, plan.Aggregation, true, ordered)
+				a, err := Aggregate(pool, tracer, plan.Aggregation, true, ordered, seed)
 				if err != nil {
 					visitErr = err
 					return false

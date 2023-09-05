@@ -155,7 +155,7 @@ func (b LocalQueryBuilder) buildPhysical(ctx context.Context) (*physicalplan.Out
 		return nil, err
 	}
 
-	for _, optimizer := range logicalplan.DefaultOptimizers {
+	for _, optimizer := range logicalplan.DefaultOptimizers() {
 		logicalPlan = optimizer.Optimize(logicalPlan)
 	}
 

@@ -12,12 +12,10 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/math"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
-	"github.com/cespare/xxhash/v2"
-	"github.com/dgryski/go-metro"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
+	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -28,6 +26,7 @@ func Aggregate(
 	agg *logicalplan.Aggregation,
 	final bool,
 	ordered bool,
+	seed maphash.Seed,
 ) (PhysicalPlan, error) {
 	aggregations := make([]Aggregation, 0, len(agg.AggExprs))
 
@@ -91,6 +90,7 @@ func Aggregate(
 		tracer,
 		aggregations,
 		agg.GroupExprs,
+		seed,
 		final,
 	), nil
 }
@@ -182,6 +182,7 @@ func NewHashAggregate(
 	tracer trace.Tracer,
 	aggregations []Aggregation,
 	groupByColumnMatchers []logicalplan.Expr,
+	seed maphash.Seed,
 	finalStage bool,
 ) *HashAggregate {
 	dynamic := []Aggregation{}
@@ -199,7 +200,7 @@ func NewHashAggregate(
 		tracer: tracer,
 		// TODO: Matchers can be optimized to be something like a radix tree or just a fast-lookup datastructure for exact matches or prefix matches.
 		groupByColumnMatchers: groupByColumnMatchers,
-		hashSeed:              maphash.MakeSeed(),
+		hashSeed:              seed,
 		finalStage:            finalStage,
 
 		groupByFields:      make([]arrow.Field, 0, 10),
@@ -295,108 +296,6 @@ func (d *durationHashCombine) hashCombine(rhs uint64) uint64 {
 	return rhs / d.milliseconds // floors by default
 }
 
-func hashArray(arr arrow.Array) []uint64 {
-	switch ar := arr.(type) {
-	case *array.String:
-		return hashStringArray(ar)
-	case *array.Binary:
-		return hashBinaryArray(ar)
-	case *array.Int64:
-		return hashInt64Array(ar)
-	case *array.Boolean:
-		return hashBooleanArray(ar)
-	case *array.Dictionary:
-		return hashDictionaryArray(ar)
-	case *array.List:
-		return hashListArray(ar)
-	default:
-		panic("unsupported array type " + fmt.Sprintf("%T", arr))
-	}
-}
-
-func hashListArray(arr *array.List) []uint64 {
-	res := make([]uint64, arr.Len())
-	digest := xxhash.New()
-	for i := 0; i < arr.Len(); i++ {
-		if err := arrowutils.ForEachValueInList(i, arr, func(_ int, v any) {
-			switch val := v.(type) {
-			case []byte:
-				// NOTE: We can ignore the return here because from the xxhash Write function is says: It always returns len(b), nil.
-				_, _ = digest.Write(val)
-			}
-		}); err != nil {
-			panic(err)
-		}
-
-		res[i] = digest.Sum64()
-		digest.Reset()
-	}
-	return res
-}
-
-func hashDictionaryArray(arr *array.Dictionary) []uint64 {
-	res := make([]uint64, arr.Len())
-	for i := 0; i < arr.Len(); i++ {
-		if !arr.IsNull(i) {
-			switch dict := arr.Dictionary().(type) {
-			case *array.Binary:
-				res[i] = metro.Hash64(dict.Value(arr.GetValueIndex(i)), 0)
-			case *array.String:
-				res[i] = metro.Hash64([]byte(dict.Value(arr.GetValueIndex(i))), 0)
-			default:
-				panic("unsupported dictionary type " + fmt.Sprintf("%T", dict))
-			}
-		}
-	}
-	return res
-}
-
-func hashBinaryArray(arr *array.Binary) []uint64 {
-	res := make([]uint64, arr.Len())
-	for i := 0; i < arr.Len(); i++ {
-		if !arr.IsNull(i) {
-			res[i] = metro.Hash64(arr.Value(i), 0)
-		}
-	}
-	return res
-}
-
-func hashBooleanArray(arr *array.Boolean) []uint64 {
-	res := make([]uint64, arr.Len())
-	for i := 0; i < arr.Len(); i++ {
-		if arr.IsNull(i) {
-			res[i] = 0
-			continue
-		}
-		if arr.Value(i) {
-			res[i] = 2
-		} else {
-			res[i] = 1
-		}
-	}
-	return res
-}
-
-func hashStringArray(arr *array.String) []uint64 {
-	res := make([]uint64, arr.Len())
-	for i := 0; i < arr.Len(); i++ {
-		if !arr.IsNull(i) {
-			res[i] = metro.Hash64([]byte(arr.Value(i)), 0)
-		}
-	}
-	return res
-}
-
-func hashInt64Array(arr *array.Int64) []uint64 {
-	res := make([]uint64, arr.Len())
-	for i := 0; i < arr.Len(); i++ {
-		if !arr.IsNull(i) {
-			res[i] = uint64(arr.Value(i))
-		}
-	}
-	return res
-}
-
 func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 	// Generates high volume of spans. Comment out if needed during development.
 	// ctx, span := a.tracer.Start(ctx, "HashAggregate/Callback")
@@ -405,6 +304,7 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 	// aggregate is the current aggregation
 	aggregate := a.aggregates[len(a.aggregates)-1]
 
+	fields := r.Schema().Fields() // NOTE: call Fields() once to avoid creating a copy each time
 	groupByFields := a.groupByFields
 	groupByFieldHashes := a.groupByFieldHashes
 	groupByArrays := a.groupByArrays
@@ -423,6 +323,13 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			if matcher.MatchColumn(field.Name) {
 				groupByFields = append(groupByFields, field)
 				groupByArrays = append(groupByArrays, r.Column(i))
+
+				if a.finalStage { // in the final stage expect the hashes to already exist, so only need to combine them as normal hashes
+					groupByFieldHashes = append(groupByFieldHashes,
+						&uint64HashCombine{value: scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name))},
+					)
+					continue
+				}
 
 				switch v := matcher.(type) {
 				case *logicalplan.DurationExpr:
@@ -491,7 +398,16 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 
 	colHashes := make([][]uint64, len(groupByArrays))
 	for i, arr := range groupByArrays {
-		colHashes[i] = hashArray(arr)
+		col := dynparquet.FindHashedColumn(groupByFields[i].Name, fields)
+		if col != -1 {
+			vals := make([]uint64, 0, numRows)
+			for _, v := range r.Column(col).(*array.Int64).Int64Values() {
+				vals = append(vals, uint64(v))
+			}
+			colHashes[i] = vals
+		} else {
+			colHashes[i] = dynparquet.HashArray(arr)
+		}
 	}
 
 	for i := 0; i < numRows; i++ {
@@ -618,8 +534,8 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	defer span.End()
 
 	totalRows := 0
-	for _, aggregate := range a.aggregates {
-		if err := a.finishAggregate(ctx, aggregate); err != nil {
+	for i, aggregate := range a.aggregates {
+		if err := a.finishAggregate(ctx, i, aggregate); err != nil {
 			return err
 		}
 		totalRows += aggregate.rowCount
@@ -628,7 +544,7 @@ func (a *HashAggregate) Finish(ctx context.Context) error {
 	return a.next.Finish(ctx)
 }
 
-func (a *HashAggregate) finishAggregate(ctx context.Context, aggregate *hashAggregate) error {
+func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggregate *hashAggregate) error {
 	numCols := len(aggregate.groupByCols) + len(aggregate.aggregations)
 	numRows := aggregate.rowCount
 
@@ -639,6 +555,9 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggregate *hashAggr
 	groupByFields := make([]arrow.Field, 0, numCols)
 	groupByArrays := make([]arrow.Array, 0, numCols)
 	for _, fieldName := range aggregate.colOrdering {
+		if a.finalStage && dynparquet.IsHashedColumn(fieldName) {
+			continue
+		}
 		groupByCol, ok := aggregate.groupByCols[fieldName]
 		if !ok {
 			return fmt.Errorf("unknown field name: %s", fieldName)
@@ -654,6 +573,22 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggregate *hashAggr
 		arr := groupByCol.NewArray()
 		groupByFields = append(groupByFields, arrow.Field{Name: fieldName, Type: arr.DataType()})
 		groupByArrays = append(groupByArrays, arr)
+		// Pass forward the hashings of the group-by columns
+		if !a.finalStage {
+			groupByFields = append(groupByFields, arrow.Field{Name: dynparquet.HashedColumnName(fieldName), Type: arrow.PrimitiveTypes.Int64})
+			func() {
+				bldr := array.NewInt64Builder(a.pool)
+				defer bldr.Release()
+				sortedHashes := make([]int64, arr.Len())
+				for hash, tuple := range a.hashToAggregate {
+					if tuple.aggregate == aggIdx { // only append the hash for the current aggregate
+						sortedHashes[tuple.array] = int64(hash)
+					}
+				}
+				bldr.AppendValues(sortedHashes, nil)
+				groupByArrays = append(groupByArrays, bldr.NewArray())
+			}()
+		}
 	}
 
 	// Rename to clarity upon appending aggregations later
@@ -679,6 +614,7 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggregate *hashAggr
 			Name: aggregation.resultName, Type: aggregateArray.DataType(),
 		})
 	}
+
 	r := array.NewRecord(
 		arrow.NewSchema(aggregateFields, nil),
 		aggregateColumns,

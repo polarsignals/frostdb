@@ -1124,6 +1124,9 @@ func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.R
 		return nil
 	}
 
+	record = dynparquet.PrehashColumns(t.table.schema, record)
+	defer record.Release()
+
 	if err := t.insertRecordToGranules(tx, record); err != nil {
 		return fmt.Errorf("failed to insert record into granules: %w", err)
 	}
