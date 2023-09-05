@@ -139,12 +139,11 @@ func TestBinaryScalarOperation(t *testing.T) {
 			expectSatisfies: false,
 		},
 		{
-			name:      "OpGtFullNullColumn",
-			right:     1,
-			nullCount: 10,
-			op:        logicalplan.OpGt,
-			// expectSatisfies should probably be false once we optimize this.
-			expectSatisfies: true,
+			name:            "OpGtFullNullColumn",
+			right:           1,
+			nullCount:       10,
+			op:              logicalplan.OpGt,
+			expectSatisfies: false,
 		},
 		{
 			name:            "OpGtNullValueMatch",
@@ -159,6 +158,24 @@ func TestBinaryScalarOperation(t *testing.T) {
 			nullCount: 1,
 			op:        logicalplan.OpGt,
 			// expectSatisfies should probably be false once we optimize this.
+			expectSatisfies: true,
+		},
+		{
+			name:            "OpGtWithSomeNullValuesNoMatch",
+			min:             1,
+			max:             10,
+			right:           11,
+			nullCount:       1,
+			op:              logicalplan.OpGt,
+			expectSatisfies: false,
+		},
+		{
+			name:            "OpGtWithSomeNullValuesMatch",
+			min:             1,
+			max:             10,
+			right:           5,
+			nullCount:       1,
+			op:              logicalplan.OpGt,
 			expectSatisfies: true,
 		},
 	} {
