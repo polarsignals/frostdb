@@ -81,6 +81,9 @@ type Expr interface {
 	// Computed returns whether the expression is computed as opposed to being
 	// a static value or unmodified physical column.
 	Computed() bool
+
+	// Clone returns a deep copy of the expression.
+	Clone() Expr
 }
 
 func (b Builder) Filter(expr Expr) Builder {
