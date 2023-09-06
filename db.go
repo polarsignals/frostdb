@@ -1144,7 +1144,9 @@ func (db *DB) dropStorage() error {
 	trashDir := db.trashDir()
 
 	if moveErr := func() error {
-		_ = os.Mkdir(trashDir, os.FileMode(0o755))
+		if err := os.MkdirAll(trashDir, os.FileMode(0o755)); err != nil {
+			return fmt.Errorf("making trash dir: %w", err)
+		}
 		// Create a temporary directory in the trash dir to avoid clashing
 		// with other wal/snapshot dirs that might not have been removed
 		// previously.

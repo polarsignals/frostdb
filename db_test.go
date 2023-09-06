@@ -23,6 +23,7 @@ import (
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/query/physicalplan"
 )
 
 func TestDBWithWALAndBucket(t *testing.T) {
@@ -1839,4 +1840,80 @@ func Test_DB_DropStorage(t *testing.T) {
 	_, err = db.Table("test", config)
 	require.NoError(t, err)
 	countRows(0)
+}
+
+func Test_DB_EngineInMemory(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	logger := newTestLogger(t)
+
+	dir := t.TempDir()
+	bucket := objstore.NewInMemBucket()
+
+	sinksource := NewDefaultObjstoreBucket(bucket)
+
+	c, err := New(
+		WithLogger(logger),
+		WithStoragePath(dir),
+		WithReadWriteStorage(sinksource),
+		WithActiveMemorySize(100*1024),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(t, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+	}
+	require.NoError(t, c.Close())
+
+	c, err = New(
+		WithLogger(logger),
+		WithStoragePath(dir),
+		WithReadWriteStorage(sinksource),
+		WithActiveMemorySize(100*1024),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err = db.Table("test", config)
+	require.NoError(t, err)
+
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	engine := query.NewEngine(pool, db.TableProvider(), query.WithPhysicalplanOptions(physicalplan.WithInMemoryOnly()))
+	err = engine.ScanTable("test").
+		Aggregate(
+			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
+		).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			t.FailNow() // should not be called
+			return nil
+		})
+	require.NoError(t, err)
+
+	engine = query.NewEngine(pool, db.TableProvider())
+	err = engine.ScanTable("test").
+		Aggregate(
+			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
+		).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			require.Equal(t, int64(2), r.NumRows())
+			return nil
+		})
+	require.NoError(t, err)
 }
