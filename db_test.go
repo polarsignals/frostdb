@@ -1888,8 +1888,6 @@ func Test_DB_EngineInMemory(t *testing.T) {
 
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
-	table, err = db.Table("test", config)
-	require.NoError(t, err)
 
 	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	defer pool.AssertSize(t, 0)
