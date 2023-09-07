@@ -863,6 +863,7 @@ func (a *LimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 	res := array.NewListBuilder(pool, arrs[0].DataType())
 	defer res.Release()
 	vb := res.ValueBuilder()
+	res.Append(true)
 	for _, arr := range arrs {
 		for i := 0; i < arr.Len() && uint64(i) < a.Limit; i++ {
 			err := vb.AppendValueFromString(arr.ValueStr(i))

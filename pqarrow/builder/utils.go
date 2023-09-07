@@ -114,6 +114,21 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 					}
 				}
 			}
+		case *array.Int64:
+			b.Append(true)
+			for j := 0; j < v.Len(); j++ {
+				switch bldr := vb.(type) {
+				case *array.Int64Builder:
+					bldr.Append(v.Value(j))
+				case *OptInt64Builder:
+					bldr.Append(v.Value(j))
+				default:
+					return fmt.Errorf("uknown value builder type %T", bldr)
+				}
+			}
+
+		default:
+			return fmt.Errorf("unsupported type for arrow list append %T", v)
 		}
 	default:
 		return fmt.Errorf("unsupported type for arrow append %T", b)
