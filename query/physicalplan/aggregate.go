@@ -43,6 +43,7 @@ func Aggregate(
 			case *logicalplan.AggregationFunction:
 				aggFunc = e.Func
 				aggFuncFound = true
+				aggregation.arguments = e.Args
 			case *logicalplan.Column:
 				aggregation.expr = e
 				aggColumnFound = true
@@ -97,6 +98,7 @@ func Aggregate(
 
 func chooseAggregationFunction(
 	aggFunc logicalplan.AggFunc,
+	aggArgs map[string]interface{},
 	dataType arrow.DataType,
 ) (AggregationFunction, error) {
 	switch aggFunc {
@@ -123,8 +125,13 @@ func chooseAggregationFunction(
 		}
 	case logicalplan.AggFuncCount:
 		return &CountAggregation{}, nil
-	case logicalplan.AggFuncFirst:
-		return &FirstAggregation{}, nil
+	case logicalplan.AggFuncLimit:
+		if limit, ok := aggArgs["limit"]; ok {
+			if limit, ok := limit.(uint64); ok {
+				return &LimitAggregation{Limit: limit}, nil
+			}
+		}
+		return nil, fmt.Errorf("invalid limit aggregation arguments: %v", aggArgs)
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
 	}
@@ -137,6 +144,7 @@ type Aggregation struct {
 	resultName string
 	function   logicalplan.AggFunc
 	arrays     []builder.ColumnBuilder // TODO: These can actually live outside this struct and be shared. Only at the very end will they be read by each column and then aggregated separately.
+	arguments  map[string]interface{}
 }
 
 type AggregationFunction interface {
@@ -668,7 +676,13 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggregate *hashAggr
 			arr = append(arr, a.NewArray())
 		}
 
-		aggregateArray, err := runAggregation(a.finalStage, aggregation.function, a.pool, arr)
+		aggregateArray, err := runAggregation(
+			a.finalStage,
+			aggregation.function,
+			aggregation.arguments,
+			a.pool,
+			arr,
+		)
 		for _, a := range arr {
 			a.Release()
 		}
@@ -841,19 +855,19 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 	return res.NewArray(), nil
 }
 
-type FirstAggregation struct{}
+type LimitAggregation struct {
+	Limit uint64
+}
 
-func (a *FirstAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+func (a *LimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	res := array.NewBuilder(pool, arrs[0].DataType())
 	defer res.Release()
 	for _, arr := range arrs {
-		if arr.Len() == 0 {
-			res.AppendNull()
-			continue
-		}
-		err := res.AppendValueFromString(arr.ValueStr(0))
-		if err != nil {
-			return nil, err
+		for i := 0; i < arr.Len() && uint64(i) < a.Limit; i++ {
+			err := res.AppendValueFromString(arr.ValueStr(i))
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return res.NewArray(), nil
@@ -862,12 +876,18 @@ func (a *FirstAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 // runAggregation is a helper to run the given aggregation function given
 // the set of values. It is aware of the final stage and chooses the aggregation
 // function appropriately.
-func runAggregation(finalStage bool, fn logicalplan.AggFunc, pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+func runAggregation(
+	finalStage bool,
+	fn logicalplan.AggFunc,
+	args map[string]interface{},
+	pool memory.Allocator,
+	arrs []arrow.Array,
+) (arrow.Array, error) {
 	if len(arrs) == 0 {
 		return array.NewInt64Builder(pool).NewArray(), nil
 	}
 
-	aggFunc, err := chooseAggregationFunction(fn, arrs[0].DataType())
+	aggFunc, err := chooseAggregationFunction(fn, args, arrs[0].DataType())
 	if err != nil {
 		return nil, err
 	}

@@ -429,6 +429,7 @@ func (e *LiteralExpr) MatchColumn(columnName string) bool {
 type AggregationFunction struct {
 	Func AggFunc
 	Expr Expr
+	Args map[string]interface{}
 }
 
 func (f *AggregationFunction) Clone() Expr {
@@ -485,7 +486,7 @@ const (
 	AggFuncMax
 	AggFuncCount
 	AggFuncAvg
-	AggFuncFirst
+	AggFuncLimit
 )
 
 func (f AggFunc) String() string {
@@ -500,8 +501,8 @@ func (f AggFunc) String() string {
 		return "count"
 	case AggFuncAvg:
 		return "avg"
-	case AggFuncFirst:
-		return "first"
+	case AggFuncLimit:
+		return "limit"
 	default:
 		panic("unknown aggregation function")
 	}
@@ -542,10 +543,13 @@ func Avg(expr Expr) *AggregationFunction {
 	}
 }
 
-func First(expr Expr) *AggregationFunction {
+func Limit(expr Expr, limit uint64) *AggregationFunction {
 	return &AggregationFunction{
-		Func: AggFuncFirst,
+		Func: AggFuncLimit,
 		Expr: expr,
+		Args: map[string]interface{}{
+			"limit": limit,
+		},
 	}
 }
 

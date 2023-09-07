@@ -376,7 +376,7 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 		return nil
 	}
 
-	results, err := runAggregation(a.finalStage, a.aggregationFunction, a.pool, arraysToAggregate)
+	results, err := runAggregation(a.finalStage, a.aggregationFunction, nil, a.pool, arraysToAggregate)
 	if err != nil {
 		return err
 	}
@@ -431,7 +431,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 		}
 
 		results, err := runAggregation(
-			a.finalStage, a.aggregationFunction, a.pool, []arrow.Array{a.arrayToAggCarry.NewArray()},
+			a.finalStage, a.aggregationFunction, nil, a.pool, []arrow.Array{a.arrayToAggCarry.NewArray()},
 		)
 		if err != nil {
 			return err
@@ -525,7 +525,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 			start = end
 		}
 
-		result, err := runAggregation(true, a.aggregationFunction, a.pool, toAggregate)
+		result, err := runAggregation(true, a.aggregationFunction, nil, a.pool, toAggregate)
 		if err != nil {
 			return err
 		}
