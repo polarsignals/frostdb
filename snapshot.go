@@ -115,6 +115,10 @@ func getTxFromSnapshotFileName(fileName string) (uint64, error) {
 // started (i.e. no other snapshot was in progress). When the snapshot
 // goroutine successfully completes a snapshot, onSuccess is called.
 func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
+	db.snapshot(ctx, true, onSuccess)
+}
+
+func (db *DB) snapshot(ctx context.Context, async bool, onSuccess func()) {
 	if !db.columnStore.enableWAL {
 		return
 	}
@@ -131,7 +135,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 		"msg", "starting a new snapshot",
 		"tx", tx,
 	)
-	go func() {
+	doSnapshot := func(writeSnapshot func(context.Context, io.Writer) error) {
 		start := time.Now()
 		defer db.snapshotInProgress.Store(false)
 		defer commit()
@@ -157,7 +161,7 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 			}
 		}
 
-		if err := db.snapshotAtTX(ctx, tx, db.snapshotWriter(tx, metadata)); err != nil {
+		if err := db.snapshotAtTX(ctx, tx, writeSnapshot); err != nil {
 			level.Error(db.logger).Log(
 				"msg", "failed to snapshot database", "err", err,
 			)
@@ -169,7 +173,13 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 			"duration", time.Since(start),
 		)
 		onSuccess()
-	}()
+	}
+
+	if async {
+		go doSnapshot(db.snapshotWriter(tx, metadata))
+	} else {
+		doSnapshot(db.offlineSnapshotWriter(tx, metadata))
+	}
 }
 
 // snapshotAtTX takes a snapshot of the state of the database at transaction tx.
@@ -358,11 +368,18 @@ func (w *offsetWriter) checksum() uint32 {
 
 func (db *DB) snapshotWriter(tx uint64, txnMetadata []byte) func(context.Context, io.Writer) error {
 	return func(ctx context.Context, w io.Writer) error {
-		return WriteSnapshot(ctx, tx, txnMetadata, db, w)
+		return WriteSnapshot(ctx, tx, txnMetadata, db, w, false)
 	}
 }
 
-func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w io.Writer) error {
+// offlineSnapshotWriter is used when a database is closing after all the tables have closed.
+func (db *DB) offlineSnapshotWriter(tx uint64, txnMetadata []byte) func(context.Context, io.Writer) error {
+	return func(ctx context.Context, w io.Writer) error {
+		return WriteSnapshot(ctx, tx, txnMetadata, db, w, true)
+	}
+}
+
+func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w io.Writer, offline bool) error {
 	offW := newOffsetWriter(w)
 	w = offW
 	var tables []*Table
@@ -381,11 +398,18 @@ func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w
 		if err := func() error {
 			// Obtain a write block to prevent racing with
 			// compaction/persistence.
-			block, done, err := t.ActiveWriteBlock()
-			if err != nil {
-				return err
+			var block *TableBlock
+			if offline {
+				block = t.ActiveBlock()
+			} else {
+				var done func()
+				var err error
+				block, done, err = t.ActiveWriteBlock()
+				if err != nil {
+					return err
+				}
+				defer done()
 			}
-			defer done()
 			blockUlid, err := block.ulid.MarshalBinary()
 			if err != nil {
 				return err

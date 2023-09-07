@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1569,11 +1570,11 @@ func TestDBRecover(t *testing.T) {
 		snapshotsPath := filepath.Join(dir, "databases", dbAndTableName, "snapshots")
 		files, err := os.ReadDir(snapshotsPath)
 		require.NoError(t, err)
-		require.Equal(t, 2, len(files))
+		require.Equal(t, 3, len(files))
 		require.NoError(t, os.RemoveAll(filepath.Join(snapshotsPath, files[len(files)-1].Name())))
 		files, err = os.ReadDir(snapshotsPath)
 		require.NoError(t, err)
-		require.Equal(t, 1, len(files))
+		require.Equal(t, 2, len(files))
 
 		c, err := New(
 			WithLogger(newTestLogger(t)),
@@ -1914,4 +1915,48 @@ func Test_DB_EngineInMemory(t *testing.T) {
 			return nil
 		})
 	require.NoError(t, err)
+}
+
+func Test_DB_SnapshotOnClose(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	logger := newTestLogger(t)
+	dir := t.TempDir()
+
+	c, err := New(
+		WithLogger(logger),
+		WithStoragePath(dir),
+		WithWAL(),
+		WithActiveMemorySize(1024*1024*1024),
+		WithSnapshotTriggerSize(1024*1024*1024),
+		WithManualBlockRotation(),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(t, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(t, err)
+	}
+	require.NoError(t, c.Close())
+
+	// Check that we have a snapshot
+	found := false
+	filepath.WalkDir(dir, func(path string, info fs.DirEntry, err error) error {
+		if filepath.Ext(path) == ".fdbs" {
+			found = true
+		}
+		return nil
+	})
+	require.True(t, found)
 }

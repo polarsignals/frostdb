@@ -841,6 +841,17 @@ func (db *DB) Close(options ...CloseOption) error {
 	}
 	level.Info(db.logger).Log("msg", "closed all tables")
 
+	if !shouldPersist && db.columnStore.snapshotTriggerSize != 0 {
+		db.snapshot(context.Background(), false, func() {
+			if err := db.reclaimDiskSpace(context.Background()); err != nil {
+				level.Error(db.logger).Log(
+					"msg", "failed to reclaim disk space after snapshot",
+					"err", err,
+				)
+			}
+		})
+	}
+
 	if err := db.closeInternal(); err != nil {
 		return err
 	}
