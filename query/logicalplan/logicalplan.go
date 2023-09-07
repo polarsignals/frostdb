@@ -35,9 +35,16 @@ type IterOptions struct {
 	Projection         []Expr
 	Filter             Expr
 	DistinctColumns    []Expr
+	InMemoryOnly       bool
 }
 
 type Option func(opts *IterOptions)
+
+func WithInMemoryOnly() Option {
+	return func(opts *IterOptions) {
+		opts.InMemoryOnly = true
+	}
+}
 
 func WithPhysicalProjection(e ...Expr) Option {
 	return func(opts *IterOptions) {
@@ -177,6 +184,9 @@ type TableScan struct {
 
 	// Projection is the list of columns that are to be projected.
 	Projection []Expr
+
+	// SkipSources indicates to skip scanning the tables sources.
+	SkipSources bool
 }
 
 func (scan *TableScan) String() string {
@@ -204,6 +214,9 @@ type SchemaScan struct {
 
 	// Projection is the list of columns that are to be projected.
 	Projection []Expr
+
+	// SkipSources indicates to skip scanning the tables sources.
+	SkipSources bool
 }
 
 func (s *SchemaScan) String() string {

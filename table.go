@@ -977,7 +977,7 @@ func (t *Table) Iterator(
 	}
 
 	errg.Go(func() error {
-		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
+		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.InMemoryOnly, rowGroups); err != nil {
 			return err
 		}
 		close(rowGroups)
@@ -1073,7 +1073,7 @@ func (t *Table) SchemaIterator(
 	}
 
 	errg.Go(func() error {
-		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, rowGroups); err != nil {
+		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.InMemoryOnly, rowGroups); err != nil {
 			return err
 		}
 		close(rowGroups)
@@ -1741,6 +1741,7 @@ func (t *Table) collectRowGroups(
 	ctx context.Context,
 	tx uint64,
 	filterExpr logicalplan.Expr,
+	skipSources bool,
 	rowGroups chan<- any,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/collectRowGroups")
@@ -1766,6 +1767,10 @@ func (t *Table) collectRowGroups(
 		if err := block.RowGroupIterator(ctx, tx, filter, rowGroups); err != nil {
 			return err
 		}
+	}
+
+	if skipSources {
+		return nil
 	}
 
 	// Collect from all other data sources.

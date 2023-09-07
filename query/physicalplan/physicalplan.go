@@ -128,6 +128,17 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		}
 	}()
 
+	opts := []logicalplan.Option{
+		logicalplan.WithPhysicalProjection(s.options.PhysicalProjection...),
+		logicalplan.WithProjection(s.options.Projection...),
+		logicalplan.WithFilter(s.options.Filter),
+		logicalplan.WithDistinctColumns(s.options.Distinct...),
+	}
+
+	if s.options.SkipSources {
+		opts = append(opts, logicalplan.WithInMemoryOnly())
+	}
+
 	errg, _ := errgroup.WithContext(ctx)
 	errg.Go(recovery.Do(func() error {
 		return table.View(ctx, func(ctx context.Context, tx uint64) error {
@@ -136,10 +147,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 				tx,
 				pool,
 				callbacks,
-				logicalplan.WithPhysicalProjection(s.options.PhysicalProjection...),
-				logicalplan.WithProjection(s.options.Projection...),
-				logicalplan.WithFilter(s.options.Filter),
-				logicalplan.WithDistinctColumns(s.options.Distinct...),
+				opts...,
 			)
 		})
 	}))
@@ -187,6 +195,17 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		callbacks = append(callbacks, plan.Callback)
 	}
 
+	opts := []logicalplan.Option{
+		logicalplan.WithPhysicalProjection(s.options.PhysicalProjection...),
+		logicalplan.WithProjection(s.options.Projection...),
+		logicalplan.WithFilter(s.options.Filter),
+		logicalplan.WithDistinctColumns(s.options.Distinct...),
+	}
+
+	if s.options.SkipSources {
+		opts = append(opts, logicalplan.WithInMemoryOnly())
+	}
+
 	errg, _ := errgroup.WithContext(ctx)
 	errg.Go(recovery.Do(func() error {
 		return table.View(ctx, func(ctx context.Context, tx uint64) error {
@@ -195,10 +214,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 				tx,
 				pool,
 				callbacks,
-				logicalplan.WithPhysicalProjection(s.options.PhysicalProjection...),
-				logicalplan.WithProjection(s.options.Projection...),
-				logicalplan.WithFilter(s.options.Filter),
-				logicalplan.WithDistinctColumns(s.options.Distinct...),
+				opts...,
 			)
 		})
 	}))
@@ -247,9 +263,16 @@ func (p *noopOperator) Draw() *Diagram {
 type execOptions struct {
 	orderedAggregations bool
 	overrideInput       []PhysicalPlan
+	skipSources         bool
 }
 
 type Option func(o *execOptions)
+
+func WithInMemoryOnly() Option {
+	return func(o *execOptions) {
+		o.skipSources = true
+	}
+}
 
 func WithOrderedAggregations() Option {
 	return func(o *execOptions) {
@@ -304,6 +327,7 @@ func Build(
 			for i := range plans {
 				plans[i] = &noopOperator{}
 			}
+			plan.SchemaScan.SkipSources = execOpts.skipSources
 			outputPlan.scan = &SchemaScan{
 				tracer:  tracer,
 				options: plan.SchemaScan,
@@ -318,6 +342,7 @@ func Build(
 			for i := range plans {
 				plans[i] = &noopOperator{}
 			}
+			plan.TableScan.SkipSources = execOpts.skipSources
 			outputPlan.scan = &TableScan{
 				tracer:  tracer,
 				options: plan.TableScan,
