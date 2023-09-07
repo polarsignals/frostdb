@@ -1952,11 +1952,11 @@ func Test_DB_SnapshotOnClose(t *testing.T) {
 
 	// Check that we have a snapshot
 	found := false
-	filepath.WalkDir(dir, func(path string, info fs.DirEntry, err error) error {
+	require.NoError(t, filepath.WalkDir(dir, func(path string, info fs.DirEntry, err error) error {
 		if filepath.Ext(path) == ".fdbs" {
 			found = true
 		}
 		return nil
-	})
+	}))
 	require.True(t, found)
 }
