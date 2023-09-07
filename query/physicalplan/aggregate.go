@@ -860,17 +860,20 @@ type LimitAggregation struct {
 }
 
 func (a *LimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
-	res := array.NewBuilder(pool, arrs[0].DataType())
+	res := array.NewListBuilder(pool, arrs[0].DataType())
 	defer res.Release()
+	vb := res.ValueBuilder()
 	for _, arr := range arrs {
 		for i := 0; i < arr.Len() && uint64(i) < a.Limit; i++ {
-			err := res.AppendValueFromString(arr.ValueStr(i))
+			err := vb.AppendValueFromString(arr.ValueStr(i))
 			if err != nil {
 				return nil, err
 			}
 		}
+		res.Append(true)
 	}
-	return res.NewArray(), nil
+	r := res.NewArray()
+	return r, nil
 }
 
 // runAggregation is a helper to run the given aggregation function given
