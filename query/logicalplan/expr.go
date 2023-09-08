@@ -426,10 +426,45 @@ func (e *LiteralExpr) MatchColumn(columnName string) bool {
 	return e.Name() == columnName
 }
 
+type AggregationArgKey uint32
+
+const (
+	AggArgLimit AggregationArgKey = iota
+	AggArgFinal
+)
+
+type AggregationArguments map[AggregationArgKey]interface{}
+
+func (a AggregationArguments) GetUInt64(key AggregationArgKey) (uint64, bool) {
+	var i uint64
+	var ok bool
+	if v, k := a[key]; k {
+		i, ok = v.(uint64)
+	}
+	return i, ok
+}
+
+func (a AggregationArguments) GetBool(key AggregationArgKey) (bool, bool) {
+	var b bool
+	var ok bool
+	if v, k := a[key]; k {
+		b, ok = v.(bool)
+	}
+	return b, ok
+}
+
+func (a AggregationArguments) Copy() AggregationArguments {
+	c := make(AggregationArguments)
+	for k, v := range a {
+		c[k] = v
+	}
+	return c
+}
+
 type AggregationFunction struct {
 	Func AggFunc
 	Expr Expr
-	Args map[string]interface{}
+	Args AggregationArguments
 }
 
 func (f *AggregationFunction) Clone() Expr {
@@ -547,9 +582,7 @@ func Limit(expr Expr, limit uint64) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncLimit,
 		Expr: expr,
-		Args: map[string]interface{}{
-			"limit": limit,
-		},
+		Args: AggregationArguments{AggArgLimit: limit},
 	}
 }
 

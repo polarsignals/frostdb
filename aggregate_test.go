@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -245,6 +246,133 @@ func TestAggregationProjection(t *testing.T) {
 	require.True(t, record.Schema().HasField("labels.label4"))
 	require.True(t, record.Schema().HasField("sum(value)"))
 	require.True(t, record.Schema().HasField("max(value)"))
+}
+
+func TestAggregationLimit(t *testing.T) {
+	config := NewTableConfig(dynparquet.SampleDefinition())
+	logger := newTestLogger(t)
+	c, err := New(WithLogger(logger))
+	require.NoError(t, err)
+	defer c.Close()
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{{
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+		},
+		Value:     1,
+		Timestamp: 1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+		},
+		Value:     2,
+		Timestamp: 1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+		},
+		Value:     1,
+		Timestamp: 1,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+		},
+		Value:     1,
+		Timestamp: 2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+		},
+		Value:     2,
+		Timestamp: 2,
+	}, {
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+		},
+		Value:     1,
+		Timestamp: 3,
+	}}
+
+	for i := 0; i < len(samples); i++ {
+		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		require.NoError(t, err)
+
+		_, err = table.InsertBuffer(context.Background(), buf)
+		require.NoError(t, err)
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	records := []arrow.Record{}
+	err = engine.ScanTable("test").
+		Aggregate(
+			[]logicalplan.Expr{
+				logicalplan.Limit(logicalplan.Col("value"), 2),
+			},
+			[]logicalplan.Expr{
+				logicalplan.Col("timestamp"),
+			},
+		).
+		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+			records = append(records, ar)
+			ar.Retain()
+			fmt.Printf("%s", ar)
+			return nil
+		})
+
+	require.NoError(t, err)
+
+	require.Equal(t, 1, len(records))
+	record := records[0]
+
+	require.True(t, record.Schema().HasField("timestamp"))
+	// TODO --
+	// require.True(t, record.Schema().HasField("limit(value, 2)"))
+
+	require.Equal(t, int64(2), record.NumCols())
+	require.Equal(t, int64(3), record.NumRows())
+
+	// the first column should be the timestamps and there should be 3 of them
+	require.Equal(t, record.Column(0).(*array.Int64).Len(), 3)
+
+	// the second column should be the lists of values
+	list, ok := record.Column(1).(*array.List)
+	require.True(t, ok)
+	require.Equal(t, list.Len(), 3)
+	require.Equal(t, len(list.Offsets()), 4)
+	require.Equal(t, list.ListValues().Len(), 5)
+
+	for i := 0; i < list.Len(); i++ {
+		start, end := list.ValueOffsets(i)
+		values := array.NewSlice(list.ListValues(), start, end)
+		valuesRaw := []int64{}
+		for i := 0; i < values.Len(); i++ {
+			valuesRaw = append(valuesRaw, values.(*array.Int64).Value(i))
+		}
+
+		defer values.Release()
+		switch record.Column(0).(*array.Int64).Value(i) {
+		case 1:
+			require.Equal(t, values.(*array.Int64).Len(), 2)
+			require.Contains(t, valuesRaw, int64(1))
+			require.Contains(t, valuesRaw, int64(2))
+		case 2:
+			require.Equal(t, values.(*array.Int64).Len(), 2)
+			require.Contains(t, valuesRaw, int64(1))
+			require.Contains(t, valuesRaw, int64(2))
+		case 3:
+			require.Equal(t, values.(*array.Int64).Len(), 1)
+			require.Contains(t, valuesRaw, int64(1))
+		}
+	}
+
 }
 
 // go test -bench=BenchmarkAggregation -benchmem -count=10 . | tee BenchmarkAggregation

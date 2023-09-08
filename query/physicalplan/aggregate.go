@@ -43,7 +43,8 @@ func Aggregate(
 			case *logicalplan.AggregationFunction:
 				aggFunc = e.Func
 				aggFuncFound = true
-				aggregation.arguments = e.Args
+				aggregation.arguments = e.Args.Copy()
+				aggregation.arguments[logicalplan.AggArgFinal] = final
 			case *logicalplan.Column:
 				aggregation.expr = e
 				aggColumnFound = true
@@ -98,7 +99,7 @@ func Aggregate(
 
 func chooseAggregationFunction(
 	aggFunc logicalplan.AggFunc,
-	aggArgs map[string]interface{},
+	aggArgs logicalplan.AggregationArguments,
 	dataType arrow.DataType,
 ) (AggregationFunction, error) {
 	switch aggFunc {
@@ -126,12 +127,12 @@ func chooseAggregationFunction(
 	case logicalplan.AggFuncCount:
 		return &CountAggregation{}, nil
 	case logicalplan.AggFuncLimit:
-		if limit, ok := aggArgs["limit"]; ok {
-			if limit, ok := limit.(uint64); ok {
-				return &LimitAggregation{Limit: limit}, nil
-			}
+		limit, limitOK := aggArgs.GetUInt64(logicalplan.AggArgLimit)
+		final, finalOK := aggArgs.GetBool(logicalplan.AggArgFinal)
+		if !limitOK || !finalOK {
+			return nil, fmt.Errorf("invalid limit aggregation arguments: %v", aggArgs)
 		}
-		return nil, fmt.Errorf("invalid limit aggregation arguments: %v", aggArgs)
+		return &LimitAggregation{Limit: limit, Final: final}, nil
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
 	}
@@ -144,7 +145,7 @@ type Aggregation struct {
 	resultName string
 	function   logicalplan.AggFunc
 	arrays     []builder.ColumnBuilder // TODO: These can actually live outside this struct and be shared. Only at the very end will they be read by each column and then aggregated separately.
-	arguments  map[string]interface{}
+	arguments  logicalplan.AggregationArguments
 }
 
 type AggregationFunction interface {
@@ -856,24 +857,54 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 }
 
 type LimitAggregation struct {
+	Final bool
 	Limit uint64
 }
 
 func (a *LimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
-	res := array.NewListBuilder(pool, arrs[0].DataType())
+	var res *array.ListBuilder
+	if a.Final {
+		lists, ok := arrs[0].(*array.List)
+		if !ok {
+			return nil, fmt.Errorf("expected list array, got %T", arrs[0])
+		}
+		res = array.NewListBuilder(pool, lists.ListValues().DataType())
+	} else {
+		res = array.NewListBuilder(pool, arrs[0].DataType())
+	}
 	defer res.Release()
 	vb := res.ValueBuilder()
-	res.Append(true)
+
 	for _, arr := range arrs {
+		res.Append(true)
 		for i := 0; i < arr.Len() && uint64(i) < a.Limit; i++ {
-			err := vb.AppendValueFromString(arr.ValueStr(i))
-			if err != nil {
-				return nil, err
+			if a.Final {
+				lists, ok := arr.(*array.List)
+				if !ok {
+					return nil, fmt.Errorf("expected list array, got %T", arr)
+				}
+
+				start, end := lists.ValueOffsets(i)
+				for j := start; j < end && uint64(int64(i)+j-start) < a.Limit; j++ {
+					s := lists.ListValues().ValueStr(int(j))
+					err := vb.AppendValueFromString(s)
+					if err != nil {
+						return nil, err
+					}
+				}
+
+			} else {
+				err := vb.AppendValueFromString(arr.ValueStr(i))
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
-		res.Append(true)
 	}
 	r := res.NewArray()
+	if a.Final {
+		fmt.Printf("%v\n", r)
+	}
 	return r, nil
 }
 
@@ -883,7 +914,7 @@ func (a *LimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 func runAggregation(
 	finalStage bool,
 	fn logicalplan.AggFunc,
-	args map[string]interface{},
+	args logicalplan.AggregationArguments,
 	pool memory.Allocator,
 	arrs []arrow.Array,
 ) (arrow.Array, error) {
