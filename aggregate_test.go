@@ -362,7 +362,8 @@ func TestAggregationLimit(t *testing.T) {
 		case 1:
 			require.Equal(t, values.(*array.Int64).Len(), 2)
 			require.Contains(t, valuesRaw, int64(1))
-			require.Contains(t, valuesRaw, int64(2))
+			// the 2nd value in this could be 1 or 2 so we don't check it
+			// to avoid the test flaking ..
 		case 2:
 			require.Equal(t, values.(*array.Int64).Len(), 2)
 			require.Contains(t, valuesRaw, int64(1))

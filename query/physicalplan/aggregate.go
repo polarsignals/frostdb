@@ -132,7 +132,11 @@ func chooseAggregationFunction(
 		if !limitOK || !finalOK {
 			return nil, fmt.Errorf("invalid limit aggregation arguments: %v", aggArgs)
 		}
-		return &LimitAggregation{Limit: limit, Final: final}, nil
+		if !final {
+			return &LimitAggregation{Limit: limit}, nil
+		} else {
+			return &FinalLimitAggregation{Limit: limit}, nil
+		}
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
 	}
@@ -857,55 +861,53 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 }
 
 type LimitAggregation struct {
-	Final bool
 	Limit uint64
 }
 
 func (a *LimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
-	var res *array.ListBuilder
-	if a.Final {
-		lists, ok := arrs[0].(*array.List)
-		if !ok {
-			return nil, fmt.Errorf("expected list array, got %T", arrs[0])
-		}
-		res = array.NewListBuilder(pool, lists.ListValues().DataType())
-	} else {
-		res = array.NewListBuilder(pool, arrs[0].DataType())
-	}
+	res := array.NewListBuilder(pool, arrs[0].DataType())
 	defer res.Release()
 	vb := res.ValueBuilder()
 
 	for _, arr := range arrs {
 		res.Append(true)
 		for i := 0; i < arr.Len() && uint64(i) < a.Limit; i++ {
-			if a.Final {
-				lists, ok := arr.(*array.List)
-				if !ok {
-					return nil, fmt.Errorf("expected list array, got %T", arr)
-				}
+			err := vb.AppendValueFromString(arr.ValueStr(i))
+			if err != nil {
+				return nil, err
+			}
 
-				start, end := lists.ValueOffsets(i)
-				for j := start; j < end && uint64(int64(i)+j-start) < a.Limit; j++ {
-					s := lists.ListValues().ValueStr(int(j))
-					err := vb.AppendValueFromString(s)
-					if err != nil {
-						return nil, err
-					}
-				}
+		}
+	}
 
-			} else {
-				err := vb.AppendValueFromString(arr.ValueStr(i))
+	return res.NewArray(), nil
+}
+
+type FinalLimitAggregation struct {
+	Limit uint64
+}
+
+func (a *FinalLimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	res := array.NewListBuilder(pool, arrs[0].(*array.List).ListValues().DataType())
+	defer res.Release()
+	vb := res.ValueBuilder()
+
+	for _, arr := range arrs {
+		res.Append(true)
+		for i := 0; i < arr.Len() && uint64(i) < a.Limit; i++ {
+			list := arr.(*array.List)
+			start, end := list.ValueOffsets(i)
+			for j := start; j < end && uint64(int64(i)+j-start) < a.Limit; j++ {
+				s := list.ListValues().ValueStr(int(j))
+				err := vb.AppendValueFromString(s)
 				if err != nil {
 					return nil, err
 				}
 			}
 		}
 	}
-	r := res.NewArray()
-	if a.Final {
-		fmt.Printf("%v\n", r)
-	}
-	return r, nil
+
+	return res.NewArray(), nil
 }
 
 // runAggregation is a helper to run the given aggregation function given
