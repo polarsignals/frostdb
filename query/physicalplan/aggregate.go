@@ -126,16 +126,16 @@ func chooseAggregationFunction(
 		}
 	case logicalplan.AggFuncCount:
 		return &CountAggregation{}, nil
-	case logicalplan.AggFuncLimit:
+	case logicalplan.AggFuncTake:
 		limit, limitOK := aggArgs.GetUInt64(logicalplan.AggArgLimit)
 		final, finalOK := aggArgs.GetBool(logicalplan.AggArgFinal)
 		if !limitOK || !finalOK {
 			return nil, fmt.Errorf("invalid limit aggregation arguments: %v", aggArgs)
 		}
 		if !final {
-			return &LimitAggregation{Limit: limit}, nil
+			return &TakeAggregation{Limit: limit}, nil
 		} else {
-			return &FinalLimitAggregation{Limit: limit}, nil
+			return &FinalTakeAggregation{Limit: limit}, nil
 		}
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
@@ -860,11 +860,11 @@ func (a *CountAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 	return res.NewArray(), nil
 }
 
-type LimitAggregation struct {
+type TakeAggregation struct {
 	Limit uint64
 }
 
-func (a *LimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+func (a *TakeAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	res := array.NewListBuilder(pool, arrs[0].DataType())
 	defer res.Release()
 	vb := res.ValueBuilder()
@@ -883,11 +883,11 @@ func (a *LimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) 
 	return res.NewArray(), nil
 }
 
-type FinalLimitAggregation struct {
+type FinalTakeAggregation struct {
 	Limit uint64
 }
 
-func (a *FinalLimitAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+func (a *FinalTakeAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	res := array.NewListBuilder(pool, arrs[0].(*array.List).ListValues().DataType())
 	defer res.Release()
 	vb := res.ValueBuilder()

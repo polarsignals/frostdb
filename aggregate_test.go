@@ -248,7 +248,7 @@ func TestAggregationProjection(t *testing.T) {
 	require.True(t, record.Schema().HasField("max(value)"))
 }
 
-func TestAggregationLimit(t *testing.T) {
+func TestAggregationTakeLimit(t *testing.T) {
 	config := NewTableConfig(dynparquet.SampleDefinition())
 	logger := newTestLogger(t)
 	c, err := New(WithLogger(logger))
@@ -333,8 +333,7 @@ func TestAggregationLimit(t *testing.T) {
 	record := records[0]
 
 	require.True(t, record.Schema().HasField("timestamp"))
-	// TODO --
-	// require.True(t, record.Schema().HasField("limit(value, 2)"))
+	require.True(t, record.Schema().HasField("take(value, 2)"))
 
 	require.Equal(t, int64(2), record.NumCols())
 	require.Equal(t, int64(3), record.NumRows())

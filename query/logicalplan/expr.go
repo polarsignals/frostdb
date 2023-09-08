@@ -2,6 +2,7 @@ package logicalplan
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -497,7 +498,11 @@ func (f *AggregationFunction) Computed() bool {
 }
 
 func (f *AggregationFunction) Name() string {
-	return f.Func.String() + "(" + f.Expr.Name() + ")"
+	args := []string{f.Expr.Name()}
+	for _, arg := range f.Args {
+		args = append(args, fmt.Sprintf("%v", arg))
+	}
+	return f.Func.String() + "(" + strings.Join(args, ", ") + ")"
 }
 
 func (f *AggregationFunction) ColumnsUsedExprs() []Expr {
@@ -521,7 +526,7 @@ const (
 	AggFuncMax
 	AggFuncCount
 	AggFuncAvg
-	AggFuncLimit
+	AggFuncTake
 )
 
 func (f AggFunc) String() string {
@@ -536,8 +541,8 @@ func (f AggFunc) String() string {
 		return "count"
 	case AggFuncAvg:
 		return "avg"
-	case AggFuncLimit:
-		return "limit"
+	case AggFuncTake:
+		return "take"
 	default:
 		panic("unknown aggregation function")
 	}
@@ -580,7 +585,7 @@ func Avg(expr Expr) *AggregationFunction {
 
 func Limit(expr Expr, limit uint64) *AggregationFunction {
 	return &AggregationFunction{
-		Func: AggFuncLimit,
+		Func: AggFuncTake,
 		Expr: expr,
 		Args: AggregationArguments{AggArgLimit: limit},
 	}
