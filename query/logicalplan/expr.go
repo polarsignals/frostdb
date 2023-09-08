@@ -583,7 +583,7 @@ func Avg(expr Expr) *AggregationFunction {
 	}
 }
 
-func Limit(expr Expr, limit uint64) *AggregationFunction {
+func Take(expr Expr, limit uint64) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncTake,
 		Expr: expr,

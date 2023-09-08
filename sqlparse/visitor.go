@@ -183,6 +183,18 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		// Deliberate pass-through nodes.
 	case *ast.FuncCallExpr:
 		switch expr.FnName.String() {
+		case "take":
+			left, right := pop(v.exprStack)
+			var exprStack []logicalplan.Expr
+			// exprStack = append(exprStack, right...)
+			switch l := left.(type) {
+			case *logicalplan.LiteralExpr:
+				val := l.Value.(*scalar.Int64)
+				limit := uint64(val.Value)
+				exprStack = append(exprStack, logicalplan.Take(right[0], limit))
+				v.exprStack = exprStack
+			}
+
 		case ast.Second:
 			// This is pretty hacky and only fine because it's in the test only.
 			left, right := pop(v.exprStack)

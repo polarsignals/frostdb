@@ -314,7 +314,7 @@ func TestAggregationTakeLimit(t *testing.T) {
 	err = engine.ScanTable("test").
 		Aggregate(
 			[]logicalplan.Expr{
-				logicalplan.Limit(logicalplan.Col("value"), 2),
+				logicalplan.Take(logicalplan.Col("value"), 2),
 			},
 			[]logicalplan.Expr{
 				logicalplan.Col("timestamp"),

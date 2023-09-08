@@ -428,6 +428,10 @@ func arrayToStringVals(a arrow.Array) ([]string, error) {
 		default:
 			return nil, fmt.Errorf("unhandled dictionary type: %T", dict)
 		}
+	case *array.List:
+		for i := range result {
+			result[i] = col.ValueStr(i)
+		}
 	default:
 		return nil, fmt.Errorf("unhandled type %T", col)
 	}
