@@ -186,7 +186,6 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		case "take":
 			left, right := pop(v.exprStack)
 			var exprStack []logicalplan.Expr
-			// exprStack = append(exprStack, right...)
 			switch l := left.(type) {
 			case *logicalplan.LiteralExpr:
 				val := l.Value.(*scalar.Int64)

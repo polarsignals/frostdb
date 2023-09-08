@@ -2,7 +2,6 @@ package frostdb
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -323,7 +322,6 @@ func TestAggregationTakeLimit(t *testing.T) {
 		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
 			records = append(records, ar)
 			ar.Retain()
-			fmt.Printf("%s", ar)
 			return nil
 		})
 
