@@ -888,6 +888,14 @@ type FinalTakeAggregation struct {
 }
 
 func (a *FinalTakeAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	// TODO(albertlockett) I will clean this up -- this is a bit of a hacky way to handle
+	// plans that have chained aggregations b/c if the 'take' agg runs after some  previous agg,
+	// it won't run in stages (e.g. before and after the synchronizer, so we don't get the folded
+	// results here.)
+	if _, ok := arrs[0].(*array.List); !ok {
+		return (&TakeAggregation{Limit: a.Limit}).Aggregate(pool, arrs)
+	}
+
 	res := array.NewListBuilder(pool, arrs[0].(*array.List).ListValues().DataType())
 	defer res.Release()
 	vb := res.ValueBuilder()
