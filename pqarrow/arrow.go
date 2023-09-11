@@ -1201,6 +1201,7 @@ func Project(r arrow.Record, projections []logicalplan.Expr) arrow.Record {
 			if projection.MatchColumn(r.Schema().Field(i).Name) {
 				cols = append(cols, r.Column(i))
 				fields = append(fields, r.Schema().Field(i))
+				break
 			}
 		}
 	}

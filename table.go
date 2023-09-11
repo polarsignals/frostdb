@@ -946,7 +946,9 @@ func (t *Table) Iterator(
 					switch t := rg.(type) {
 					case arrow.Record:
 						defer t.Release()
-						err := callback(ctx, t)
+						r := pqarrow.Project(t, iterOpts.PhysicalProjection)
+						defer r.Release()
+						err := callback(ctx, r)
 						if err != nil {
 							return err
 						}
