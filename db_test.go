@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
@@ -338,26 +339,51 @@ func Test_DB_WithStorage(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf, err := samples.ToBuffer(table.Schema())
+	r, err := samples.ToRecord()
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	_, err = table.InsertBuffer(ctx, buf)
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	pool := memory.NewGoAllocator()
+	engine := query.NewEngine(pool, db.TableProvider())
+	var inMemory arrow.Record
+	err = engine.ScanTable(t.Name()).
+		Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			r.Retain()
+			inMemory = r
+			return nil
+		})
 	require.NoError(t, err)
 
 	// Gracefully close the db to persist blocks
 	c.Close()
 
-	pool := memory.NewGoAllocator()
-	engine := query.NewEngine(pool, db.TableProvider())
+	c, err = New(
+		WithLogger(logger),
+		WithReadWriteStorage(sinksource),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err = c.DB(context.Background(), t.Name())
+	require.NoError(t, err)
+	engine = query.NewEngine(pool, db.TableProvider())
+	var onDisk arrow.Record
 	err = engine.ScanTable(t.Name()).
 		Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
 		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-			require.Equal(t, int64(1), r.NumCols())
-			require.Equal(t, int64(2), r.NumRows())
+			r.Retain()
+			onDisk = r
 			return nil
 		})
 	require.NoError(t, err)
+
+	require.True(t, array.RecordEqual(inMemory, onDisk))
+	require.Equal(t, int64(1), onDisk.NumCols())
+	require.Equal(t, int64(2), onDisk.NumRows())
 }
 
 func Test_DB_ColdStart(t *testing.T) {
