@@ -1341,7 +1341,7 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 		"timestamp filter": {
 			filter: logicalplan.Col("timestamp").GtEq(logicalplan.Literal(12)),
 			rows:   1,
-			cols:   7,
+			cols:   1,
 		},
 		"distinct": {
 			distinct: logicalplan.DynCol("labels"),
