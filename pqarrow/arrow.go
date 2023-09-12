@@ -1186,3 +1186,25 @@ func ColToWriter(col int, writers []MultiColumnWriter) writer.ValueWriter {
 
 	return nil
 }
+
+// Project will project the record according to the given projections.
+func Project(r arrow.Record, projections []logicalplan.Expr) arrow.Record {
+	if len(projections) == 0 {
+		r.Retain() // NOTE: we're creating another reference to this record, so retain it
+		return r
+	}
+
+	cols := make([]arrow.Array, 0, r.Schema().NumFields())
+	fields := make([]arrow.Field, 0, r.Schema().NumFields())
+	for i := 0; i < r.Schema().NumFields(); i++ {
+		for _, projection := range projections {
+			if projection.MatchColumn(r.Schema().Field(i).Name) {
+				cols = append(cols, r.Column(i))
+				fields = append(fields, r.Schema().Field(i))
+				break
+			}
+		}
+	}
+
+	return array.NewRecord(arrow.NewSchema(fields, nil), cols, r.NumRows())
+}
