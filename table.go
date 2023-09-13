@@ -261,6 +261,9 @@ func newTable(
 	if err != nil {
 		return nil, err
 	}
+	if len(s.SortingColumns()) == 0 {
+		return nil, errors.New("table schema must have at least one sorting column")
+	}
 
 	t := &Table{
 		db:     db,
