@@ -351,6 +351,11 @@ func Build(
 			prev = append(prev[:0], plans...)
 			oInfo.nodeMaintainsOrdering()
 		case plan.Projection != nil:
+			for _, e := range plan.Projection.Exprs { // Don't build the projection if it's a wildcard, the projection pushdown optimization will handle it.
+				if e.Name() == "all" {
+					return true
+				}
+			}
 			// For each previous physical plan create one Projection
 			for i := range prev {
 				p, err := Project(pool, tracer, plan.Projection.Exprs)

@@ -690,3 +690,27 @@ func (a *AverageExpr) Accept(visitor Visitor) bool {
 
 	return visitor.PostVisit(a)
 }
+
+type AllExpr struct{}
+
+func All() *AllExpr {
+	return &AllExpr{}
+}
+
+func (a *AllExpr) DataType(*parquet.Schema) (arrow.DataType, error) { return nil, nil }
+func (a *AllExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(a)
+	if !continu {
+		return false
+	}
+
+	return visitor.PostVisit(a)
+}
+func (a *AllExpr) Name() string { return "all" }
+func (a *AllExpr) ColumnsUsedExprs() []Expr {
+	return []Expr{&AllExpr{}}
+}
+func (a *AllExpr) MatchColumn(columnName string) bool { return true }
+func (a *AllExpr) MatchPath(path string) bool         { return true }
+func (a *AllExpr) Computed() bool                     { return false }
+func (a *AllExpr) Clone() Expr                        { return &AllExpr{} }
