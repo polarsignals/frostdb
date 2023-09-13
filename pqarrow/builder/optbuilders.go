@@ -338,6 +338,13 @@ func (b *OptInt64Builder) AppendNulls(n int) {
 	b.builderBase.AppendNulls(n)
 }
 
+func (b *OptInt64Builder) SetNull(i int) {
+	if i < 0 || i >= b.length {
+		panic("arrow/array: index out of range")
+	}
+	bitutil.ClearBit(b.validityBitmap, i)
+}
+
 func (b *OptInt64Builder) NewArray() arrow.Array {
 	var dataAsBytes []byte
 
