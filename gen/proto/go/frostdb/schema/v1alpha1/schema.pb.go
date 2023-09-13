@@ -340,6 +340,7 @@ type Column struct {
 	// Whether the column can dynamically expand.
 	Dynamic bool `protobuf:"varint,3,opt,name=dynamic,proto3" json:"dynamic,omitempty"`
 	// Prehash the column before storing it. This is an optimization to speed up aggregation queries when this column is often aggregated.
+	// This will create a separate non-dynamic column with the same name and the prefix "hashed." that contains the prehashed values.
 	Prehash bool `protobuf:"varint,4,opt,name=prehash,proto3" json:"prehash,omitempty"`
 }
 
