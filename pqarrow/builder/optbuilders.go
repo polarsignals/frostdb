@@ -33,6 +33,7 @@ type OptimizedBuilder interface {
 	RepeatLastValue(int) error
 	IsNull(i int) bool
 	IsValid(i int) bool
+	SetNull(i int)
 }
 
 type builderBase struct {
@@ -74,6 +75,14 @@ func (b *builderBase) AppendNulls(n int) {
 	b.validityBitmap = resizeBitmap(b.validityBitmap, b.length+n)
 	bitutil.SetBitsTo(b.validityBitmap, int64(b.length), int64(n), false)
 	b.length += n
+}
+
+// SetNull is setting the value at the index i to null.
+func (b *builderBase) SetNull(i int) {
+	if i < 0 || i >= b.length {
+		panic("arrow/array: index out of range")
+	}
+	bitutil.ClearBit(b.validityBitmap, i)
 }
 
 func (b *builderBase) IsValid(n int) bool {
@@ -648,13 +657,6 @@ func (b *OptInt32Builder) Set(i int, v int32) {
 		panic("arrow/array: index out of range")
 	}
 	b.data[i] = v
-}
-
-func (b *OptInt32Builder) SetNull(i int) {
-	if i < 0 || i >= b.length {
-		panic("arrow/array: index out of range")
-	}
-	bitutil.ClearBit(b.validityBitmap, i)
 }
 
 func (b *OptInt32Builder) Add(i int, v int32) {
