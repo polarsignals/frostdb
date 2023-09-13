@@ -825,7 +825,7 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 					"last_snapshot_size", humanize.IBytes(uint64(block.lastSnapshotSize.Load())),
 				)
 				block.lastSnapshotSize.Store(blockSize)
-				if err := t.db.reclaimDiskSpace(ctx); err != nil {
+				if err := t.db.reclaimDiskSpace(context.Background()); err != nil {
 					level.Error(t.logger).Log(
 						"msg", "failed to reclaim disk space after snapshot",
 						"err", err,
