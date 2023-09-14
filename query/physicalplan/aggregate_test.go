@@ -3,6 +3,7 @@ package physicalplan
 import (
 	"context"
 	"encoding/binary"
+	"hash/maphash"
 	"math/rand"
 	"testing"
 
@@ -44,13 +45,14 @@ func Test_Aggregate_ArrayOverflow(t *testing.T) {
 			logicalplan.Col("stacktrace"),
 			logicalplan.Col("id"),
 		},
+		maphash.MakeSeed(),
 		false,
 	)
 
 	totalRows := int64(0)
 	agg.SetNext(&OutputPlan{
 		callback: func(ctx context.Context, r arrow.Record) error {
-			require.Equal(t, 3, len(r.Schema().Fields()))
+			require.Equal(t, 5, len(r.Schema().Fields()))
 			for i := 0; i < int(r.NumCols()); i++ {
 				require.Equal(t, r.NumRows(), int64(r.Column(i).Len()))
 			}

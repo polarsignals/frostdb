@@ -20,6 +20,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
@@ -1259,113 +1260,118 @@ func Test_DB_TableNotExist(t *testing.T) {
 }
 
 func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
-	ctx := context.Background()
-	config := NewTableConfig(
+	for _, schema := range []proto.Message{
 		dynparquet.SampleDefinition(),
-	)
+		dynparquet.PrehashedSampleDefinition(),
+	} {
+		ctx := context.Background()
+		config := NewTableConfig(
+			schema,
+		)
 
-	c, err := New(WithLogger(newTestLogger(t)))
-	require.NoError(t, err)
-	defer c.Close()
+		c, err := New(WithLogger(newTestLogger(t)))
+		require.NoError(t, err)
+		defer c.Close()
 
-	db, err := c.DB(ctx, "sampleschema")
-	require.NoError(t, err)
+		db, err := c.DB(ctx, "sampleschema")
+		require.NoError(t, err)
 
-	table, err := db.Table("test", config)
-	require.NoError(t, err)
+		table, err := db.Table("test", config)
+		require.NoError(t, err)
 
-	samples := dynparquet.Samples{
-		{
-			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
+		samples := dynparquet.Samples{
+			{
+				ExampleType: "test",
+				Labels: []dynparquet.Label{
+					{Name: "label1", Value: "value1"},
+					{Name: "label2", Value: "value2"},
+				},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+				},
+				Timestamp: 10,
+				Value:     1,
 			},
-			Stacktrace: []uuid.UUID{
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			{
+				ExampleType: "test",
+				Labels: []dynparquet.Label{
+					{Name: "label1", Value: "value1"},
+					{Name: "label2", Value: "value2"},
+					{Name: "label3", Value: "value3"},
+				},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+				},
+				Timestamp: 11,
+				Value:     2,
 			},
-			Timestamp: 10,
-			Value:     1,
-		},
-		{
-			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
-				{Name: "label3", Value: "value3"},
+			{
+				ExampleType: "test",
+				Labels: []dynparquet.Label{
+					{Name: "label1", Value: "value1"},
+					{Name: "label2", Value: "value2"},
+				},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+				},
+				Timestamp: 12,
+				Value:     3,
 			},
-			Stacktrace: []uuid.UUID{
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		}
+
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+
+		engine := query.NewEngine(
+			memory.NewGoAllocator(),
+			db.TableProvider(),
+		)
+
+		tests := map[string]struct {
+			filter   logicalplan.Expr
+			distinct logicalplan.Expr
+			rows     int64
+			cols     int64
+		}{
+			"none": {
+				rows: 3,
+				cols: 7,
 			},
-			Timestamp: 11,
-			Value:     2,
-		},
-		{
-			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
+			"timestamp filter": {
+				filter: logicalplan.Col("timestamp").GtEq(logicalplan.Literal(12)),
+				rows:   1,
+				cols:   1,
 			},
-			Stacktrace: []uuid.UUID{
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			"distinct": {
+				distinct: logicalplan.DynCol("labels"),
+				rows:     2,
+				cols:     3,
 			},
-			Timestamp: 12,
-			Value:     3,
-		},
-	}
+		}
 
-	r, err := samples.ToRecord()
-	require.NoError(t, err)
-
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
-
-	engine := query.NewEngine(
-		memory.NewGoAllocator(),
-		db.TableProvider(),
-	)
-
-	tests := map[string]struct {
-		filter   logicalplan.Expr
-		distinct logicalplan.Expr
-		rows     int64
-		cols     int64
-	}{
-		"none": {
-			rows: 3,
-			cols: 7,
-		},
-		"timestamp filter": {
-			filter: logicalplan.Col("timestamp").GtEq(logicalplan.Literal(12)),
-			rows:   1,
-			cols:   1,
-		},
-		"distinct": {
-			distinct: logicalplan.DynCol("labels"),
-			rows:     2,
-			cols:     3,
-		},
-	}
-
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			bldr := engine.ScanTable("test")
-			if test.filter != nil {
-				bldr = bldr.Filter(test.filter)
-			}
-			if test.distinct != nil {
-				bldr = bldr.Distinct(test.distinct)
-			}
-			err = bldr.Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
-				require.Equal(t, test.rows, ar.NumRows())
-				require.Equal(t, test.cols, ar.NumCols())
-				return nil
+		for name, test := range tests {
+			t.Run(name, func(t *testing.T) {
+				bldr := engine.ScanTable("test")
+				if test.filter != nil {
+					bldr = bldr.Filter(test.filter)
+				}
+				if test.distinct != nil {
+					bldr = bldr.Distinct(test.distinct)
+				}
+				err = bldr.Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+					require.Equal(t, test.rows, ar.NumRows())
+					require.Equal(t, test.cols, ar.NumCols())
+					return nil
+				})
+				require.NoError(t, err)
 			})
-			require.NoError(t, err)
-		})
+		}
 	}
 }
 
@@ -2063,5 +2069,106 @@ func Test_DB_All(t *testing.T) {
 			require.Equal(t, int64(8), r.NumCols())
 			return nil
 		})
+	require.NoError(t, err)
+}
+
+func Test_DB_PrehashedStorage(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.PrehashedSampleDefinition(),
+	)
+
+	bucket := objstore.NewInMemBucket()
+	sinksource := NewDefaultObjstoreBucket(bucket)
+	logger := newTestLogger(t)
+
+	c, err := New(
+		WithLogger(logger),
+		WithReadWriteStorage(sinksource),
+	)
+	require.NoError(t, err)
+
+	db, err := c.DB(context.Background(), t.Name())
+	require.NoError(t, err)
+	defer os.RemoveAll(t.Name())
+	table, err := db.Table(t.Name(), config)
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	r, err := samples.ToRecord()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	// Gracefully close the db to persist blocks
+	c.Close()
+
+	c, err = New(
+		WithLogger(logger),
+		WithReadWriteStorage(sinksource),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err = c.DB(context.Background(), t.Name())
+	require.NoError(t, err)
+	table, err = db.Table(t.Name(), config)
+	require.NoError(t, err)
+
+	// Read the raw data back and expect prehashed columns to be returned
+	allocator := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer allocator.AssertSize(t, 0)
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+		return table.Iterator(
+			ctx,
+			tx,
+			allocator,
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				require.Equal(t, int64(3), ar.NumRows())
+				require.Equal(t, int64(13), ar.NumCols())
+				return nil
+			}},
+		)
+	})
 	require.NoError(t, err)
 }

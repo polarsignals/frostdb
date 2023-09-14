@@ -30,6 +30,7 @@ type ColumnDefinition struct {
 	Name          string
 	StorageLayout parquet.Node
 	Dynamic       bool
+	PreHash       bool
 }
 
 // SortingColumn describes a column to sort by in a dynamic parquet schema.
@@ -215,6 +216,7 @@ func SchemaFromDefinition(msg proto.Message) (*Schema, error) {
 				Name:          col.Name,
 				StorageLayout: layout,
 				Dynamic:       col.Dynamic,
+				PreHash:       col.Prehash,
 			})
 		}
 
@@ -611,12 +613,7 @@ func (s *Schema) ParquetSchema() *parquet.Schema {
 
 // dynamicParquetSchema returns the parquet schema for the dynamic schema with the
 // concrete dynamic column names given in the argument.
-func (s Schema) dynamicParquetSchema(
-	dynamicColumns map[string][]string,
-) (
-	*parquet.Schema,
-	error,
-) {
+func (s Schema) dynamicParquetSchema(dynamicColumns map[string][]string) (*parquet.Schema, error) {
 	switch def := s.def.(type) {
 	case *schemav2pb.Schema:
 		return ParquetSchemaFromV2Definition(def), nil
@@ -627,10 +624,16 @@ func (s Schema) dynamicParquetSchema(
 				dyn := dynamicColumnsFor(col.Name, dynamicColumns)
 				for _, name := range dyn {
 					g[col.Name+"."+name] = col.StorageLayout
+					if col.PreHash {
+						g[HashedColumnName(col.Name+"."+name)] = parquet.Int(64) // TODO(thor): Do we need compression etc. here?
+					}
 				}
 				continue
 			}
 			g[col.Name] = col.StorageLayout
+			if col.PreHash {
+				g[HashedColumnName(col.Name)] = parquet.Int(64) // TODO(thor): Do we need compression etc. here?
+			}
 		}
 
 		return parquet.NewSchema(s.Name(), g), nil

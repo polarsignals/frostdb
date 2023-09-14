@@ -280,9 +280,9 @@ func BenchmarkAggregation(b *testing.B) {
 			})
 		}
 
-		buf, err := samples.ToBuffer(table.Schema())
+		r, err := samples.ToRecord()
 		require.NoError(b, err)
-		_, err = table.InsertBuffer(ctx, buf)
+		_, err = table.InsertRecord(ctx, r)
 		require.NoError(b, err)
 	}
 

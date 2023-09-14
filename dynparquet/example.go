@@ -192,6 +192,64 @@ func ExtractLocationIDs(locs []uuid.UUID) []byte {
 	return b
 }
 
+func PrehashedSampleDefinition() *schemapb.Schema {
+	return &schemapb.Schema{
+		Name: "test",
+		Columns: []*schemapb.Column{{
+			Name: "example_type",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: false,
+		}, {
+			Name: "labels",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Nullable: true,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: true,
+			Prehash: true,
+		}, {
+			Name: "stacktrace",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+			},
+			Dynamic: false,
+			Prehash: true,
+		}, {
+			Name: "timestamp",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
+		}, {
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
+		}},
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "example_type",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
+			Name:       "labels",
+			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+			NullsFirst: true,
+		}, {
+			Name:      "timestamp",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
+			Name:       "stacktrace",
+			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+			NullsFirst: true,
+		}},
+	}
+}
+
 func SampleDefinition() *schemapb.Schema {
 	return &schemapb.Schema{
 		Name: "test",

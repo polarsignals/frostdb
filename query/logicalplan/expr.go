@@ -2,6 +2,7 @@ package logicalplan
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -683,6 +684,65 @@ func (a *AverageExpr) Computed() bool {
 }
 
 func (a *AverageExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(a)
+	if !continu {
+		return false
+	}
+
+	return visitor.PostVisit(a)
+}
+
+func RegExpColumnMatch(regexp string) *RegexpColumnMatch {
+	return &RegexpColumnMatch{
+		regexp: regexp,
+	}
+}
+
+func RegExpNotColumnMatch(regexp string) *RegexpColumnMatch {
+	return &RegexpColumnMatch{
+		inverse: true,
+		regexp:  regexp,
+	}
+}
+
+type RegexpColumnMatch struct {
+	inverse bool
+	regexp  string
+}
+
+func (a *RegexpColumnMatch) Clone() Expr {
+	return &RegexpColumnMatch{
+		regexp: a.regexp,
+	}
+}
+
+func (a *RegexpColumnMatch) DataType(s *parquet.Schema) (arrow.DataType, error) {
+	return nil, nil
+}
+
+func (a *RegexpColumnMatch) Name() string {
+	return a.regexp
+}
+
+func (a *RegexpColumnMatch) ColumnsUsedExprs() []Expr {
+	return []Expr{a}
+}
+
+func (a *RegexpColumnMatch) MatchPath(path string) bool {
+	match, err := regexp.MatchString(a.regexp, path)
+	return err == nil && match != a.inverse
+}
+
+func (a *RegexpColumnMatch) MatchColumn(name string) bool {
+	match, err := regexp.MatchString(a.regexp, name)
+	return err == nil && match != a.inverse
+}
+
+func (a *RegexpColumnMatch) Computed() bool {
+	return true
+}
+
+func (a *RegexpColumnMatch) Accept(visitor Visitor) bool {
 	continu := visitor.PreVisit(a)
 	if !continu {
 		return false

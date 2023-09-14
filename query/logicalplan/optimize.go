@@ -8,12 +8,18 @@ type Optimizer interface {
 	Optimize(plan *LogicalPlan) *LogicalPlan
 }
 
-var DefaultOptimizers = []Optimizer{
-	&AverageAggregationPushDown{},
-	&PhysicalProjectionPushDown{},
-	&FilterPushDown{},
-	&DistinctPushDown{},
-	&ProjectionPushDown{},
+func DefaultOptimizers() []Optimizer {
+	return []Optimizer{
+		&AverageAggregationPushDown{},
+		&PhysicalProjectionPushDown{
+			defaultProjections: []Expr{
+				RegExpNotColumnMatch("^hashed."),
+			},
+		},
+		&FilterPushDown{},
+		&DistinctPushDown{},
+		&ProjectionPushDown{},
+	}
 }
 
 type AverageAggregationPushDown struct{}
@@ -80,7 +86,9 @@ func (p *AverageAggregationPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 // physical columns used by the query to the table scan, so the table provider
 // can decide to only read the columns that are actually going to be used by
 // the query.
-type PhysicalProjectionPushDown struct{}
+type PhysicalProjectionPushDown struct {
+	defaultProjections []Expr
+}
 
 func (p *PhysicalProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 	p.optimize(plan, nil)
@@ -90,16 +98,19 @@ func (p *PhysicalProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsedExprs []Expr) {
 	switch {
 	case plan.SchemaScan != nil:
-		plan.SchemaScan.PhysicalProjection = columnsUsedExprs
+		plan.SchemaScan.PhysicalProjection = append(p.defaultProjections, columnsUsedExprs...)
 	case plan.TableScan != nil:
-		plan.TableScan.PhysicalProjection = columnsUsedExprs
+		plan.TableScan.PhysicalProjection = append(p.defaultProjections, columnsUsedExprs...)
 	case plan.Filter != nil:
+		p.defaultProjections = []Expr{}
 		columnsUsedExprs = append(columnsUsedExprs, plan.Filter.Expr.ColumnsUsedExprs()...)
 	case plan.Distinct != nil:
+		p.defaultProjections = []Expr{}
 		for _, expr := range plan.Distinct.Exprs {
 			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
 	case plan.Projection != nil:
+		p.defaultProjections = []Expr{}
 		for _, expr := range plan.Projection.Exprs {
 			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
@@ -110,6 +121,8 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsedExpr
 		for _, expr := range plan.Aggregation.AggExprs {
 			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
+		p.defaultProjections = []Expr{}
+		columnsUsedExprs = append(columnsUsedExprs, RegExpColumnMatch("^hashed."))
 	}
 
 	if plan.Input != nil {
@@ -129,6 +142,7 @@ type ProjectionPushDown struct{}
 func (p *ProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 	// Don't perform the optimization if filters or aggregations contain a column that projections do not.
 	// Otherwise we'll removed the columns we're filtering/aggregating.
+	// Also never remove prehashed columns if there is an aggregation being performed.
 	projectColumns := projectionColumns(plan)
 	projectMap := map[string]bool{}
 	filterColumns := filterColumns(plan)
