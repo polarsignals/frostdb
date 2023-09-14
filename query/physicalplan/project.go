@@ -168,6 +168,8 @@ func (p dynamicProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arr
 
 func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 	switch e := expr.(type) {
+	case *logicalplan.AllExpr:
+		return allProjection{}, nil
 	case *logicalplan.Column:
 		return plainProjection{
 			expr: e,
@@ -355,4 +357,12 @@ func avgInt64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array
 	}
 
 	return res.NewArray()
+}
+
+type allProjection struct{}
+
+func (a allProjection) Name() string { return "all" }
+
+func (a allProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	return ar.Schema().Fields(), ar.Columns(), nil
 }

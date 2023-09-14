@@ -1986,3 +1986,82 @@ func Test_DB_SnapshotOnClose(t *testing.T) {
 	}))
 	require.True(t, found)
 }
+
+func Test_DB_All(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	logger := newTestLogger(t)
+
+	c, err := New(
+		WithLogger(logger),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(context.Background(), t.Name())
+	require.NoError(t, err)
+	defer os.RemoveAll(t.Name())
+	table, err := db.Table(t.Name(), config)
+	require.NoError(t, err)
+
+	samples := dynparquet.Samples{{
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value1"},
+			{Name: "label2", Value: "value2"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 1,
+		Value:     1,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value2"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label3", Value: "value3"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 2,
+		Value:     2,
+	}, {
+		ExampleType: "test",
+		Labels: []dynparquet.Label{
+			{Name: "label1", Value: "value3"},
+			{Name: "label2", Value: "value2"},
+			{Name: "label4", Value: "value4"},
+		},
+		Stacktrace: []uuid.UUID{
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+		},
+		Timestamp: 3,
+		Value:     3,
+	}}
+
+	r, err := samples.ToRecord()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	pool := memory.NewGoAllocator()
+	engine := query.NewEngine(pool, db.TableProvider())
+	err = engine.ScanTable(t.Name()).
+		Project(logicalplan.All()).
+		Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			require.Equal(t, int64(2), r.NumRows())
+			require.Equal(t, int64(8), r.NumCols())
+			return nil
+		})
+	require.NoError(t, err)
+}
