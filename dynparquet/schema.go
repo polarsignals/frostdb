@@ -706,6 +706,10 @@ func (b *Buffer) Reset() {
 	b.buffer.Reset()
 }
 
+func (b *Buffer) Size() int64 {
+	return b.buffer.Size()
+}
+
 func (b *Buffer) String() string {
 	return prettyRowGroup(b)
 }
