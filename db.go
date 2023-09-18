@@ -291,7 +291,7 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 		databaseName := f.Name()
 		g.Go(func() error {
 			// Open the DB for the side effect of the snapshot and WALs being loaded as part of the open operation.
-			_, err := s.DB(ctx, databaseName, WithCompactionAfterOpen(s.compactionConfig.compactAfterRecovery))
+			_, err := s.DB(ctx, databaseName)
 			return err
 		})
 	}
@@ -331,8 +331,7 @@ type DB struct {
 	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
 	txPool *TxPool
 
-	compactAfterRecovery bool
-	compactorPool        *compactorPool
+	compactorPool *compactorPool
 
 	snapshotInProgress atomic.Bool
 
@@ -365,13 +364,6 @@ type DBOption func(*DB) error
 func WithUserDefinedTxnMetadataProvider(f func(tx uint64) []byte) DBOption {
 	return func(db *DB) error {
 		db.txnMetadataProvider = f
-		return nil
-	}
-}
-
-func WithCompactionAfterOpen(compact bool) DBOption {
-	return func(db *DB) error {
-		db.compactAfterRecovery = compact
 		return nil
 	}
 }
@@ -443,6 +435,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		}
 		db.txPool = NewTxPool(&db.highWatermark)
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
+		db.compactorPool.start()
 		if len(db.sources) != 0 {
 			for _, source := range db.sources {
 				prefixes, err := source.Prefixes(ctx, name)
@@ -505,22 +498,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		return nil, dbSetupErr
 	}
 
-	// Compact tables after recovery if requested. Perform this before starting the compactor pool so there is no race between compactions.
-	if db.compactAfterRecovery {
-		for name := range db.tables {
-			tbl, err := db.GetTable(name)
-			if err != nil {
-				level.Warn(db.logger).Log("msg", "get table during db setup", "err", err)
-				continue
-			}
-
-			if err := tbl.EnsureCompaction(); err != nil {
-				level.Warn(db.logger).Log("msg", "compaction during setup", "err", err)
-			}
-		}
-	}
-
-	db.compactorPool.start()
 	s.dbs[name] = db
 	return db, nil
 }
