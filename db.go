@@ -559,10 +559,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			"snapshot_tx", snapshotTx.TxnID,
 			"snapshot_load_duration", time.Since(snapshotLoadStart),
 		)
-		if err := db.truncateSnapshotsLessThanTX(ctx, snapshotTx.TxnID); err != nil {
+		if err := db.cleanupSnapshotDir(ctx, snapshotTx.TxnID); err != nil {
 			// Truncation is best-effort. If it fails, move on.
 			level.Info(db.logger).Log(
-				"msg", "failed to truncate snapshots less than loaded snapshot",
+				"msg", "failed to truncate snapshots not equal to loaded snapshot",
 				"err", err,
 				"snapshot_tx", snapshotTx.TxnID,
 			)
@@ -882,7 +882,7 @@ func (db *DB) reclaimDiskSpace(ctx context.Context) error {
 	if validSnapshotTxn == 0 {
 		return nil
 	}
-	if err := db.truncateSnapshotsLessThanTX(ctx, validSnapshotTxn); err != nil {
+	if err := db.cleanupSnapshotDir(ctx, validSnapshotTxn); err != nil {
 		return err
 	}
 	return db.wal.Truncate(validSnapshotTxn)
