@@ -684,12 +684,14 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 	return footer.TxnMetadata, nil
 }
 
-// truncateSnapshotsLessThanTX deletes all snapshots taken at a transaction less
-// than the given tx.
-func (db *DB) truncateSnapshotsLessThanTX(ctx context.Context, tx uint64) error {
+// cleanupSnapshotDir should be called with a tx at which the caller is certain
+// a valid snapshot exists (e.g. the tx returned from
+// getLatestValidSnapshotTxn). This method deletes all snapshots taken at any
+// other transaction.
+func (db *DB) cleanupSnapshotDir(ctx context.Context, tx uint64) error {
 	dir := db.snapshotsDir()
 	return db.snapshotsDo(ctx, dir, func(fileTx uint64, entry os.DirEntry) (bool, error) {
-		if fileTx >= tx {
+		if fileTx == tx {
 			// Continue.
 			return true, nil
 		}

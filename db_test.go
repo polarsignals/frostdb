@@ -1600,11 +1600,17 @@ func TestDBRecover(t *testing.T) {
 		dir := setup(t, false)
 
 		snapshotsPath := filepath.Join(dir, "databases", dbAndTableName, "snapshots")
-		files, err := os.ReadDir(snapshotsPath)
-		require.NoError(t, err)
-		require.Equal(t, 3, len(files))
+		// Since we snapshot on close, the latest snapshot might not have been
+		// written yet.
+		var files []os.DirEntry
+		require.Eventually(t, func() bool {
+			var err error
+			files, err = os.ReadDir(snapshotsPath)
+			require.NoError(t, err)
+			return len(files) == 3
+		}, 1*time.Second, 100*time.Millisecond)
 		require.NoError(t, os.RemoveAll(filepath.Join(snapshotsPath, files[len(files)-1].Name())))
-		files, err = os.ReadDir(snapshotsPath)
+		files, err := os.ReadDir(snapshotsPath)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(files))
 
