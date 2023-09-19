@@ -1,8 +1,12 @@
 package logicalplan
 
 import (
+	"regexp"
+
 	"golang.org/x/exp/slices"
 )
+
+var hashedMatch = regexp.MustCompile("^hashed.")
 
 type Optimizer interface {
 	Optimize(plan *LogicalPlan) *LogicalPlan
@@ -13,7 +17,7 @@ func DefaultOptimizers() []Optimizer {
 		&AverageAggregationPushDown{},
 		&PhysicalProjectionPushDown{
 			defaultProjections: []Expr{
-				RegExpNotColumnMatch("^hashed."),
+				RegExpNotColumnMatch(hashedMatch),
 			},
 		},
 		&FilterPushDown{},
@@ -122,7 +126,7 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsedExpr
 			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
 		p.defaultProjections = []Expr{}
-		columnsUsedExprs = append(columnsUsedExprs, RegExpColumnMatch("^hashed."))
+		columnsUsedExprs = append(columnsUsedExprs, RegExpColumnMatch(hashedMatch))
 	}
 
 	if plan.Input != nil {

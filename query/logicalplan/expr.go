@@ -692,27 +692,27 @@ func (a *AverageExpr) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(a)
 }
 
-func RegExpColumnMatch(regexp string) *RegexpColumnMatch {
+func RegExpColumnMatch(match *regexp.Regexp) *RegexpColumnMatch {
 	return &RegexpColumnMatch{
-		regexp: regexp,
+		match: match,
 	}
 }
 
-func RegExpNotColumnMatch(regexp string) *RegexpColumnMatch {
+func RegExpNotColumnMatch(match *regexp.Regexp) *RegexpColumnMatch {
 	return &RegexpColumnMatch{
 		inverse: true,
-		regexp:  regexp,
+		match:   match,
 	}
 }
 
 type RegexpColumnMatch struct {
 	inverse bool
-	regexp  string
+	match   *regexp.Regexp
 }
 
 func (a *RegexpColumnMatch) Clone() Expr {
 	return &RegexpColumnMatch{
-		regexp: a.regexp,
+		match: a.match.Copy(),
 	}
 }
 
@@ -721,7 +721,7 @@ func (a *RegexpColumnMatch) DataType(s *parquet.Schema) (arrow.DataType, error) 
 }
 
 func (a *RegexpColumnMatch) Name() string {
-	return a.regexp
+	return a.match.String()
 }
 
 func (a *RegexpColumnMatch) ColumnsUsedExprs() []Expr {
@@ -729,13 +729,11 @@ func (a *RegexpColumnMatch) ColumnsUsedExprs() []Expr {
 }
 
 func (a *RegexpColumnMatch) MatchPath(path string) bool {
-	match, err := regexp.MatchString(a.regexp, path)
-	return err == nil && match != a.inverse
+	return a.match.MatchString(path) != a.inverse
 }
 
 func (a *RegexpColumnMatch) MatchColumn(name string) bool {
-	match, err := regexp.MatchString(a.regexp, name)
-	return err == nil && match != a.inverse
+	return a.match.MatchString(name) != a.inverse
 }
 
 func (a *RegexpColumnMatch) Computed() bool {
