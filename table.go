@@ -9,11 +9,8 @@ import (
 	"math"
 	"math/rand"
 	"path/filepath"
-	"reflect"
-	"regexp"
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +23,6 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
-	"github.com/google/uuid"
 	"github.com/oklog/ulid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/client_golang/prometheus"
@@ -569,181 +565,12 @@ func (t *Table) EnsureCompaction() error {
 
 // Write objects into the table.
 func (t *Table) Write(ctx context.Context, vals ...any) (uint64, error) {
-	b, err := ValuesToBuffer(t.Schema(), vals...)
+	b, err := dynparquet.ValuesToBuffer(t.Schema(), vals...)
 	if err != nil {
 		return 0, err
 	}
 
 	return t.InsertBuffer(ctx, b)
-}
-
-var (
-	matchFirstCap = regexp.MustCompile("(.)([A-Z][a-z]+)")
-	matchAllCap   = regexp.MustCompile("([a-z0-9])([A-Z])")
-)
-
-func ToSnakeCase(str string) string {
-	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
-	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
-	return strings.ToLower(snake)
-}
-
-func ValuesToBuffer(schema *dynparquet.Schema, vals ...any) (*dynparquet.Buffer, error) {
-	dynamicColumns := map[string][]string{}
-	rows := make([]parquet.Row, 0, len(vals))
-
-	findColumn := func(val reflect.Value, col string, v any) any {
-		for i := 0; i < val.NumField(); i++ {
-			if ToSnakeCase(val.Type().Field(i).Name) == col {
-				return val.Field(i).Interface()
-			}
-		}
-		return nil
-	}
-
-	// Collect dynamic columns
-	for _, v := range vals {
-		val := reflect.ValueOf(v)
-		for _, col := range schema.Columns() {
-			cv := findColumn(val, col.Name, v)
-			if cv == nil {
-				continue
-			}
-			switch col.Dynamic {
-			case true:
-				switch reflect.TypeOf(cv).Kind() {
-				case reflect.Struct:
-					dynVals := reflect.ValueOf(cv)
-					for j := 0; j < dynVals.NumField(); j++ {
-						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(dynVals.Type().Field(j).Name))
-					}
-				case reflect.Slice:
-					dynVals := reflect.ValueOf(cv)
-					for j := 0; j < dynVals.Len(); j++ {
-						pair := reflect.ValueOf(dynVals.Index(j).Interface())
-						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", pair.Field(0))))
-					}
-				case reflect.Map:
-					dynVals := reflect.ValueOf(cv)
-					for _, key := range dynVals.MapKeys() {
-						switch key.Kind() {
-						case reflect.String:
-							dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", key.String())))
-						default:
-							return nil, fmt.Errorf("unsupported dynamic map key type for column for column '%s'", col.Name)
-						}
-					}
-				default:
-					return nil, fmt.Errorf("unsupported dynamic type for column '%s'", col.Name)
-				}
-			}
-		}
-	}
-
-	dynamicColumns = bufutils.Dedupe(dynamicColumns)
-
-	// Create all rows
-	for _, v := range vals {
-		row := []parquet.Value{}
-		val := reflect.ValueOf(v)
-
-		colIdx := 0
-		for _, col := range schema.Columns() {
-			cv := findColumn(val, col.Name, v)
-			if cv == nil {
-				continue
-			}
-			switch col.Dynamic {
-			case true:
-				switch reflect.TypeOf(cv).Kind() {
-				case reflect.Struct:
-					dynVals := reflect.ValueOf(cv)
-					for _, dyncol := range dynamicColumns[col.Name] {
-						found := false
-						for j := 0; j < dynVals.NumField(); j++ {
-							if ToSnakeCase(dynVals.Type().Field(j).Name) == dyncol {
-								row = append(row, parquet.ValueOf(dynVals.Field(j).Interface()).Level(0, 1, colIdx))
-								colIdx++
-								found = true
-								break
-							}
-						}
-						if !found {
-							row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
-							colIdx++
-						}
-					}
-				case reflect.Slice:
-					dynVals := reflect.ValueOf(cv)
-					for _, dyncol := range dynamicColumns[col.Name] {
-						found := false
-						for j := 0; j < dynVals.Len(); j++ {
-							pair := reflect.ValueOf(dynVals.Index(j).Interface())
-							if ToSnakeCase(fmt.Sprintf("%v", pair.Field(0).Interface())) == dyncol {
-								row = append(row, parquet.ValueOf(pair.Field(1).Interface()).Level(0, 1, colIdx))
-								colIdx++
-								found = true
-								break
-							}
-						}
-						if !found {
-							row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
-							colIdx++
-						}
-					}
-				case reflect.Map:
-					dynVals := reflect.ValueOf(cv)
-					for _, key := range dynVals.MapKeys() {
-						switch key.Kind() {
-						case reflect.String:
-							for _, dyncol := range dynamicColumns[col.Name] {
-								found := false
-								for _, key := range dynVals.MapKeys() {
-									if ToSnakeCase(fmt.Sprintf("%v", key.String())) == dyncol {
-										row = append(row, parquet.ValueOf(dynVals.MapIndex(key).Interface()).Level(0, 1, colIdx))
-										colIdx++
-										found = true
-										break
-									}
-								}
-
-								if !found {
-									row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
-									colIdx++
-								}
-							}
-						default:
-							return nil, fmt.Errorf("unsupported dynamic map key type for column '%s'", col.Name)
-						}
-					}
-				default:
-					return nil, fmt.Errorf("unsupported dynamic type for column '%s'", col.Name)
-				}
-			default:
-				switch t := cv.(type) {
-				case []uuid.UUID: // Special handling for this type
-					row = append(row, parquet.ValueOf(dynparquet.ExtractLocationIDs(t)).Level(0, 0, colIdx))
-				default:
-					row = append(row, parquet.ValueOf(cv).Level(0, 0, colIdx))
-				}
-				colIdx++
-			}
-		}
-
-		rows = append(rows, row)
-	}
-
-	pb, err := schema.NewBuffer(dynamicColumns)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = pb.WriteRows(rows)
-	if err != nil {
-		return nil, err
-	}
-
-	return pb, nil
 }
 
 func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, error) {
