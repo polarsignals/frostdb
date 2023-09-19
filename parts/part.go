@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/parquet-go/parquet-go"
@@ -268,7 +269,7 @@ func NewPartSorter(schema *dynparquet.Schema, parts []*Part) *PartSorter {
 	}
 }
 
-func (p PartSorter) Len() int {
+func (p *PartSorter) Len() int {
 	return len(p.parts)
 }
 
@@ -292,4 +293,64 @@ func (p *PartSorter) Swap(i, j int) {
 
 func (p *PartSorter) Err() error {
 	return p.err
+}
+
+// FindMaximumNonOverlappingSet removes the minimum number of parts from the
+// given slice in order to return the maximum non-overlapping set of parts.
+// The function returns the non-overlapping parts first and any overlapping
+// parts second. The parts returned are in sorted order according to their Least
+// row.
+func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*Part, []*Part, error) {
+	if len(parts) < 2 {
+		return parts, nil, nil
+	}
+	sorter := NewPartSorter(schema, parts)
+	sort.Sort(sorter)
+	if sorter.Err() != nil {
+		return nil, nil, sorter.Err()
+	}
+
+	// Parts are now sorted according to their Least row.
+	end, err := parts[0].most()
+	if err != nil {
+		return nil, nil, err
+	}
+	nonOverlapping := make([]*Part, 0, len(parts))
+	overlapping := make([]*Part, 0, len(parts))
+	for i := 1; i < len(parts); i++ {
+		start, err := parts[i].Least()
+		if err != nil {
+			return nil, nil, err
+		}
+		curEnd, err := parts[i].most()
+		if err != nil {
+			return nil, nil, err
+		}
+		if schema.Cmp(end, start) < 0 {
+			// No overlap, append the previous part and update end for the next
+			// iteration.
+			nonOverlapping = append(nonOverlapping, parts[i-1])
+			end = curEnd
+			continue
+		}
+
+		// This part overlaps with the previous part. Remove the part with
+		// the highest end row.
+		if schema.Cmp(end, curEnd) >= 0 {
+			overlapping = append(overlapping, parts[i-1])
+			end = curEnd
+		} else {
+			// The current part must be removed. Don't update end, this will
+			// be used in the next iteration and must stay the same.
+			overlapping = append(overlapping, parts[i])
+		}
+	}
+	if len(overlapping) == 0 || overlapping[len(overlapping)-1] != parts[len(parts)-1] {
+		// The last part either did not overlap with its previous part, or
+		// overlapped but had a smaller end row than its previous part (so the
+		// previous part is in the overlapping slice). The last part must be
+		// appended to nonOverlapping.
+		nonOverlapping = append(nonOverlapping, parts[len(parts)-1])
+	}
+	return nonOverlapping, overlapping, nil
 }
