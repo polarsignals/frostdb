@@ -712,7 +712,7 @@ type RegexpColumnMatch struct {
 
 func (a *RegexpColumnMatch) Clone() Expr {
 	return &RegexpColumnMatch{
-		match: a.match.Copy(),
+		match: a.match,
 	}
 }
 
