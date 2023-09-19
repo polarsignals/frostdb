@@ -564,34 +564,16 @@ func compactLevel0IntoLevel1(
 	// To reduce the number of open cursors at the same time (which helps in
 	// memory usage reduction), find which level0Parts do not overlap with any
 	// other part. These parts can be sorted and read one by one.
-	overlappingL0 := make([]*parts.Part, 0)
-	nonOverlappingL0 := make([]*parts.Part, 0)
-	for _, p1 := range level0Parts {
-		overlapped := false
-		for _, p0 := range level0Parts {
-			if p1 == p0 {
-				continue
-			}
-			if overlaps, err := p0.OverlapsWith(t.table.schema, p1); err != nil {
-				return nil, err
-			} else if overlaps {
-				overlapped = true
-				break
-			}
-		}
-		if !overlapped {
-			nonOverlappingL0 = append(nonOverlappingL0, p1)
-		} else {
-			overlappingL0 = append(overlappingL0, p1)
-		}
+	nonOverlappingL0, overlappingL0, err := parts.FindMaximumNonOverlappingSet(t.table.schema, level0Parts)
+	if err != nil {
+		return nil, err
 	}
 	bufs := make([]dynparquet.DynamicRowGroup, 0, len(level0Parts))
-	if len(nonOverlappingL0) > 0 {
-		sorter := parts.NewPartSorter(t.table.schema, nonOverlappingL0)
-		sort.Sort(sorter)
-		if sorter.Err() != nil {
-			return nil, fmt.Errorf("error sorting non-overlapping level0: %w", sorter.Err())
-		}
+	if len(nonOverlappingL0) == 1 {
+		// Not worth doing anything if only one part does not overlap.
+		overlappingL0 = append(overlappingL0, nonOverlappingL0[0])
+	} else if len(nonOverlappingL0) > 0 {
+		// nonOverlappingL0 is already sorted.
 		rowGroups := make([]dynparquet.DynamicRowGroup, 0, len(nonOverlappingL0))
 		for _, p := range nonOverlappingL0 {
 			buf, err := p.AsSerializedBuffer(t.table.schema)

@@ -298,7 +298,8 @@ func (p *PartSorter) Err() error {
 // FindMaximumNonOverlappingSet removes the minimum number of parts from the
 // given slice in order to return the maximum non-overlapping set of parts.
 // The function returns the non-overlapping parts first and any overlapping
-// parts second.
+// parts second. The parts returned are in sorted order according to their Least
+// row.
 func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*Part, []*Part, error) {
 	if len(parts) < 2 {
 		return parts, nil, nil
