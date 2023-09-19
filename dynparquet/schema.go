@@ -1217,6 +1217,10 @@ func (r *MergedRowGroup) DynamicRows() DynamicRowReader {
 
 type mergeOption struct {
 	dynamicColumns map[string][]string
+	// alreadySorted indicates that the row groups are already sorted and
+	// non-overlapping. This results in a parquet.MultiRowGroup, which is just
+	// a wrapper without the full-scale merging infrastructure.
+	alreadySorted bool
 }
 
 type MergeOption func(m *mergeOption)
@@ -1224,6 +1228,12 @@ type MergeOption func(m *mergeOption)
 func WithDynamicCols(cols map[string][]string) MergeOption {
 	return func(m *mergeOption) {
 		m.dynamicColumns = cols
+	}
+}
+
+func WithAlreadySorted() MergeOption {
+	return func(m *mergeOption) {
+		m.alreadySorted = true
 	}
 }
 
@@ -1264,11 +1274,15 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup, options ...M
 		))
 	}
 
+	var opts []parquet.RowGroupOption
+	if !m.alreadySorted {
+		opts = append(opts, parquet.SortingRowGroupConfig(
+			parquet.SortingColumns(cols...),
+		))
+	}
 	merge, err := parquet.MergeRowGroups(
 		adapters,
-		parquet.SortingRowGroupConfig(
-			parquet.SortingColumns(cols...),
-		),
+		opts...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create merge row groups: %w", err)
