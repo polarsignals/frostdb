@@ -5,21 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"text/tabwriter"
 
-	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress"
 	"github.com/parquet-go/parquet-go/encoding"
 	"github.com/parquet-go/parquet-go/format"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/polarsignals/frostdb/bufutils"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 )
@@ -955,175 +951,6 @@ func (b *Buffer) DynamicRows() DynamicRowReader {
 	return newDynamicRowGroupReader(b, b.fields)
 }
 
-var (
-	matchFirstCap = regexp.MustCompile("(.)([A-Z][a-z]+)")
-	matchAllCap   = regexp.MustCompile("([a-z0-9])([A-Z])")
-)
-
-func ToSnakeCase(str string) string {
-	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
-	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
-	return strings.ToLower(snake)
-}
-
-func ValuesToBuffer(schema *Schema, vals ...any) (*Buffer, error) {
-	dynamicColumns := map[string][]string{}
-	rows := make([]parquet.Row, 0, len(vals))
-
-	findColumn := func(val reflect.Value, col string, v any) any {
-		for i := 0; i < val.NumField(); i++ {
-			if ToSnakeCase(val.Type().Field(i).Name) == col {
-				return val.Field(i).Interface()
-			}
-		}
-		return nil
-	}
-
-	// Collect dynamic columns
-	for _, v := range vals {
-		val := reflect.ValueOf(v)
-		for _, col := range schema.Columns() {
-			cv := findColumn(val, col.Name, v)
-			if cv == nil {
-				continue
-			}
-			switch col.Dynamic {
-			case true:
-				switch reflect.TypeOf(cv).Kind() {
-				case reflect.Struct:
-					dynVals := reflect.ValueOf(cv)
-					for j := 0; j < dynVals.NumField(); j++ {
-						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(dynVals.Type().Field(j).Name))
-					}
-				case reflect.Slice:
-					dynVals := reflect.ValueOf(cv)
-					for j := 0; j < dynVals.Len(); j++ {
-						pair := reflect.ValueOf(dynVals.Index(j).Interface())
-						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", pair.Field(0))))
-					}
-				case reflect.Map:
-					dynVals := reflect.ValueOf(cv)
-					for _, key := range dynVals.MapKeys() {
-						switch key.Kind() {
-						case reflect.String:
-							dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", key.String())))
-						default:
-							return nil, fmt.Errorf("unsupported dynamic map key type for column for column '%s'", col.Name)
-						}
-					}
-				default:
-					return nil, fmt.Errorf("unsupported dynamic type for column '%s'", col.Name)
-				}
-			}
-		}
-	}
-
-	dynamicColumns = bufutils.Dedupe(dynamicColumns)
-
-	// Create all rows
-	for _, v := range vals {
-		row := []parquet.Value{}
-		val := reflect.ValueOf(v)
-
-		colIdx := 0
-		for _, col := range schema.Columns() {
-			cv := findColumn(val, col.Name, v)
-			if cv == nil {
-				continue
-			}
-			switch col.Dynamic {
-			case true:
-				switch reflect.TypeOf(cv).Kind() {
-				case reflect.Struct:
-					dynVals := reflect.ValueOf(cv)
-					for _, dyncol := range dynamicColumns[col.Name] {
-						found := false
-						for j := 0; j < dynVals.NumField(); j++ {
-							if ToSnakeCase(dynVals.Type().Field(j).Name) == dyncol {
-								row = append(row, parquet.ValueOf(dynVals.Field(j).Interface()).Level(0, 1, colIdx))
-								colIdx++
-								found = true
-								break
-							}
-						}
-						if !found {
-							row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
-							colIdx++
-						}
-					}
-				case reflect.Slice:
-					dynVals := reflect.ValueOf(cv)
-					for _, dyncol := range dynamicColumns[col.Name] {
-						found := false
-						for j := 0; j < dynVals.Len(); j++ {
-							pair := reflect.ValueOf(dynVals.Index(j).Interface())
-							if ToSnakeCase(fmt.Sprintf("%v", pair.Field(0).Interface())) == dyncol {
-								row = append(row, parquet.ValueOf(pair.Field(1).Interface()).Level(0, 1, colIdx))
-								colIdx++
-								found = true
-								break
-							}
-						}
-						if !found {
-							row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
-							colIdx++
-						}
-					}
-				case reflect.Map:
-					dynVals := reflect.ValueOf(cv)
-					for _, key := range dynVals.MapKeys() {
-						switch key.Kind() {
-						case reflect.String:
-							for _, dyncol := range dynamicColumns[col.Name] {
-								found := false
-								for _, key := range dynVals.MapKeys() {
-									if ToSnakeCase(fmt.Sprintf("%v", key.String())) == dyncol {
-										row = append(row, parquet.ValueOf(dynVals.MapIndex(key).Interface()).Level(0, 1, colIdx))
-										colIdx++
-										found = true
-										break
-									}
-								}
-
-								if !found {
-									row = append(row, parquet.ValueOf(nil).Level(0, 0, colIdx))
-									colIdx++
-								}
-							}
-						default:
-							return nil, fmt.Errorf("unsupported dynamic map key type for column '%s'", col.Name)
-						}
-					}
-				default:
-					return nil, fmt.Errorf("unsupported dynamic type for column '%s'", col.Name)
-				}
-			default:
-				switch t := cv.(type) {
-				case []uuid.UUID: // Special handling for this type
-					row = append(row, parquet.ValueOf(ExtractLocationIDs(t)).Level(0, 0, colIdx))
-				default:
-					row = append(row, parquet.ValueOf(cv).Level(0, 0, colIdx))
-				}
-				colIdx++
-			}
-		}
-
-		rows = append(rows, row)
-	}
-
-	pb, err := schema.NewBuffer(dynamicColumns)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = pb.WriteRows(rows)
-	if err != nil {
-		return nil, err
-	}
-
-	return pb, nil
-}
-
 // NewBuffer returns a new buffer with a concrete parquet schema generated
 // using the given concrete dynamic column names.
 func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) {
@@ -1390,10 +1217,6 @@ func (r *MergedRowGroup) DynamicRows() DynamicRowReader {
 
 type mergeOption struct {
 	dynamicColumns map[string][]string
-	// alreadySorted indicates that the row groups are already sorted and
-	// non-overlapping. This results in a parquet.MultiRowGroup, which is just
-	// a wrapper without the full-scale merging infrastructure.
-	alreadySorted bool
 }
 
 type MergeOption func(m *mergeOption)
@@ -1401,12 +1224,6 @@ type MergeOption func(m *mergeOption)
 func WithDynamicCols(cols map[string][]string) MergeOption {
 	return func(m *mergeOption) {
 		m.dynamicColumns = cols
-	}
-}
-
-func WithAlreadySorted() MergeOption {
-	return func(m *mergeOption) {
-		m.alreadySorted = true
 	}
 }
 
@@ -1447,15 +1264,11 @@ func (s *Schema) MergeDynamicRowGroups(rowGroups []DynamicRowGroup, options ...M
 		))
 	}
 
-	var opts []parquet.RowGroupOption
-	if !m.alreadySorted {
-		opts = append(opts, parquet.SortingRowGroupConfig(
-			parquet.SortingColumns(cols...),
-		))
-	}
 	merge, err := parquet.MergeRowGroups(
 		adapters,
-		opts...,
+		parquet.SortingRowGroupConfig(
+			parquet.SortingColumns(cols...),
+		),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create merge row groups: %w", err)
