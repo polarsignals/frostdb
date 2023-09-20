@@ -43,6 +43,12 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 			expectedNonOverlapping: []rng{{1, 2}},
 		},
 		{
+			name:                   "RemoveFirst",
+			ranges:                 []rng{{1, 4}, {1, 2}},
+			expectedNonOverlapping: []rng{{1, 2}},
+			expectedOverlapping:    []rng{{1, 4}},
+		},
+		{
 			name:                   "TwoNonOverlapping",
 			ranges:                 []rng{{1, 2}, {3, 4}},
 			expectedNonOverlapping: []rng{{1, 2}, {3, 4}},
@@ -58,6 +64,15 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 			ranges:                 []rng{{1, 2}, {4, 10}, {4, 5}, {6, 7}},
 			expectedNonOverlapping: []rng{{1, 2}, {4, 5}, {6, 7}},
 			expectedOverlapping:    []rng{{4, 10}},
+		},
+		{
+			// ReuseCursor makes sure that when dropping a range, its boundaries
+			// are not reused. This is a regression test (which is why it's so
+			// specific).
+			name:                   "ReuseCursor",
+			ranges:                 []rng{{1, 3}, {2, 4}, {4, 5}, {6, 7}},
+			expectedNonOverlapping: []rng{{1, 3}, {4, 5}, {6, 7}},
+			expectedOverlapping:    []rng{{2, 4}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

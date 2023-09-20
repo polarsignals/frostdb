@@ -311,7 +311,8 @@ func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*
 	}
 
 	// Parts are now sorted according to their Least row.
-	end, err := parts[0].most()
+	prev := 0
+	prevEnd, err := parts[0].most()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -326,22 +327,24 @@ func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*
 		if err != nil {
 			return nil, nil, err
 		}
-		if schema.Cmp(end, start) < 0 {
+		if schema.Cmp(prevEnd, start) < 0 {
 			// No overlap, append the previous part and update end for the next
 			// iteration.
-			nonOverlapping = append(nonOverlapping, parts[i-1])
-			end = curEnd
+			nonOverlapping = append(nonOverlapping, parts[prev])
+			prevEnd = curEnd
+			prev = i
 			continue
 		}
 
 		// This part overlaps with the previous part. Remove the part with
 		// the highest end row.
-		if schema.Cmp(end, curEnd) >= 0 {
-			overlapping = append(overlapping, parts[i-1])
-			end = curEnd
+		if schema.Cmp(prevEnd, curEnd) >= 0 {
+			overlapping = append(overlapping, parts[prev])
+			prevEnd = curEnd
+			prev = i
 		} else {
-			// The current part must be removed. Don't update end, this will
-			// be used in the next iteration and must stay the same.
+			// The current part must be removed. Don't update prevEnd or prev,
+			// this will be used in the next iteration and must stay the same.
 			overlapping = append(overlapping, parts[i])
 		}
 	}
