@@ -174,7 +174,7 @@ func (b *serializedRowGroup) ColumnChunks() []parquet.ColumnChunk {
 	if b.indexes != nil && b.offsets != nil {
 		cachedColumnChunks := make([]parquet.ColumnChunk, len(chunks))
 		for i, chunk := range chunks {
-			chunks[i] = &cachedColumnChunk{
+			cachedColumnChunks[i] = &cachedColumnChunk{
 				index:  b.indexes[i],
 				offset: b.offsets[i],
 				chunk:  chunk,
