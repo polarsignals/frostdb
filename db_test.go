@@ -2178,3 +2178,63 @@ func Test_DB_PrehashedStorage(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func Benchmark_DB_StorageWithPageIndexCache(b *testing.B) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	bucket := objstore.NewInMemBucket()
+	sinksource := NewDefaultObjstoreBucket(bucket, StorageWithPageIndexCache(NewDefaultPageCacheIndex()))
+
+	c, err := New(
+		WithReadWriteStorage(sinksource),
+		WithActiveMemorySize(100*1024),
+	)
+	require.NoError(b, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(b, err)
+	table, err := db.Table("test", config)
+	require.NoError(b, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		buf, err := samples.ToBuffer(table.Schema())
+		require.NoError(b, err)
+		_, err = table.InsertBuffer(ctx, buf)
+		require.NoError(b, err)
+	}
+	require.NoError(b, table.EnsureCompaction())
+	require.NoError(b, c.Close())
+
+	c, err = New(
+		WithReadWriteStorage(sinksource),
+		WithActiveMemorySize(100*1024),
+	)
+	require.NoError(b, err)
+	defer c.Close()
+
+	db, err = c.DB(context.Background(), "test")
+	require.NoError(b, err)
+	table, err = db.Table("test", config)
+	require.NoError(b, err)
+
+	allocator := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer allocator.AssertSize(b, 0)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows := int64(0)
+		query.NewEngine(allocator, db.TableProvider()).
+			ScanTable("test").
+			Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
+			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				rows += r.NumRows()
+				return nil
+			})
+
+		require.Equal(b, int64(300), int64(rows))
+	}
+}
