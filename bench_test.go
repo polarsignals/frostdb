@@ -379,6 +379,43 @@ func BenchmarkReplay(b *testing.B) {
 	}
 }
 
+type writeCounter struct {
+	io.Writer
+	count int
+}
+
+func (wc *writeCounter) Write(p []byte) (int, error) {
+	count, err := wc.Writer.Write(p)
+	wc.count += count
+	return count, err
+}
+
+func BenchmarkSnapshot(b *testing.B) {
+	b.Skip(skipReason)
+
+	ctx := context.Background()
+	col, err := New(
+		WithWAL(),
+		WithStoragePath(storagePath),
+	)
+	require.NoError(b, err)
+	defer col.Close()
+
+	db, err := col.DB(ctx, dbName)
+	require.NoError(b, err)
+
+	b.Log("recovered DB, starting benchmark")
+
+	b.ResetTimer()
+	bytesWritten := 0
+	for i := 0; i < b.N; i++ {
+		wc := &writeCounter{Writer: io.Discard}
+		require.NoError(b, WriteSnapshot(ctx, db.HighWatermark().TxnID, nil, db, wc, false))
+		bytesWritten += wc.count
+	}
+	b.ReportMetric(float64(bytesWritten)/float64(b.N), "size/op")
+}
+
 func NewTestSamples(num int) dynparquet.Samples {
 	samples := make(dynparquet.Samples, 0, num)
 	for i := 0; i < num; i++ {

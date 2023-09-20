@@ -21,7 +21,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/google/btree"
 	"github.com/oklog/ulid"
-	"github.com/parquet-go/parquet-go"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -455,17 +454,11 @@ func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w
 						if err != nil {
 							return err
 						}
-						rows := buf.Reader()
-						defer rows.Close()
 
-						parquetWriter, err := schema.GetWriter(w, buf.DynamicColumns())
-						if err != nil {
-							return err
-						}
-						defer schema.PutWriter(parquetWriter)
-						defer parquetWriter.Close()
-
-						if _, err := parquet.CopyRows(parquetWriter, rows); err != nil {
+						f := buf.ParquetFile()
+						if _, err := io.Copy(
+							w, io.NewSectionReader(f, 0, f.Size()),
+						); err != nil {
 							return err
 						}
 						return nil
