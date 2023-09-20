@@ -10,6 +10,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/format"
 	"github.com/thanos-io/objstore"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -62,6 +63,13 @@ type DefaultObjstoreBucket struct {
 	logger log.Logger
 
 	blockReaderLimit int
+
+	pageIndexCache PageIndexCache
+}
+
+type PageIndexCache interface {
+	Get(key string) ([]format.ColumnIndex, []format.OffsetIndex, bool)
+	Put(key string, columnIndex []format.ColumnIndex, offsetIndex []format.OffsetIndex)
 }
 
 type DefaultObjstoreBucketOption func(*DefaultObjstoreBucket)
@@ -81,6 +89,12 @@ func StorageWithTracer(tracer trace.Tracer) DefaultObjstoreBucketOption {
 func StorageWithLogger(logger log.Logger) DefaultObjstoreBucketOption {
 	return func(b *DefaultObjstoreBucket) {
 		b.logger = logger
+	}
+}
+
+func StorageWithPageIndexCache(cache PageIndexCache) DefaultObjstoreBucketOption {
+	return func(b *DefaultObjstoreBucket) {
+		b.pageIndexCache = cache
 	}
 }
 
@@ -168,13 +182,17 @@ func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName str
 		return nil, err
 	}
 
-	file, err := parquet.OpenFile(
-		r,
-		size,
-		parquet.ReadBufferSize(5*1024*1024), // 5MB read buffers
+	defaultOptions := []parquet.FileOption{
+		parquet.ReadBufferSize(5 * 1024 * 1024), // 5MB read buffers
 		parquet.SkipBloomFilters(true),
 		parquet.FileReadMode(parquet.ReadModeAsync),
-	)
+	}
+
+	if b.pageIndexCache != nil { // Conditionally skip page index if cache is enabled
+		defaultOptions = append(defaultOptions, parquet.SkipPageIndex(true))
+	}
+
+	file, err := parquet.OpenFile(r, size, defaultOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -216,8 +234,28 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 		return err
 	}
 
+	var indexes []format.ColumnIndex
+	var offsets []format.OffsetIndex
+	// Populate indexes and offsets if they exist from cache
+	if b.pageIndexCache != nil {
+		var ok bool
+		indexes, offsets, ok = b.pageIndexCache.Get(blockName)
+		if !ok { // Cache miss, read them from the file
+			indexes, offsets, err = file.ReadPageIndex()
+			if err != nil {
+				return err
+			}
+
+			b.pageIndexCache.Put(blockName, indexes, offsets)
+		}
+	}
+
 	// Get a reader from the file bytes
-	buf, err := dynparquet.NewSerializedBuffer(file)
+	buf, err := dynparquet.NewSerializedBuffer(
+		file,
+		dynparquet.WithIndexes(indexes),
+		dynparquet.WithOffsets(offsets),
+	)
 	if err != nil {
 		return err
 	}
