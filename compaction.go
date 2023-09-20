@@ -530,7 +530,7 @@ func compactLevel0IntoLevel1(
 	// cause them to be split to different granules, rendering the index
 	// useless.
 	nonOverlapping := make([]*parts.Part, 0, len(level1Parts))
-	partsToCompact := level0Parts
+	partsToCompact := make([]*parts.Part, 0, len(level1Parts))
 	// size and numRows are used to estimate the number of bytes per row so that
 	// we can provide a maximum number of rows to write in writeRowGroups which
 	// will more or less keep the compacted part under the maximum granule size.
@@ -542,6 +542,8 @@ func compactLevel0IntoLevel1(
 		size = stats.level0SizeBefore
 		numRows = stats.level0NumRowsBefore
 	}
+	// Determine which level1Parts need to be compacted based on their overlap
+	// with level0Parts.
 	for _, p1 := range level1Parts {
 		overlapped := false
 		for _, p0 := range level0Parts {
@@ -559,7 +561,38 @@ func compactLevel0IntoLevel1(
 		}
 	}
 
+	// To reduce the number of open cursors at the same time (which helps in
+	// memory usage reduction), find which level0Parts do not overlap with any
+	// other part. These parts can be sorted and read one by one.
+	nonOverlappingL0, overlappingL0, err := parts.FindMaximumNonOverlappingSet(t.table.schema, level0Parts)
+	if err != nil {
+		return nil, err
+	}
 	bufs := make([]dynparquet.DynamicRowGroup, 0, len(level0Parts))
+	if len(nonOverlappingL0) == 1 {
+		// Not worth doing anything if only one part does not overlap.
+		overlappingL0 = append(overlappingL0, nonOverlappingL0[0])
+	} else if len(nonOverlappingL0) > 0 {
+		// nonOverlappingL0 is already sorted.
+		rowGroups := make([]dynparquet.DynamicRowGroup, 0, len(nonOverlappingL0))
+		for _, p := range nonOverlappingL0 {
+			buf, err := p.AsSerializedBuffer(t.table.schema)
+			if err != nil {
+				return nil, err
+			}
+			rowGroups = append(rowGroups, buf.MultiDynamicRowGroup())
+		}
+		// WithAlreadySorted ensures that a parquet.MultiRowGroup is created
+		// here, which is much cheaper than actually merging all these row
+		// groups.
+		merged, err := t.table.schema.MergeDynamicRowGroups(rowGroups, dynparquet.WithAlreadySorted())
+		if err != nil {
+			return nil, err
+		}
+		bufs = append(bufs, merged)
+	}
+
+	partsToCompact = append(partsToCompact, overlappingL0...)
 	for _, p := range partsToCompact {
 		buf, err := p.AsSerializedBuffer(t.table.schema)
 		if err != nil {
@@ -572,7 +605,6 @@ func compactLevel0IntoLevel1(
 		bufs = append(bufs, buf.MultiDynamicRowGroup())
 	}
 
-	cursor := 0
 	merged, err := t.table.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
 		return nil, err
@@ -609,7 +641,6 @@ func compactLevel0IntoLevel1(
 			if n == 0 {
 				break
 			}
-			cursor += n
 			serBuf, err := dynparquet.ReaderFromBytes(mergedBytes.Bytes())
 			if err != nil {
 				return err
