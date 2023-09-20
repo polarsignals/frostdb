@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -70,6 +71,42 @@ type DefaultObjstoreBucket struct {
 type PageIndexCache interface {
 	Get(key string) ([]format.ColumnIndex, []format.OffsetIndex, bool)
 	Put(key string, columnIndex []format.ColumnIndex, offsetIndex []format.OffsetIndex)
+}
+
+type DefaultPageCacheIndex struct {
+	sync.RWMutex
+	cache map[string]struct {
+		columnIndex []format.ColumnIndex
+		offsetIndex []format.OffsetIndex
+	}
+}
+
+func NewDefaultPageCacheIndex() *DefaultPageCacheIndex {
+	return &DefaultPageCacheIndex{
+		cache: make(map[string]struct {
+			columnIndex []format.ColumnIndex
+			offsetIndex []format.OffsetIndex
+		}),
+	}
+}
+
+func (c *DefaultPageCacheIndex) Get(key string) ([]format.ColumnIndex, []format.OffsetIndex, bool) {
+	c.RLock()
+	defer c.RUnlock()
+	v, ok := c.cache[key]
+	return v.columnIndex, v.offsetIndex, ok
+}
+
+func (c *DefaultPageCacheIndex) Put(key string, columnIndex []format.ColumnIndex, offsetIndex []format.OffsetIndex) {
+	c.Lock()
+	defer c.Unlock()
+	c.cache[key] = struct {
+		columnIndex []format.ColumnIndex
+		offsetIndex []format.OffsetIndex
+	}{
+		columnIndex: columnIndex,
+		offsetIndex: offsetIndex,
+	}
 }
 
 type DefaultObjstoreBucketOption func(*DefaultObjstoreBucket)
