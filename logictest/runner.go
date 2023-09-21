@@ -63,7 +63,6 @@ type DB interface {
 
 type Table interface {
 	Schema() *dynparquet.Schema
-	InsertBuffer(context.Context, *dynparquet.Buffer) (uint64, error)
 	InsertRecord(context.Context, arrow.Record) (uint64, error)
 }
 
@@ -86,20 +85,20 @@ func NewRunner(db DB, schemas map[string]*schemapb.Schema) *Runner {
 
 // RunCmd parses and runs datadriven command with the associated arguments, and
 // returns the result.
-func (r *Runner) RunCmd(ctx context.Context, c *datadriven.TestData, arrow bool) string {
-	result, err := r.handleCmd(ctx, c, arrow)
+func (r *Runner) RunCmd(ctx context.Context, c *datadriven.TestData) string {
+	result, err := r.handleCmd(ctx, c)
 	if err != nil {
 		return err.Error()
 	}
 	return result
 }
 
-func (r *Runner) handleCmd(ctx context.Context, c *datadriven.TestData, arrow bool) (string, error) {
+func (r *Runner) handleCmd(ctx context.Context, c *datadriven.TestData) (string, error) {
 	switch c.Cmd {
 	case createTableCmd:
 		return r.handleCreateTable(ctx, c)
 	case insertCmd:
-		return r.handleInsert(ctx, c, arrow)
+		return r.handleInsert(ctx, c)
 	case execCmd:
 		return r.handleExec(ctx, c)
 	}
@@ -143,7 +142,7 @@ type colDef struct {
 	dynColName string
 }
 
-func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData, arrow bool) (string, error) {
+func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (string, error) {
 	var colDefs []colDef
 
 	schema := r.activeTable.Schema()
@@ -255,24 +254,18 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData, arrow
 
 	buf.Sort()
 
-	if arrow {
-		converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
-		defer converter.Close()
+	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
+	defer converter.Close()
 
-		if err := converter.Convert(ctx, buf); err != nil {
-			return "", err
-		}
+	if err := converter.Convert(ctx, buf); err != nil {
+		return "", err
+	}
 
-		rec := converter.NewRecord()
-		defer rec.Release()
+	rec := converter.NewRecord()
+	defer rec.Release()
 
-		if _, err := r.activeTable.InsertRecord(ctx, rec); err != nil {
-			return "", fmt.Errorf("insert: %w", err)
-		}
-	} else {
-		if _, err := r.activeTable.InsertBuffer(ctx, buf); err != nil {
-			return "", fmt.Errorf("insert: %w", err)
-		}
+	if _, err := r.activeTable.InsertRecord(ctx, rec); err != nil {
+		return "", fmt.Errorf("insert: %w", err)
 	}
 
 	return c.Expected, nil

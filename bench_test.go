@@ -454,10 +454,10 @@ func Benchmark_Serialize(b *testing.B) {
 
 	// Insert 10k rows
 	samples := NewTestSamples(10000)
-	buf, err := samples.ToBuffer(tbl.schema)
+	r, err := samples.ToRecord()
 	require.NoError(b, err)
 
-	_, err = tbl.InsertBuffer(ctx, buf)
+	_, err = tbl.InsertRecord(ctx, r)
 	require.NoError(b, err)
 
 	b.ResetTimer()

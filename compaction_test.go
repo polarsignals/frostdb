@@ -14,25 +14,6 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 )
 
-// insertSamples is a helper function to insert a deterministic sample with a
-// given timestamp. Note that rows inserted should be sorted by timestamp since
-// it is a sorting column.
-func insertSamples(ctx context.Context, t *testing.T, table *Table, timestamps ...int64) uint64 {
-	t.Helper()
-	samples := make([]any, 0, len(timestamps))
-	for _, ts := range timestamps {
-		samples = append(samples, dynparquet.Sample{
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-			},
-			Timestamp: ts,
-		})
-	}
-	tx, err := table.Write(ctx, samples...)
-	require.NoError(t, err)
-	return tx
-}
-
 // insertSampleRecords is the same helper function as insertSamples but it inserts arrow records instead.
 func insertSampleRecords(ctx context.Context, t *testing.T, table *Table, timestamps ...int64) uint64 {
 	t.Helper()
@@ -297,7 +278,7 @@ func TestCompaction(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		f := func(asArrow bool) func(t *testing.T) {
+		f := func() func(t *testing.T) {
 			return func(t *testing.T) {
 				c, table := basicTable(t)
 				defer c.Close()
@@ -329,9 +310,7 @@ func TestCompaction(t *testing.T) {
 							"tests assume only a single granule as input",
 						)
 						cfg := table.db.columnStore.compactionConfig
-						if asArrow {
-							cfg.l1ToGranuleSizeRatio = 0.6 // use a different ratio for arrow records
-						}
+						cfg.l1ToGranuleSizeRatio = 0.6 // use a different ratio for arrow records
 						success, err := table.active.compactGranule((table.active.Index().Min()).(*Granule), cfg)
 						require.True(t, success)
 						require.NoError(t, err)
@@ -350,12 +329,7 @@ func TestCompaction(t *testing.T) {
 						accumulating = true
 					case flushAcc:
 						accumulating = false
-						switch asArrow {
-						case true:
-							lastTx = insertSampleRecords(context.Background(), t, table, accBuf...)
-						default:
-							lastTx = insertSamples(context.Background(), t, table, accBuf...)
-						}
+						lastTx = insertSampleRecords(context.Background(), t, table, accBuf...)
 						accBuf = accBuf[:0]
 						numInserts++
 					default:
@@ -363,12 +337,7 @@ func TestCompaction(t *testing.T) {
 							accBuf = append(accBuf, v)
 							continue
 						}
-						switch asArrow {
-						case true:
-							lastTx = insertSampleRecords(context.Background(), t, table, v)
-						default:
-							lastTx = insertSamples(context.Background(), t, table, v)
-						}
+						lastTx = insertSampleRecords(context.Background(), t, table, v)
 						numInserts++
 					}
 				}
@@ -439,7 +408,6 @@ func TestCompaction(t *testing.T) {
 				})
 			}
 		}
-		t.Run(tc.name+"-parquet", f(false))
-		t.Run(tc.name+"-arrow", f(true))
+		t.Run(tc.name+"-arrow", f())
 	}
 }

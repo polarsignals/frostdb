@@ -1,7 +1,6 @@
 package frostdb
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -570,7 +569,17 @@ func (t *Table) Write(ctx context.Context, vals ...any) (uint64, error) {
 		return 0, err
 	}
 
-	return t.InsertBuffer(ctx, b)
+	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
+	defer converter.Close()
+
+	if err := converter.Convert(ctx, b); err != nil {
+		return 0, err
+	}
+
+	r := converter.NewRecord()
+	defer r.Release()
+
+	return t.InsertRecord(ctx, r)
 }
 
 func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, error) {
@@ -592,37 +601,6 @@ func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, 
 	}
 
 	return tx, nil
-}
-
-func (t *Table) InsertBuffer(ctx context.Context, buf *dynparquet.Buffer) (uint64, error) {
-	b := bytes.NewBuffer(nil)
-	err := t.schema.SerializeBuffer(b, buf) // TODO should we abort this function? If a large buffer is passed this could get long potentially...
-	if err != nil {
-		return 0, fmt.Errorf("serialize buffer: %w", err)
-	}
-
-	return t.Insert(ctx, b.Bytes())
-}
-
-func (t *Table) Insert(ctx context.Context, buf []byte) (uint64, error) {
-	return t.insert(ctx, buf)
-}
-
-func (t *Table) appendToLog(ctx context.Context, tx uint64, txnMetadata, buf []byte) error {
-	if err := t.wal.Log(tx, &walpb.Record{
-		Entry: &walpb.Entry{
-			EntryType: &walpb.Entry_Write_{
-				Write: &walpb.Entry_Write{
-					Data:      buf,
-					TableName: t.name,
-				},
-			},
-		},
-		TxnMetadata: txnMetadata,
-	}); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
@@ -673,33 +651,6 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 			return nil, nil, fmt.Errorf("rotate block: %w", err)
 		}
 	}
-}
-
-func (t *Table) insert(ctx context.Context, buf []byte) (uint64, error) {
-	block, close, err := t.appender(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("get appender: %w", err)
-	}
-	defer close()
-
-	tx, _, metadata, commit := t.db.begin()
-	defer commit()
-
-	if err := t.appendToLog(ctx, tx, metadata, buf); err != nil {
-		return tx, fmt.Errorf("append to log: %w", err)
-	}
-
-	serBuf, err := dynparquet.ReaderFromBytes(buf)
-	if err != nil {
-		return tx, fmt.Errorf("deserialize buffer: %w", err)
-	}
-
-	err = block.Insert(ctx, tx, serBuf)
-	if err != nil {
-		return tx, fmt.Errorf("insert buffer into block: %w", err)
-	}
-
-	return tx, nil
 }
 
 func (t *Table) View(ctx context.Context, fn func(ctx context.Context, tx uint64) error) error {
@@ -961,127 +912,6 @@ func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.R
 	return nil
 }
 
-func (t *TableBlock) Insert(ctx context.Context, tx uint64, buf *dynparquet.SerializedBuffer) error {
-	defer func() {
-		t.table.metrics.rowsInserted.Add(float64(buf.NumRows()))
-		t.table.metrics.rowInsertSize.Observe(float64(buf.NumRows()))
-	}()
-
-	numRows := buf.NumRows()
-	if numRows == 0 {
-		t.table.metrics.zeroRowsInserted.Add(float64(buf.NumRows()))
-		return nil
-	}
-
-	var dynRows *dynparquet.DynamicRows
-	{
-		rowBuf := make([]parquet.Row, numRows)
-		rows := buf.Reader()
-		defer rows.Close()
-
-		// TODO(asubiotto): Add utility method to read all rows.
-		n := 0
-		for int64(n) < numRows {
-			readN, err := rows.ReadRows(rowBuf[n:])
-			for i := n; i < n+readN; i++ {
-				rowBuf[i] = rowBuf[i].Clone()
-			}
-			n += readN
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				return err
-			}
-		}
-
-		dynRows = dynparquet.NewDynamicRows(
-			rowBuf,
-			buf.ParquetFile().Schema(),
-			buf.DynamicColumns(),
-			buf.ParquetFile().Schema().Fields(),
-		)
-
-		if !dynRows.IsSorted(t.table.schema) {
-			// Input rows should be sorted. Eventually, we should return an error.
-			// However, for caution, we just increment a metric and sort the rows.
-			t.table.metrics.unsortedInserts.Inc()
-			sorter := dynparquet.NewDynamicRowSorter(t.table.schema, dynRows)
-			sort.Sort(sorter)
-		}
-	}
-
-	rowsToInsertPerGranule, err := t.splitRowsByGranule(dynRows)
-	if err != nil {
-		return fmt.Errorf("failed to split rows by granule: %w", err)
-	}
-
-	b := bytes.NewBuffer(nil)
-	w, err := t.table.schema.GetWriter(b, buf.DynamicColumns())
-	if err != nil {
-		return fmt.Errorf("failed to get writer: %w", err)
-	}
-	defer t.table.schema.PutWriter(w)
-
-	list := make([]*parts.Part, 0)
-	for granule, indices := range rowsToInsertPerGranule {
-		select {
-		case <-ctx.Done():
-			parts.Tombstone(list)
-			return ctx.Err()
-		default:
-
-			for idx := range dynRows.Rows {
-				// Check if this index belongs in this granule
-				if _, ok := indices[idx]; !ok {
-					continue
-				}
-
-				if _, err = w.WriteRows(dynRows.Rows[idx : idx+1]); err != nil {
-					return fmt.Errorf("failed to write rows: %w", err)
-				}
-			}
-			if err := w.Close(); err != nil {
-				return fmt.Errorf("failed to close writer: %w", err)
-			}
-
-			serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
-			if err != nil {
-				return fmt.Errorf("failed to get reader from bytes: %w", err)
-			}
-
-			part := parts.NewPart(tx, serBuf)
-			if granule == nil { // insert new granule with part
-				g, err := NewGranule(t.table.schema, part)
-				if err != nil {
-					return fmt.Errorf("failed to create granule: %w", err)
-				}
-				t.table.metrics.granulesCreated.Inc()
-
-				if err := t.updateIndex(func(index *btree.BTree) error {
-					index.ReplaceOrInsert(g)
-					return nil
-				}); err != nil {
-					return err
-				}
-				t.table.metrics.numParts.Add(float64(1))
-			} else {
-				if _, err := granule.Append(part); err != nil {
-					return fmt.Errorf("failed to add part to granule: %w", err)
-				}
-			}
-			list = append(list, part)
-			t.size.Add(serBuf.ParquetFile().Size())
-
-			b = bytes.NewBuffer(nil)
-			w.Reset(b)
-		}
-	}
-
-	t.table.metrics.numParts.Add(float64(len(list)))
-	return nil
-}
-
 // updateIndex updates that TableBlock's index in a thread safe manner to the result of calling the update fn with the current index.
 func (t *TableBlock) updateIndex(update func(index *btree.BTree) error) error {
 	var replaceErr error
@@ -1233,76 +1063,6 @@ type btreeComparableDynamicRow struct {
 
 func (r btreeComparableDynamicRow) Less(than btree.Item) bool {
 	return r.schema.RowLessThan(r.DynamicRow, than.(*Granule).Least())
-}
-
-func (t *TableBlock) splitRowsByGranule(parquetRows *dynparquet.DynamicRows) (map[*Granule]map[int]struct{}, error) {
-	index := t.Index()
-	if index.Len() == 0 {
-		rows := map[int]struct{}{}
-		for i := 0; i < len(parquetRows.Rows); i++ {
-			rows[i] = struct{}{}
-		}
-
-		return map[*Granule]map[int]struct{}{
-			nil: rows, // NOTE: nil pointer to a granule indicates a new granule must be greated for insertion
-		}, nil
-	}
-
-	var (
-		rowsByGranule = map[*Granule]map[int]struct{}{}
-		idx           = len(parquetRows.Rows) - 1
-	)
-
-	// Imagine our index looks like (in sorted order):
-	// [a, c) [c, h) [h, inf)
-	// Note that the "end" range bounds are implicit and defined by the least
-	// row of the next granule.
-	// If we insert 2 rows, [d, k], the DescendLessOrEqual call will return
-	// granule [h, inf) as a starting point for our descent. The rows to insert
-	// are iterated in reverse order until a row is found that does not belong
-	// to the current granule (e.g. d, since it's less than h). At this point,
-	// the iteration is continued to granule [c, h) into which d is inserted.
-	index.DescendLessOrEqual(
-		btreeComparableDynamicRow{
-			schema:     t.table.schema,
-			DynamicRow: parquetRows.Get(idx),
-		},
-		func(i btree.Item) bool {
-			g := i.(*Granule)
-			// Descend the rows to insert until we find a row that does not belong
-			// in this granule.
-			for ; idx >= 0; idx-- {
-				if t.table.schema.RowLessThan(parquetRows.Get(idx), g.Least()) {
-					// Go on to the next granule.
-					return true
-				}
-				if _, ok := rowsByGranule[g]; !ok {
-					rowsByGranule[g] = map[int]struct{}{}
-				}
-				rowsByGranule[g][idx] = struct{}{}
-			}
-			// If we got here, all rows were exhausted in the loop above.
-			return false
-		})
-
-	if idx < 0 {
-		// All rows exhausted.
-		return rowsByGranule, nil
-	}
-
-	if _, ok := rowsByGranule[nil]; ok {
-		return nil, errors.New(
-			"unexpectedly found rows that do not belong to any granule before exhausting search",
-		)
-	}
-
-	// Add remaining rows to a new granule.
-	rowsByGranule[nil] = map[int]struct{}{}
-	for ; idx >= 0; idx-- {
-		rowsByGranule[nil][idx] = struct{}{}
-	}
-
-	return rowsByGranule, nil
 }
 
 // addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.

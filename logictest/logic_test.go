@@ -121,27 +121,24 @@ var schemas = map[string]*schemapb.Schema{
 func TestLogic(t *testing.T) {
 	ctx := context.Background()
 	t.Parallel()
-	isArrow := []bool{true, false}
-	for _, arrow := range isArrow {
-		datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
-			columnStore, err := frostdb.New()
-			require.NoError(t, err)
-			defer columnStore.Close()
-			db, err := columnStore.DB(ctx, "test")
-			require.NoError(t, err)
-			fdb := frostDB{
-				DB:        db,
-				allocator: query.NewLimitAllocator(1024*1024*1024, memory.DefaultAllocator),
-			}
-			r := NewRunner(fdb, schemas)
-			datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
-				return r.RunCmd(ctx, c, arrow)
-			})
-			if path != "testdata/exec/aggregate/ordered_aggregate" { // NOTE: skip checking the limit for the ordered aggregator as it still leaks memory.
-				require.Equal(t, 0, fdb.allocator.Allocated())
-			}
+	datadriven.Walk(t, testdataDirectory, func(t *testing.T, path string) {
+		columnStore, err := frostdb.New()
+		require.NoError(t, err)
+		defer columnStore.Close()
+		db, err := columnStore.DB(ctx, "test")
+		require.NoError(t, err)
+		fdb := frostDB{
+			DB:        db,
+			allocator: query.NewLimitAllocator(1024*1024*1024, memory.DefaultAllocator),
+		}
+		r := NewRunner(fdb, schemas)
+		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
+			return r.RunCmd(ctx, c)
 		})
-	}
+		if path != "testdata/exec/aggregate/ordered_aggregate" { // NOTE: skip checking the limit for the ordered aggregator as it still leaks memory.
+			require.Equal(t, 0, fdb.allocator.Allocated())
+		}
+	})
 }
 
 func SchemaMust(def *schemapb.Schema) *dynparquet.Schema {
