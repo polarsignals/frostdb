@@ -554,6 +554,13 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 
 	groupByFields := make([]arrow.Field, 0, numCols)
 	groupByArrays := make([]arrow.Array, 0, numCols)
+	defer func() {
+		for _, arr := range groupByArrays {
+			if arr != nil {
+				arr.Release()
+			}
+		}
+	}()
 	for _, fieldName := range aggregate.colOrdering {
 		if a.finalStage && dynparquet.IsHashedColumn(fieldName) {
 			continue
@@ -592,7 +599,6 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 	}
 
 	// Rename to clarity upon appending aggregations later
-	aggregateColumns := groupByArrays
 	aggregateFields := groupByFields
 
 	for _, aggregation := range aggregate.aggregations {
@@ -608,7 +614,7 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 		if err != nil {
 			return fmt.Errorf("aggregate batched arrays: %w", err)
 		}
-		aggregateColumns = append(aggregateColumns, aggregateArray)
+		groupByArrays = append(groupByArrays, aggregateArray)
 
 		aggregateFields = append(aggregateFields, arrow.Field{
 			Name: aggregation.resultName, Type: aggregateArray.DataType(),
@@ -617,13 +623,10 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 
 	r := array.NewRecord(
 		arrow.NewSchema(aggregateFields, nil),
-		aggregateColumns,
+		groupByArrays,
 		int64(numRows),
 	)
 	defer r.Release()
-	for _, arr := range aggregateColumns {
-		arr.Release()
-	}
 	err := a.next.Callback(ctx, r)
 	if err != nil {
 		return err
