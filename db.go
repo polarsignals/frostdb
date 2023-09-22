@@ -435,7 +435,10 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		}
 		db.txPool = NewTxPool(&db.highWatermark)
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
-		db.compactorPool.start()
+		// Wait to start the compactor pool since benchmarks show that WAL
+		// replay is a lot more efficient if it is not competing against
+		// compaction.
+		defer db.compactorPool.start()
 		if len(db.sources) != 0 {
 			for _, source := range db.sources {
 				prefixes, err := source.Prefixes(ctx, name)
@@ -607,6 +610,9 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
+	// Writes are performed concurrently to speed up replay.
+	var writeWg errgroup.Group
+	writeWg.SetLimit(runtime.GOMAXPROCS(0))
 	if err := wal.Replay(snapshotTx.TxnID, func(tx uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -725,36 +731,34 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				return fmt.Errorf("get table: %w", err)
 			}
 
-			switch e.Write.Arrow {
-			case true:
-				reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
-				if err != nil {
-					return fmt.Errorf("create ipc reader: %w", err)
-				}
-				record, err := reader.Read()
-				if err != nil {
-					return fmt.Errorf("read record: %w", err)
-				}
+			writeWg.Go(func() error {
+				switch e.Write.Arrow {
+				case true:
+					reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
+					if err != nil {
+						return fmt.Errorf("create ipc reader: %w", err)
+					}
+					record, err := reader.Read()
+					if err != nil {
+						return fmt.Errorf("read record: %w", err)
+					}
 
-				if err := table.active.InsertRecord(ctx, tx, record); err != nil {
-					return fmt.Errorf("insert record into block: %w", err)
-				}
-			default:
-				serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
-				if err != nil {
-					return fmt.Errorf("deserialize buffer: %w", err)
-				}
+					if err := table.active.InsertRecord(ctx, tx, record); err != nil {
+						return fmt.Errorf("insert record into block: %w", err)
+					}
+				default:
+					serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
+					if err != nil {
+						return fmt.Errorf("deserialize buffer: %w", err)
+					}
 
-				if err := table.active.Insert(ctx, tx, serBuf); err != nil {
-					return fmt.Errorf("insert buffer into block: %w", err)
+					if err := table.active.Insert(ctx, tx, serBuf); err != nil {
+						return fmt.Errorf("insert buffer into block: %w", err)
+					}
 				}
-			}
+				return nil
+			})
 
-			// After every insert we're setting the tx and highWatermark to the
-			// replayed tx.
-			// This allows the block's compaction to start working on the
-			// inserted data.
-			db.resetToTxn(Txn{TxnID: tx, TxnMetadata: record.TxnMetadata}, nil)
 		case *walpb.Entry_TableBlockPersisted_:
 			return nil
 		case *walpb.Entry_Snapshot_:
@@ -765,6 +769,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return nil
 	}); err != nil {
 		return err
+	}
+
+	if err := writeWg.Wait(); err != nil {
+		return fmt.Errorf("write error during replay: %w", err)
 	}
 
 	resetTxn := snapshotTx
