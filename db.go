@@ -776,14 +776,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 						return fmt.Errorf("insert record into block: %w", err)
 					}
 				default:
-					serBuf, err := dynparquet.ReaderFromBytes(entry.Data)
-					if err != nil {
-						return fmt.Errorf("deserialize buffer: %w", err)
-					}
-
-					if err := table.active.Insert(ctx, tx, serBuf); err != nil {
-						return fmt.Errorf("insert buffer into block: %w", err)
-					}
+					panic("parquet writes are deprecated")
 				}
 				return nil
 			})

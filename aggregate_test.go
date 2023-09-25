@@ -69,10 +69,10 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 	}}
 
 	for i := range samples {
-		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		r, err := samples[i : i+1].ToRecord()
 		require.NoError(t, err)
 
-		_, err = table.InsertBuffer(context.Background(), buf)
+		_, err = table.InsertRecord(context.Background(), r)
 		require.NoError(t, err)
 	}
 
@@ -197,10 +197,10 @@ func TestAggregationProjection(t *testing.T) {
 	}}
 
 	for i := 0; i < len(samples); i++ {
-		buf, err := samples[i : i+1].ToBuffer(table.Schema())
+		r, err := samples[i : i+1].ToRecord()
 		require.NoError(t, err)
 
-		_, err = table.InsertBuffer(context.Background(), buf)
+		_, err = table.InsertRecord(context.Background(), r)
 		require.NoError(t, err)
 	}
 

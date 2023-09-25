@@ -70,14 +70,14 @@ func TestSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		insertSampleRecords(ctx, t, table, 1, 2, 3)
 		require.NoError(t, table.EnsureCompaction())
-		insertSamples(ctx, t, table, 4, 5, 6)
+		insertSampleRecords(ctx, t, table, 4, 5, 6)
 		insertSampleRecords(ctx, t, table, 7, 8, 9)
 
 		const overrideConfigVal = 1234
 		config.RowGroupSize = overrideConfigVal
 		table, err = db.Table("table2", config)
 		require.NoError(t, err)
-		insertSamples(ctx, t, table, 1, 2, 3)
+		insertSampleRecords(ctx, t, table, 1, 2, 3)
 		insertSampleRecords(ctx, t, table, 4, 5, 6)
 
 		config.BlockReaderLimit = overrideConfigVal
@@ -87,7 +87,7 @@ func TestSnapshot(t *testing.T) {
 		highWatermark := db.highWatermark.Load().TxnID
 
 		// Insert a sample that should not be snapshot.
-		insertSamples(ctx, t, table, 10)
+		insertSampleRecords(ctx, t, table, 10)
 		require.NoError(t, db.snapshotAtTX(ctx, highWatermark, db.snapshotWriter(highWatermark, nil)))
 
 		// Create another db and verify.
@@ -170,7 +170,7 @@ func TestSnapshot(t *testing.T) {
 		errg.Go(func() error {
 			ts := int64(highWatermarkAtStart)
 			for cancelCtx.Err() == nil {
-				tx := insertSamples(ctx, t, table, ts)
+				tx := insertSampleRecords(ctx, t, table, ts)
 				// This check simply ensures that the assumption that inserting
 				// timestamp n corresponds to the n+1th transaction (the +1
 				// corresponding to table creation). This assumption is required
@@ -247,9 +247,9 @@ func TestSnapshotWithWAL(t *testing.T) {
 		}
 		ctx := context.Background()
 
-		buf, err := samples.ToBuffer(table.schema)
+		r, err := samples.ToRecord()
 		require.NoError(t, err)
-		_, err = table.InsertBuffer(ctx, buf)
+		_, err = table.InsertRecord(ctx, r)
 		require.NoError(t, err)
 
 		// No snapshots should have happened yet.
@@ -259,10 +259,10 @@ func TestSnapshotWithWAL(t *testing.T) {
 		for i := range samples {
 			samples[i].Timestamp = firstWriteTimestamp + 1
 		}
-		buf, err = samples.ToBuffer(table.schema)
+		r, err = samples.ToRecord()
 		require.NoError(t, err)
 		// With this new insert, a snapshot should be triggered.
-		_, err = table.InsertBuffer(ctx, buf)
+		_, err = table.InsertRecord(ctx, r)
 		require.NoError(t, err)
 
 		require.Eventually(t, func() bool {
