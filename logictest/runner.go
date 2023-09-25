@@ -254,6 +254,7 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (stri
 
 	buf.Sort()
 
+	// TODO: https://github.com/polarsignals/frostdb/issues/548 Should just build the arrow record directly.
 	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
 	defer converter.Close()
 
