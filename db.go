@@ -445,8 +445,9 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		db.compactorPool = newCompactorPool(db, s.compactionConfig)
 		// Wait to start the compactor pool since benchmarks show that WAL
 		// replay is a lot more efficient if it is not competing against
-		// compaction.
-		defer db.compactorPool.start()
+		// compaction. Additionally, if the CompactAfterRecovery option is
+		// specified, we don't want the user-specified compaction to race with
+		// our compactor pool.
 		if len(db.sources) != 0 {
 			for _, source := range db.sources {
 				prefixes, err := source.Prefixes(ctx, name)
@@ -528,6 +529,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		}
 	}
 
+	db.compactorPool.start()
 	s.dbs[name] = db
 	return db, nil
 }
