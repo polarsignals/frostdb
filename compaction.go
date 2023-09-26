@@ -31,7 +31,8 @@ type CompactionConfig struct {
 	l1ToGranuleSizeRatio float64
 
 	// compactAfterRecovery specifies to run compaction on all tables after recovery.
-	compactAfterRecovery bool
+	compactAfterRecovery           bool
+	compactAfterRecoveryTableNames []string
 }
 
 // NewCompactionConfig creates a new compaction config with the given options.
@@ -54,10 +55,13 @@ func NewCompactionConfig(options ...CompactionOption) *CompactionConfig {
 	return c
 }
 
-// WithCompactionAfterRecovery specifies to run compaction on all tables after recovery.
-func WithCompactionAfterRecovery() CompactionOption {
+// WithCompactionAfterRecovery specifies to run compaction on a specific set
+// of tables after recovery. If a zero-length slice is passed in, compaction is
+// run on all tables (this can be slow since it is currently single-threaded).
+func WithCompactionAfterRecovery(tableNames []string) CompactionOption {
 	return func(c *CompactionConfig) {
 		c.compactAfterRecovery = true
+		c.compactAfterRecoveryTableNames = tableNames
 	}
 }
 
