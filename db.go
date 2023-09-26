@@ -291,7 +291,13 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 		databaseName := f.Name()
 		g.Go(func() error {
 			// Open the DB for the side effect of the snapshot and WALs being loaded as part of the open operation.
-			_, err := s.DB(ctx, databaseName, WithCompactionAfterOpen(s.compactionConfig.compactAfterRecovery))
+			_, err := s.DB(
+				ctx,
+				databaseName,
+				WithCompactionAfterOpen(
+					s.compactionConfig.compactAfterRecovery, s.compactionConfig.compactAfterRecoveryTableNames,
+				),
+			)
 			return err
 		})
 	}
@@ -331,8 +337,10 @@ type DB struct {
 	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
 	txPool *TxPool
 
-	compactAfterRecovery bool
-	compactorPool        *compactorPool
+	compactAfterRecovery           bool
+	compactAfterRecoveryTableNames []string
+
+	compactorPool *compactorPool
 
 	snapshotInProgress atomic.Bool
 
@@ -369,9 +377,10 @@ func WithUserDefinedTxnMetadataProvider(f func(tx uint64) []byte) DBOption {
 	}
 }
 
-func WithCompactionAfterOpen(compact bool) DBOption {
+func WithCompactionAfterOpen(compact bool, tableNames []string) DBOption {
 	return func(db *DB) error {
 		db.compactAfterRecovery = compact
+		db.compactAfterRecoveryTableNames = tableNames
 		return nil
 	}
 }
@@ -512,7 +521,12 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 
 	// Compact tables after recovery if requested.
 	if db.compactAfterRecovery {
-		for name := range db.tables {
+		tables := db.compactAfterRecoveryTableNames
+		if len(tables) == 0 {
+			// Run compaction on all tables.
+			tables = maps.Keys(db.tables)
+		}
+		for _, name := range tables {
 			tbl, err := db.GetTable(name)
 			if err != nil {
 				level.Warn(db.logger).Log("msg", "get table during db setup", "err", err)
