@@ -1,11 +1,11 @@
 package frostdb
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/rand"
 	"path/filepath"
 	"runtime"
@@ -21,7 +21,6 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/google/btree"
 	"github.com/oklog/ulid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,7 +30,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/polarsignals/frostdb/bufutils"
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
@@ -46,8 +44,12 @@ import (
 )
 
 var (
-	ErrNoSchema     = fmt.Errorf("no schema")
-	ErrTableClosing = fmt.Errorf("table closing")
+	ErrNoSchema        = fmt.Errorf("no schema")
+	ErrTableClosing    = fmt.Errorf("table closing")
+	DefaultIndexConfig = []*LevelConfig{
+		{Level: L0, MaxSize: 1024 * 1024 * 128}, // Compact to Parquet after 128MiB
+		{Level: L1, MaxSize: 1024 * 1024 * 512}, // Final level. Rotate after 512MiB of Parquet files
+	}
 )
 
 type ErrWriteRow struct{ err error }
@@ -191,7 +193,7 @@ type TableBlock struct {
 	// lastSnapshotSize keeps track of the size of the block when it last
 	// triggered a snapshot.
 	lastSnapshotSize atomic.Int64
-	index            *atomic.Pointer[btree.BTree] // *btree.BTree
+	index            *LSM
 
 	pendingWritersWg sync.WaitGroup
 	pendingReadersWg sync.WaitGroup
@@ -200,19 +202,13 @@ type TableBlock struct {
 }
 
 type tableMetrics struct {
-	blockPersisted            prometheus.Counter
-	blockRotated              prometheus.Counter
-	granulesCreated           prometheus.Counter
-	compactions               prometheus.Counter
-	granulesSplits            prometheus.Counter
-	rowsInserted              prometheus.Counter
-	zeroRowsInserted          prometheus.Counter
-	granulesCompactionAborted prometheus.Counter
-	rowInsertSize             prometheus.Histogram
-	lastCompletedBlockTx      prometheus.Gauge
-	numParts                  prometheus.Gauge
-	unsortedInserts           prometheus.Counter
-	compactionMetrics         *compactionMetrics
+	blockPersisted       prometheus.Counter
+	blockRotated         prometheus.Counter
+	rowsInserted         prometheus.Counter
+	zeroRowsInserted     prometheus.Counter
+	rowInsertSize        prometheus.Histogram
+	lastCompletedBlockTx prometheus.Gauge
+	numParts             prometheus.Gauge
 }
 
 func schemaFromTableConfig(tableConfig *tablepb.TableConfig) (*dynparquet.Schema, error) {
@@ -279,22 +275,6 @@ func newTable(
 				Name: "frostdb_table_blocks_rotated_total",
 				Help: "Number of table blocks that have been rotated.",
 			}),
-			granulesCreated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_granules_created_total",
-				Help: "Number of granules created.",
-			}),
-			compactions: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_granules_compactions_total",
-				Help: "Number of granule compactions.",
-			}),
-			granulesSplits: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_granules_splits_total",
-				Help: "Number of granules splits executed.",
-			}),
-			granulesCompactionAborted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_granules_compaction_aborted_total",
-				Help: "Number of aborted granules compaction.",
-			}),
 			rowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "frostdb_table_rows_inserted_total",
 				Help: "Number of rows inserted into table.",
@@ -312,11 +292,6 @@ func newTable(
 				Name: "frostdb_table_last_completed_block_tx",
 				Help: "Last completed block transaction.",
 			}),
-			unsortedInserts: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_unsorted_inserts_total",
-				Help: "The number of times a buffer to insert was not in sorted order.",
-			}),
-			compactionMetrics: newCompactionMetrics(reg, float64(db.columnStore.granuleSizeBytes)),
 		},
 	}
 
@@ -326,16 +301,6 @@ func newTable(
 	}
 
 	t.pendingBlocks = make(map[*TableBlock]struct{})
-
-	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "frostdb_table_index_size",
-		Help: "Number of granules in the table index currently.",
-	}, func() float64 {
-		if active := t.ActiveBlock(); active != nil {
-			return float64(active.Index().Len())
-		}
-		return 0
-	})
 
 	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "frostdb_table_active_block_size",
@@ -388,16 +353,7 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	block.pendingReadersWg.Wait()
 	block.pendingWritersWg.Wait()
 
-	block.Index().Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
-			if r := p.Record(); r != nil {
-				r.Release()
-			}
-			return true
-		})
-		return true
-	})
+	// TODO thor call Release on all records in the block...
 }
 
 func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
@@ -870,12 +826,8 @@ func generateULID() ulid.ULID {
 }
 
 func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, error) {
-	index := atomic.Pointer[btree.BTree]{}
-	index.Store(btree.New(table.db.columnStore.indexDegree))
-
-	return &TableBlock{
+	tb := &TableBlock{
 		table:  table,
-		index:  &index,
 		mtx:    &sync.RWMutex{},
 		ulid:   id,
 		size:   &atomic.Int64{},
@@ -883,12 +835,20 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		tracer: table.tracer,
 		minTx:  tx,
 		prevTx: prevTx,
-	}, nil
+	}
+
+	var err error
+	tb.index, err = NewLSM(table.name, table.configureLSMLevels(table.db.columnStore.indexConfig))
+	if err != nil {
+		return nil, err
+	}
+
+	return tb, nil
 }
 
 // EnsureCompaction forces a TableBlock compaction.
 func (t *TableBlock) EnsureCompaction() error {
-	return t.compact(t.table.db.columnStore.compactionConfig)
+	return t.index.merge(L0, nil)
 }
 
 func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.Record) error {
@@ -905,56 +865,10 @@ func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.R
 	record = dynparquet.PrehashColumns(t.table.schema, record)
 	defer record.Release()
 
-	if err := t.insertRecordToGranules(tx, record); err != nil {
-		return fmt.Errorf("failed to insert record into granules: %w", err)
-	}
-
+	t.index.Add(tx, record)
+	t.table.metrics.numParts.Inc()
+	t.size.Add(util.TotalRecordSize(record))
 	return nil
-}
-
-// updateIndex updates that TableBlock's index in a thread safe manner to the result of calling the update fn with the current index.
-func (t *TableBlock) updateIndex(update func(index *btree.BTree) error) error {
-	var replaceErr error
-	for ok := false; !ok; {
-		ok = func() bool {
-			old := t.Index()
-			t.mtx.Lock()
-			newIndex := old.Clone()
-			t.mtx.Unlock()
-
-			if err := update(newIndex); err != nil {
-				replaceErr = err
-				return true
-			}
-
-			return t.index.CompareAndSwap(old, newIndex)
-		}()
-	}
-	return replaceErr
-}
-
-// RowGroupIterator iterates in order over all granules in the table.
-// It stops iterating when the iterator function returns false.
-func (t *TableBlock) RowGroupIterator(
-	ctx context.Context,
-	tx uint64,
-	filter TrueNegativeFilter,
-	rowGroups chan<- any,
-) error {
-	ctx, span := t.tracer.Start(ctx, "TableBlock/RowGroupIterator")
-	span.SetAttributes(attribute.Int64("tx", int64(tx))) // Attributes don't support uint64...
-	defer span.End()
-
-	index := t.Index()
-
-	var err error
-	index.Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-		g.Collect(ctx, tx, filter, rowGroups)
-		return true
-	})
-
-	return err
 }
 
 // Size returns the cumulative size of all buffers in the table. This is roughly the size of the table in bytes.
@@ -963,253 +877,19 @@ func (t *TableBlock) Size() int64 {
 }
 
 // Index provides atomic access to the table index.
-func (t *TableBlock) Index() *btree.BTree {
-	return (*btree.BTree)(t.index.Load())
-}
-
-func (t *TableBlock) insertRecordToGranules(tx uint64, record arrow.Record) error {
-	ps := t.table.schema
-	numRows := record.NumRows()
-	idx := numRows - 1
-	dynCols := pqarrow.RecordDynamicCols(record)
-	pooledSchema, err := ps.GetDynamicParquetSchema(dynCols)
-	if err != nil {
-		return err
-	}
-	defer ps.PutPooledParquetSchema(pooledSchema)
-	row, err := pqarrow.RecordToDynamicRow(ps, pooledSchema.Schema, record, dynCols, int(idx))
-	if err != nil {
-		if err == io.EOF {
-			level.Debug(t.logger).Log("msg", "inserted record with no rows")
-			return nil
-		}
-		return err
-	}
-
-	// recordSizePerRow is the rough estimate of the size of each row in the record.
-	recordSizePerRow := int(util.TotalRecordSize(record) / int64(numRows))
-
-	var ascendErr error
-	t.Index().DescendLessOrEqual(
-		btreeComparableDynamicRow{
-			schema:     ps,
-			DynamicRow: row,
-		},
-		func(i btree.Item) bool {
-			g := i.(*Granule)
-			// Descend rows to insert until we find a row that does not belong in this granule.
-			n := 0
-			for ; idx >= 0; idx-- {
-				row, err := pqarrow.RecordToDynamicRow(ps, pooledSchema.Schema, record, dynCols, int(idx))
-				if err != nil {
-					ascendErr = err
-					return false
-				}
-				if ps.RowLessThan(row, g.Least()) {
-					if n > 0 {
-						if _, err := g.Append(parts.NewArrowPart(tx, record.NewSlice(idx+1, idx+1+int64(n)), recordSizePerRow*n, ps)); err != nil {
-							ascendErr = err
-							return false
-						}
-						t.table.metrics.numParts.Add(float64(1))
-					}
-					// Go on to the next granule.
-					return true
-				}
-				n++
-			}
-			// If we got here, all rows were exhaused in the loop above.
-			if n > 0 {
-				if _, err := g.Append(parts.NewArrowPart(tx, record.NewSlice(idx+1, idx+1+int64(n)), recordSizePerRow*n, ps)); err != nil {
-					ascendErr = err
-					return false
-				}
-				t.table.metrics.numParts.Add(float64(1))
-			}
-			return false
-		},
-	)
-	if ascendErr != nil {
-		return err
-	}
-
-	if idx < 0 {
-		// All rows exhausted.
-		t.size.Add(util.TotalRecordSize(record))
-		return nil
-	}
-
-	g, err := NewGranule(ps, parts.NewArrowPart(tx, record.NewSlice(0, idx+1), recordSizePerRow*int(idx+1), ps))
-	if err != nil {
-		return fmt.Errorf("new granule failed: %w", err)
-	}
-
-	if err := t.updateIndex(func(index *btree.BTree) error {
-		index.ReplaceOrInsert(g)
-		return nil
-	}); err != nil {
-		return err
-	}
-	t.table.metrics.granulesCreated.Inc()
-	t.table.metrics.numParts.Add(float64(1))
-	t.size.Add(util.TotalRecordSize(record))
-	return nil
-}
-
-type btreeComparableDynamicRow struct {
-	schema *dynparquet.Schema
-	*dynparquet.DynamicRow
-}
-
-func (r btreeComparableDynamicRow) Less(than btree.Item) bool {
-	return r.schema.RowLessThan(r.DynamicRow, than.(*Granule).Least())
-}
-
-// addPartToGranule finds the corresponding granule it belongs to in a sorted list of Granules.
-func addPartToGranule(granules []*Granule, p *parts.Part) error {
-	row, err := p.Least()
-	if err != nil {
-		return err
-	}
-
-	var prev *Granule
-	for _, g := range granules {
-		if g.schema.RowLessThan(row, g.Least()) {
-			if prev != nil {
-				if _, err := prev.Append(p); err != nil {
-					return err
-				}
-				return nil
-			}
-		} else {
-			prev = g
-		}
-	}
-
-	if prev != nil {
-		// Save part to prev
-		if _, err := prev.Append(p); err != nil {
-			return err
-		}
-	} else {
-		// NOTE: this should never happen
-		panic("programming error; unable to find granule for part")
-	}
-
-	return nil
-}
-
-// abortCompaction resets state set on compaction so that a granule may be
-// compacted again.
-func (t *TableBlock) abortCompaction(granule *Granule) {
-	t.table.metrics.granulesCompactionAborted.Inc()
-	for {
-		// Unmark pruned, so that we can compact the granule in the future.
-		if granule.metadata.pruned.CompareAndSwap(1, 0) {
-			return
-		}
-	}
+func (t *TableBlock) Index() *LSM {
+	return t.index
 }
 
 // Serialize the table block into a single Parquet file.
-// The Serialize function will walk all Granules in the block, compact each Granule into a sorted set of Row groups, then write those
-// row groups to the final Parquet file, repeating for each Granule. This leverages the fact that the index has alreayd sorted the Granules
-// so no need to sort them further than the intra-granule parts.
 func (t *TableBlock) Serialize(writer io.Writer) error {
-	var ascendErr error
-	dynCols := map[string][]string{} // NOTE: it would be nice if we didn't have to go back and find all the dynamic columns...
-	index := t.Index()
-	index.Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-
-		g.PartsForTx(math.MaxUint64, func(p *parts.Part) bool {
-			buf, err := p.AsSerializedBuffer(t.table.schema)
-			if err != nil {
-				ascendErr = err
-				return false
-			}
-
-			for key, vals := range buf.DynamicColumns() {
-				dynCols[key] = append(dynCols[key], vals...)
-			}
-			return true
-		})
-
-		return true
-	})
-	if ascendErr != nil {
-		return ascendErr
+	for i := L0; i < t.index.MaxLevel(); i++ {
+		if err := t.index.merge(i, nil); err != nil {
+			return err
+		}
 	}
 
-	dynCols = bufutils.Dedupe(dynCols)
-	rowWriter, err := t.rowWriter(writer, dynCols)
-	if err != nil {
-		return fmt.Errorf("create row writer: %w", err)
-	}
-	defer rowWriter.close()
-
-	cols := t.table.schema.ParquetSortingColumns(dynCols)
-	pooledSchema, err := t.table.schema.GetDynamicParquetSchema(dynCols)
-	if err != nil {
-		return err
-	}
-	defer t.table.schema.PutPooledParquetSchema(pooledSchema)
-	ps := pooledSchema.Schema
-
-	// Merge all parts in a Granule and write that granule to the file
-	index.Ascend(func(i btree.Item) bool {
-		g := i.(*Granule)
-
-		// collect parts based on compaction level; we do this because level1 parts are already non-overlapping.
-		lvl0, lvl1, _, stats, err := collectPartsForCompaction(math.MaxUint64, g.parts)
-		if err != nil {
-			ascendErr = err
-			return false
-		}
-
-		// Compact the level 0 parts
-		if len(lvl0) > 0 {
-			lvl1, err = compactLevel0IntoLevel1(t, math.MaxUint64, lvl0, lvl1, 1.0, &stats)
-			if err != nil {
-				ascendErr = err
-				return false
-			}
-		}
-
-		sorter := parts.NewPartSorter(t.table.schema, lvl1)
-		sort.Sort(sorter)
-		if err := sorter.Err(); err != nil {
-			ascendErr = err
-			return false
-		}
-
-		// Write the sorted parts
-		for _, p := range lvl1 {
-			buf, err := p.AsSerializedBuffer(t.table.schema)
-			if err != nil {
-				ascendErr = err
-				return false
-			}
-
-			// Use the dynamic row group merge adapter for each row group to ensure the missing dynamic columns are written
-			for i := 0; i < buf.NumRowGroups(); i++ {
-				rows := dynparquet.NewDynamicRowGroupMergeAdapter(ps, cols, dynCols, buf.DynamicRowGroup(i)).Rows()
-				defer rows.Close()
-
-				// Write the merged row groups to the writer
-				if _, err := rowWriter.writeRows(rows); err != nil {
-					ascendErr = err
-					return false
-				}
-			}
-		}
-
-		return true
-	})
-	if ascendErr != nil {
-		return ascendErr
-	}
-
+	t.index.merge(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
 	return nil
 }
 
@@ -1339,11 +1019,6 @@ func (t *Table) collectRowGroups(
 	ctx, span := t.tracer.Start(ctx, "Table/collectRowGroups")
 	defer span.End()
 
-	filter, err := BooleanExpr(filterExpr)
-	if err != nil {
-		return err
-	}
-
 	// pending blocks could be uploaded to the bucket while we iterate on them.
 	// to avoid to iterate on them again while reading the block file
 	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
@@ -1355,8 +1030,14 @@ func (t *Table) collectRowGroups(
 		}
 	}()
 	for _, block := range memoryBlocks {
-		span.AddEvent("memoryBlock")
-		if err := block.RowGroupIterator(ctx, tx, filter, rowGroups); err != nil {
+		if err := block.index.Scan(ctx, "", t.schema, filterExpr, tx, func(ctx context.Context, v any) error {
+			select {
+			case rowGroups <- v:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}); err != nil {
 			return err
 		}
 	}
@@ -1390,4 +1071,86 @@ func (t *Table) close() {
 
 	t.active.pendingWritersWg.Wait()
 	t.closing = true
+}
+
+// configureLSMLevels configures the level configs for this table.
+func (t *Table) configureLSMLevels(levels []*LevelConfig) []*LevelConfig {
+	config := make([]*LevelConfig, 0, len(levels))
+
+	for _, level := range levels {
+		config = append(config, &LevelConfig{
+			Level:   level.Level,
+			MaxSize: level.MaxSize,
+			Compact: t.parquetCompaction, // NOTE: right now we only support parquet compaction but in the future this could compact parts into larger arrow records.
+		})
+	}
+
+	// Don't set the compaction functino for the last level. As the LSM doesn't have a level after the last one.
+	config[len(levels)-1].Compact = nil
+
+	return config
+}
+
+func (t *Table) parquetCompaction(compact []*parts.Part) (*parts.Part, int64, int64, error) {
+	b := &bytes.Buffer{}
+	size, err := t.compactParts(b, compact)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	buf, err := dynparquet.ReaderFromBytes(b.Bytes())
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return parts.NewPart(0, buf), size, int64(b.Len()), nil
+}
+
+func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []*parts.Part) (*parts.Part, int64, int64, error) {
+	return func(compact []*parts.Part) (*parts.Part, int64, int64, error) {
+		size, err := t.compactParts(writer, compact)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+
+		return nil, size, 0, nil
+	}
+}
+
+// compactParts will compact the given parts into a Parquet file written to w.
+// It returns the size in bytes of the compacted parts.
+func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
+	bufs := []dynparquet.DynamicRowGroup{}
+	var size int64
+	for _, part := range compact {
+		size += part.Size()
+		buf, err := part.AsSerializedBuffer(t.schema)
+		if err != nil {
+			return 0, err
+		}
+		bufs = append(bufs, buf.MultiDynamicRowGroup())
+	}
+	merged, err := t.schema.MergeDynamicRowGroups(bufs)
+	if err != nil {
+		return 0, err
+	}
+	err = func() error {
+		p, err := t.active.rowWriter(w, merged.DynamicColumns())
+		if err != nil {
+			return err
+		}
+		defer p.close()
+
+		rows := merged.Rows()
+		defer rows.Close()
+		if _, err := p.writeRows(rows); err != nil {
+			return err
+		}
+
+		return nil
+	}()
+	if err != nil {
+		return 0, err
+	}
+
+	return size, nil
 }

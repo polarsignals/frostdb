@@ -74,6 +74,28 @@ func TestDBWithWALAndBucket(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer c.Close()
+	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err = db.Table("test", config)
+	require.NoError(t, err)
+
+	// Validate that a read can be performed of the persisted data
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	rows := int64(0)
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+		return table.Iterator(
+			ctx,
+			tx,
+			pool,
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				rows += ar.NumRows()
+				return nil
+			}},
+		)
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(300), rows)
 }
 
 func TestDBWithWAL(t *testing.T) {

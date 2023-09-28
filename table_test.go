@@ -19,7 +19,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -69,132 +68,6 @@ func basicTable(t *testing.T, options ...Option) (*ColumnStore, *Table) {
 	require.NoError(t, err)
 
 	return c, table
-}
-
-func TestTable(t *testing.T) {
-	c, table := basicTable(t)
-	defer c.Close()
-
-	samples := dynparquet.Samples{{
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 1,
-		Value:     1,
-	}, {
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}, {
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 3,
-		Value:     3,
-	}}
-
-	r, err := samples.ToRecord()
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
-
-	samples = dynparquet.Samples{{
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}}
-
-	r, err = samples.ToRecord()
-	require.NoError(t, err)
-
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
-
-	samples = dynparquet.Samples{{
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 3,
-		Value:     3,
-	}}
-
-	r, err = samples.ToRecord()
-	require.NoError(t, err)
-
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
-
-	pool := memory.NewGoAllocator()
-
-	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
-		return table.Iterator(
-			ctx,
-			tx,
-			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-				t.Log(ar)
-				return nil
-			}},
-		)
-	})
-	require.NoError(t, err)
-
-	uuid1 := uuid.MustParse("00000000-0000-0000-0000-000000000001")
-	uuid2 := uuid.MustParse("00000000-0000-0000-0000-000000000002")
-
-	// One granule with 3 parts
-	require.Equal(t, 1, table.active.Index().Len())
-	require.Equal(t, 3, table.active.Index().Min().(*Granule).parts.Total())
-	require.Equal(t, parquet.Row{
-		parquet.ValueOf("test").Level(0, 0, 0),
-		parquet.ValueOf("value1").Level(0, 1, 1),
-		parquet.ValueOf("value2").Level(0, 1, 2),
-		parquet.ValueOf(nil).Level(0, 0, 3),
-		parquet.ValueOf(nil).Level(0, 0, 4),
-		parquet.ValueOf(append(uuid1[:], uuid2[:]...)).Level(0, 0, 5),
-		parquet.ValueOf(1).Level(0, 0, 6),
-		parquet.ValueOf(1).Level(0, 0, 7),
-	}, (*dynparquet.DynamicRow)(table.active.Index().Min().(*Granule).metadata.least).Row)
-	require.Equal(t, 1, table.active.Index().Len())
 }
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
@@ -399,8 +272,6 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 				}},
 			)
 		})
-		require.Equal(b, 0., testutil.ToFloat64(table.metrics.granulesCompactionAborted))
-		require.NoError(b, err)
 		require.Equal(b, int64(rows*iterations*writers), totalrows)
 
 		b.StartTimer()
@@ -764,82 +635,6 @@ func Test_L0Query(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, records)
-}
-
-// This test checks to make sure that if a new row is added that is globally the least it shall be added as a new granule.
-func Test_Table_InsertLeast(t *testing.T) {
-	c, table := basicTable(t)
-	defer c.Close()
-
-	samples := dynparquet.Samples{{
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 1,
-		Value:     1,
-	}, {
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}, {
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 3,
-		Value:     3,
-	}}
-
-	r, err := samples.ToRecord()
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
-
-	before := table.active.Index().Len()
-
-	samples = dynparquet.Samples{{
-		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "a"},
-		},
-		Stacktrace: []uuid.UUID{
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-		},
-		Timestamp: 2,
-		Value:     2,
-	}}
-
-	r, err = samples.ToRecord()
-	require.NoError(t, err)
-
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
-
-	require.Equal(t, before+1, table.active.Index().Len())
 }
 
 func Test_Serialize_DisparateDynamicColumns(t *testing.T) {

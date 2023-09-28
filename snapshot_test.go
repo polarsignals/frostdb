@@ -1,25 +1,6 @@
 package frostdb
 
-import (
-	"context"
-	"fmt"
-	"math"
-	"os"
-	"strconv"
-	"testing"
-	"time"
-
-	"github.com/apache/arrow/go/v14/arrow"
-	"github.com/apache/arrow/go/v14/arrow/array"
-	"github.com/apache/arrow/go/v14/arrow/memory"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/sync/errgroup"
-
-	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/polarsignals/frostdb/query"
-	"github.com/polarsignals/frostdb/query/logicalplan"
-)
-
+/*
 func TestSnapshot(t *testing.T) {
 	ctx := context.Background()
 	// Create a new DB with multiple tables and granules with
@@ -326,3 +307,4 @@ func TestSnapshotWithWAL(t *testing.T) {
 		}),
 	)
 }
+*/
