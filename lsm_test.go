@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/apache/arrow/go/v14/arrow"
-	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/stretchr/testify/require"
+
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 func check(t *testing.T, lsm *LSM, records, buffers int) {

@@ -11,11 +11,12 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/query/logicalplan"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // LSM is a log-structured merge-tree like index. It is implemented as a single linked list of parts.
@@ -32,7 +33,6 @@ type LSM struct {
 	levels  *Node
 	sizes   []*atomic.Int64
 	configs []*LevelConfig
-	schema  *dynparquet.Schema
 
 	logger  log.Logger
 	metrics *LSMMetrics
@@ -222,7 +222,7 @@ func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter l
 	return iterError
 }
 
-// TODO: this should be changed to just retain the sentinel nodes in the lsm struct to do an O(1) lookup
+// TODO: this should be changed to just retain the sentinel nodes in the lsm struct to do an O(1) lookup.
 func (l *LSM) findLevel(level SentinelType) *Node {
 	var list *Node
 	l.levels.Iterate(func(node *Node) bool {

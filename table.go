@@ -671,10 +671,7 @@ func (t *Table) Iterator(
 						if r.NumRows() == 0 {
 							return nil
 						}
-						if err := callback(ctx, r); err != nil {
-							return err
-						}
-						return nil
+						return callback(ctx, r)
 					}
 
 					switch t := rg.(type) {
@@ -889,8 +886,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 		}
 	}
 
-	t.index.merge(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
-	return nil
+	return t.index.merge(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
 }
 
 // parquetRowWriter is a stateful parquet row group writer.
@@ -907,12 +903,6 @@ type parquetRowWriter struct {
 }
 
 type parquetRowWriterOption func(p *parquetRowWriter)
-
-func withMaxRows(max int) parquetRowWriterOption {
-	return func(p *parquetRowWriter) {
-		p.maxNumRows = max
-	}
-}
 
 // rowWriter returns a new Parquet row writer with the given dynamic columns.
 func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {

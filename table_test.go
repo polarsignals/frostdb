@@ -272,6 +272,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 				}},
 			)
 		})
+		require.NoError(b, err)
 		require.Equal(b, int64(rows*iterations*writers), totalrows)
 
 		b.StartTimer()

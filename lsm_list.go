@@ -31,25 +31,22 @@ func (n *Node) String() string {
 	if n.part == nil {
 		if n.next.Load() == nil {
 			return fmt.Sprintf("[%v]", n.sentinel)
-		} else {
-			return fmt.Sprintf("[%v]->%v", n.sentinel, n.next.Load().String())
 		}
-	} else {
-		if n.part.Record() != nil {
-			if n.next.Load() == nil {
-				return fmt.Sprintf("[%v]", n.part.Record().NumRows())
-			} else {
-				return fmt.Sprintf("[%v]->%v", n.part.Record().NumRows(), n.next.Load().String())
-			}
-		} else {
-			b, _ := n.part.AsSerializedBuffer(nil)
-			if n.next.Load() == nil {
-				return fmt.Sprintf("[%v]", b.NumRows())
-			} else {
-				return fmt.Sprintf("[%v]->%v", b.NumRows(), n.next.Load().String())
-			}
-		}
+		return fmt.Sprintf("[%v]->%v", n.sentinel, n.next.Load().String())
 	}
+
+	if n.part.Record() != nil {
+		if n.next.Load() == nil {
+			return fmt.Sprintf("[%v]", n.part.Record().NumRows())
+		}
+		return fmt.Sprintf("[%v]->%v", n.part.Record().NumRows(), n.next.Load().String())
+	}
+
+	b, _ := n.part.AsSerializedBuffer(nil)
+	if n.next.Load() == nil {
+		return fmt.Sprintf("[%v]", b.NumRows())
+	}
+	return fmt.Sprintf("[%v]->%v", b.NumRows(), n.next.Load().String())
 }
 
 // NewList creates a new part list using atomic constructs.
@@ -62,38 +59,38 @@ func NewList(sentinel SentinelType) *Node {
 }
 
 // Sentinel adds a new sentinel node to the list, and returns the sub list starting from that sentinel.
-func (l *Node) Sentinel(s SentinelType) *Node {
-	return l.prepend(&Node{
+func (n *Node) Sentinel(s SentinelType) *Node {
+	return n.prepend(&Node{
 		next:     &atomic.Pointer[Node]{},
 		sentinel: s,
 	})
 }
 
 // Prepend a node onto the front of the list.
-func (l *Node) Prepend(part *parts.Part) *Node {
-	return l.prepend(&Node{
+func (n *Node) Prepend(part *parts.Part) *Node {
+	return n.prepend(&Node{
 		next: &atomic.Pointer[Node]{},
 		part: part,
 	})
 }
 
-func (l *Node) prepend(node *Node) *Node {
+func (n *Node) prepend(node *Node) *Node {
 	for { // continue until a successful compare and swap occurs
-		next := l.next.Load()
+		next := n.next.Load()
 		node.next.Store(next)
-		if l.next.CompareAndSwap(next, node) {
+		if n.next.CompareAndSwap(next, node) {
 			return node
 		}
 	}
 }
 
 // Iterate accesses every node in the list.
-func (l *Node) Iterate(iterate func(*Node) bool) {
-	if !iterate(l) {
+func (n *Node) Iterate(iterate func(*Node) bool) {
+	if !iterate(n) {
 		return
 	}
 
-	node := l.next.Load()
+	node := n.next.Load()
 	for {
 		if node == nil {
 			return
