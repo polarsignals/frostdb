@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
@@ -448,7 +449,12 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 }
 
 func Test_Table_Bloomfilter(t *testing.T) {
-	c, table := basicTable(t, WithGranuleSizeBytes(1))
+	c, table := basicTable(t, WithIndexConfig(
+		[]*LevelConfig{
+			{Level: L0, MaxSize: 452}, // NOTE: 452 is the current size of the 3 records that are inserted
+			{Level: L1, MaxSize: 100000},
+		},
+	))
 	defer c.Close()
 
 	samples := dynparquet.Samples{{
@@ -503,24 +509,26 @@ func Test_Table_Bloomfilter(t *testing.T) {
 
 	require.NoError(t, table.EnsureCompaction())
 
-	iterations := 0
-	err := table.View(context.Background(), func(ctx context.Context, tx uint64) error {
-		pool := memory.NewGoAllocator()
+	require.Eventually(t, func() bool {
+		iterations := 0
+		err := table.View(context.Background(), func(ctx context.Context, tx uint64) error {
+			pool := memory.NewGoAllocator()
 
-		require.NoError(t, table.Iterator(
-			context.Background(),
-			tx,
-			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-				iterations++
-				return nil
-			}},
-			logicalplan.WithFilter(logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))),
-		))
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, 1, iterations)
+			require.NoError(t, table.Iterator(
+				context.Background(),
+				tx,
+				pool,
+				[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+					iterations++
+					return nil
+				}},
+				logicalplan.WithFilter(logicalplan.Col("labels.label4").Eq(logicalplan.Literal("value4"))),
+			))
+			return nil
+		})
+		require.NoError(t, err)
+		return iterations == 1
+	}, time.Millisecond*60, time.Millisecond*10)
 }
 
 func Test_RecordToRow(t *testing.T) {

@@ -160,7 +160,13 @@ func (l *LSM) InsertPart(level SentinelType, part *parts.Part) {
 }
 
 func (l *LSM) String() string {
-	return l.levels.String()
+	s := ""
+	for i, size := range l.sizes {
+		s += fmt.Sprintf("L%v: %d ", i, size.Load())
+	}
+	s += "\n"
+	s += l.levels.String()
+	return s
 }
 
 func (l *LSM) Prefixes(ctx context.Context, prefix string) ([]string, error) {
@@ -234,6 +240,20 @@ func (l *LSM) findLevel(level SentinelType) *Node {
 	return list
 }
 
+// findNode returns the node that points to node.
+func (l *LSM) findNode(node *Node) *Node {
+	var list *Node
+	l.levels.Iterate(func(n *Node) bool {
+		if n.next.Load() == node {
+			list = n
+			return false
+		}
+		return true
+	})
+
+	return list
+}
+
 func (l *LSM) Compact() error {
 	if l.compacting.CompareAndSwap(false, true) {
 		return l.compact()
@@ -253,7 +273,7 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 	}
 	l.metrics.Compactions.WithLabelValues(level.String()).Inc()
 
-	mergeList := []*parts.Part{}
+	nodeList := []*Node{}
 	var next *Node
 	compact := l.findLevel(level)
 	var iterErr error
@@ -270,14 +290,14 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 			return false
 		}
 
-		mergeList = append(mergeList, node.part)
+		nodeList = append(nodeList, node)
 		return true
 	})
 	if iterErr != nil {
 		return iterErr
 	}
 
-	if len(mergeList) == 0 {
+	if len(nodeList) == 0 {
 		return nil
 	}
 
@@ -285,8 +305,11 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 	var compactedSize int64
 	var compacted *parts.Part
 	var err error
+	mergeList := make([]*parts.Part, 0, len(nodeList))
+	for _, node := range nodeList {
+		mergeList = append(mergeList, node.part)
+	}
 	s := &Node{
-		next:     &atomic.Pointer[Node]{},
 		sentinel: level + 1,
 	}
 	if externalWriter != nil {
@@ -306,7 +329,6 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 
 		// Create new list for the compacted part.
 		node := &Node{
-			next: &atomic.Pointer[Node]{},
 			part: compacted,
 		}
 		s.next.Store(node)
@@ -318,7 +340,12 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 	}
 
 	// Replace the compacted list with the new list
-	compact.next.Store(s)
+	// find the node that points to the first node in our compacted list.
+	node := l.findNode(nodeList[0])
+	for !node.next.CompareAndSwap(nodeList[0], s) {
+		// This can happen at most once in the scenario where a new part is added to the L0 list while we are trying to replace it.
+		node = l.findNode(nodeList[0])
+	}
 	l.sizes[level].Add(-int64(size))
 	l.metrics.LevelSize.WithLabelValues(level.String()).Set(float64(l.sizes[level].Load()))
 
