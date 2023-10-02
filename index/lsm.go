@@ -149,7 +149,9 @@ func (l *LSM) Add(tx uint64, record arrow.Record) {
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
 	if l0 >= l.configs[L0].MaxSize {
 		if l.compacting.CompareAndSwap(false, true) {
-			go l.compact()
+			go func() {
+				_ = l.compact()
+			}()
 		}
 	}
 }
@@ -162,8 +164,8 @@ func (l *LSM) InsertPart(level SentinelType, part *parts.Part) {
 
 func (l *LSM) String() string {
 	s := ""
-	for i, size := range l.sizes {
-		s += fmt.Sprintf("L%v: %d ", i, size.Load())
+	for i := range l.sizes {
+		s += fmt.Sprintf("L%v: %d ", i, l.sizes[i].Load())
 	}
 	s += "\n"
 	s += l.levels.String()

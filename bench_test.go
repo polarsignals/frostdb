@@ -219,6 +219,7 @@ func getDeterministicLabelValuePair(ctx context.Context, engine *query.LocalEngi
 }
 
 func BenchmarkQuery(b *testing.B) {
+	b.Skip(skipReason)
 	ctx := context.Background()
 	c, db, err := newDBForBenchmarks(ctx, b)
 	require.NoError(b, err)

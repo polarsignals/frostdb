@@ -56,7 +56,9 @@ func compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
 		defer rows.Close()
 
 		buf := make([]parquet.Row, merged.NumRows())
-		rows.ReadRows(buf)
+		if _, err := rows.ReadRows(buf); err != nil {
+			return err
+		}
 		if _, err := writer.WriteRows(buf); err != nil {
 			return err
 		}
