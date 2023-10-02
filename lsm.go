@@ -234,6 +234,14 @@ func (l *LSM) findLevel(level SentinelType) *Node {
 	return list
 }
 
+func (l *LSM) Compact() error {
+	if l.compacting.CompareAndSwap(false, true) {
+		return l.compact()
+	}
+
+	return nil
+}
+
 // Merge will merge the given level into an arrow record for the next level using the configured Compact function for the given level.
 // If this is the max level of the LSM an external writer must be provided to write the merged part elsewhere.
 func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*parts.Part, int64, int64, error)) error {
@@ -328,7 +336,7 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 
 // compact is a cascading compaction routine. It will start at the lowest level and compact until the next level is either the max level or the next level does not exceed the max size.
 // compact can not be run concurrently.
-func (l *LSM) compact() {
+func (l *LSM) compact() error {
 	defer l.compacting.Store(false)
 	start := time.Now()
 	defer func() {
@@ -339,8 +347,10 @@ func (l *LSM) compact() {
 		if l.sizes[i].Load() >= l.configs[i].MaxSize {
 			if err := l.merge(SentinelType(i), nil); err != nil {
 				level.Error(l.logger).Log("msg", "failed to merge level", "level", i, "err", err)
-				return
+				return err
 			}
 		}
 	}
+
+	return nil
 }

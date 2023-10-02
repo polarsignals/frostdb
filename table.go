@@ -845,7 +845,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 
 // EnsureCompaction forces a TableBlock compaction.
 func (t *TableBlock) EnsureCompaction() error {
-	return t.index.merge(L0, nil)
+	return t.index.Compact()
 }
 
 func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.Record) error {
