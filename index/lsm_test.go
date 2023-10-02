@@ -3,6 +3,7 @@ package index
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -56,10 +57,10 @@ func compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
 		defer rows.Close()
 
 		buf := make([]parquet.Row, merged.NumRows())
-		if _, err := rows.ReadRows(buf); err != nil {
+		if _, err := rows.ReadRows(buf); err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
-		if _, err := writer.WriteRows(buf); err != nil {
+		if _, err := writer.WriteRows(buf); err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 
