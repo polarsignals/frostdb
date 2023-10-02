@@ -1,4 +1,4 @@
-package frostdb
+package index
 
 import (
 	"fmt"
@@ -25,6 +25,10 @@ type Node struct {
 	part *parts.Part
 
 	sentinel SentinelType // sentinel nodes contain no parts, and are to indicate the start of a new sub list
+}
+
+func (n *Node) Part() *parts.Part {
+	return n.part
 }
 
 func (n *Node) String() string {

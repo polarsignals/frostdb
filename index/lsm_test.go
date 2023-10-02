@@ -1,15 +1,74 @@
-package frostdb
+package index
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/parts"
 )
+
+func parquetCompaction(compact []*parts.Part) (*parts.Part, int64, int64, error) {
+	b := &bytes.Buffer{}
+	size, err := compactParts(b, compact)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	buf, err := dynparquet.ReaderFromBytes(b.Bytes())
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return parts.NewPart(0, buf), size, int64(b.Len()), nil
+}
+
+func compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
+	schema := dynparquet.NewSampleSchema()
+	bufs := []dynparquet.DynamicRowGroup{}
+	var size int64
+	for _, part := range compact {
+		size += part.Size()
+		buf, err := part.AsSerializedBuffer(schema)
+		if err != nil {
+			return 0, err
+		}
+		bufs = append(bufs, buf.MultiDynamicRowGroup())
+	}
+	merged, err := schema.MergeDynamicRowGroups(bufs)
+	if err != nil {
+		return 0, err
+	}
+	err = func() error {
+		writer, err := schema.GetWriter(w, merged.DynamicColumns())
+		if err != nil {
+			return err
+		}
+		defer writer.Close()
+
+		rows := merged.Rows()
+		defer rows.Close()
+
+		buf := make([]parquet.Row, merged.NumRows())
+		rows.ReadRows(buf)
+		if _, err := writer.WriteRows(buf); err != nil {
+			return err
+		}
+
+		return nil
+	}()
+	if err != nil {
+		return 0, err
+	}
+
+	return size, nil
+}
 
 func check(t *testing.T, lsm *LSM, records, buffers int) {
 	t.Helper()
@@ -40,12 +99,9 @@ func check(t *testing.T, lsm *LSM, records, buffers int) {
 
 func Test_LSM_Basic(t *testing.T) {
 	t.Parallel()
-	c, table := basicTable(t)
-	defer c.Close()
-
 	lsm, err := NewLSM("test", []*LevelConfig{
-		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: table.parquetCompaction},
-		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: table.parquetCompaction},
+		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
+		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
 	})
 	require.NoError(t, err)
@@ -76,13 +132,9 @@ func Test_LSM_Basic(t *testing.T) {
 
 func Test_LSM_DuplicateSentinel(t *testing.T) {
 	t.Parallel()
-
-	c, table := basicTable(t)
-	defer c.Close()
-
 	lsm, err := NewLSM("test", []*LevelConfig{
-		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: table.parquetCompaction},
-		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: table.parquetCompaction},
+		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
+		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
 	})
 	require.NoError(t, err)
@@ -103,11 +155,8 @@ func Test_LSM_DuplicateSentinel(t *testing.T) {
 
 func Test_LSM_Compaction(t *testing.T) {
 	t.Parallel()
-	c, table := basicTable(t)
-	defer c.Close()
-
 	lsm, err := NewLSM("test", []*LevelConfig{
-		{Level: L0, MaxSize: 1, Compact: table.parquetCompaction},
+		{Level: L0, MaxSize: 1, Compact: parquetCompaction},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024},
 	})
 	require.NoError(t, err)
@@ -124,14 +173,11 @@ func Test_LSM_Compaction(t *testing.T) {
 
 func Test_LSM_CascadeCompaction(t *testing.T) {
 	t.Parallel()
-	c, table := basicTable(t)
-	defer c.Close()
-
 	lsm, err := NewLSM("test", []*LevelConfig{
-		{Level: L0, MaxSize: 257, Compact: table.parquetCompaction},
-		{Level: L1, MaxSize: 2281, Compact: table.parquetCompaction},
-		{Level: L2, MaxSize: 2281, Compact: table.parquetCompaction},
-		{Level: 3, MaxSize: 2281, Compact: table.parquetCompaction},
+		{Level: L0, MaxSize: 257, Compact: parquetCompaction},
+		{Level: L1, MaxSize: 2281, Compact: parquetCompaction},
+		{Level: L2, MaxSize: 2281, Compact: parquetCompaction},
+		{Level: 3, MaxSize: 2281, Compact: parquetCompaction},
 		{Level: 4, MaxSize: 2281},
 	})
 	require.NoError(t, err)

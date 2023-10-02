@@ -1,4 +1,4 @@
-package frostdb
+package expr
 
 import (
 	"testing"

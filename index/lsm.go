@@ -1,4 +1,4 @@
-package frostdb
+package index
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
+	"github.com/polarsignals/frostdb/query/expr"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -173,11 +174,15 @@ func (l *LSM) Prefixes(ctx context.Context, prefix string) ([]string, error) {
 	return []string{l.prefix}, nil
 }
 
+func (l *LSM) Iterate(iter func(node *Node) bool) {
+	l.levels.Iterate(iter)
+}
+
 func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter logicalplan.Expr, tx uint64, callback func(context.Context, any) error) error {
 	l.RLock()
 	defer l.RUnlock()
 
-	booleanFilter, err := BooleanExpr(filter)
+	booleanFilter, err := expr.BooleanExpr(filter)
 	if err != nil {
 		return fmt.Errorf("boolean expr: %w", err)
 	}
@@ -255,9 +260,26 @@ func (l *LSM) findNode(node *Node) *Node {
 }
 
 func (l *LSM) Compact() error {
-	for !l.compacting.CompareAndSwap(false, true) {
+	for !l.compacting.CompareAndSwap(false, true) { // TODO: should backoff retry this probably
 	}
 	return l.compact()
+}
+
+func (l *LSM) Rotate(level SentinelType, externalWriter func([]*parts.Part) (*parts.Part, int64, int64, error)) error {
+	for !l.compacting.CompareAndSwap(false, true) { // TODO: should backoff retry this probably
+	}
+	defer l.compacting.Store(false)
+	start := time.Now()
+	defer func() {
+		l.metrics.CompactionDuration.Observe(time.Since(start).Seconds())
+	}()
+
+	for i := 0; i < len(l.configs)-1; i++ {
+		if err := l.merge(SentinelType(i), nil); err != nil {
+			return err
+		}
+	}
+	return l.merge(level, externalWriter)
 }
 
 // Merge will merge the given level into an arrow record for the next level using the configured Compact function for the given level.

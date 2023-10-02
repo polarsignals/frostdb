@@ -24,6 +24,7 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -450,9 +451,9 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 
 func Test_Table_Bloomfilter(t *testing.T) {
 	c, table := basicTable(t, WithIndexConfig(
-		[]*LevelConfig{
-			{Level: L0, MaxSize: 452}, // NOTE: 452 is the current size of the 3 records that are inserted
-			{Level: L1, MaxSize: 100000},
+		[]*index.LevelConfig{
+			{Level: index.L0, MaxSize: 452}, // NOTE: 452 is the current size of the 3 records that are inserted
+			{Level: index.L1, MaxSize: 100000},
 		},
 	))
 	defer c.Close()

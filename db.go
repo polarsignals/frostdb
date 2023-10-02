@@ -30,6 +30,7 @@ import (
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
+	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/storage"
 	"github.com/polarsignals/frostdb/wal"
@@ -54,7 +55,7 @@ type ColumnStore struct {
 	// splitSize is the number of new granules that are created when granules are split (default =2)
 	splitSize int
 	// indexConfig is the configuration settings for the lsm index
-	indexConfig []*LevelConfig
+	indexConfig []*index.LevelConfig
 
 	sources []DataSource
 	sinks   []DataSink
@@ -213,7 +214,7 @@ func WithStoragePath(path string) Option {
 	}
 }
 
-func WithIndexConfig(indexConfig []*LevelConfig) Option {
+func WithIndexConfig(indexConfig []*index.LevelConfig) Option {
 	return func(s *ColumnStore) error {
 		s.indexConfig = indexConfig
 		return nil
@@ -600,7 +601,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-					table.ActiveBlock().index, err = NewLSM(table.name, table.configureLSMLevels(db.columnStore.indexConfig))
+					table.ActiveBlock().index, err = index.NewLSM(table.name, table.configureLSMLevels(db.columnStore.indexConfig))
 					if err != nil {
 						return err
 					}

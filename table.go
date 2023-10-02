@@ -35,6 +35,7 @@ import (
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
+	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -46,9 +47,9 @@ import (
 var (
 	ErrNoSchema        = fmt.Errorf("no schema")
 	ErrTableClosing    = fmt.Errorf("table closing")
-	DefaultIndexConfig = []*LevelConfig{
-		{Level: L0, MaxSize: 1024 * 1024 * 128}, // Compact to Parquet after 128MiB
-		{Level: L1, MaxSize: 1024 * 1024 * 512}, // Final level. Rotate after 512MiB of Parquet files
+	DefaultIndexConfig = []*index.LevelConfig{
+		{Level: index.L0, MaxSize: 1024 * 1024 * 1},   // Compact to Parquet after 128MiB
+		{Level: index.L1, MaxSize: 1024 * 1024 * 512}, // Final level. Rotate after 512MiB of Parquet files
 	}
 )
 
@@ -193,7 +194,7 @@ type TableBlock struct {
 	// lastSnapshotSize keeps track of the size of the block when it last
 	// triggered a snapshot.
 	lastSnapshotSize atomic.Int64
-	index            *LSM
+	index            *index.LSM
 
 	pendingWritersWg sync.WaitGroup
 	pendingReadersWg sync.WaitGroup
@@ -835,7 +836,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 	}
 
 	var err error
-	tb.index, err = NewLSM(table.name, table.configureLSMLevels(table.db.columnStore.indexConfig))
+	tb.index, err = index.NewLSM(table.name, table.configureLSMLevels(table.db.columnStore.indexConfig))
 	if err != nil {
 		return nil, err
 	}
@@ -874,19 +875,13 @@ func (t *TableBlock) Size() int64 {
 }
 
 // Index provides atomic access to the table index.
-func (t *TableBlock) Index() *LSM {
+func (t *TableBlock) Index() *index.LSM {
 	return t.index
 }
 
 // Serialize the table block into a single Parquet file.
 func (t *TableBlock) Serialize(writer io.Writer) error {
-	for i := L0; i < t.index.MaxLevel(); i++ {
-		if err := t.index.merge(i, nil); err != nil {
-			return err
-		}
-	}
-
-	return t.index.merge(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
+	return t.index.Rotate(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
 }
 
 // parquetRowWriter is a stateful parquet row group writer.
@@ -1064,11 +1059,11 @@ func (t *Table) close() {
 }
 
 // configureLSMLevels configures the level configs for this table.
-func (t *Table) configureLSMLevels(levels []*LevelConfig) []*LevelConfig {
-	config := make([]*LevelConfig, 0, len(levels))
+func (t *Table) configureLSMLevels(levels []*index.LevelConfig) []*index.LevelConfig {
+	config := make([]*index.LevelConfig, 0, len(levels))
 
 	for _, level := range levels {
-		config = append(config, &LevelConfig{
+		config = append(config, &index.LevelConfig{
 			Level:   level.Level,
 			MaxSize: level.MaxSize,
 			Compact: t.parquetCompaction, // NOTE: right now we only support parquet compaction but in the future this could compact parts into larger arrow records.

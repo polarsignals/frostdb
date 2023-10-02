@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query/expr"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/storage"
 )
@@ -139,7 +140,7 @@ func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynp
 	span.SetAttributes(attribute.Int64("lastBlockTimestamp", int64(lastBlockTimestamp)))
 	defer span.End()
 
-	f, err := BooleanExpr(filter)
+	f, err := expr.BooleanExpr(filter)
 	if err != nil {
 		return err
 	}
@@ -183,7 +184,7 @@ func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName str
 }
 
 // ProcessFile will process a bucket block parquet file.
-func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter TrueNegativeFilter, callback func(context.Context, any) error) error {
+func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter expr.TrueNegativeFilter, callback func(context.Context, any) error) error {
 	ctx, span := b.tracer.Start(ctx, "Source/IterateBucketBlocks/Iter/ProcessFile")
 	defer span.End()
 
@@ -225,7 +226,7 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 	return b.filterRowGroups(ctx, buf, filter, callback)
 }
 
-func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter TrueNegativeFilter, callback func(context.Context, any) error) error {
+func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter expr.TrueNegativeFilter, callback func(context.Context, any) error) error {
 	_, span := b.tracer.Start(ctx, "Source/filterRowGroups")
 	defer span.End()
 	span.SetAttributes(attribute.Int("row_groups", buf.NumRowGroups()))

@@ -26,6 +26,7 @@ import (
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
+	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/parts"
 )
 
@@ -424,12 +425,12 @@ func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w
 			}
 
 			var ascendErr error
-			block.Index().levels.Iterate(func(node *Node) bool {
+			block.Index().Iterate(func(node *index.Node) bool {
 				granuleMeta := &snapshotpb.Granule{}
-				if node.part == nil {
+				if node.Part() == nil {
 					return true
 				}
-				p := node.part
+				p := node.Part()
 				partMeta := &snapshotpb.Part{
 					StartOffset:     int64(offW.offset),
 					Tx:              p.TX(),
@@ -650,9 +651,9 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 
 				for _, part := range resultParts {
 					if part.Record() != nil { // TODO: eventually store the level in the part metadata
-						newIdx.InsertPart(L0, part)
+						newIdx.InsertPart(index.L0, part)
 					} else {
-						newIdx.InsertPart(L1, part)
+						newIdx.InsertPart(index.L1, part)
 					}
 				}
 			}
