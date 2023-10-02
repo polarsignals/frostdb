@@ -1,6 +1,51 @@
 package frostdb
 
-/*
+import (
+	"context"
+	"fmt"
+	"math"
+	"os"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/google/uuid"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query"
+	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
+)
+
+// insertSampleRecords is the same helper function as insertSamples but it inserts arrow records instead.
+func insertSampleRecords(ctx context.Context, t *testing.T, table *Table, timestamps ...int64) uint64 {
+	t.Helper()
+	var samples dynparquet.Samples
+	samples = make([]dynparquet.Sample, 0, len(timestamps))
+	for _, ts := range timestamps {
+		samples = append(samples, dynparquet.Sample{
+			ExampleType: "ex",
+			Labels: []dynparquet.Label{
+				{Name: "label1", Value: "value1"},
+			},
+			Stacktrace: []uuid.UUID{
+				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			},
+			Timestamp: ts,
+		})
+	}
+
+	ar, err := samples.ToRecord()
+	require.NoError(t, err)
+
+	tx, err := table.InsertRecord(ctx, ar)
+	require.NoError(t, err)
+	return tx
+}
+
 func TestSnapshot(t *testing.T) {
 	ctx := context.Background()
 	// Create a new DB with multiple tables and granules with
@@ -45,8 +90,6 @@ func TestSnapshot(t *testing.T) {
 
 		config := NewTableConfig(dynparquet.SampleDefinition())
 
-		// Pause compactor pool to have control over compactions.
-		db.compactorPool.pause()
 		table, err := db.Table("table1", config)
 		require.NoError(t, err)
 		insertSampleRecords(ctx, t, table, 1, 2, 3)
@@ -75,7 +118,6 @@ func TestSnapshot(t *testing.T) {
 		snapshotDB, err := c.DB(ctx, "testsnapshot")
 		require.NoError(t, err)
 
-		snapshotDB.compactorPool.pause()
 		// Load the other db's latest snapshot.
 		tx, err := snapshotDB.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
 		require.NoError(t, err)
@@ -307,4 +349,3 @@ func TestSnapshotWithWAL(t *testing.T) {
 		}),
 	)
 }
-*/

@@ -31,7 +31,7 @@ type LSM struct {
 
 	prefix  string
 	levels  *Node
-	sizes   []*atomic.Int64
+	sizes   []atomic.Int64
 	configs []*LevelConfig
 
 	logger  log.Logger
@@ -79,7 +79,7 @@ func NewLSM(prefix string, levels []*LevelConfig, options ...LSMOption) (*LSM, e
 	lsm := &LSM{
 		prefix:     prefix,
 		levels:     NewList(L0),
-		sizes:      make([]*atomic.Int64, len(levels)),
+		sizes:      make([]atomic.Int64, len(levels)),
 		configs:    levels,
 		compacting: &atomic.Bool{},
 		logger:     log.NewNopLogger(),
@@ -90,10 +90,6 @@ func NewLSM(prefix string, levels []*LevelConfig, options ...LSMOption) (*LSM, e
 
 	for _, opt := range options {
 		opt(lsm)
-	}
-
-	for i := range lsm.sizes {
-		lsm.sizes[i] = &atomic.Int64{}
 	}
 
 	for i := len(levels) - 1; i > 0; i-- {
@@ -151,7 +147,9 @@ func (l *LSM) Add(tx uint64, record arrow.Record) {
 	l0 := l.sizes[L0].Add(int64(size))
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
 	if l0 >= l.configs[L0].MaxSize {
-		go l.compact()
+		if l.compacting.CompareAndSwap(false, true) {
+			go l.compact()
+		}
 	}
 }
 
@@ -331,10 +329,6 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 // compact is a cascading compaction routine. It will start at the lowest level and compact until the next level is either the max level or the next level does not exceed the max size.
 // compact can not be run concurrently.
 func (l *LSM) compact() {
-	if !l.compacting.CompareAndSwap(false, true) {
-		// Compaciton routine is already running
-		return
-	}
 	defer l.compacting.Store(false)
 	start := time.Now()
 	defer func() {
