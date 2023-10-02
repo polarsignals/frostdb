@@ -255,11 +255,9 @@ func (l *LSM) findNode(node *Node) *Node {
 }
 
 func (l *LSM) Compact() error {
-	if l.compacting.CompareAndSwap(false, true) {
-		return l.compact()
+	for !l.compacting.CompareAndSwap(false, true) {
 	}
-
-	return nil
+	return l.compact()
 }
 
 // Merge will merge the given level into an arrow record for the next level using the configured Compact function for the given level.
