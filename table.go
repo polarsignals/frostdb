@@ -884,10 +884,16 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	return t.index.Rotate(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
 }
 
+type ParquetWriter interface {
+	Flush() error
+	WriteRows([]parquet.Row) (int, error)
+	io.Closer
+}
+
 // parquetRowWriter is a stateful parquet row group writer.
 type parquetRowWriter struct {
 	schema *dynparquet.Schema
-	w      *dynparquet.PooledWriter
+	w      ParquetWriter
 
 	rowGroupSize int
 	maxNumRows   int
@@ -901,7 +907,7 @@ type parquetRowWriterOption func(p *parquetRowWriter)
 
 // rowWriter returns a new Parquet row writer with the given dynamic columns.
 func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
-	w, err := t.table.schema.GetWriter(writer, dynCols)
+	w, err := t.table.schema.NewSortingWriter(writer, dynCols)
 	if err != nil {
 		return nil, err
 	}
@@ -964,7 +970,6 @@ func (p *parquetRowWriter) writeRows(rows parquet.Rows) (int, error) {
 }
 
 func (p *parquetRowWriter) close() error {
-	defer p.schema.PutWriter(p.w)
 	return p.w.Close()
 }
 
