@@ -54,7 +54,7 @@ type LSMMetrics struct {
 type LevelConfig struct {
 	Level   SentinelType
 	MaxSize int64
-	Compact func([]*parts.Part) (*parts.Part, int64, int64, error)
+	Compact func([]*parts.Part) ([]*parts.Part, int64, int64, error)
 }
 
 type LSMOption func(*LSM)
@@ -325,7 +325,7 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 
 	var size int64
 	var compactedSize int64
-	var compacted *parts.Part
+	var compacted []*parts.Part
 	var err error
 	mergeList := make([]*parts.Part, 0, len(nodeList))
 	for _, node := range nodeList {
@@ -349,11 +349,18 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 			return err
 		}
 
-		// Create new list for the compacted part.
-		node := &Node{
-			part: compacted,
+		// Create new list for the compacted parts.
+		compactedList := &Node{
+			part: compacted[0],
 		}
-		s.next.Store(node)
+		node := compactedList
+		for _, p := range compacted[1:] {
+			node.next.Store(&Node{
+				part: p,
+			})
+			node = node.next.Load()
+		}
+		s.next.Store(compactedList)
 		if next != nil {
 			node.next.Store(next)
 		}

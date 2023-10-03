@@ -1076,7 +1076,7 @@ func (t *Table) configureLSMLevels(levels []*index.LevelConfig) []*index.LevelCo
 	return config
 }
 
-func (t *Table) parquetCompaction(compact []*parts.Part) (*parts.Part, int64, int64, error) {
+func (t *Table) parquetCompaction(compact []*parts.Part) ([]*parts.Part, int64, int64, error) {
 	b := &bytes.Buffer{}
 	size, err := t.compactParts(b, compact)
 	if err != nil {
@@ -1087,7 +1087,7 @@ func (t *Table) parquetCompaction(compact []*parts.Part) (*parts.Part, int64, in
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	return parts.NewPart(0, buf), size, int64(b.Len()), nil
+	return []*parts.Part{parts.NewPart(0, buf)}, size, int64(b.Len()), nil
 }
 
 func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []*parts.Part) (*parts.Part, int64, int64, error) {
