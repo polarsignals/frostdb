@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	dbName      = "parca"
+	dbName      = "profiling-ec7e346b-6b12-4abf-a910-b59e3b38555a"
 	tableName   = "stacktraces"
 	storagePath = "testdata/data"
 	skipReason  = "requires data directory"
@@ -219,8 +219,6 @@ func getDeterministicLabelValuePair(ctx context.Context, engine *query.LocalEngi
 }
 
 func BenchmarkQuery(b *testing.B) {
-	b.Skip(skipReason)
-
 	ctx := context.Background()
 	c, db, err := newDBForBenchmarks(ctx, b)
 	require.NoError(b, err)
