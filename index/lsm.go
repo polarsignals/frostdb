@@ -104,9 +104,6 @@ func NewLSM(prefix string, levels []*LevelConfig, options ...LSMOption) (*LSM, e
 		configs:    levels,
 		compacting: &atomic.Bool{},
 		logger:     log.NewNopLogger(),
-		metrics: &LSMMetrics{
-			reg: prometheus.NewRegistry(),
-		},
 	}
 
 	for _, opt := range options {
@@ -118,22 +115,8 @@ func NewLSM(prefix string, levels []*LevelConfig, options ...LSMOption) (*LSM, e
 		lsm.levels.Sentinel(levels[i].Level)
 	}
 
-	if lsm.metrics.Compactions == nil {
-		lsm.metrics.Compactions = promauto.With(lsm.metrics.reg).NewCounterVec(prometheus.CounterOpts{
-			Name: "frostdb_lsm_compactions_total",
-			Help: "The total number of compactions that have occurred.",
-		}, []string{"level"})
-
-		lsm.metrics.LevelSize = promauto.With(lsm.metrics.reg).NewGaugeVec(prometheus.GaugeOpts{
-			Name: "frostdb_lsm_level_size_bytes",
-			Help: "The size of the level in bytes.",
-		}, []string{"level"})
-
-		lsm.metrics.CompactionDuration = promauto.With(lsm.metrics.reg).NewHistogram(prometheus.HistogramOpts{
-			Name:    "frostdb_lsm_compaction_total_duration_seconds",
-			Help:    "Total compaction duration",
-			Buckets: prometheus.ExponentialBuckets(0.5, 2, 25),
-		})
+	if lsm.metrics == nil {
+		lsm.metrics = NewLSMMetrics(prometheus.NewRegistry())
 	}
 
 	return lsm, nil
