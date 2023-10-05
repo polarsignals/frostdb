@@ -41,7 +41,6 @@ type LSM struct {
 
 // LSMMetrics are the metrics for an LSM index.
 type LSMMetrics struct {
-	reg                prometheus.Registerer
 	Compactions        *prometheus.CounterVec
 	LevelSize          *prometheus.GaugeVec
 	CompactionDuration prometheus.Histogram
@@ -125,8 +124,8 @@ func NewLSM(prefix string, levels []*LevelConfig, options ...LSMOption) (*LSM, e
 // Size returns the total size of the index in bytes.
 func (l *LSM) Size() int64 {
 	var size int64
-	for _, s := range l.sizes {
-		size += s.Load()
+	for i := range l.sizes {
+		size += l.sizes[i].Load()
 	}
 	return size
 }
