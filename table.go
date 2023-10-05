@@ -17,7 +17,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
-	"github.com/apache/arrow/go/v14/arrow/util"
 	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -191,7 +190,6 @@ type TableBlock struct {
 	minTx  uint64
 	prevTx uint64
 
-	size *atomic.Int64
 	// lastSnapshotSize keeps track of the size of the block when it last
 	// triggered a snapshot.
 	lastSnapshotSize atomic.Int64
@@ -832,7 +830,6 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		table:  table,
 		mtx:    &sync.RWMutex{},
 		ulid:   id,
-		size:   &atomic.Int64{},
 		logger: table.logger,
 		tracer: table.tracer,
 		minTx:  tx,
@@ -873,13 +870,12 @@ func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.R
 
 	t.index.Add(tx, record)
 	t.table.metrics.numParts.Inc()
-	t.size.Add(util.TotalRecordSize(record))
 	return nil
 }
 
 // Size returns the cumulative size of all buffers in the table. This is roughly the size of the table in bytes.
 func (t *TableBlock) Size() int64 {
-	return t.size.Load()
+	return t.index.Size()
 }
 
 // Index provides atomic access to the table index.

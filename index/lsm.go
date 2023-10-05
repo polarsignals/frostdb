@@ -122,13 +122,13 @@ func NewLSM(prefix string, levels []*LevelConfig, options ...LSMOption) (*LSM, e
 	return lsm, nil
 }
 
-func (l *LSM) Reset() {
-	l.levels = NewList(L0)
-	l.compacting = &atomic.Bool{}
-	// Reverse iterate (due to prepend) to create the chain of sentinel nodes.
-	for i := len(l.configs) - 1; i > 0; i-- {
-		l.levels.Sentinel(l.configs[i].Level)
+// Size returns the total size of the index in bytes.
+func (l *LSM) Size() int64 {
+	var size int64
+	for _, s := range l.sizes {
+		size += s.Load()
 	}
+	return size
 }
 
 func validateLevels(levels []*LevelConfig) error {
@@ -175,6 +175,8 @@ func (l *LSM) Add(tx uint64, record arrow.Record) {
 // This should only be used during snapshot recovery.
 func (l *LSM) InsertPart(level SentinelType, part *parts.Part) {
 	l.findLevel(level).Prepend(part)
+	size := l.sizes[level].Add(int64(part.Size()))
+	l.metrics.LevelSize.WithLabelValues(level.String()).Set(float64(size))
 }
 
 func (l *LSM) String() string {

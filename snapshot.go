@@ -602,7 +602,6 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 			block := table.active
 			block.mtx.Lock()
 			block.ulid = blockUlid
-			block.size.Store(tableMeta.ActiveBlock.Size)
 			// Store the last snapshot size so a snapshot is not triggered right
 			// after loading this snapshot.
 			block.lastSnapshotSize.Store(tableMeta.ActiveBlock.Size)
