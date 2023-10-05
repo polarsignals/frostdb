@@ -210,6 +210,8 @@ type tableMetrics struct {
 	rowInsertSize        prometheus.Histogram
 	lastCompletedBlockTx prometheus.Gauge
 	numParts             prometheus.Gauge
+
+	indexMetrics *index.LSMMetrics
 }
 
 func schemaFromTableConfig(tableConfig *tablepb.TableConfig) (*dynparquet.Schema, error) {
@@ -293,6 +295,7 @@ func newTable(
 				Name: "frostdb_table_last_completed_block_tx",
 				Help: "Last completed block transaction.",
 			}),
+			indexMetrics: index.NewLSMMetrics(reg),
 		},
 	}
 
@@ -836,7 +839,11 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 	}
 
 	var err error
-	tb.index, err = index.NewLSM(table.name, table.configureLSMLevels(table.db.columnStore.indexConfig))
+	tb.index, err = index.NewLSM(
+		table.name,
+		table.configureLSMLevels(table.db.columnStore.indexConfig),
+		index.LSMWithMetrics(table.metrics.indexMetrics),
+	)
 	if err != nil {
 		return nil, err
 	}

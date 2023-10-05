@@ -59,15 +59,35 @@ type LevelConfig struct {
 
 type LSMOption func(*LSM)
 
-func LSMWithRegistry(reg prometheus.Registerer) LSMOption {
-	return func(l *LSM) {
-		l.metrics.reg = reg
-	}
-}
-
 func LSMWithLogger(logger log.Logger) LSMOption {
 	return func(l *LSM) {
 		l.logger = logger
+	}
+}
+
+func LSMWithMetrics(metrics *LSMMetrics) LSMOption {
+	return func(l *LSM) {
+		l.metrics = metrics
+	}
+}
+
+func NewLSMMetrics(reg prometheus.Registerer) *LSMMetrics {
+	return &LSMMetrics{
+		Compactions: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+			Name: "frostdb_lsm_compactions_total",
+			Help: "The total number of compactions that have occurred.",
+		}, []string{"level"}),
+
+		LevelSize: promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+			Name: "frostdb_lsm_level_size_bytes",
+			Help: "The size of the level in bytes.",
+		}, []string{"level"}),
+
+		CompactionDuration: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
+			Name:                        "frostdb_lsm_compaction_total_duration_seconds",
+			Help:                        "Total compaction duration",
+			NativeHistogramBucketFactor: 1.1,
+		}),
 	}
 }
 
@@ -93,27 +113,39 @@ func NewLSM(prefix string, levels []*LevelConfig, options ...LSMOption) (*LSM, e
 		opt(lsm)
 	}
 
+	// Reverse iterate (due to prepend) to create the chain of sentinel nodes.
 	for i := len(levels) - 1; i > 0; i-- {
 		lsm.levels.Sentinel(levels[i].Level)
 	}
 
-	lsm.metrics.Compactions = promauto.With(lsm.metrics.reg).NewCounterVec(prometheus.CounterOpts{
-		Name: "frostdb_lsm_compactions_total",
-		Help: "The total number of compactions that have occurred.",
-	}, []string{"level"})
+	if lsm.metrics.Compactions == nil {
+		lsm.metrics.Compactions = promauto.With(lsm.metrics.reg).NewCounterVec(prometheus.CounterOpts{
+			Name: "frostdb_lsm_compactions_total",
+			Help: "The total number of compactions that have occurred.",
+		}, []string{"level"})
 
-	lsm.metrics.LevelSize = promauto.With(lsm.metrics.reg).NewGaugeVec(prometheus.GaugeOpts{
-		Name: "frostdb_lsm_level_size_bytes",
-		Help: "The size of the level in bytes.",
-	}, []string{"level"})
+		lsm.metrics.LevelSize = promauto.With(lsm.metrics.reg).NewGaugeVec(prometheus.GaugeOpts{
+			Name: "frostdb_lsm_level_size_bytes",
+			Help: "The size of the level in bytes.",
+		}, []string{"level"})
 
-	lsm.metrics.CompactionDuration = promauto.With(lsm.metrics.reg).NewHistogram(prometheus.HistogramOpts{
-		Name:    "frostdb_lsm_compaction_total_duration_seconds",
-		Help:    "Total compaction duration",
-		Buckets: prometheus.ExponentialBuckets(0.5, 2, 25),
-	})
+		lsm.metrics.CompactionDuration = promauto.With(lsm.metrics.reg).NewHistogram(prometheus.HistogramOpts{
+			Name:    "frostdb_lsm_compaction_total_duration_seconds",
+			Help:    "Total compaction duration",
+			Buckets: prometheus.ExponentialBuckets(0.5, 2, 25),
+		})
+	}
 
 	return lsm, nil
+}
+
+func (l *LSM) Reset() {
+	l.levels = NewList(L0)
+	l.compacting = &atomic.Bool{}
+	// Reverse iterate (due to prepend) to create the chain of sentinel nodes.
+	for i := len(l.configs) - 1; i > 0; i-- {
+		l.levels.Sentinel(l.configs[i].Level)
+	}
 }
 
 func validateLevels(levels []*LevelConfig) error {

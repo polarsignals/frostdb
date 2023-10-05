@@ -601,7 +601,11 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-					table.ActiveBlock().index, err = index.NewLSM(table.name, table.configureLSMLevels(db.columnStore.indexConfig))
+					table.ActiveBlock().index, err = index.NewLSM(
+						table.name,
+						table.configureLSMLevels(db.columnStore.indexConfig),
+						index.LSMWithMetrics(table.metrics.indexMetrics),
+					)
 					if err != nil {
 						return err
 					}
