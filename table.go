@@ -48,8 +48,9 @@ var (
 	ErrNoSchema        = fmt.Errorf("no schema")
 	ErrTableClosing    = fmt.Errorf("table closing")
 	DefaultIndexConfig = []*index.LevelConfig{
-		{Level: index.L0, MaxSize: 1024 * 1024 * 128}, // Compact to Parquet after 128MiB
-		{Level: index.L1, MaxSize: 1024 * 1024 * 512}, // Final level. Rotate after 512MiB of Parquet files
+		{Level: index.L0, MaxSize: 1024 * 1024 * 15},  // Compact to Parquet after 15MiB of data
+		{Level: index.L1, MaxSize: 1024 * 1024 * 128}, // Compact to a single Parquet after 128MiB of Parquet files
+		{Level: index.L2, MaxSize: 1024 * 1024 * 512}, // Final level. Rotate after 512MiB of Parquet files
 	}
 )
 
