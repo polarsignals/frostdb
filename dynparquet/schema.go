@@ -112,11 +112,12 @@ func (dyn dynamicSortingColumn) Path() []string { return dyn.path }
 // ability that any column definition that is dynamic will have columns
 // dynamically created as their column name is seen for the first time.
 type Schema struct {
-	def            proto.Message
-	columns        []ColumnDefinition
-	columnIndexes  map[string]int
-	sortingColumns []SortingColumn
-	dynamicColumns []int
+	def                proto.Message
+	columns            []ColumnDefinition
+	columnIndexes      map[string]int
+	sortingColumns     []SortingColumn
+	dynamicColumns     []int
+	uniquePrimaryIndex bool
 
 	writers        *sync.Map
 	buffers        *sync.Map
@@ -206,8 +207,11 @@ func nameFromNodeDef(node *schemav2pb.Node) string {
 }
 
 func SchemaFromDefinition(msg proto.Message) (*Schema, error) {
-	var columns []ColumnDefinition
-	var sortingColumns []SortingColumn
+	var (
+		columns            []ColumnDefinition
+		sortingColumns     []SortingColumn
+		uniquePrimaryIndex bool
+	)
 	switch def := msg.(type) {
 	case *schemapb.Schema:
 		columns = make([]ColumnDefinition, 0, len(def.Columns))
@@ -240,6 +244,7 @@ func SchemaFromDefinition(msg proto.Message) (*Schema, error) {
 			}
 			sortingColumns = append(sortingColumns, sortingColumn)
 		}
+		uniquePrimaryIndex = def.UniquePrimaryIndex
 	case *schemav2pb.Schema:
 		columns = []ColumnDefinition{}
 		for _, node := range def.Root.Nodes {
@@ -262,13 +267,10 @@ func SchemaFromDefinition(msg proto.Message) (*Schema, error) {
 			}
 			sortingColumns = append(sortingColumns, sortingColumn)
 		}
+		uniquePrimaryIndex = def.UniquePrimaryIndex
 	}
 
-	return newSchema(
-		msg,
-		columns,
-		sortingColumns,
-	), nil
+	return newSchema(msg, columns, sortingColumns, uniquePrimaryIndex), nil
 }
 
 // DefinitionFromParquetFile converts a parquet file into a schemapb.Schema.
@@ -535,6 +537,7 @@ func newSchema(
 	def proto.Message,
 	columns []ColumnDefinition,
 	sortingColumns []SortingColumn,
+	uniquePrimaryIndex bool,
 ) *Schema {
 	sort.Slice(columns, func(i, j int) bool {
 		return columns[i].Name < columns[j].Name
@@ -546,14 +549,15 @@ func newSchema(
 	}
 
 	s := &Schema{
-		def:            def,
-		columns:        columns,
-		sortingColumns: sortingColumns,
-		columnIndexes:  columnIndexes,
-		writers:        &sync.Map{},
-		buffers:        &sync.Map{},
-		sortingSchemas: &sync.Map{},
-		parquetSchemas: &sync.Map{},
+		def:                def,
+		columns:            columns,
+		sortingColumns:     sortingColumns,
+		columnIndexes:      columnIndexes,
+		writers:            &sync.Map{},
+		buffers:            &sync.Map{},
+		sortingSchemas:     &sync.Map{},
+		parquetSchemas:     &sync.Map{},
+		uniquePrimaryIndex: uniquePrimaryIndex,
 	}
 
 	for i, col := range columns {
@@ -1206,7 +1210,7 @@ const bloomFilterBitsPerValue = 10
 
 // NewWriter returns a new parquet writer with a concrete parquet schema
 // generated using the given concrete dynamic column names.
-func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*parquet.GenericWriter[any], error) {
+func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (ParquetWriter, error) {
 	ps, err := s.GetDynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, err
@@ -1231,7 +1235,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 		)
 	}
 
-	return parquet.NewGenericWriter[any](w,
+	writerOptions := []parquet.WriterOption{
 		ps.Schema,
 		parquet.ColumnIndexSizeLimit(ColumnIndexSize),
 		parquet.BloomFilters(bloomFilterColumns...),
@@ -1241,17 +1245,30 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (*pa
 		),
 		parquet.SortingWriterConfig(
 			parquet.SortingColumns(cols...),
+			parquet.DropDuplicatedRows(s.uniquePrimaryIndex),
 		),
-	), nil
+	}
+	if s.uniquePrimaryIndex {
+		return parquet.NewSortingWriter[any](
+			w,
+			32*1024,
+			writerOptions...,
+		), nil
+	}
+	return parquet.NewGenericWriter[any](w, writerOptions...), nil
+}
+
+type ParquetWriter interface {
+	Write(rows []any) (int, error)
+	WriteRows(rows []parquet.Row) (int, error)
+	Flush() error
+	Close() error
+	Reset(writer io.Writer)
 }
 
 type PooledWriter struct {
 	pool *sync.Pool
-	*parquet.GenericWriter[any]
-}
-
-func (p PooledWriter) ParquetWriter() *parquet.GenericWriter[any] {
-	return p.GenericWriter
+	ParquetWriter
 }
 
 func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*PooledWriter, error) {
@@ -1265,10 +1282,10 @@ func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*Po
 		}
 		return &PooledWriter{
 			pool:          pool.(*sync.Pool),
-			GenericWriter: new,
+			ParquetWriter: new,
 		}, nil
 	}
-	pooled.(*PooledWriter).GenericWriter.Reset(w)
+	pooled.(*PooledWriter).ParquetWriter.Reset(w)
 	return pooled.(*PooledWriter), nil
 }
 
@@ -1323,7 +1340,7 @@ func (s *Schema) PutPooledParquetSchema(ps *PooledParquetSchema) {
 }
 
 func (s *Schema) PutWriter(w *PooledWriter) {
-	w.GenericWriter.Reset(bytes.NewBuffer(nil))
+	w.ParquetWriter.Reset(bytes.NewBuffer(nil))
 	w.pool.Put(w)
 }
 

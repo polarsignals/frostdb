@@ -48,6 +48,16 @@ func (m *Schema) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.UniquePrimaryIndex {
+		i--
+		if m.UniquePrimaryIndex {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x20
+	}
 	if len(m.SortingColumns) > 0 {
 		for iNdEx := len(m.SortingColumns) - 1; iNdEx >= 0; iNdEx-- {
 			size, err := m.SortingColumns[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
@@ -425,6 +435,9 @@ func (m *Schema) SizeVT() (n int) {
 			n += 1 + l + sov(uint64(l))
 		}
 	}
+	if m.UniquePrimaryIndex {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -660,6 +673,26 @@ func (m *Schema) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field UniquePrimaryIndex", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.UniquePrimaryIndex = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skip(dAtA[iNdEx:])

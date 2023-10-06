@@ -126,7 +126,7 @@ func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, 
 	return dynparquet.NewDynamicRow(row, pqSchema, dyncols, pqSchema.Fields()), nil
 }
 
-func RecordToFile(schema *dynparquet.Schema, w *parquet.GenericWriter[any], r arrow.Record) error {
+func RecordToFile(schema *dynparquet.Schema, w dynparquet.ParquetWriter, r arrow.Record) error {
 	defer w.Close()
 
 	ps, err := schema.GetDynamicParquetSchema(RecordDynamicCols(r))
