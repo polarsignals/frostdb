@@ -1259,6 +1259,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (Par
 }
 
 type ParquetWriter interface {
+	Schema() *parquet.Schema
 	Write(rows []any) (int, error)
 	WriteRows(rows []parquet.Row) (int, error)
 	Flush() error
