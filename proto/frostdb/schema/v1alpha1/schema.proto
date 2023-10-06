@@ -10,6 +10,9 @@ message Schema {
     repeated Column columns = 2;
     // Columns to sort by in the schema.
     repeated SortingColumn sorting_columns = 3;
+    // UniquePrimaryIndex defines whether the primary index is unique. Duplicate
+    // (according to the sorting column) rows will be dropped on compaction.
+    bool unique_primary_index = 4;
 }
 
 // Column definition.

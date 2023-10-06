@@ -1326,3 +1326,69 @@ func Test_Table_DynamicColumnNotDefined(t *testing.T) {
 	_, err = table.Write(context.Background(), record)
 	require.NoError(t, err)
 }
+
+func TestTableUniquePrimaryIndex(t *testing.T) {
+	// Disable compaction so we trigger it manually.
+	c, err := New(WithGranuleSizeBytes(1), WithCompactionConfig(NewCompactionConfig(WithConcurrency(0))))
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	schema := &schemapb.Schema{
+		Name: "unique_primary_index",
+		Columns: []*schemapb.Column{
+			{
+				Name: "name",
+				StorageLayout: &schemapb.StorageLayout{
+					Type: schemapb.StorageLayout_TYPE_STRING,
+				},
+			},
+		},
+		SortingColumns: []*schemapb.SortingColumn{
+			{
+				Name:      "name",
+				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+			},
+		},
+		UniquePrimaryIndex: true,
+	}
+
+	const tableName = "test"
+	table, err := db.Table(tableName, NewTableConfig(schema))
+	require.NoError(t, err)
+
+	const numRecords = 10
+	for i := 0; i < numRecords; i++ {
+		_, err = table.Write(context.Background(), struct {
+			Name string
+		}{
+			Name: "duplicate",
+		})
+		require.NoError(t, err)
+	}
+
+	rowsRead := 0
+	require.NoError(t, query.NewEngine(
+		memory.DefaultAllocator,
+		db.TableProvider()).ScanTable(tableName).Execute(
+		context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rowsRead += int(r.NumRows())
+			return nil
+		}))
+	// Duplicates are only dropped after compaction.
+	require.Equal(t, numRecords, rowsRead)
+
+	require.NoError(t, table.ActiveBlock().EnsureCompaction())
+
+	rowsRead = 0
+	require.NoError(t, query.NewEngine(
+		memory.DefaultAllocator,
+		db.TableProvider()).ScanTable(tableName).Execute(
+		context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rowsRead += int(r.NumRows())
+			return nil
+		}))
+	require.Equal(t, 1, rowsRead)
+}
