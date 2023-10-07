@@ -591,8 +591,6 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 				return err
 			}
 
-			return nil
-
 			var blockUlid ulid.ULID
 			if err := blockUlid.UnmarshalBinary(tableMeta.ActiveBlock.Ulid); err != nil {
 				return err

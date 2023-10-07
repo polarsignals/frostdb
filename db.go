@@ -539,10 +539,6 @@ func (db *DB) trashDir() string {
 	return filepath.Join(db.storagePath, "trash")
 }
 
-var SkipTables = map[string]struct{}{
-	"labels_view": {},
-}
-
 // recover attempts to recover database state from a combination of snapshots
 // and the WAL.
 func (db *DB) recover(ctx context.Context, wal WAL) error {
@@ -726,10 +722,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			if lastPersistedTx, ok := persistedTables[tableName]; ok && tx < lastPersistedTx {
 				// This write has already been successfully persisted, so we can
 				// skip it.
-				return nil
-			}
-
-			if _, ok := SkipTables[entry.TableName]; ok {
 				return nil
 			}
 

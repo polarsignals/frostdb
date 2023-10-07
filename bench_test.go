@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	dbName      = "profiling-ec7e346b-6b12-4abf-a910-b59e3b38555a"
+	dbName      = "parca"
 	tableName   = "stacktraces"
 	storagePath = "testdata/data"
 	skipReason  = "requires data directory"
