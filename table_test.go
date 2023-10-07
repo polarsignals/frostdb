@@ -1133,8 +1133,10 @@ func Test_Table_DynamicColumnNotDefined(t *testing.T) {
 }
 
 func TestTableUniquePrimaryIndex(t *testing.T) {
-	// Disable compaction so we trigger it manually.
-	c, err := New(WithGranuleSizeBytes(1), WithCompactionConfig(NewCompactionConfig(WithConcurrency(0))))
+	c, err := New(WithGranuleSizeBytes(1), WithIndexConfig([]*index.LevelConfig{
+		{Level: index.L0, MaxSize: 180},
+		{Level: index.L1, MaxSize: 1024 * 1024 * 1024 * 1024},
+	}))
 	require.NoError(t, err)
 	defer c.Close()
 
@@ -1164,7 +1166,7 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 	table, err := db.Table(tableName, NewTableConfig(schema))
 	require.NoError(t, err)
 
-	const numRecords = 10
+	const numRecords = 9
 	for i := 0; i < numRecords; i++ {
 		_, err = table.Write(context.Background(), struct {
 			Name string
@@ -1185,6 +1187,12 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 	// Duplicates are only dropped after compaction.
 	require.Equal(t, numRecords, rowsRead)
 
+	// Trigger compaction with a new record.
+	_, err = table.Write(context.Background(), struct {
+		Name string
+	}{
+		Name: "duplicate",
+	})
 	require.NoError(t, table.ActiveBlock().EnsureCompaction())
 
 	rowsRead = 0

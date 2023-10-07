@@ -1267,7 +1267,7 @@ type ParquetWriter interface {
 	Reset(writer io.Writer)
 }
 
-func (s *Schema) NewSortingWriter(w io.Writer, dynamicColumns map[string][]string) (*parquet.SortingWriter[any], error) {
+func (s *Schema) NewSortingWriter(w io.Writer, dynamicColumns map[string][]string) (ParquetWriter, error) {
 	ps, err := s.GetDynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, err
@@ -1303,6 +1303,7 @@ func (s *Schema) NewSortingWriter(w io.Writer, dynamicColumns map[string][]strin
 		),
 		parquet.SortingWriterConfig(
 			parquet.SortingColumns(cols...),
+			parquet.DropDuplicatedRows(s.uniquePrimaryIndex),
 		),
 	), nil
 }
