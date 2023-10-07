@@ -10,11 +10,10 @@ require (
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-kit/log v0.2.1
-	github.com/google/btree v1.0.1
 	github.com/google/uuid v1.3.0
 	github.com/oklog/ulid v1.3.1
 	github.com/olekukonko/tablewriter v0.0.5
-	github.com/parquet-go/parquet-go v0.0.0-20230717201923-bb12c19a1110
+	github.com/parquet-go/parquet-go v0.18.1-0.20231004061202-cde8189c4c26
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
 	github.com/polarsignals/wal v0.0.0-20230809145250-99ef415c5a6c
 	github.com/prometheus/client_golang v1.16.0
