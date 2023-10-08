@@ -1193,6 +1193,7 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 	}{
 		Name: "duplicate",
 	})
+	require.NoError(t, err)
 	require.NoError(t, table.ActiveBlock().EnsureCompaction())
 
 	rowsRead = 0
