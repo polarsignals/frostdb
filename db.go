@@ -60,6 +60,9 @@ type ColumnStore struct {
 	sources []DataSource
 	sinks   []DataSink
 
+	compactAfterRecovery           bool
+	compactAfterRecoveryTableNames []string
+
 	// testingOptions are options only used for testing purposes.
 	testingOptions struct {
 		disableReclaimDiskSpaceOnSnapshot bool
@@ -221,6 +224,14 @@ func WithIndexConfig(indexConfig []*index.LevelConfig) Option {
 	}
 }
 
+func WithCompactionAfterRecovery(tableNames []string) Option {
+	return func(s *ColumnStore) error {
+		s.compactAfterRecovery = true
+		s.compactAfterRecoveryTableNames = tableNames
+		return nil
+	}
+}
+
 // WithSnapshotTriggerSize specifies a table block size in bytes that will
 // trigger a snapshot of the whole database. This should be less than the active
 // memory size. If 0, snapshots are disabled. Note that snapshots (if enabled)
@@ -292,7 +303,12 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 		databaseName := f.Name()
 		g.Go(func() error {
 			// Open the DB for the side effect of the snapshot and WALs being loaded as part of the open operation.
-			_, err := s.DB(ctx, databaseName)
+			_, err := s.DB(ctx,
+				databaseName,
+				WithCompactionAfterOpen(
+					s.compactAfterRecovery, s.compactAfterRecoveryTableNames,
+				),
+			)
 			return err
 		})
 	}
@@ -332,6 +348,9 @@ type DB struct {
 	// TxPool is a waiting area for finished transactions that haven't been added to the watermark
 	txPool *TxPool
 
+	compactAfterRecovery           bool
+	compactAfterRecoveryTableNames []string
+
 	snapshotInProgress atomic.Bool
 
 	metrics *dbMetrics
@@ -363,6 +382,14 @@ type DBOption func(*DB) error
 func WithUserDefinedTxnMetadataProvider(f func(tx uint64) []byte) DBOption {
 	return func(db *DB) error {
 		db.txnMetadataProvider = f
+		return nil
+	}
+}
+
+func WithCompactionAfterOpen(compact bool, tableNames []string) DBOption {
+	return func(db *DB) error {
+		db.compactAfterRecovery = compact
+		db.compactAfterRecoveryTableNames = tableNames
 		return nil
 	}
 }
@@ -498,6 +525,30 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		// rotating blocks etc... that the public Close method does.
 		_ = db.closeInternal()
 		return nil, dbSetupErr
+	}
+
+	// Compact tables after recovery if requested.
+	if db.compactAfterRecovery {
+		tables := db.compactAfterRecoveryTableNames
+		if len(tables) == 0 {
+			// Run compaction on all tables.
+			tables = maps.Keys(db.tables)
+		}
+		for _, name := range tables {
+			tbl, err := db.GetTable(name)
+			if err != nil {
+				level.Warn(db.logger).Log("msg", "get table during db setup", "err", err)
+				continue
+			}
+
+			start := time.Now()
+			if err := tbl.EnsureCompaction(); err != nil {
+				level.Warn(db.logger).Log("msg", "compaction during setup", "err", err)
+			}
+			level.Info(db.logger).Log(
+				"msg", "compacted table after recovery", "table", name, "took", time.Since(start),
+			)
+		}
 	}
 
 	s.dbs[name] = db
