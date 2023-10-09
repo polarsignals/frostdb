@@ -17,7 +17,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/ipc"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/google/btree"
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -31,6 +30,7 @@ import (
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
+	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/storage"
 	"github.com/polarsignals/frostdb/wal"
@@ -47,7 +47,6 @@ type ColumnStore struct {
 	storagePath         string
 	enableWAL           bool
 	manualBlockRotation bool
-	compactionConfig    *CompactionConfig
 	snapshotTriggerSize int64
 	metrics             metrics
 
@@ -55,9 +54,14 @@ type ColumnStore struct {
 	indexDegree int
 	// splitSize is the number of new granules that are created when granules are split (default =2)
 	splitSize int
+	// indexConfig is the configuration settings for the lsm index
+	indexConfig []*index.LevelConfig
 
 	sources []DataSource
 	sinks   []DataSink
+
+	compactAfterRecovery           bool
+	compactAfterRecoveryTableNames []string
 
 	// testingOptions are options only used for testing purposes.
 	testingOptions struct {
@@ -82,11 +86,11 @@ func New(
 		reg:              prometheus.NewRegistry(),
 		logger:           log.NewNopLogger(),
 		tracer:           trace.NewNoopTracerProvider().Tracer(""),
+		indexConfig:      DefaultIndexConfig,
 		indexDegree:      2,
 		splitSize:        2,
 		granuleSizeBytes: 1 * 1024 * 1024,   // 1MB granule size before splitting
 		activeMemorySize: 512 * 1024 * 1024, // 512MB
-		compactionConfig: NewCompactionConfig(),
 	}
 
 	for _, option := range options {
@@ -213,9 +217,17 @@ func WithStoragePath(path string) Option {
 	}
 }
 
-func WithCompactionConfig(c *CompactionConfig) Option {
+func WithIndexConfig(indexConfig []*index.LevelConfig) Option {
 	return func(s *ColumnStore) error {
-		s.compactionConfig = c
+		s.indexConfig = indexConfig
+		return nil
+	}
+}
+
+func WithCompactionAfterRecovery(tableNames []string) Option {
+	return func(s *ColumnStore) error {
+		s.compactAfterRecovery = true
+		s.compactAfterRecoveryTableNames = tableNames
 		return nil
 	}
 }
@@ -291,11 +303,10 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 		databaseName := f.Name()
 		g.Go(func() error {
 			// Open the DB for the side effect of the snapshot and WALs being loaded as part of the open operation.
-			_, err := s.DB(
-				ctx,
+			_, err := s.DB(ctx,
 				databaseName,
 				WithCompactionAfterOpen(
-					s.compactionConfig.compactAfterRecovery, s.compactionConfig.compactAfterRecoveryTableNames,
+					s.compactAfterRecovery, s.compactAfterRecoveryTableNames,
 				),
 			)
 			return err
@@ -339,8 +350,6 @@ type DB struct {
 
 	compactAfterRecovery           bool
 	compactAfterRecoveryTableNames []string
-
-	compactorPool *compactorPool
 
 	snapshotInProgress atomic.Bool
 
@@ -451,7 +460,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 			return err
 		}
 		db.txPool = NewTxPool(&db.highWatermark)
-		db.compactorPool = newCompactorPool(db, s.compactionConfig)
 		// Wait to start the compactor pool since benchmarks show that WAL
 		// replay is a lot more efficient if it is not competing against
 		// compaction. Additionally, if the CompactAfterRecovery option is
@@ -543,7 +551,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		}
 	}
 
-	db.compactorPool.start()
 	s.dbs[name] = db
 	return db, nil
 }
@@ -641,7 +648,14 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-					table.ActiveBlock().index.Store(btree.New(table.db.columnStore.indexDegree))
+					table.ActiveBlock().index, err = index.NewLSM(
+						table.name,
+						table.configureLSMLevels(db.columnStore.indexConfig),
+						index.LSMWithMetrics(table.metrics.indexMetrics),
+					)
+					if err != nil {
+						return err
+					}
 				}
 				db.mtx.Unlock()
 			}
@@ -896,10 +910,6 @@ func (db *DB) closeInternal() error {
 	}
 	if db.txPool != nil {
 		db.txPool.Stop()
-	}
-
-	if db.compactorPool != nil {
-		db.compactorPool.stop()
 	}
 
 	return nil

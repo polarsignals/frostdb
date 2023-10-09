@@ -13,20 +13,20 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/arrow/go/v14/arrow/ipc"
 	"github.com/apache/arrow/go/v14/arrow/util"
 	"github.com/go-kit/log/level"
-	"github.com/google/btree"
-	"github.com/oklog/ulid"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
+	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/parts"
 )
 
@@ -425,54 +425,53 @@ func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w
 			}
 
 			var ascendErr error
-			block.Index().Ascend(func(i btree.Item) bool {
+			block.Index().Iterate(func(node *index.Node) bool {
 				granuleMeta := &snapshotpb.Granule{}
-				i.(*Granule).PartsForTx(tx, func(p *parts.Part) bool {
-					partMeta := &snapshotpb.Part{
-						StartOffset:     int64(offW.offset),
-						Tx:              p.TX(),
-						CompactionLevel: uint64(p.CompactionLevel()),
-					}
-					if err := func() error {
-						if err := ctx.Err(); err != nil {
-							return err
-						}
-						schema := t.schema
-
-						if record := p.Record(); record != nil {
-							partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
-							recordWriter := ipc.NewWriter(
-								w,
-								ipc.WithSchema(record.Schema()),
-							)
-							defer recordWriter.Close()
-							return recordWriter.Write(record)
-						}
-						partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
-
-						buf, err := p.AsSerializedBuffer(schema)
-						if err != nil {
-							return err
-						}
-
-						f := buf.ParquetFile()
-						if _, err := io.Copy(
-							w, io.NewSectionReader(f, 0, f.Size()),
-						); err != nil {
-							return err
-						}
-						return nil
-					}(); err != nil {
-						ascendErr = err
-						return false
-					}
-					partMeta.EndOffset = int64(offW.offset)
-					granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
+				if node.Part() == nil {
 					return true
-				})
-				if len(granuleMeta.PartMetadata) > 0 {
-					tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta)
 				}
+				p := node.Part()
+				partMeta := &snapshotpb.Part{
+					StartOffset:     int64(offW.offset),
+					Tx:              p.TX(),
+					CompactionLevel: uint64(p.CompactionLevel()),
+				}
+				if err := func() error {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					schema := t.schema
+
+					if record := p.Record(); record != nil {
+						partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
+						recordWriter := ipc.NewWriter(
+							w,
+							ipc.WithSchema(record.Schema()),
+						)
+						defer recordWriter.Close()
+						return recordWriter.Write(record)
+					}
+					partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
+
+					buf, err := p.AsSerializedBuffer(schema)
+					if err != nil {
+						return err
+					}
+
+					f := buf.ParquetFile()
+					if _, err := io.Copy(
+						w, io.NewSectionReader(f, 0, f.Size()),
+					); err != nil {
+						return err
+					}
+					return nil
+				}(); err != nil {
+					ascendErr = err
+					return false
+				}
+				partMeta.EndOffset = int64(offW.offset)
+				granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
+				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
 				return true
 			})
 			metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
@@ -564,9 +563,6 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 		return nil, err
 	}
 
-	db.compactorPool.pause()
-	defer db.compactorPool.resume()
-
 	for i, tableMeta := range footer.TableMetadata {
 		if err := func() error {
 			var schemaMsg proto.Message
@@ -604,13 +600,12 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 			block := table.active
 			block.mtx.Lock()
 			block.ulid = blockUlid
-			block.size.Store(tableMeta.ActiveBlock.Size)
 			// Store the last snapshot size so a snapshot is not triggered right
 			// after loading this snapshot.
 			block.lastSnapshotSize.Store(tableMeta.ActiveBlock.Size)
 			block.minTx = tableMeta.ActiveBlock.MinTx
 			block.prevTx = tableMeta.ActiveBlock.PrevTx
-			newIdx := block.Index().Clone()
+			newIdx := block.Index()
 			block.mtx.Unlock()
 			table.mtx.Unlock()
 
@@ -651,16 +646,13 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 					}
 				}
 
-				granule, err := NewGranule(table.schema, resultParts...)
-				if err != nil {
-					return err
+				for _, part := range resultParts {
+					if part.Record() != nil { // TODO: eventually store the level in the part metadata
+						newIdx.InsertPart(index.L0, part)
+					} else {
+						newIdx.InsertPart(index.L1, part)
+					}
 				}
-				newIdx.ReplaceOrInsert(granule)
-			}
-
-			// This shouldn't be necessary since compactions were paused and no
-			// inserts should be happening, but err on the side of caution.
-			for !block.index.CompareAndSwap(block.Index(), newIdx) {
 			}
 
 			return nil
