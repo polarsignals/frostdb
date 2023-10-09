@@ -53,7 +53,7 @@ type LSMMetrics struct {
 type LevelConfig struct {
 	Level   SentinelType
 	MaxSize int64
-	Compact func([]*parts.Part) ([]*parts.Part, int64, int64, error)
+	Compact func([]*parts.Part, ...parts.Option) ([]*parts.Part, int64, int64, error)
 }
 
 type LSMOption func(*LSM)
@@ -158,7 +158,7 @@ func (l *LSM) MaxLevel() SentinelType {
 func (l *LSM) Add(tx uint64, record arrow.Record) {
 	record.Retain()
 	size := util.TotalRecordSize(record)
-	l.levels.Prepend(parts.NewArrowPart(tx, record, int(size), nil))
+	l.levels.Prepend(parts.NewArrowPart(tx, record, int(size), nil, parts.WithCompactionLevel(int(L0))))
 	l0 := l.sizes[L0].Add(int64(size))
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
 	if l0 >= l.configs[L0].MaxSize {
@@ -360,7 +360,7 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 			s.next.Store(next)
 		}
 	} else {
-		compacted, size, compactedSize, err = l.configs[level].Compact(mergeList)
+		compacted, size, compactedSize, err = l.configs[level].Compact(mergeList, parts.WithCompactionLevel(int(level)+1))
 		if err != nil {
 			return err
 		}

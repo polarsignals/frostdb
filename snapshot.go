@@ -621,7 +621,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 					if _, err := r.ReadAt(partBytes, startOffset); err != nil {
 						return err
 					}
-					partOptions := parts.WithCompactionLevel(parts.CompactionLevel(partMeta.CompactionLevel))
+					partOptions := parts.WithCompactionLevel(int(partMeta.CompactionLevel))
 					switch partMeta.Encoding {
 					case snapshotpb.Part_ENCODING_PARQUET:
 						serBuf, err := dynparquet.ReaderFromBytes(partBytes)
@@ -647,11 +647,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 				}
 
 				for _, part := range resultParts {
-					if part.Record() != nil { // TODO: eventually store the level in the part metadata
-						newIdx.InsertPart(index.L0, part)
-					} else {
-						newIdx.InsertPart(index.L1, part)
-					}
+					newIdx.InsertPart(index.SentinelType(part.CompactionLevel()), part)
 				}
 			}
 

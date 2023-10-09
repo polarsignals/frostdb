@@ -13,18 +13,6 @@ import (
 	"github.com/polarsignals/frostdb/pqarrow"
 )
 
-type CompactionLevel uint8
-
-const (
-	// CompactionLevel0 is the default compaction level for new Parts. This
-	// means that the Part contains multiple variable-length row groups.
-	CompactionLevel0 CompactionLevel = iota
-	// CompactionLevel1 is the compaction level for Parts that are the result of
-	// a compaction. Parts with this compaction level contain multiple row
-	// groups with the row group size specified on table creation.
-	CompactionLevel1
-)
-
 type Part struct {
 	buf    *dynparquet.SerializedBuffer
 	record arrow.Record
@@ -36,7 +24,7 @@ type Part struct {
 	// tx is the id of the transaction that created this part.
 	tx uint64
 
-	compactionLevel CompactionLevel
+	compactionLevel int
 
 	minRow *dynparquet.DynamicRow
 	maxRow *dynparquet.DynamicRow
@@ -86,7 +74,7 @@ func (p *Part) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.Serial
 
 type Option func(*Part)
 
-func WithCompactionLevel(level CompactionLevel) Option {
+func WithCompactionLevel(level int) Option {
 	return func(p *Part) {
 		p.compactionLevel = level
 	}
@@ -137,7 +125,7 @@ func (p *Part) Size() int64 {
 	return int64(p.recordRelativeSize)
 }
 
-func (p *Part) CompactionLevel() CompactionLevel {
+func (p *Part) CompactionLevel() int {
 	return p.compactionLevel
 }
 
