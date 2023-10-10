@@ -792,7 +792,7 @@ func (n *NotExpr) Accept(visitor Visitor) bool {
 
 	return visitor.PostVisit(n)
 }
-func (n *NotExpr) Name() string { return "not " + n.Name() }
+func (n *NotExpr) Name() string { return "not " + n.Expr.Name() }
 func (n *NotExpr) ColumnsUsedExprs() []Expr {
 	return []Expr{&NotExpr{Expr: n.Expr}}
 }
