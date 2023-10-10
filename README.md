@@ -120,21 +120,21 @@ func Schema() (*dynparquet.Schema, error) {
 
 With this schema, all rows are expected to have a `timestamp` and a `value` but can vary in their columns prefixed with `labels.`. In this schema all dynamically created columns are still Dictionary and run-length encoded and must be of type `string`.
 
-### Immutable & Sorted
+### Immutable
 
-There are only writes and reads. All data is immutable and sorted. Having all data sorted allows FrostDB to avoid maintaining an index per column, and still serve queries with low latency.
+There are only writes and reads. All data is immutable. 
 
-To maintain global sorting FrostDB requires all inserts to be sorted if they contain multiple rows. Combined with immutability, global sorting of all data can be maintained at a reasonable cost. To optimize throughput, it is preferable to perform inserts in as large batches as possible. FrostDB maintains inserted data in batches of a configurable amount of bytes (1MB by default), called a _Granule_. To directly jump to data needed for a query, FrostDB maintains a sparse index of Granules. The sparse index is small enough to fully reside in memory. It is currently implemented as a [b-tree](https://github.com/google/btree) of Granules.
+FrostDB maintains inserted data in an Log-structured merge-tree(LSM) like index. This index is implemented as lists of Parts. A Part containers either an Arrow record or a 
+Parquet file. The first level (L0) contains a list of Arrrow records inserted as-is into the list. Upon reaching the maximum configured size of the level the level will be compacted
+ into a single Parquet file and added to the next level of the index. This process continues for each configured level of the index until a file is written into the final level of the index.
 
-![Sparse index of Granules](https://docs.google.com/drawings/d/1DbGqLKsloKAEG7ydJ5n5-Vr03j4jQMqdipJyEu0goIE/export/svg)
+![LSM Index compacting into higher levels](https://docs.google.com/drawings/d/e/2PACX-1vRckTzb-D57UaxDUSCQjyD4mZN_3_Cu032oA-2kLCu_owrYeaT4nrYCKBP1QYS8EMqv3bI3Kiudt_jV/pub?w=960&h=720)
 
-At insert time, FrostDB splits the inserted rows into the appropriate Granule according to their lower and upper bound, to maintain global sorting. Once a Granule exceeds the configured size, the Granule is split into 2 new Granules.
+Upon the size of the entire index reaching the configured max in-memory size the index is rotated out. It can be either configured to be dropped entirely or to be written out to 
+your storage of choice.
 
-![Split of Granule](https://docs.google.com/drawings/d/1c38HQfpTPVtzatGenQaqF7oA_7NiEDbfeudxiUV5lSg/export/svg)
-
-Under the hood, Granules are a list of sorted Parts, and only if a query requires it are all parts merged into a sorted stream using a [direct k-way merge](https://en.wikipedia.org/wiki/K-way_merge_algorithm#Direct_k-way_merge) using a [min-heap](https://en.wikipedia.org/wiki/Binary_heap). An example of an operation that requires the whole Granule to be read as a single sorted stream are the aforementioned Granule splits.
-
-![A Granule is organized in Parts](https://docs.google.com/drawings/d/1Ex4hKLwoQ_IgYARj0aEjoFEjQRt6-B0fO8K9E7syyHc/export/svg)
+At query time FrostDB will scan each part in the in the index. To maintain fast queries FrostDB leverages the sparse index features of Parquet files, such as bloom filters and min
+and max values of columns in each row group such that only the row groups that contain data that can satisfy the query are processed.
 
 ### Snapshot isolation
 
@@ -148,4 +148,4 @@ This mechanism is inspired by a mix of [Google Spanner](https://research.google/
 
 ## Acknowledgments
 
-FrostDB stands on the shoulders of giants. Shout out to Segment for creating the incredible [`parquet-go`](https://github.com/segmentio/parquet-go) library as well as InfluxData for starting and various contributors after them working on [Go support for Apache Arrow](https://pkg.go.dev/github.com/apache/arrow/go/arrow).
+FrostDB stands on the shoulders of giants. Shout out to Segment for creating the incredible [`parquet-go`](https://github.com/parquet-go/parquet-go) library as well as InfluxData for starting and various contributors after them working on [Go support for Apache Arrow](https://pkg.go.dev/github.com/apache/arrow/go/arrow).
