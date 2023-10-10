@@ -48,7 +48,10 @@ func (t *TableBlock) Persist() error {
 		}
 
 		if err != nil {
-			return fmt.Errorf("failed to serialize block: %v", err)
+			if deleteErr := sink.Delete(context.Background(), fileName); deleteErr != nil {
+				err = fmt.Errorf("%v failed to delete file on error: %w", err, deleteErr)
+			}
+			return fmt.Errorf("failed to serialize block: %w", err)
 		}
 	}
 
@@ -211,6 +214,14 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 	}
 
 	span.SetAttributes(attribute.Int64("size", attribs.Size))
+
+	if attribs.Size == 0 {
+		level.Debug(b.logger).Log(
+			"msg", "ignoring empty block",
+			"blockTime", blockUlid.Time(),
+		)
+		return nil
+	}
 
 	file, err := b.openBlockFile(ctx, blockName, attribs.Size)
 	if err != nil {

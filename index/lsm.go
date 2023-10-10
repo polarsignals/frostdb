@@ -193,6 +193,8 @@ func (l *LSM) Prefixes(ctx context.Context, prefix string) ([]string, error) {
 }
 
 func (l *LSM) Iterate(iter func(node *Node) bool) {
+	l.RLock()
+	defer l.RUnlock()
 	l.levels.Iterate(iter)
 }
 
