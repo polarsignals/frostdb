@@ -35,7 +35,7 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "value"},
-			RegExpColumnMatch(hashedMatch),
+			DynCol(hashedMatch),
 			&Column{ColumnName: "labels.test"},
 		},
 	},
@@ -205,7 +205,7 @@ func TestAllOptimizers(t *testing.T) {
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "value"},
-			RegExpColumnMatch(hashedMatch),
+			DynCol(hashedMatch),
 			&Column{ColumnName: "labels.test"},
 		},
 		Filter: &BinaryExpr{

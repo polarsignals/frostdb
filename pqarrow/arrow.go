@@ -1206,5 +1206,11 @@ func Project(r arrow.Record, projections []logicalplan.Expr) arrow.Record {
 		}
 	}
 
+	// If the projection matches the entire record, return the record as is.
+	if len(cols) == r.Schema().NumFields() {
+		r.Retain() // NOTE: we're creating another reference to this record, so retain it
+		return r
+	}
+
 	return array.NewRecord(arrow.NewSchema(fields, nil), cols, r.NumRows())
 }
