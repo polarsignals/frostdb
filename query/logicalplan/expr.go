@@ -772,3 +772,31 @@ func (a *AllExpr) MatchColumn(columnName string) bool { return true }
 func (a *AllExpr) MatchPath(path string) bool         { return true }
 func (a *AllExpr) Computed() bool                     { return false }
 func (a *AllExpr) Clone() Expr                        { return &AllExpr{} }
+
+type NotExpr struct {
+	Expr Expr
+}
+
+func Not(expr Expr) *NotExpr {
+	return &NotExpr{
+		Expr: expr,
+	}
+}
+
+func (n *NotExpr) DataType(*parquet.Schema) (arrow.DataType, error) { return nil, nil }
+func (n *NotExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(n)
+	if !continu {
+		return false
+	}
+
+	return visitor.PostVisit(n)
+}
+func (n *NotExpr) Name() string { return "not " + n.Name() }
+func (n *NotExpr) ColumnsUsedExprs() []Expr {
+	return []Expr{&NotExpr{Expr: n.Expr}}
+}
+func (n *NotExpr) MatchColumn(columnName string) bool { return !n.Expr.MatchColumn(columnName) }
+func (n *NotExpr) MatchPath(path string) bool         { return !n.Expr.MatchPath(path) }
+func (n *NotExpr) Computed() bool                     { return false }
+func (n *NotExpr) Clone() Expr                        { return &NotExpr{Expr: n.Expr} }
