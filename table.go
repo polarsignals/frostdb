@@ -895,89 +895,6 @@ type ParquetWriter interface {
 	io.Closer
 }
 
-// parquetRowWriter is a stateful parquet row group writer.
-type parquetRowWriter struct {
-	schema *dynparquet.Schema
-	w      ParquetWriter
-
-	rowGroupSize int
-	maxNumRows   int
-
-	rowGroupRowsWritten int
-	totalRowsWritten    int
-	rowsBuf             []parquet.Row
-}
-
-type parquetRowWriterOption func(p *parquetRowWriter)
-
-// rowWriter returns a new Parquet row writer with the given dynamic columns.
-func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
-	w, err := t.table.schema.NewWriter(writer, dynCols)
-	if err != nil {
-		return nil, err
-	}
-
-	buffSize := 256
-	if t.table.config.RowGroupSize > 0 {
-		buffSize = int(t.table.config.RowGroupSize)
-	}
-
-	p := &parquetRowWriter{
-		w:            w,
-		schema:       t.table.schema,
-		rowsBuf:      make([]parquet.Row, buffSize),
-		rowGroupSize: int(t.table.config.RowGroupSize),
-	}
-
-	for _, option := range options {
-		option(p)
-	}
-
-	return p, nil
-}
-
-// WriteRows will write the given rows to the underlying Parquet writer. It returns the number of rows written.
-func (p *parquetRowWriter) writeRows(rows parquet.Rows) (int, error) {
-	written := 0
-	for p.maxNumRows == 0 || p.totalRowsWritten < p.maxNumRows {
-		if p.rowGroupSize > 0 && p.rowGroupRowsWritten+len(p.rowsBuf) > p.rowGroupSize {
-			// Read only as many rows as we need to complete the row group size limit.
-			p.rowsBuf = p.rowsBuf[:p.rowGroupSize-p.rowGroupRowsWritten]
-		}
-		if p.maxNumRows != 0 && p.totalRowsWritten+len(p.rowsBuf) > p.maxNumRows {
-			// Read only as many rows as we need to write if they would bring
-			// us over the limit.
-			p.rowsBuf = p.rowsBuf[:p.maxNumRows-p.totalRowsWritten]
-		}
-		n, err := rows.ReadRows(p.rowsBuf)
-		if err != nil && err != io.EOF {
-			return 0, err
-		}
-		if n == 0 {
-			break
-		}
-
-		if _, err = p.w.WriteRows(p.rowsBuf[:n]); err != nil {
-			return 0, err
-		}
-		written += n
-		p.rowGroupRowsWritten += n
-		p.totalRowsWritten += n
-		if p.rowGroupSize > 0 && p.rowGroupRowsWritten >= p.rowGroupSize {
-			if err := p.w.Flush(); err != nil {
-				return 0, err
-			}
-			p.rowGroupRowsWritten = 0
-		}
-	}
-
-	return written, nil
-}
-
-func (p *parquetRowWriter) close() error {
-	return p.w.Close()
-}
-
 // memoryBlocks collects the active and pending blocks that are currently resident in memory.
 // The pendingReadersWg.Done() function must be called on all blocks returned once processing is finished.
 func (t *Table) memoryBlocks() ([]*TableBlock, uint64) {
@@ -1182,15 +1099,18 @@ func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) 
 		return 0, err
 	}
 	err = func() error {
-		p, err := t.active.rowWriter(w, merged.DynamicColumns())
+		pw, err := t.schema.NewWriter(
+			w, merged.DynamicColumns(), parquet.MaxRowsPerRowGroup(int64(t.config.RowGroupSize)),
+		)
 		if err != nil {
 			return err
 		}
-		defer p.close()
+		defer pw.Close()
 
 		rows := merged.Rows()
 		defer rows.Close()
-		if _, err := p.writeRows(rows); err != nil {
+
+		if _, err := parquet.CopyRows(pw, rows); err != nil {
 			return err
 		}
 

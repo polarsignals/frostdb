@@ -1,7 +1,6 @@
 package frostdb
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -719,62 +718,6 @@ func Test_Serialize_DisparateDynamicColumns(t *testing.T) {
 
 	// Serialize the table
 	require.NoError(t, table.active.Serialize(io.Discard))
-}
-
-func Test_RowWriter(t *testing.T) {
-	config := NewTableConfig(
-		dynparquet.SampleDefinition(),
-		WithRowGroupSize(5),
-	)
-
-	logger := newTestLogger(t)
-
-	c, err := New(WithLogger(logger))
-	require.NoError(t, err)
-
-	db, err := c.DB(context.Background(), "test")
-	require.NoError(t, err)
-	table, err := db.Table("test", config)
-	require.NoError(t, err)
-	defer c.Close()
-
-	b := &bytes.Buffer{}
-	rowWriter, err := table.ActiveBlock().rowWriter(b, map[string][]string{
-		"labels": {"node"},
-	})
-	require.NoError(t, err)
-
-	// Write 17(8,9) rows, expect 3 row groups of 5 rows and 1 row group of 2 rows
-	samples := dynparquet.GenerateTestSamples(8)
-	buf, err := samples.ToBuffer(table.Schema())
-	require.NoError(t, err)
-	rows := buf.Rows()
-	_, err = rowWriter.writeRows(rows)
-	require.NoError(t, err)
-	require.NoError(t, rows.Close())
-
-	samples = dynparquet.GenerateTestSamples(9)
-	buf, err = samples.ToBuffer(table.Schema())
-	require.NoError(t, err)
-	rows = buf.Rows()
-	_, err = rowWriter.writeRows(rows)
-	require.NoError(t, err)
-	require.NoError(t, rows.Close())
-
-	require.NoError(t, rowWriter.close())
-
-	f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
-	require.NoError(t, err)
-
-	require.Equal(t, 4, len(f.Metadata().RowGroups))
-	for i, rg := range f.Metadata().RowGroups {
-		switch i {
-		case 3:
-			require.Equal(t, int64(2), rg.NumRows)
-		default:
-			require.Equal(t, int64(5), rg.NumRows)
-		}
-	}
 }
 
 // Test_Table_Size ensures the size of the table increases by the size of the inserted data.
