@@ -1065,6 +1065,7 @@ func (t *Table) close() {
 
 	t.active.pendingWritersWg.Wait()
 	t.closing = true
+	t.active.index.WaitForPendingCompactions()
 }
 
 // configureLSMLevels configures the level configs for this table.

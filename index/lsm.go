@@ -28,7 +28,8 @@ import (
 // [L0]->[record]->[record]->[L1]->[record/parquet]->[record/parquet] etc.
 type LSM struct {
 	sync.RWMutex
-	compacting *atomic.Bool
+	compacting   *atomic.Bool
+	compactionWg sync.WaitGroup
 
 	prefix  string
 	levels  *Node
@@ -163,11 +164,17 @@ func (l *LSM) Add(tx uint64, record arrow.Record) {
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
 	if l0 >= l.configs[L0].MaxSize {
 		if l.compacting.CompareAndSwap(false, true) {
+			l.compactionWg.Add(1)
 			go func() {
+				defer l.compactionWg.Done()
 				_ = l.compact()
 			}()
 		}
 	}
+}
+
+func (l *LSM) WaitForPendingCompactions() {
+	l.compactionWg.Wait()
 }
 
 // InsertPart inserts a part into the LSM tree. It will be inserted into the correct level. It does not check if the insert should cause a compaction.
