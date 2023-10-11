@@ -650,6 +650,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
 					table.ActiveBlock().index, err = index.NewLSM(
 						table.name,
+						table.schema,
 						table.configureLSMLevels(db.columnStore.indexConfig),
 						index.LSMWithMetrics(table.metrics.indexMetrics),
 					)

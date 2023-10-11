@@ -102,7 +102,7 @@ func check(t *testing.T, lsm *LSM, records, buffers int) {
 
 func Test_LSM_Basic(t *testing.T) {
 	t.Parallel()
-	lsm, err := NewLSM("test", []*LevelConfig{
+	lsm, err := NewLSM("test", nil, []*LevelConfig{
 		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
@@ -135,7 +135,7 @@ func Test_LSM_Basic(t *testing.T) {
 
 func Test_LSM_DuplicateSentinel(t *testing.T) {
 	t.Parallel()
-	lsm, err := NewLSM("test", []*LevelConfig{
+	lsm, err := NewLSM("test", nil, []*LevelConfig{
 		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
@@ -158,7 +158,7 @@ func Test_LSM_DuplicateSentinel(t *testing.T) {
 
 func Test_LSM_Compaction(t *testing.T) {
 	t.Parallel()
-	lsm, err := NewLSM("test", []*LevelConfig{
+	lsm, err := NewLSM("test", nil, []*LevelConfig{
 		{Level: L0, MaxSize: 1, Compact: parquetCompaction},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024},
 	})
@@ -176,7 +176,7 @@ func Test_LSM_Compaction(t *testing.T) {
 
 func Test_LSM_CascadeCompaction(t *testing.T) {
 	t.Parallel()
-	lsm, err := NewLSM("test", []*LevelConfig{
+	lsm, err := NewLSM("test", nil, []*LevelConfig{
 		{Level: L0, MaxSize: 257, Compact: parquetCompaction},
 		{Level: L1, MaxSize: 2281, Compact: parquetCompaction},
 		{Level: L2, MaxSize: 2281, Compact: parquetCompaction},

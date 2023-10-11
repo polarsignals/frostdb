@@ -839,6 +839,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 	var err error
 	tb.index, err = index.NewLSM(
 		table.name,
+		table.schema,
 		table.configureLSMLevels(table.db.columnStore.indexConfig),
 		index.LSMWithMetrics(table.metrics.indexMetrics),
 	)
@@ -1065,6 +1066,7 @@ func (t *Table) close() {
 
 	t.active.pendingWritersWg.Wait()
 	t.closing = true
+	t.active.index.WaitForPendingCompactions()
 }
 
 // configureLSMLevels configures the level configs for this table.
@@ -1086,17 +1088,36 @@ func (t *Table) configureLSMLevels(levels []*index.LevelConfig) []*index.LevelCo
 }
 
 func (t *Table) parquetCompaction(compact []*parts.Part, options ...parts.Option) ([]*parts.Part, int64, int64, error) {
-	b := &bytes.Buffer{}
-	size, err := t.compactParts(b, compact)
-	if err != nil {
-		return nil, 0, 0, err
+	var (
+		buf                                   *dynparquet.SerializedBuffer
+		preCompactionSize, postCompactionSize int64
+		err                                   error
+	)
+	if len(compact) > 1 {
+		var b bytes.Buffer
+		preCompactionSize, err = t.compactParts(&b, compact)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		buf, err = dynparquet.ReaderFromBytes(b.Bytes())
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		postCompactionSize = int64(b.Len())
+	} else if len(compact) == 1 {
+		// It's more efficient to skip compactParts if there's only one part.
+		// The only thing we want to ensure is that this part is converted to
+		// parquet if it is an arrow part.
+		singlePart := compact[0]
+		preCompactionSize = singlePart.Size()
+		buf, err = compact[0].AsSerializedBuffer(t.schema)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		postCompactionSize = buf.ParquetFile().Size()
 	}
 
-	buf, err := dynparquet.ReaderFromBytes(b.Bytes())
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	return []*parts.Part{parts.NewPart(0, buf, options...)}, size, int64(b.Len()), nil
+	return []*parts.Part{parts.NewPart(0, buf, options...)}, preCompactionSize, postCompactionSize, nil
 }
 
 func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []*parts.Part) (*parts.Part, int64, int64, error) {
@@ -1113,9 +1134,40 @@ func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []*part
 // compactParts will compact the given parts into a Parquet file written to w.
 // It returns the size in bytes of the compacted parts.
 func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
-	bufs := []dynparquet.DynamicRowGroup{}
+	// To reduce the number of open cursors at the same time (which helps in
+	// memory usage reduction), find which parts do not overlap with any other
+	// part. These parts can be sorted and read one by one.
+	nonOverlappingParts, overlappingParts, err := parts.FindMaximumNonOverlappingSet(t.schema, compact)
+	if err != nil {
+		return 0, err
+	}
+	bufs := make([]dynparquet.DynamicRowGroup, 0, len(compact))
 	var size int64
-	for _, part := range compact {
+	if len(nonOverlappingParts) == 1 {
+		// Not worth doing anything if only one part does not overlap.
+		overlappingParts = append(overlappingParts, nonOverlappingParts[0])
+	} else if len(nonOverlappingParts) > 0 {
+		// nonOverlappingParts is already sorted.
+		rowGroups := make([]dynparquet.DynamicRowGroup, 0, len(nonOverlappingParts))
+		for _, p := range nonOverlappingParts {
+			size += p.Size()
+			buf, err := p.AsSerializedBuffer(t.schema)
+			if err != nil {
+				return 0, err
+			}
+			rowGroups = append(rowGroups, buf.MultiDynamicRowGroup())
+		}
+		// WithAlreadySorted ensures that a parquet.MultiRowGroup is created
+		// here, which is much cheaper than actually merging all these row
+		// groups.
+		merged, err := t.schema.MergeDynamicRowGroups(rowGroups, dynparquet.WithAlreadySorted())
+		if err != nil {
+			return 0, err
+		}
+		bufs = append(bufs, merged)
+	}
+
+	for _, part := range overlappingParts {
 		size += part.Size()
 		buf, err := part.AsSerializedBuffer(t.schema)
 		if err != nil {
