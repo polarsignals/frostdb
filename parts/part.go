@@ -210,7 +210,7 @@ func (p *Part) most() (*dynparquet.DynamicRow, error) {
 	return p.maxRow, nil
 }
 
-func (p Part) OverlapsWith(schema *dynparquet.Schema, otherPart *Part) (bool, error) {
+func (p *Part) OverlapsWith(schema *dynparquet.Schema, otherPart *Part) (bool, error) {
 	a, err := p.Least()
 	if err != nil {
 		return false, err
@@ -240,7 +240,7 @@ func Tombstone(parts []*Part) {
 	}
 }
 
-func (p Part) HasTombstone() bool {
+func (p *Part) HasTombstone() bool {
 	return p.tx == math.MaxUint64
 }
 

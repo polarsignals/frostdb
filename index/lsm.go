@@ -31,6 +31,8 @@ type LSM struct {
 	compacting   *atomic.Bool
 	compactionWg sync.WaitGroup
 
+	schema *dynparquet.Schema
+
 	prefix  string
 	levels  *Node
 	sizes   []atomic.Int64
@@ -92,12 +94,13 @@ func NewLSMMetrics(reg prometheus.Registerer) *LSMMetrics {
 }
 
 // NewLSM returns an LSM-like index of len(levels) levels.
-func NewLSM(prefix string, levels []*LevelConfig, options ...LSMOption) (*LSM, error) {
+func NewLSM(prefix string, schema *dynparquet.Schema, levels []*LevelConfig, options ...LSMOption) (*LSM, error) {
 	if err := validateLevels(levels); err != nil {
 		return nil, err
 	}
 
 	lsm := &LSM{
+		schema:     schema,
 		prefix:     prefix,
 		levels:     NewList(L0),
 		sizes:      make([]atomic.Int64, len(levels)),
@@ -159,7 +162,7 @@ func (l *LSM) MaxLevel() SentinelType {
 func (l *LSM) Add(tx uint64, record arrow.Record) {
 	record.Retain()
 	size := util.TotalRecordSize(record)
-	l.levels.Prepend(parts.NewArrowPart(tx, record, int(size), nil, parts.WithCompactionLevel(int(L0))))
+	l.levels.Prepend(parts.NewArrowPart(tx, record, int(size), l.schema, parts.WithCompactionLevel(int(L0))))
 	l0 := l.sizes[L0].Add(int64(size))
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
 	if l0 >= l.configs[L0].MaxSize {
