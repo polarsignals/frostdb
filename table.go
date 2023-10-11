@@ -912,7 +912,7 @@ type parquetRowWriterOption func(p *parquetRowWriter)
 
 // rowWriter returns a new Parquet row writer with the given dynamic columns.
 func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
-	w, err := t.table.schema.NewSortingWriter(writer, dynCols)
+	w, err := t.table.schema.NewWriter(writer, dynCols)
 	if err != nil {
 		return nil, err
 	}
@@ -1137,6 +1137,8 @@ func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) 
 	// To reduce the number of open cursors at the same time (which helps in
 	// memory usage reduction), find which parts do not overlap with any other
 	// part. These parts can be sorted and read one by one.
+	// This compaction code assumes the invariant that rows are sorted within
+	// parts. This helps reduce memory usage in various ways.
 	nonOverlappingParts, overlappingParts, err := parts.FindMaximumNonOverlappingSet(t.schema, compact)
 	if err != nil {
 		return 0, err
