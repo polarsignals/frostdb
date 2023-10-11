@@ -1267,47 +1267,6 @@ type ParquetWriter interface {
 	Reset(writer io.Writer)
 }
 
-func (s *Schema) NewSortingWriter(w io.Writer, dynamicColumns map[string][]string) (ParquetWriter, error) {
-	ps, err := s.GetDynamicParquetSchema(dynamicColumns)
-	if err != nil {
-		return nil, err
-	}
-	defer s.PutPooledParquetSchema(ps)
-
-	cols := s.ParquetSortingColumns(dynamicColumns)
-	bloomFilterColumns := make([]parquet.BloomFilterColumn, 0, len(cols))
-	for _, col := range cols {
-		// Don't add bloom filters to boolean columns
-		colName := strings.Split(col.Path()[0], ".")[0]
-		def, ok := s.ColumnByName(colName)
-		if !ok {
-			continue
-		}
-		if def.StorageLayout.Type().Kind() == parquet.Boolean {
-			continue
-		}
-
-		bloomFilterColumns = append(
-			bloomFilterColumns, parquet.SplitBlockFilter(bloomFilterBitsPerValue, col.Path()...),
-		)
-	}
-
-	return parquet.NewSortingWriter[any](w,
-		32*1024,
-		ps.Schema,
-		parquet.ColumnIndexSizeLimit(ColumnIndexSize),
-		parquet.BloomFilters(bloomFilterColumns...),
-		parquet.KeyValueMetadata(
-			DynamicColumnsKey,
-			serializeDynamicColumns(dynamicColumns),
-		),
-		parquet.SortingWriterConfig(
-			parquet.SortingColumns(cols...),
-			parquet.DropDuplicatedRows(s.uniquePrimaryIndex),
-		),
-	), nil
-}
-
 type PooledWriter struct {
 	pool *sync.Pool
 	ParquetWriter
