@@ -118,6 +118,10 @@ func (q *logRequestQueue) Pop() any {
 	old := *q
 	n := len(old)
 	x := old[n-1]
+	// Remove this reference to a logRequest since the GC considers the popped
+	// element still accessible otherwise. Since these are sync pooled, we want
+	// to defer object lifetime management to the pool without interfering.
+	old[n-1] = nil
 	*q = old[0 : n-1]
 	return x
 }
@@ -319,7 +323,16 @@ func (w *FileWAL) run(ctx context.Context) {
 				}
 			}
 
-			for _, r := range batch {
+			// Remove references to a logRequest since the GC considers the
+			// popped element still accessible otherwise. Since these are sync
+			// pooled, we want to defer object lifetime management to the pool
+			// without interfering.
+			for i := range walBatch {
+				walBatch[i].Data = nil
+			}
+
+			for i, r := range batch {
+				batch[i] = nil
 				w.logRequestPool.Put(r)
 			}
 
