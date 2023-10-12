@@ -64,6 +64,7 @@ type fileWALMetrics struct {
 	walRepairs            prometheus.Counter
 	walRepairsLostRecords prometheus.Counter
 	walCloseTimeouts      prometheus.Counter
+	walQueueSize          prometheus.Gauge
 }
 
 const dirPerms = os.FileMode(0o750)
@@ -89,6 +90,10 @@ type FileWAL struct {
 		// with this txn.
 		nextTx uint64
 	}
+
+	// segmentSize indicates what the underlying WAL segment size is. This helps
+	// the run goroutine size batches more or less appropriately.
+	segmentSize int
 
 	cancel       func()
 	shutdownCh   chan struct{}
@@ -136,7 +141,8 @@ func Open(
 	}
 
 	reg = prometheus.WrapRegistererWithPrefix("frostdb_wal_", reg)
-	logStore, err := wal.Open(path, wal.WithLogger(logger), wal.WithMetricsRegisterer(reg))
+	segmentSize := wal.DefaultSegmentSize
+	logStore, err := wal.Open(path, wal.WithLogger(logger), wal.WithMetricsRegisterer(reg), wal.WithSegmentSize(segmentSize))
 	if err != nil {
 		return nil, err
 	}
@@ -185,8 +191,13 @@ func Open(
 				Name: "close_timeouts_total",
 				Help: "The number of times the WAL failed to close due to a timeout",
 			}),
+			walQueueSize: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+				Name: "queue_size",
+				Help: "The number of unprocessed requests in the WAL queue",
+			}),
 		},
-		shutdownCh: make(chan struct{}),
+		segmentSize: segmentSize,
+		shutdownCh:  make(chan struct{}),
 	}
 
 	w.protected.nextTx = lastIndex + 1
@@ -246,7 +257,8 @@ func (w *FileWAL) run(ctx context.Context) {
 		case <-ticker.C:
 			batch := batch[:0]
 			w.protected.Lock()
-			for w.protected.queue.Len() > 0 {
+			batchSize := 0
+			for w.protected.queue.Len() > 0 && batchSize < w.segmentSize {
 				if minTx := w.protected.queue[0].tx; minTx != w.protected.nextTx {
 					if minTx < w.protected.nextTx {
 						// The next entry must be dropped otherwise progress
@@ -258,11 +270,14 @@ func (w *FileWAL) run(ctx context.Context) {
 							"found", minTx,
 						)
 						_ = heap.Pop(&w.protected.queue)
+						w.metrics.walQueueSize.Sub(1)
 					}
 					break
 				}
 				r := heap.Pop(&w.protected.queue).(*logRequest)
+				w.metrics.walQueueSize.Sub(1)
 				batch = append(batch, r)
+				batchSize += len(r.data)
 				w.protected.nextTx++
 			}
 			// truncateTx will be non-zero if we either are about to log a
@@ -393,6 +408,7 @@ func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
 
 	w.protected.Lock()
 	heap.Push(&w.protected.queue, r)
+	w.metrics.walQueueSize.Add(1)
 	w.protected.Unlock()
 
 	return nil
@@ -451,6 +467,7 @@ func (w *FileWAL) LogRecord(tx uint64, txnMetadata []byte, table string, record 
 
 	w.protected.Lock()
 	heap.Push(&w.protected.queue, r)
+	w.metrics.walQueueSize.Add(1)
 	w.protected.Unlock()
 
 	return nil
