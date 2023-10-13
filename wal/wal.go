@@ -67,7 +67,10 @@ type fileWALMetrics struct {
 	walQueueSize          prometheus.Gauge
 }
 
-const dirPerms = os.FileMode(0o750)
+const (
+	dirPerms           = os.FileMode(0o750)
+	progressLogTimeout = 10 * time.Second
+)
 
 type FileWAL struct {
 	logger log.Logger
@@ -94,6 +97,9 @@ type FileWAL struct {
 	// segmentSize indicates what the underlying WAL segment size is. This helps
 	// the run goroutine size batches more or less appropriately.
 	segmentSize int
+	// lastTimeProgressWasMade tracks just that and serves to log information in
+	// case the WAL has not made progress in some time.
+	lastTimeProgressWasMade time.Time
 
 	cancel       func()
 	shutdownCh   chan struct{}
@@ -271,7 +277,19 @@ func (w *FileWAL) run(ctx context.Context) {
 						)
 						_ = heap.Pop(&w.protected.queue)
 						w.metrics.walQueueSize.Sub(1)
+						// Keep on going since there might be other transactions
+						// below this one.
+						continue
 					}
+					if sinceProgress := time.Since(w.lastTimeProgressWasMade); sinceProgress > progressLogTimeout {
+						level.Info(w.logger).Log(
+							"msg", "wal has not made progress",
+							"since", sinceProgress,
+							"next_expected_tx", w.protected.nextTx,
+							"min_tx", minTx,
+						)
+					}
+					// Next expected tx has not yet been seen.
 					break
 				}
 				r := heap.Pop(&w.protected.queue).(*logRequest)
@@ -280,6 +298,7 @@ func (w *FileWAL) run(ctx context.Context) {
 				batchSize += len(r.data)
 				w.protected.nextTx++
 			}
+			w.lastTimeProgressWasMade = time.Now()
 			// truncateTx will be non-zero if we either are about to log a
 			// record with a txn past the txn to truncate, or we have logged one
 			// in the past.
@@ -434,6 +453,19 @@ func (w *FileWAL) writeRecord(buf *bytes.Buffer, record arrow.Record) error {
 }
 
 func (w *FileWAL) LogRecord(tx uint64, txnMetadata []byte, table string, record arrow.Record) error {
+	w.protected.Lock()
+	nextTx := w.protected.nextTx
+	w.protected.Unlock()
+	if tx < nextTx {
+		// Transaction should not be logged. This could happen if a truncation
+		// has been issued simultaneously as logging a WAL record.
+		level.Warn(w.logger).Log(
+			"msg", "attempted to log txn below next expected txn",
+			"tx", tx,
+			"next_tx", nextTx,
+		)
+		return nil
+	}
 	buf := w.getArrowBuf()
 	defer w.putArrowBuf(buf)
 	if err := w.writeRecord(buf, record); err != nil {
