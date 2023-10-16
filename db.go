@@ -521,6 +521,11 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		}
 		return nil
 	}(); dbSetupErr != nil {
+		level.Warn(s.logger).Log(
+			"msg", "error setting up db",
+			"name", name,
+			"err", dbSetupErr,
+		)
 		// closeInternal handles closing partially set fields in the db without
 		// rotating blocks etc... that the public Close method does.
 		_ = db.closeInternal()
