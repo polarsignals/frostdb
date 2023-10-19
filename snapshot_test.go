@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -348,5 +349,79 @@ func TestSnapshotWithWAL(t *testing.T) {
 			require.Equal(t, firstWriteTimestamp+1, r.Column(0).(*array.Int64).Value(0))
 			return nil
 		}),
+	)
+}
+
+func TestSnapshotIsTakenOnUncompressedInserts(t *testing.T) {
+	const dbAndTableName = "test"
+	var (
+		ctx = context.Background()
+		dir = t.TempDir()
+	)
+	const (
+		numInserts                     = 100
+		expectedUncompressedInsertSize = 2000
+	)
+	c, err := New(
+		WithWAL(),
+		WithStoragePath(dir),
+		WithSnapshotTriggerSize(expectedUncompressedInsertSize),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(ctx, dbAndTableName)
+	require.NoError(t, err)
+
+	// Create a schema that is highly compressible.
+	schema := &schemapb.Schema{
+		Name: dbAndTableName,
+		Columns: []*schemapb.Column{
+			{
+				Name: "bytes",
+				StorageLayout: &schemapb.StorageLayout{
+					Type:     schemapb.StorageLayout_TYPE_STRING,
+					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				},
+			},
+		},
+	}
+
+	table, err := db.Table(dbAndTableName, NewTableConfig(schema))
+	require.NoError(t, err)
+
+	type model struct {
+		Bytes string
+	}
+	for i := 0; i < numInserts; i++ {
+		_, err = table.Write(ctx, model{Bytes: "test"})
+		require.NoError(t, err)
+	}
+	activeBlock := table.ActiveBlock()
+	require.True(t, activeBlock.Size() == expectedUncompressedInsertSize, "expected uncompressed insert size is wrong. The test should be updated.")
+	// This will force a compaction of all the inserts we have so far.
+	require.NoError(t, table.EnsureCompaction())
+	require.True(
+		t,
+		activeBlock.Size() < activeBlock.uncompressedInsertsSize.Load(),
+		"expected uncompressed inserts to be larger than compressed inserts. Did the compaction run?",
+	)
+	require.Zero(t, activeBlock.lastSnapshotSize.Load(), "expected no snapshots to be taken so far")
+
+	// These writes should now trigger a snapshot even though the active block
+	// size is much lower than the uncompressed insert size.
+	for i := 0; i < 2; i++ {
+		_, err = table.Write(ctx, model{Bytes: "test"})
+		require.NoError(t, err)
+	}
+
+	require.Eventually(
+		t,
+		func() bool {
+			return activeBlock.lastSnapshotSize.Load() > 0
+		},
+		1*time.Second,
+		10*time.Millisecond,
+		"expected snapshot to be taken",
 	)
 }

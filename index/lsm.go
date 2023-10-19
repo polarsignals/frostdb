@@ -170,7 +170,7 @@ func (l *LSM) Add(tx uint64, record arrow.Record) {
 			l.compactionWg.Add(1)
 			go func() {
 				defer l.compactionWg.Done()
-				_ = l.compact()
+				_ = l.compact(false)
 			}()
 		}
 	}
@@ -289,10 +289,12 @@ func (l *LSM) findNode(node *Node) *Node {
 	return list
 }
 
-func (l *LSM) Compact() error {
+// EnsureCompaction forces a compaction of all levels, regardless of whether the
+// levels are below the target size.
+func (l *LSM) EnsureCompaction() error {
 	for !l.compacting.CompareAndSwap(false, true) { // TODO: should backoff retry this probably
 	}
-	return l.compact()
+	return l.compact(true /* ignoreSizes */)
 }
 
 func (l *LSM) Rotate(level SentinelType, externalWriter func([]*parts.Part) (*parts.Part, int64, int64, error)) error {
@@ -420,7 +422,7 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 
 // compact is a cascading compaction routine. It will start at the lowest level and compact until the next level is either the max level or the next level does not exceed the max size.
 // compact can not be run concurrently.
-func (l *LSM) compact() error {
+func (l *LSM) compact(ignoreSizes bool) error {
 	defer l.compacting.Store(false)
 	start := time.Now()
 	defer func() {
@@ -428,7 +430,7 @@ func (l *LSM) compact() error {
 	}()
 
 	for i := 0; i < len(l.configs)-1; i++ {
-		if l.sizes[i].Load() >= l.configs[i].MaxSize {
+		if ignoreSizes || l.sizes[i].Load() >= l.configs[i].MaxSize {
 			if err := l.merge(SentinelType(i), nil); err != nil {
 				level.Error(l.logger).Log("msg", "failed to merge level", "level", i, "err", err)
 				return err
