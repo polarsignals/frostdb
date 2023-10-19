@@ -219,6 +219,7 @@ type tableMetrics struct {
 	blockPersisted       prometheus.Counter
 	blockRotated         prometheus.Counter
 	rowsInserted         prometheus.Counter
+	rowBytesInserted     prometheus.Counter
 	zeroRowsInserted     prometheus.Counter
 	rowInsertSize        prometheus.Histogram
 	lastCompletedBlockTx prometheus.Gauge
@@ -294,6 +295,10 @@ func newTable(
 			rowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "frostdb_table_rows_inserted_total",
 				Help: "Number of rows inserted into table.",
+			}),
+			rowBytesInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+				Name: "frostdb_table_row_bytes_inserted_total",
+				Help: "Number of bytes inserted into table.",
 			}),
 			zeroRowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 				Name: "frostdb_table_zero_rows_inserted_total",
@@ -875,6 +880,7 @@ func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.R
 	defer func() {
 		t.table.metrics.rowsInserted.Add(float64(record.NumRows()))
 		t.table.metrics.rowInsertSize.Observe(float64(record.NumRows()))
+		t.table.metrics.rowBytesInserted.Add(float64(recordSize))
 	}()
 
 	if record.NumRows() == 0 {
