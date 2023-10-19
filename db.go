@@ -86,7 +86,7 @@ func New(
 		reg:              prometheus.NewRegistry(),
 		logger:           log.NewNopLogger(),
 		tracer:           trace.NewNoopTracerProvider().Tracer(""),
-		indexConfig:      DefaultIndexConfig,
+		indexConfig:      DefaultIndexConfig(),
 		indexDegree:      2,
 		splitSize:        2,
 		granuleSizeBytes: 1 * 1024 * 1024,   // 1MB granule size before splitting
@@ -232,10 +232,18 @@ func WithCompactionAfterRecovery(tableNames []string) Option {
 	}
 }
 
-// WithSnapshotTriggerSize specifies a table block size in bytes that will
-// trigger a snapshot of the whole database. This should be less than the active
-// memory size. If 0, snapshots are disabled. Note that snapshots (if enabled)
-// are also triggered on block rotation of any database table.
+// WithSnapshotTriggerSize specifies a size in bytes of uncompressed inserts
+// that will trigger a snapshot of the whole database. This can be larger than
+// the active memory size given that the active memory size tracks the size of
+// *compressed* data, while snapshots are triggered based on the *uncompressed*
+// data inserted into the database. The reason this choice was made is that
+// if a database instance crashes, it is forced to reread all uncompressed
+// inserts since the last snapshot from the WAL, which could potentially lead
+// to unrecoverable OOMs on startup. Defining the snapshot trigger in terms of
+// uncompressed bytes limits the memory usage on recovery to at most the
+// snapshot trigger size (as long as snapshots were successful).
+// If 0, snapshots are disabled. Note that snapshots (if enabled) are also
+// triggered on block rotation of any database table.
 // Snapshots are complementary to the WAL and will also be disabled if the WAL
 // is disabled.
 func WithSnapshotTriggerSize(size int64) Option {

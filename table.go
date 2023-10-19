@@ -17,6 +17,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/apache/arrow/go/v14/arrow/util"
 	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -44,14 +45,19 @@ import (
 )
 
 var (
-	ErrNoSchema        = fmt.Errorf("no schema")
-	ErrTableClosing    = fmt.Errorf("table closing")
-	DefaultIndexConfig = []*index.LevelConfig{
+	ErrNoSchema     = fmt.Errorf("no schema")
+	ErrTableClosing = fmt.Errorf("table closing")
+)
+
+// DefaultIndexConfig returns the default level configs used. This is a function
+// So that any modifications to the result will not affect the default config.
+func DefaultIndexConfig() []*index.LevelConfig {
+	return []*index.LevelConfig{
 		{Level: index.L0, MaxSize: 1024 * 1024 * 15},  // Compact to Parquet after 15MiB of data
 		{Level: index.L1, MaxSize: 1024 * 1024 * 128}, // Compact to a single Parquet after 128MiB of Parquet files
 		{Level: index.L2, MaxSize: 1024 * 1024 * 512}, // Final level. Rotate after 512MiB of Parquet files
 	}
-)
+}
 
 type ErrWriteRow struct{ err error }
 
@@ -190,10 +196,18 @@ type TableBlock struct {
 	minTx  uint64
 	prevTx uint64
 
-	// lastSnapshotSize keeps track of the size of the block when it last
-	// triggered a snapshot.
+	// uncompressedInsertsSize keeps track of the cumulative L0 size. This is
+	// not the size of the block, since these inserts are eventually compressed.
+	// However, it serves to determine when to perform a snapshot, since these
+	// uncompressed inserts are stored in the WAL, and if the node crashes, it
+	// is obliged to re-read all of these uncompressed inserts into memory,
+	// potentially causing OOMs.
+	uncompressedInsertsSize atomic.Int64
+	// lastSnapshotSize keeps track of the uncompressedInsertsSize when a
+	// snapshot was last triggered.
 	lastSnapshotSize atomic.Int64
-	index            *index.LSM
+
+	index *index.LSM
 
 	pendingWritersWg sync.WaitGroup
 	pendingReadersWg sync.WaitGroup
@@ -571,12 +585,12 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 			return nil, nil, err
 		}
 
-		blockSize := block.Size()
+		uncompressedInsertsSize := block.uncompressedInsertsSize.Load()
 		if t.db.columnStore.snapshotTriggerSize != 0 &&
 			// If size-lastSnapshotSize > snapshotTriggerSize (a column store
 			// option), a new snapshot is triggered. This is basically the size
 			// of the new data in this block since the last snapshot.
-			blockSize-block.lastSnapshotSize.Load() > t.db.columnStore.snapshotTriggerSize {
+			uncompressedInsertsSize-block.lastSnapshotSize.Load() > t.db.columnStore.snapshotTriggerSize {
 			// context.Background is used here for the snapshot since callers
 			// might cancel the context when the write is finished but the
 			// snapshot is not.
@@ -585,10 +599,10 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 			t.db.asyncSnapshot(context.Background(), func() {
 				level.Debug(t.logger).Log(
 					"msg", "successful snapshot on block size trigger",
-					"block_size", humanize.IBytes(uint64(blockSize)),
+					"block_size", humanize.IBytes(uint64(uncompressedInsertsSize)),
 					"last_snapshot_size", humanize.IBytes(uint64(block.lastSnapshotSize.Load())),
 				)
-				block.lastSnapshotSize.Store(blockSize)
+				block.lastSnapshotSize.Store(uncompressedInsertsSize)
 				if err := t.db.reclaimDiskSpace(context.Background()); err != nil {
 					level.Error(t.logger).Log(
 						"msg", "failed to reclaim disk space after snapshot",
@@ -598,6 +612,7 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 				}
 			})
 		}
+		blockSize := block.Size()
 		if blockSize < t.db.columnStore.activeMemorySize || t.db.columnStore.manualBlockRotation {
 			return block, close, nil
 		}
@@ -852,10 +867,11 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 
 // EnsureCompaction forces a TableBlock compaction.
 func (t *TableBlock) EnsureCompaction() error {
-	return t.index.Compact()
+	return t.index.EnsureCompaction()
 }
 
 func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.Record) error {
+	recordSize := util.TotalRecordSize(record)
 	defer func() {
 		t.table.metrics.rowsInserted.Add(float64(record.NumRows()))
 		t.table.metrics.rowInsertSize.Observe(float64(record.NumRows()))
@@ -871,6 +887,7 @@ func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.R
 
 	t.index.Add(tx, record)
 	t.table.metrics.numParts.Inc()
+	t.uncompressedInsertsSize.Add(recordSize)
 	return nil
 }
 
