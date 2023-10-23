@@ -220,14 +220,18 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, writeSnapshot func(co
 		}
 		return nil
 	}(); err != nil {
-		db.metrics.snapshotMetrics.snapshotsTotal.WithLabelValues("false").Inc()
+		if db.metrics != nil {
+			db.metrics.snapshotMetrics.snapshotsTotal.WithLabelValues("false").Inc()
+		}
 		return err
 	}
-	db.metrics.snapshotMetrics.snapshotsTotal.WithLabelValues("true").Inc()
-	if fileSize > 0 {
-		db.metrics.snapshotMetrics.snapshotFileSizeBytes.Set(float64(fileSize))
+	if db.metrics != nil {
+		db.metrics.snapshotMetrics.snapshotsTotal.WithLabelValues("true").Inc()
+		if fileSize > 0 {
+			db.metrics.snapshotMetrics.snapshotFileSizeBytes.Set(float64(fileSize))
+		}
+		db.metrics.snapshotMetrics.snapshotDurationHistogram.Observe(time.Since(start).Seconds())
 	}
-	db.metrics.snapshotMetrics.snapshotDurationHistogram.Observe(time.Since(start).Seconds())
 	// TODO(asubiotto): If snapshot file sizes become too large, investigate
 	// adding compression.
 	return nil
