@@ -843,6 +843,14 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	if lastTx.TxnID > resetTxn.TxnID {
 		resetTxn = lastTx
 	}
+
+	db.mtx.Lock()
+	for _, table := range db.tables {
+		block := table.ActiveBlock()
+		block.uncompressedInsertsSize.Store(block.Index().LevelSize(index.L0))
+	}
+	db.mtx.Unlock()
+
 	db.resetToTxn(resetTxn, nil)
 	level.Info(db.logger).Log(
 		append(
