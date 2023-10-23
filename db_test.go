@@ -45,7 +45,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		WithWAL(),
 		WithStoragePath(dir),
 		WithReadWriteStorage(sinksource),
-		WithActiveMemorySize(100*1024),
+		WithActiveMemorySize(100*KB),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -70,7 +70,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 		WithWAL(),
 		WithStoragePath(dir),
 		WithReadWriteStorage(sinksource),
-		WithActiveMemorySize(100*1024),
+		WithActiveMemorySize(100*KB),
 	)
 	require.NoError(t, err)
 	defer c.Close()
@@ -1357,7 +1357,7 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 		WithWAL(),
 		WithStoragePath(dir),
 		WithReadWriteStorage(sinksource),
-		WithActiveMemorySize(100*1024),
+		WithActiveMemorySize(100*KB),
 	)
 	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
@@ -1382,7 +1382,7 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 		WithWAL(),
 		WithStoragePath(dir),
 		WithReadWriteStorage(sinksource),
-		WithActiveMemorySize(100*1024),
+		WithActiveMemorySize(100*KB),
 	)
 	require.NoError(t, err)
 	defer c.Close()
@@ -1791,7 +1791,7 @@ func Test_DB_DropStorage(t *testing.T) {
 		WithLogger(logger),
 		WithWAL(),
 		WithStoragePath(dir),
-		WithActiveMemorySize(1024*1024),
+		WithActiveMemorySize(1*MB),
 	)
 	defer func() {
 		_ = c.Close()
@@ -1833,7 +1833,7 @@ func Test_DB_DropStorage(t *testing.T) {
 		WithLogger(logger),
 		WithWAL(),
 		WithStoragePath(dir),
-		WithActiveMemorySize(1024*1024),
+		WithActiveMemorySize(1*MB),
 	)
 	defer func() {
 		_ = c.Close()
@@ -1933,8 +1933,8 @@ func Test_DB_SnapshotOnClose(t *testing.T) {
 		WithLogger(logger),
 		WithStoragePath(dir),
 		WithWAL(),
-		WithActiveMemorySize(1024*1024*1024),
-		WithSnapshotTriggerSize(1024*1024*1024),
+		WithActiveMemorySize(1*GB),
+		WithSnapshotTriggerSize(1*GB),
 		WithManualBlockRotation(),
 	)
 	require.NoError(t, err)

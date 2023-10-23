@@ -36,6 +36,14 @@ import (
 	"github.com/polarsignals/frostdb/wal"
 )
 
+const (
+	B  = 1
+	KB = 1024 * B
+	MB = 1024 * KB
+	GB = 1024 * MB
+	TB = 1024 * GB
+)
+
 type ColumnStore struct {
 	mtx                 *sync.RWMutex
 	dbs                 map[string]*DB
@@ -89,8 +97,8 @@ func New(
 		indexConfig:      DefaultIndexConfig(),
 		indexDegree:      2,
 		splitSize:        2,
-		granuleSizeBytes: 1 * 1024 * 1024,   // 1MB granule size before splitting
-		activeMemorySize: 512 * 1024 * 1024, // 512MB
+		granuleSizeBytes: 1 * MB,
+		activeMemorySize: 512 * MB,
 	}
 
 	for _, option := range options {
