@@ -41,7 +41,7 @@ const (
 	KiB = 1024 * B
 	MiB = 1024 * KiB
 	GiB = 1024 * MiB
-	Tib = 1024 * GiB
+	TiB = 1024 * GiB
 )
 
 type ColumnStore struct {
