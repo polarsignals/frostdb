@@ -37,11 +37,11 @@ import (
 )
 
 const (
-	B  = 1
-	KB = 1024 * B
-	MB = 1024 * KB
-	GB = 1024 * MB
-	TB = 1024 * GB
+	B   = 1
+	KiB = 1024 * B
+	MiB = 1024 * KiB
+	GiB = 1024 * MiB
+	Tib = 1024 * GiB
 )
 
 type ColumnStore struct {
@@ -97,8 +97,8 @@ func New(
 		indexConfig:      DefaultIndexConfig(),
 		indexDegree:      2,
 		splitSize:        2,
-		granuleSizeBytes: 1 * MB,
-		activeMemorySize: 512 * MB,
+		granuleSizeBytes: 1 * MiB,
+		activeMemorySize: 512 * MiB,
 	}
 
 	for _, option := range options {
