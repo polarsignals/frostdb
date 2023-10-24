@@ -1135,7 +1135,7 @@ func Test_Table_DynamicColumnNotDefined(t *testing.T) {
 func TestTableUniquePrimaryIndex(t *testing.T) {
 	c, err := New(WithGranuleSizeBytes(1), WithIndexConfig([]*index.LevelConfig{
 		{Level: index.L0, MaxSize: 180},
-		{Level: index.L1, MaxSize: 1024 * 1024 * 1024 * 1024},
+		{Level: index.L1, MaxSize: 1 * TiB},
 	}))
 	require.NoError(t, err)
 	defer c.Close()

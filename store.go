@@ -175,7 +175,7 @@ func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName str
 	file, err := parquet.OpenFile(
 		r,
 		size,
-		parquet.ReadBufferSize(5*1024*1024), // 5MB read buffers
+		parquet.ReadBufferSize(5*MiB), // 5MB read buffers
 		parquet.SkipBloomFilters(true),
 		parquet.FileReadMode(parquet.ReadModeAsync),
 	)
