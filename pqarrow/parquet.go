@@ -64,10 +64,10 @@ func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) (
 
 // RecordToRow converts an arrow record with dynamic columns into a row using a dynamic parquet schema.
 func RecordToRow(schema *dynparquet.Schema, final *parquet.Schema, record arrow.Record, index int) (parquet.Row, error) {
-	return getRecordRow(schema, final, record, index, final.Fields(), record.Schema().Fields())
+	return getRecordRow(schema, record, index, final.Fields(), record.Schema().Fields())
 }
 
-func getRecordRow(schema *dynparquet.Schema, final *parquet.Schema, record arrow.Record, index int, finalFields []parquet.Field, recordFields []arrow.Field) (parquet.Row, error) {
+func getRecordRow(schema *dynparquet.Schema, record arrow.Record, index int, finalFields []parquet.Field, recordFields []arrow.Field) (parquet.Row, error) {
 	var err error
 	row := make([]parquet.Value, 0, len(finalFields))
 	for i, f := range finalFields { // assuming flat schema
@@ -127,28 +127,40 @@ func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, 
 }
 
 func RecordToFile(schema *dynparquet.Schema, w dynparquet.ParquetWriter, r arrow.Record) error {
+	return RecordsToFile(schema, w, []arrow.Record{r})
+}
+
+func RecordsToFile(schema *dynparquet.Schema, w dynparquet.ParquetWriter, recs []arrow.Record) error {
+	dynColSets := make([]map[string][]string, 0, len(recs))
+	for _, r := range recs {
+		dynColSets = append(dynColSets, RecordDynamicCols(r))
+	}
+	dynCols := dynparquet.MergeDynamicColumnSets(dynColSets)
 	defer w.Close()
 
-	ps, err := schema.GetDynamicParquetSchema(RecordDynamicCols(r))
+	ps, err := schema.GetDynamicParquetSchema(dynCols)
 	if err != nil {
 		return err
 	}
 	defer schema.PutPooledParquetSchema(ps)
 
-	rows := make([]parquet.Row, 0, r.NumRows())
 	finalFields := ps.Schema.Fields()
-	recordFields := r.Schema().Fields()
-	for i := 0; i < int(r.NumRows()); i++ {
-		row, err := getRecordRow(schema, ps.Schema, r, i, finalFields, recordFields)
-		if err != nil {
+
+	rows := make([]parquet.Row, 0)
+	for _, r := range recs {
+		rows = rows[:0]
+		recordFields := r.Schema().Fields()
+		for i := 0; i < int(r.NumRows()); i++ {
+			row, err := getRecordRow(schema, r, i, finalFields, recordFields)
+			if err != nil {
+				return err
+			}
+			rows = append(rows, row)
+		}
+
+		if _, err := w.WriteRows(rows); err != nil {
 			return err
 		}
-		rows = append(rows, row)
-	}
-
-	_, err = w.WriteRows(rows)
-	if err != nil {
-		return err
 	}
 
 	return nil

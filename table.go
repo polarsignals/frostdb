@@ -1157,49 +1157,20 @@ func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []*part
 // compactParts will compact the given parts into a Parquet file written to w.
 // It returns the size in bytes of the compacted parts.
 func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
-	// To reduce the number of open cursors at the same time (which helps in
-	// memory usage reduction), find which parts do not overlap with any other
-	// part. These parts can be sorted and read one by one.
-	// This compaction code assumes the invariant that rows are sorted within
-	// parts. This helps reduce memory usage in various ways.
-	nonOverlappingParts, overlappingParts, err := parts.FindMaximumNonOverlappingSet(t.schema, compact)
+	preCompactionSize := int64(0)
+	for _, p := range compact {
+		preCompactionSize += p.Size()
+	}
+
+	bufs, err := t.buffersForCompaction(w, compact)
 	if err != nil {
 		return 0, err
 	}
-	bufs := make([]dynparquet.DynamicRowGroup, 0, len(compact))
-	var size int64
-	if len(nonOverlappingParts) == 1 {
-		// Not worth doing anything if only one part does not overlap.
-		overlappingParts = append(overlappingParts, nonOverlappingParts[0])
-	} else if len(nonOverlappingParts) > 0 {
-		// nonOverlappingParts is already sorted.
-		rowGroups := make([]dynparquet.DynamicRowGroup, 0, len(nonOverlappingParts))
-		for _, p := range nonOverlappingParts {
-			size += p.Size()
-			buf, err := p.AsSerializedBuffer(t.schema)
-			if err != nil {
-				return 0, err
-			}
-			rowGroups = append(rowGroups, buf.MultiDynamicRowGroup())
-		}
-		// WithAlreadySorted ensures that a parquet.MultiRowGroup is created
-		// here, which is much cheaper than actually merging all these row
-		// groups.
-		merged, err := t.schema.MergeDynamicRowGroups(rowGroups, dynparquet.WithAlreadySorted())
-		if err != nil {
-			return 0, err
-		}
-		bufs = append(bufs, merged)
+	if bufs == nil {
+		// Optimization.
+		return preCompactionSize, nil
 	}
 
-	for _, part := range overlappingParts {
-		size += part.Size()
-		buf, err := part.AsSerializedBuffer(t.schema)
-		if err != nil {
-			return 0, err
-		}
-		bufs = append(bufs, buf.MultiDynamicRowGroup())
-	}
 	merged, err := t.schema.MergeDynamicRowGroups(bufs)
 	if err != nil {
 		return 0, err
@@ -1232,5 +1203,98 @@ func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) 
 		return 0, err
 	}
 
-	return size, nil
+	return preCompactionSize, nil
+}
+
+// buffersForCompaction, given a slice of possibly overlapping parts, returns
+// the minimum slice of dynamic row groups to be merged together for compaction.
+// If nil, nil is returned, the resulting serialized buffer is written directly
+// to w as an optimization.
+func (t *Table) buffersForCompaction(w io.Writer, inputParts []*parts.Part) ([]dynparquet.DynamicRowGroup, error) {
+	nonOverlappingParts, overlappingParts, err := parts.FindMaximumNonOverlappingSet(t.schema, inputParts)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]dynparquet.DynamicRowGroup, 0, len(inputParts))
+	for _, p := range overlappingParts {
+		buf, err := p.AsSerializedBuffer(t.schema)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, buf.MultiDynamicRowGroup())
+	}
+	if len(nonOverlappingParts) == 0 {
+		return result, nil
+	}
+
+	allArrow := true
+	for _, p := range nonOverlappingParts {
+		if p.Record() == nil {
+			allArrow = false
+			break
+		}
+	}
+	if len(nonOverlappingParts) == 1 || !allArrow {
+		// Not worth doing anything if only one part does not overlap. If there
+		// is at least one non-arrow part then optimizations cannot be made.
+		nonOverlappingRowGroups := make([]dynparquet.DynamicRowGroup, 0, len(nonOverlappingParts))
+		for _, p := range nonOverlappingParts {
+			buf, err := p.AsSerializedBuffer(t.schema)
+			if err != nil {
+				return nil, err
+			}
+			nonOverlappingRowGroups = append(nonOverlappingRowGroups, buf.MultiDynamicRowGroup())
+		}
+		merged := nonOverlappingRowGroups[0]
+		if len(nonOverlappingRowGroups) > 1 {
+			// WithAlreadySorted ensures that a parquet.MultiRowGroup is created
+			// here, which is much cheaper than actually merging all these row
+			// groups.
+			merged, err = t.schema.MergeDynamicRowGroups(nonOverlappingRowGroups, dynparquet.WithAlreadySorted())
+			if err != nil {
+				return nil, err
+			}
+		}
+		result = append(result, merged)
+		return result, nil
+	}
+
+	// All the non-overlapping parts are arrow records, and can therefore be
+	// directly written to a parquet file. If there are no overlapping parts,
+	// write directly to w.
+	var b bytes.Buffer
+	if len(overlappingParts) > 0 {
+		w = &b
+	}
+
+	records := make([]arrow.Record, 0, len(nonOverlappingParts))
+	dynColSets := make([]map[string][]string, 0, len(nonOverlappingParts))
+	for _, p := range nonOverlappingParts {
+		r := p.Record()
+		dynColSets = append(dynColSets, pqarrow.RecordDynamicCols(r))
+		records = append(records, r)
+	}
+	dynCols := dynparquet.MergeDynamicColumnSets(dynColSets)
+
+	pw, err := t.schema.GetWriter(w, dynCols)
+	if err != nil {
+		return nil, err
+	}
+	defer t.schema.PutWriter(pw)
+
+	if err := pqarrow.RecordsToFile(t.schema, pw, records); err != nil {
+		return nil, err
+	}
+
+	if len(overlappingParts) == 0 {
+		// Result was written directly to w.
+		return nil, nil
+	}
+
+	buf, err := dynparquet.ReaderFromBytes(b.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, buf.MultiDynamicRowGroup())
+	return result, nil
 }

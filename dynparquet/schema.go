@@ -1488,10 +1488,10 @@ func mergeDynamicRowGroupDynamicColumns(rowGroups []DynamicRowGroup) map[string]
 		sets = append(sets, batch.DynamicColumns())
 	}
 
-	return mergeDynamicColumnSets(sets)
+	return MergeDynamicColumnSets(sets)
 }
 
-func mergeDynamicColumnSets(sets []map[string][]string) map[string][]string {
+func MergeDynamicColumnSets(sets []map[string][]string) map[string][]string {
 	dynamicColumns := map[string][][]string{}
 	for _, set := range sets {
 		for k, v := range set {
