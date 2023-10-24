@@ -689,6 +689,11 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return err
 	}
 
+	// performSnapshot is set to true if a snapshot should be performed after
+	// replay. This is set in cases where there could be "dead bytes" in the
+	// WAL (i.e. entries that occupy space on disk but are useless).
+	performSnapshot := false
+
 	// Writes are performed concurrently to speed up replay.
 	var writeWg errgroup.Group
 	writeWg.SetLimit(runtime.GOMAXPROCS(0))
@@ -763,6 +768,11 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 
 			// If we get to this point it means a block was finished but did
 			// not get persisted.
+			level.Info(db.logger).Log(
+				"msg", "writing unfinished block in recovery",
+				"table", tableName,
+				"tx", tx,
+			)
 			table.pendingBlocks[table.active] = struct{}{}
 			go table.writeBlock(table.active, db.columnStore.manualBlockRotation, false)
 
@@ -832,6 +842,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			})
 
 		case *walpb.Entry_TableBlockPersisted_:
+			// If a block was persisted but the entry still exists in the WAL,
+			// a snapshot was not performed after persisting the block. Perform
+			// one now to clean up the WAL.
+			performSnapshot = true
 			return nil
 		case *walpb.Entry_Snapshot_:
 			return nil
@@ -851,7 +865,28 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	if lastTx.TxnID > resetTxn.TxnID {
 		resetTxn = lastTx
 	}
+
+	db.mtx.Lock()
+	for _, table := range db.tables {
+		block := table.ActiveBlock()
+		block.uncompressedInsertsSize.Store(block.Index().LevelSize(index.L0))
+	}
+	db.mtx.Unlock()
+
 	db.resetToTxn(resetTxn, nil)
+	if performSnapshot && db.columnStore.snapshotTriggerSize != 0 {
+		level.Info(db.logger).Log(
+			"msg", "performing snapshot after recovery",
+		)
+		db.snapshot(ctx, false, func() {
+			if err := db.reclaimDiskSpace(ctx, wal); err != nil {
+				level.Error(db.logger).Log(
+					"msg", "failed to reclaim disk space after snapshot during recovery",
+					"err", err,
+				)
+			}
+		})
+	}
 	level.Info(db.logger).Log(
 		append(
 			[]any{
@@ -902,7 +937,7 @@ func (db *DB) Close(options ...CloseOption) error {
 		start := time.Now()
 		db.snapshot(context.Background(), false, func() {
 			level.Info(db.logger).Log("msg", "snapshot on close completed", "duration", time.Since(start))
-			if err := db.reclaimDiskSpace(context.Background()); err != nil {
+			if err := db.reclaimDiskSpace(context.Background(), nil); err != nil {
 				level.Error(db.logger).Log(
 					"msg", "failed to reclaim disk space after snapshot",
 					"err", err,
@@ -946,8 +981,10 @@ func (db *DB) maintainWAL() {
 }
 
 // reclaimDiskSpace attempts to read the latest valid snapshot txn and removes
-// any snapshots/wal entries that are older than the snapshot tx.
-func (db *DB) reclaimDiskSpace(ctx context.Context) error {
+// any snapshots/wal entries that are older than the snapshot tx. Since this can
+// be called before db.wal is set, the caller may optionally pass in a WAL to
+// truncate.
+func (db *DB) reclaimDiskSpace(ctx context.Context, wal WAL) error {
 	if db.columnStore.testingOptions.disableReclaimDiskSpaceOnSnapshot {
 		return nil
 	}
@@ -961,7 +998,10 @@ func (db *DB) reclaimDiskSpace(ctx context.Context) error {
 	if err := db.cleanupSnapshotDir(ctx, validSnapshotTxn); err != nil {
 		return err
 	}
-	return db.wal.Truncate(validSnapshotTxn)
+	if wal == nil {
+		wal = db.wal
+	}
+	return wal.Truncate(validSnapshotTxn)
 }
 
 func (db *DB) getMinTXPersisted() uint64 {

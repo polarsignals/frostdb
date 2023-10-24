@@ -112,12 +112,13 @@ func (dyn dynamicSortingColumn) Path() []string { return dyn.path }
 // ability that any column definition that is dynamic will have columns
 // dynamically created as their column name is seen for the first time.
 type Schema struct {
-	def                proto.Message
-	columns            []ColumnDefinition
-	columnIndexes      map[string]int
-	sortingColumns     []SortingColumn
-	dynamicColumns     []int
-	uniquePrimaryIndex bool
+	def            proto.Message
+	columns        []ColumnDefinition
+	columnIndexes  map[string]int
+	sortingColumns []SortingColumn
+	dynamicColumns []int
+
+	UniquePrimaryIndex bool
 
 	writers        *sync.Map
 	buffers        *sync.Map
@@ -557,7 +558,7 @@ func newSchema(
 		buffers:            &sync.Map{},
 		sortingSchemas:     &sync.Map{},
 		parquetSchemas:     &sync.Map{},
-		uniquePrimaryIndex: uniquePrimaryIndex,
+		UniquePrimaryIndex: uniquePrimaryIndex,
 	}
 
 	for i, col := range columns {
@@ -1245,15 +1246,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (Par
 		),
 		parquet.SortingWriterConfig(
 			parquet.SortingColumns(cols...),
-			parquet.DropDuplicatedRows(s.uniquePrimaryIndex),
 		),
-	}
-	if s.uniquePrimaryIndex {
-		return parquet.NewSortingWriter[any](
-			w,
-			32*1024,
-			writerOptions...,
-		), nil
 	}
 	return parquet.NewGenericWriter[any](w, writerOptions...), nil
 }

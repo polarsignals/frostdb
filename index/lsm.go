@@ -134,6 +134,11 @@ func (l *LSM) Size() int64 {
 	return size
 }
 
+// LevelSize returns the size of a specific level in bytes.
+func (l *LSM) LevelSize(t SentinelType) int64 {
+	return l.sizes[t].Load()
+}
+
 func validateLevels(levels []*LevelConfig) error {
 	for i, l := range levels {
 		if int(l.Level) != i {

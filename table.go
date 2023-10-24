@@ -466,7 +466,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 					"err", err,
 				)
 			}
-			if err := t.db.reclaimDiskSpace(ctx); err != nil {
+			if err := t.db.reclaimDiskSpace(ctx, nil); err != nil {
 				level.Error(t.logger).Log(
 					"msg", "failed to reclaim disk space after snapshot on block rotation",
 					"err", err,
@@ -608,7 +608,7 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 					"last_snapshot_size", humanize.IBytes(uint64(block.lastSnapshotSize.Load())),
 				)
 				block.lastSnapshotSize.Store(uncompressedInsertsSize)
-				if err := t.db.reclaimDiskSpace(context.Background()); err != nil {
+				if err := t.db.reclaimDiskSpace(context.Background(), nil); err != nil {
 					level.Error(t.logger).Log(
 						"msg", "failed to reclaim disk space after snapshot",
 						"err", err,
@@ -960,7 +960,7 @@ func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, op
 }
 
 // WriteRows will write the given rows to the underlying Parquet writer. It returns the number of rows written.
-func (p *parquetRowWriter) writeRows(rows parquet.Rows) (int, error) {
+func (p *parquetRowWriter) writeRows(rows parquet.RowReader) (int, error) {
 	written := 0
 	for p.maxNumRows == 0 || p.totalRowsWritten < p.maxNumRows {
 		if p.rowGroupSize > 0 && p.rowGroupRowsWritten+len(p.rowsBuf) > p.rowGroupSize {
@@ -1213,7 +1213,16 @@ func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) 
 
 		rows := merged.Rows()
 		defer rows.Close()
-		if _, err := p.writeRows(rows); err != nil {
+
+		var rowReader parquet.RowReader = rows
+		if t.schema.UniquePrimaryIndex {
+			// Given all inputs are sorted, we can deduplicate the rows using
+			// DedupeRowReader, which deduplicates consecutive rows that are
+			// equal on the sorting columns.
+			rowReader = parquet.DedupeRowReader(rows, merged.Schema().Comparator(merged.SortingColumns()...))
+		}
+
+		if _, err := p.writeRows(rowReader); err != nil {
 			return err
 		}
 

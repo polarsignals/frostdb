@@ -23,6 +23,7 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/query/physicalplan"
@@ -1629,6 +1630,81 @@ func TestDBRecover(t *testing.T) {
 		table, err := db.Table(dbAndTableName, NewTableConfig(dynparquet.SampleDefinition()))
 		require.NoError(t, err)
 		newWriteAndExpectWALRecord(t, db, table)
+	})
+
+	// SnapshotOnRecovery verifies that a snapshot is taken on recovery if the
+	// WAL indicates that a block was rotated but no snapshot was taken.
+	t.Run("SnapshotOnRecovery", func(t *testing.T) {
+		dir := setup(t, false)
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+			// This option will disable snapshots on block rotation.
+			WithSnapshotTriggerSize(0),
+		)
+		require.NoError(t, err)
+
+		snapshotsPath := filepath.Join(dir, "databases", dbAndTableName, "snapshots")
+		snapshots, err := os.ReadDir(snapshotsPath)
+		require.NoError(t, err)
+
+		seenSnapshots := make(map[string]struct{})
+		for _, s := range snapshots {
+			seenSnapshots[s.Name()] = struct{}{}
+		}
+
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+		table, err := db.Table(dbAndTableName, nil)
+		require.NoError(t, err)
+
+		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+
+		rec, err := dynparquet.NewTestSamples().ToRecord()
+		require.NoError(t, err)
+
+		insertTx, err := table.InsertRecord(ctx, rec)
+		require.NoError(t, err)
+
+		// RotateBlock again, this should log a couple of persisted block WAL
+		// entries.
+		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+		require.NoError(t, c.Close())
+
+		c, err = New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+			// Enable snapshots.
+			WithSnapshotTriggerSize(1),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+
+		snapshots, err = os.ReadDir(snapshotsPath)
+		require.NoError(t, err)
+
+		for _, s := range snapshots {
+			tx, err := getTxFromSnapshotFileName(s.Name())
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, tx, insertTx, "expected only snapshots after insert txn")
+		}
+		db, err = c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool {
+			numBlockPersists := 0
+			require.NoError(t, db.wal.Replay(0, func(tx uint64, entry *walpb.Record) error {
+				if _, ok := entry.Entry.EntryType.(*walpb.Entry_TableBlockPersisted_); ok {
+					numBlockPersists++
+				}
+				return nil
+			}))
+			return numBlockPersists <= 1
+		}, 1*time.Second, 10*time.Millisecond,
+			"expected at most one block persist entry; the others should have been snapshot and truncated",
+		)
 	})
 }
 
