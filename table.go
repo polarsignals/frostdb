@@ -466,7 +466,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 					"err", err,
 				)
 			}
-			if err := t.db.reclaimDiskSpace(ctx); err != nil {
+			if err := t.db.reclaimDiskSpace(ctx, nil); err != nil {
 				level.Error(t.logger).Log(
 					"msg", "failed to reclaim disk space after snapshot on block rotation",
 					"err", err,
@@ -608,7 +608,7 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 					"last_snapshot_size", humanize.IBytes(uint64(block.lastSnapshotSize.Load())),
 				)
 				block.lastSnapshotSize.Store(uncompressedInsertsSize)
-				if err := t.db.reclaimDiskSpace(context.Background()); err != nil {
+				if err := t.db.reclaimDiskSpace(context.Background(), nil); err != nil {
 					level.Error(t.logger).Log(
 						"msg", "failed to reclaim disk space after snapshot",
 						"err", err,
