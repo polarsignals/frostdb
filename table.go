@@ -39,6 +39,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/query/physicalplan"
 	"github.com/polarsignals/frostdb/recovery"
 	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
@@ -935,7 +936,7 @@ type parquetRowWriterOption func(p *parquetRowWriter)
 
 // rowWriter returns a new Parquet row writer with the given dynamic columns.
 func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
-	w, err := t.table.schema.NewWriter(writer, dynCols)
+	w, err := t.table.schema.NewWriter(writer, dynCols, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1162,6 +1163,24 @@ func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) 
 		preCompactionSize += p.Size()
 	}
 
+	if t.schema.UniquePrimaryIndex {
+		distinctRecords, err := t.distinctRecordsForCompaction(compact)
+		if err != nil {
+			return 0, err
+		}
+		if distinctRecords != nil {
+			// Arrow distinction was successful.
+			defer func() {
+				for _, r := range distinctRecords {
+					r.Release()
+				}
+			}()
+			// Note that the records must be sorted (sortInput=true) because
+			// there is no guarantee that order is maintained.
+			return preCompactionSize, t.writeRecordsToParquet(w, distinctRecords, true)
+		}
+	}
+
 	bufs, err := t.buffersForCompaction(w, compact)
 	if err != nil {
 		return 0, err
@@ -1268,21 +1287,11 @@ func (t *Table) buffersForCompaction(w io.Writer, inputParts []*parts.Part) ([]d
 	}
 
 	records := make([]arrow.Record, 0, len(nonOverlappingParts))
-	dynColSets := make([]map[string][]string, 0, len(nonOverlappingParts))
 	for _, p := range nonOverlappingParts {
-		r := p.Record()
-		dynColSets = append(dynColSets, pqarrow.RecordDynamicCols(r))
-		records = append(records, r)
+		records = append(records, p.Record())
 	}
-	dynCols := dynparquet.MergeDynamicColumnSets(dynColSets)
 
-	pw, err := t.schema.GetWriter(w, dynCols)
-	if err != nil {
-		return nil, err
-	}
-	defer t.schema.PutWriter(pw)
-
-	if err := pqarrow.RecordsToFile(t.schema, pw, records); err != nil {
+	if err := t.writeRecordsToParquet(w, records, false); err != nil {
 		return nil, err
 	}
 
@@ -1297,4 +1306,70 @@ func (t *Table) buffersForCompaction(w io.Writer, inputParts []*parts.Part) ([]d
 	}
 	result = append(result, buf.MultiDynamicRowGroup())
 	return result, nil
+}
+
+func (t *Table) writeRecordsToParquet(w io.Writer, records []arrow.Record, sortInput bool) error {
+	dynColSets := make([]map[string][]string, 0, len(records))
+	for _, r := range records {
+		dynColSets = append(dynColSets, pqarrow.RecordDynamicCols(r))
+	}
+	dynCols := dynparquet.MergeDynamicColumnSets(dynColSets)
+	pw, err := t.schema.GetWriter(w, dynCols, sortInput)
+	if err != nil {
+		return err
+	}
+	defer t.schema.PutWriter(pw)
+
+	return pqarrow.RecordsToFile(t.schema, pw, records)
+}
+
+// distinctRecordsForCompaction performs a distinct on the given parts. If at
+// least one non-arrow part is found, nil, nil is returned in which case, the
+// caller should fall back to normal compaction. On success, the caller is
+// responsible for releasing the returned records.
+func (t *Table) distinctRecordsForCompaction(compact []*parts.Part) ([]arrow.Record, error) {
+	sortingCols := t.schema.SortingColumns()
+	columnExprs := make([]logicalplan.Expr, 0, len(sortingCols))
+	for _, col := range sortingCols {
+		var expr logicalplan.Expr
+		if col.Dynamic {
+			expr = logicalplan.DynCol(col.Name)
+		} else {
+			expr = logicalplan.Col(col.Name)
+		}
+		columnExprs = append(columnExprs, expr)
+	}
+
+	d := physicalplan.Distinct(memory.NewGoAllocator(), t.tracer, columnExprs)
+	output := physicalplan.OutputPlan{}
+	newRecords := make([]arrow.Record, 0)
+	output.SetNextCallback(func(ctx context.Context, r arrow.Record) error {
+		r.Retain()
+		newRecords = append(newRecords, r)
+		return nil
+	})
+	d.SetNext(&output)
+
+	if ok, err := func() (bool, error) {
+		ctx := context.TODO()
+		for _, p := range compact {
+			if p.Record() == nil {
+				// Caller should fall back to parquet distinction.
+				return false, nil
+			}
+			if err := d.Callback(ctx, p.Record()); err != nil {
+				return false, err
+			}
+		}
+		if err := d.Finish(ctx); err != nil {
+			return false, err
+		}
+		return true, nil
+	}(); !ok || err != nil {
+		for _, r := range newRecords {
+			r.Release()
+		}
+		return nil, err
+	}
+	return newRecords, nil
 }
