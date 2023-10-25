@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -32,7 +33,6 @@ import (
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/query/logicalplan"
-	"github.com/polarsignals/frostdb/storage"
 	"github.com/polarsignals/frostdb/wal"
 )
 
@@ -388,7 +388,8 @@ type DataSource interface {
 // DataSink is a remote destination for data.
 type DataSink interface {
 	fmt.Stringer
-	storage.Bucket
+	Upload(ctx context.Context, name string, r io.Reader) error
+	Delete(ctx context.Context, name string) error
 }
 
 type DBOption func(*DB) error
