@@ -50,7 +50,7 @@ func (p *Part) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.Serial
 	// If this is a Arrow record part, convert the record into a serialized buffer
 	b := &bytes.Buffer{}
 
-	w, err := schema.GetWriter(b, pqarrow.RecordDynamicCols(p.record))
+	w, err := schema.GetWriter(b, pqarrow.RecordDynamicCols(p.record), false)
 	if err != nil {
 		return nil, err
 	}

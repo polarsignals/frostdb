@@ -1185,7 +1185,7 @@ func (s *Schema) NewBufferV2(dynamicColumns ...*schemav2pb.Node) (*Buffer, error
 }
 
 func (s *Schema) SerializeBuffer(w io.Writer, buffer *Buffer) error {
-	pw, err := s.GetWriter(w, buffer.DynamicColumns())
+	pw, err := s.GetWriter(w, buffer.DynamicColumns(), false)
 	if err != nil {
 		return fmt.Errorf("create writer: %w", err)
 	}
@@ -1211,7 +1211,7 @@ const bloomFilterBitsPerValue = 10
 
 // NewWriter returns a new parquet writer with a concrete parquet schema
 // generated using the given concrete dynamic column names.
-func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (ParquetWriter, error) {
+func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string, sorting bool) (ParquetWriter, error) {
 	ps, err := s.GetDynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, err
@@ -1248,6 +1248,9 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string) (Par
 			parquet.SortingColumns(cols...),
 		),
 	}
+	if sorting {
+		return parquet.NewSortingWriter[any](w, 32*1024, writerOptions...), nil
+	}
 	return parquet.NewGenericWriter[any](w, writerOptions...), nil
 }
 
@@ -1265,12 +1268,12 @@ type PooledWriter struct {
 	ParquetWriter
 }
 
-func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string) (*PooledWriter, error) {
+func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string, sorting bool) (*PooledWriter, error) {
 	key := serializeDynamicColumns(dynamicColumns)
-	pool, _ := s.writers.LoadOrStore(key, &sync.Pool{})
+	pool, _ := s.writers.LoadOrStore(fmt.Sprintf("%s,sorting=%t", key, sorting), &sync.Pool{})
 	pooled := pool.(*sync.Pool).Get()
 	if pooled == nil {
-		new, err := s.NewWriter(w, dynamicColumns)
+		new, err := s.NewWriter(w, dynamicColumns, sorting)
 		if err != nil {
 			return nil, err
 		}

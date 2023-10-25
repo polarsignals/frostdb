@@ -52,7 +52,7 @@ func main() {
 		log.Fatal(fmt.Errorf("create output file: %w", err))
 	}
 
-	w, err := newSchema.GetWriter(outf, serBuf.DynamicColumns())
+	w, err := newSchema.GetWriter(outf, serBuf.DynamicColumns(), false)
 	if err != nil {
 		log.Fatal(fmt.Errorf("get writer: %w", err))
 	}

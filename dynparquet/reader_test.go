@@ -17,7 +17,7 @@ func TestReader(t *testing.T) {
 	b := bytes.NewBuffer(nil)
 	w, err := schema.NewWriter(b, map[string][]string{
 		"labels": samples.SampleLabelNames(),
-	})
+	}, false)
 	require.NoError(t, err)
 
 	_, err = parquet.CopyRows(w, buf.Rows())

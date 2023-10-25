@@ -47,7 +47,7 @@ func compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
 		return 0, err
 	}
 	err = func() error {
-		writer, err := schema.GetWriter(w, merged.DynamicColumns())
+		writer, err := schema.GetWriter(w, merged.DynamicColumns(), false)
 		if err != nil {
 			return err
 		}

@@ -936,7 +936,7 @@ type parquetRowWriterOption func(p *parquetRowWriter)
 
 // rowWriter returns a new Parquet row writer with the given dynamic columns.
 func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
-	w, err := t.table.schema.NewWriter(writer, dynCols)
+	w, err := t.table.schema.NewWriter(writer, dynCols, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1175,7 +1175,9 @@ func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) 
 					r.Release()
 				}
 			}()
-			return preCompactionSize, t.writeRecordsToParquet(w, distinctRecords)
+			// Note that the records must be sorted (sortInput=true) because
+			// there is no guarantee that order is maintained.
+			return preCompactionSize, t.writeRecordsToParquet(w, distinctRecords, true)
 		}
 	}
 
@@ -1289,7 +1291,7 @@ func (t *Table) buffersForCompaction(w io.Writer, inputParts []*parts.Part) ([]d
 		records = append(records, p.Record())
 	}
 
-	if err := t.writeRecordsToParquet(w, records); err != nil {
+	if err := t.writeRecordsToParquet(w, records, false); err != nil {
 		return nil, err
 	}
 
@@ -1306,13 +1308,13 @@ func (t *Table) buffersForCompaction(w io.Writer, inputParts []*parts.Part) ([]d
 	return result, nil
 }
 
-func (t *Table) writeRecordsToParquet(w io.Writer, records []arrow.Record) error {
+func (t *Table) writeRecordsToParquet(w io.Writer, records []arrow.Record, sortInput bool) error {
 	dynColSets := make([]map[string][]string, 0, len(records))
 	for _, r := range records {
 		dynColSets = append(dynColSets, pqarrow.RecordDynamicCols(r))
 	}
 	dynCols := dynparquet.MergeDynamicColumnSets(dynColSets)
-	pw, err := t.schema.GetWriter(w, dynCols)
+	pw, err := t.schema.GetWriter(w, dynCols, sortInput)
 	if err != nil {
 		return err
 	}
