@@ -315,7 +315,7 @@ func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*
 		if err != nil {
 			return nil, nil, err
 		}
-		if schema.Cmp(prevEnd, start) < 0 {
+		if schema.Cmp(prevEnd, start) <= 0 {
 			// No overlap, append the previous part and update end for the next
 			// iteration.
 			nonOverlapping = append(nonOverlapping, parts[prev])
