@@ -275,7 +275,7 @@ func (w *FileWAL) run(ctx context.Context) {
 							"expected", w.protected.nextTx,
 							"found", minTx,
 						)
-						_ = heap.Pop(&w.protected.queue)
+						w.logRequestPool.Put(heap.Pop(&w.protected.queue))
 						w.metrics.walQueueSize.Sub(1)
 						// Keep on going since there might be other transactions
 						// below this one.
@@ -351,6 +351,15 @@ func (w *FileWAL) run(ctx context.Context) {
 						// record with any index to be written, however we only
 						// want to allow the next index to be logged.
 						w.protected.nextTx = truncateTx + 1
+						// Remove any records that have not yet been written and
+						// are now below the nextTx.
+						for w.protected.queue.Len() > 0 {
+							if minTx := w.protected.queue[0].tx; minTx >= w.protected.nextTx {
+								break
+							}
+							w.logRequestPool.Put(heap.Pop(&w.protected.queue))
+							w.metrics.walQueueSize.Sub(1)
+						}
 					}
 					w.protected.Unlock()
 					level.Debug(w.logger).Log("msg", "truncated WAL", "tx", truncateTx)
