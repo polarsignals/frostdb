@@ -170,8 +170,16 @@ type hashtuple struct {
 // hashAggregate represents a single hash aggregation.
 type hashAggregate struct {
 	dynamicAggregations []Aggregation
-	aggregations        []Aggregation
-	groupByCols         map[string]builder.ColumnBuilder
+	// dynamicFieldsConverted tracks the fields that match with
+	// dynamicAggregations and have been converted to aggregations on a concrete
+	// column.
+	dynamicAggregationsConverted map[string]struct{}
+	aggregations                 []Aggregation
+	// concreteAggregations memoizes the number of concrete aggregations at
+	// initialization this number needs to be recorded because dynamic
+	// aggregations are converted to concrete aggregations at runtime.
+	concreteAggregations int
+	groupByCols          map[string]builder.ColumnBuilder
 
 	colOrdering []string
 	rowCount    int
@@ -209,10 +217,12 @@ func NewHashAggregate(
 		hashToAggregate:    map[uint64]hashtuple{},
 		aggregates: []*hashAggregate{ // initialize a single hash aggregate; we expect this array to only every grow during very large aggregations.
 			{
-				dynamicAggregations: dynamic,
-				aggregations:        static,
-				groupByCols:         map[string]builder.ColumnBuilder{},
-				colOrdering:         []string{},
+				dynamicAggregations:          dynamic,
+				dynamicAggregationsConverted: make(map[string]struct{}),
+				aggregations:                 static,
+				concreteAggregations:         len(static),
+				groupByCols:                  map[string]builder.ColumnBuilder{},
+				colOrdering:                  []string{},
 			},
 		},
 	}
@@ -254,7 +264,6 @@ func (a *HashAggregate) Draw() *Diagram {
 	for _, grouping := range a.groupByColumnMatchers {
 		groupings = append(groupings, grouping.Name())
 	}
-
 	details := fmt.Sprintf("HashAggregate (%s by %s)", strings.Join(names, ","), strings.Join(groupings, ","))
 	return &Diagram{Details: details, Child: child}
 }
@@ -316,7 +325,8 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 	}()
 
 	columnToAggregate := make([]arrow.Array, len(aggregate.aggregations))
-	aggregateFieldsFound := 0
+	concreteAggregateFieldsFound := 0
+	dynamicAggregateFieldsFound := 0
 
 	for i, field := range r.Schema().Fields() {
 		for _, matcher := range a.groupByColumnMatchers {
@@ -345,29 +355,33 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			}
 		}
 
-		for _, col := range aggregate.dynamicAggregations {
-			if a.finalStage {
-				if col.expr.MatchColumn(field.Name) {
-					// expand the aggregate.aggregations with a final concrete column aggregation.
-					columnToAggregate = append(columnToAggregate, nil)
-					aggregate.aggregations = append(aggregate.aggregations, Aggregation{
-						expr:       logicalplan.Col(field.Name),
-						dynamic:    true,
-						resultName: resultNameWithConcreteColumn(col.function, field.Name),
-						function:   col.function,
-					})
-				}
-			} else {
-				// If we're aggregating the raw data we need to find the columns by their actual names for now.
-				if col.expr.MatchColumn(field.Name) {
-					// expand the aggregate.aggregations with a concrete column aggregation.
-					columnToAggregate = append(columnToAggregate, nil)
-					aggregate.aggregations = append(aggregate.aggregations, Aggregation{
-						expr:       logicalplan.Col(field.Name),
-						dynamic:    true,
-						resultName: field.Name, // Don't rename the column yet, we'll do that in the final stage. Dynamic aggregations can't match agains't the pre-computed name.
-						function:   col.function,
-					})
+		if _, ok := aggregate.dynamicAggregationsConverted[field.Name]; !ok {
+			for _, col := range aggregate.dynamicAggregations {
+				if a.finalStage {
+					if col.expr.MatchColumn(field.Name) {
+						// expand the aggregate.aggregations with a final concrete column aggregation.
+						columnToAggregate = append(columnToAggregate, nil)
+						aggregate.aggregations = append(aggregate.aggregations, Aggregation{
+							expr:       logicalplan.Col(field.Name),
+							dynamic:    true,
+							resultName: resultNameWithConcreteColumn(col.function, field.Name),
+							function:   col.function,
+						})
+						aggregate.dynamicAggregationsConverted[field.Name] = struct{}{}
+					}
+				} else {
+					// If we're aggregating the raw data we need to find the columns by their actual names for now.
+					if col.expr.MatchColumn(field.Name) {
+						// expand the aggregate.aggregations with a concrete column aggregation.
+						columnToAggregate = append(columnToAggregate, nil)
+						aggregate.aggregations = append(aggregate.aggregations, Aggregation{
+							expr:       logicalplan.Col(field.Name),
+							dynamic:    true,
+							resultName: field.Name, // Don't rename the column yet, we'll do that in the final stage. Dynamic aggregations can't match agains't the pre-computed name.
+							function:   col.function,
+						})
+						aggregate.dynamicAggregationsConverted[field.Name] = struct{}{}
+					}
 				}
 			}
 		}
@@ -378,19 +392,30 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 			if a.finalStage {
 				if col.resultName == field.Name || (col.dynamic && col.expr.MatchColumn(field.Name)) {
 					columnToAggregate[j] = r.Column(i)
-					aggregateFieldsFound++
+					if col.dynamic {
+						dynamicAggregateFieldsFound++
+					} else {
+						concreteAggregateFieldsFound++
+					}
 				}
 			} else {
 				// If we're aggregating the raw data we need to find the columns by their actual names for now.
 				if col.expr.MatchColumn(field.Name) {
 					columnToAggregate[j] = r.Column(i)
-					aggregateFieldsFound++
+					if col.dynamic {
+						dynamicAggregateFieldsFound++
+					} else {
+						concreteAggregateFieldsFound++
+					}
 				}
 			}
 		}
 	}
 
-	if aggregateFieldsFound != len(aggregate.aggregations) {
+	if concreteAggregateFieldsFound != aggregate.concreteAggregations ||
+		(len(aggregate.dynamicAggregations) > 0) && dynamicAggregateFieldsFound == 0 {
+		// To perform an aggregation ALL concrete columns must have been matched
+		// or at least one dynamic column if performing dynamic aggregations.
 		return errors.New("aggregate field not found, aggregations are not possible without it")
 	}
 
@@ -484,6 +509,17 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 		}
 
 		for j, col := range columnToAggregate {
+			if col == nil {
+				// This is a dynamic aggregation that had no match.
+				continue
+			}
+			if a.aggregates[tuple.aggregate].aggregations[j].arrays == nil {
+				// This can happen with dynamic column aggregations without
+				// groupings. The group exists, but the array to append to does
+				// not.
+				agg := builder.NewBuilder(a.pool, col.DataType())
+				aggregate.aggregations[j].arrays = append(aggregate.aggregations[j].arrays, agg)
+			}
 			if err := builder.AppendValue(a.aggregates[tuple.aggregate].aggregations[j].arrays[tuple.array], col, i); err != nil {
 				return err
 			}
