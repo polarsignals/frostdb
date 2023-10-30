@@ -351,7 +351,7 @@ func Test_Aggregation_DynCol(t *testing.T) {
 					Type:     schemapb.StorageLayout_TYPE_INT64,
 					Nullable: true,
 				},
-				Dynamic: false,
+				Dynamic: true,
 			}},
 			SortingColumns: []*schemapb.SortingColumn{{
 				Name:      "foo",
@@ -372,28 +372,41 @@ func Test_Aggregation_DynCol(t *testing.T) {
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
 
-	schema := arrow.NewSchema([]arrow.Field{
+	fields := []arrow.Field{
 		{Name: "foo.bar", Type: arrow.PrimitiveTypes.Int64},
 		{Name: "foo.baz", Type: arrow.PrimitiveTypes.Int64},
 		{Name: "foo.bah", Type: arrow.PrimitiveTypes.Int64},
-	}, nil)
-
-	bldr := array.NewRecordBuilder(memory.DefaultAllocator, schema)
-	defer bldr.Release()
-
-	n := 3
-	for i := 0; i < schema.NumFields(); i++ {
-		for j := 0; j < n; j++ {
-			bldr.Field(i).(*array.Int64Builder).Append(int64(rand.Intn(100)))
-		}
 	}
 
-	r := bldr.NewRecord()
-	defer r.Release()
+	records := make([]arrow.Record, 0)
+	// For each field, create one record with only that field.
+	for i := 0; i < len(fields); i++ {
+		func() {
+			bldr := array.NewRecordBuilder(memory.DefaultAllocator, arrow.NewSchema(fields[i:i+1], nil))
+			defer bldr.Release()
+			bldr.Field(0).(*array.Int64Builder).Append(int64(rand.Intn(100)))
+			records = append(records, bldr.NewRecord())
+		}()
+	}
+	// One more record with all concrete columns.
+	bldr := array.NewRecordBuilder(memory.DefaultAllocator, arrow.NewSchema(fields, nil))
+	defer bldr.Release()
+	for i := 0; i < len(fields); i++ {
+		bldr.Field(i).(*array.Int64Builder).Append(int64(rand.Intn(100)))
+	}
+
+	records = append(records, bldr.NewRecord())
+	defer func() {
+		for _, r := range records {
+			r.Release()
+		}
+	}()
 
 	ctx := context.Background()
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
+	for _, r := range records {
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
 
 	engine := query.NewEngine(mem, db.TableProvider())
 
