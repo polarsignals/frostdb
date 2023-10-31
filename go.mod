@@ -12,7 +12,6 @@ require (
 	github.com/go-kit/log v0.2.1
 	github.com/google/uuid v1.3.0
 	github.com/oklog/ulid v1.3.1
-	github.com/olekukonko/tablewriter v0.0.5
 	github.com/parquet-go/parquet-go v0.18.1-0.20231004061202-cde8189c4c26
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
 	github.com/polarsignals/wal v0.0.0-20230809145250-99ef415c5a6c
@@ -48,6 +47,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
+	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.18 // indirect
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63 // indirect
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7 // indirect
