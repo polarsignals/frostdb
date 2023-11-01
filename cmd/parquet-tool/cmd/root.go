@@ -26,4 +26,5 @@ func init() {
 	rootCmd.AddCommand(dumpCmd)
 	rootCmd.AddCommand(findCmd)
 	rootCmd.AddCommand(walCmd)
+	rootCmd.AddCommand(snapshotCmd)
 }

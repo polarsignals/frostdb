@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -52,5 +54,28 @@ func compare(v1, v2 parquet.Value) int {
 		return parquet.BooleanType.Compare(v1, v2)
 	default:
 		panic(fmt.Sprintf("unsupported value comparison: %v", v1.Kind()))
+	}
+}
+
+func inspectRecord(record arrow.Record, columns []string) {
+	if len(columns) == 0 {
+		fmt.Println(record)
+	} else {
+		fields := make([]arrow.Field, 0, len(columns))
+		cols := make([]arrow.Array, 0, len(columns))
+		for i, field := range record.Schema().Fields() {
+			for _, col := range columns {
+				if col == field.Name {
+					fields = append(fields, field)
+					cols = append(cols, record.Column(i))
+				}
+			}
+		}
+
+		subschema := arrow.NewSchema(fields, nil)
+
+		r := array.NewRecord(subschema, cols, record.NumRows())
+		defer r.Release()
+		fmt.Println(r)
 	}
 }
