@@ -23,6 +23,7 @@ require (
 	github.com/coreos/etcd v3.3.27+incompatible // indirect
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
 	github.com/coreos/pkg v0.0.0-20220810130054-c7d1c02cb6cf // indirect
+	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/goccy/go-json v0.10.0 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect

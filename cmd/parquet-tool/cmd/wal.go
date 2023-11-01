@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"fmt"
 
 	"github.com/apache/arrow/go/v14/arrow/ipc"
 	"github.com/go-kit/log"
@@ -42,18 +41,7 @@ func inspectWAL(dir string, columns ...string) error {
 				return err
 			}
 
-			if len(columns) == 0 {
-				fmt.Println(record)
-			} else {
-				for i, field := range record.Schema().Fields() {
-					for _, col := range columns {
-						if col == field.Name {
-							fmt.Println(record.Column(i))
-						}
-					}
-				}
-			}
-
+			inspectRecord(record, columns)
 		default:
 			// NOTE: just looking for writes
 			return nil
