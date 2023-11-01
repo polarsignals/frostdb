@@ -7,11 +7,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
+)
+
+var (
+	totalSize int
+	count     int
 )
 
 var findCmd = &cobra.Command{
@@ -65,7 +71,11 @@ func findAll(fileOrDir, column string) error {
 				return OddRowStyle
 			}
 		}).
-		Headers("FILE", "ROW GROUP", "MIN", "MAX")
+		Headers("FILE", "MIN", "MAX")
+	defer func() {
+		fmt.Println("Total Size of all column indexes: ", fmt.Sprint(totalSize))
+		fmt.Println("Average Size of all column indexes: ", fmt.Sprint(totalSize/count))
+	}()
 	defer fmt.Println(t)
 
 	if !info.IsDir() {
@@ -91,35 +101,49 @@ func find(file, column string, t *table.Table) error {
 		return err
 	}
 
+	for _, index := range pf.OffsetIndexes() {
+		totalSize += int(unsafe.Sizeof(index))
+	}
+	for _, index := range pf.ColumnIndexes() {
+		totalSize += int(unsafe.Sizeof(index))
+	}
+	count++
+
 	// TODO: would be nice to support humand readable timestamps; and parse them into int64s
-	column, val, err := parseColumnArg(column)
+	column, _, err = parseColumnArg(column)
 	if err != nil {
 		return err
 	}
 
-	for i, rg := range pf.RowGroups() {
+	var min, max parquet.Value
+	for _, rg := range pf.RowGroups() {
 		schema := rg.Schema()
 		for j, field := range schema.Fields() {
 			if field.Name() != column {
 				continue
 			}
 
-			v, err := getValue(val, field.Type().Kind())
-			if err != nil {
-				return err
-			}
-
 			// Check the min max values of each column
 			index := rg.ColumnChunks()[j].ColumnIndex()
 			for k := 0; k < index.NumPages(); k++ {
+				if min.IsNull() {
+					min = index.MinValue(k)
+					max = index.MinValue(k)
+					continue
+				}
 
-				if compare(index.MinValue(k), v) <= 0 &&
-					compare(index.MaxValue(k), v) >= 0 {
-					t.Row(file, fmt.Sprint(i), fmt.Sprint(index.MinValue(k)), fmt.Sprint(index.MaxValue(k)))
+				if compare(index.MinValue(k), min) < 0 {
+					min = index.MinValue(k)
+				}
+
+				if compare(index.MaxValue(k), max) > 0 {
+					max = index.MaxValue(k)
 				}
 			}
 		}
 	}
+
+	t.Row(file, fmt.Sprint(min), fmt.Sprint(max))
 
 	return nil
 }
