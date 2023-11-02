@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -27,6 +28,7 @@ import (
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/query/physicalplan"
+	"github.com/polarsignals/frostdb/recovery"
 )
 
 func TestDBWithWALAndBucket(t *testing.T) {
@@ -2219,4 +2221,38 @@ func Test_DB_PrehashedStorage(t *testing.T) {
 		)
 	})
 	require.NoError(t, err)
+}
+
+// TestDBConcurrentOpen verifies that concurrent calls to open a DB do not
+// result in a panic (most likely due to duplicate metrics registration).
+func TestDBConcurrentOpen(t *testing.T) {
+	const (
+		concurrency = 16
+		dbName      = "test"
+	)
+
+	bucket := objstore.NewInMemBucket()
+	sinksource := NewDefaultObjstoreBucket(bucket)
+	logger := newTestLogger(t)
+	tempDir := t.TempDir()
+
+	c, err := New(
+		WithLogger(logger),
+		WithReadWriteStorage(sinksource),
+		WithWAL(),
+		WithStoragePath(tempDir),
+	)
+	require.NoError(t, err)
+	defer c.Close()
+
+	var errg errgroup.Group
+	for i := 0; i < concurrency; i++ {
+		errg.Go(func() error {
+			return recovery.Do(func() error {
+				_, err := c.DB(context.Background(), dbName)
+				return err
+			})()
+		})
+	}
+	require.NoError(t, errg.Wait())
 }

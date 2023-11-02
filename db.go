@@ -45,8 +45,9 @@ const (
 )
 
 type ColumnStore struct {
-	mtx                 *sync.RWMutex
+	mtx                 sync.RWMutex
 	dbs                 map[string]*DB
+	dbReplaysInProgress map[string]chan struct{}
 	reg                 prometheus.Registerer
 	logger              log.Logger
 	tracer              trace.Tracer
@@ -89,16 +90,16 @@ func New(
 	options ...Option,
 ) (*ColumnStore, error) {
 	s := &ColumnStore{
-		mtx:              &sync.RWMutex{},
-		dbs:              map[string]*DB{},
-		reg:              prometheus.NewRegistry(),
-		logger:           log.NewNopLogger(),
-		tracer:           trace.NewNoopTracerProvider().Tracer(""),
-		indexConfig:      DefaultIndexConfig(),
-		indexDegree:      2,
-		splitSize:        2,
-		granuleSizeBytes: 1 * MiB,
-		activeMemorySize: 512 * MiB,
+		dbs:                 make(map[string]*DB),
+		dbReplaysInProgress: make(map[string]chan struct{}),
+		reg:                 prometheus.NewRegistry(),
+		logger:              log.NewNopLogger(),
+		tracer:              trace.NewNoopTracerProvider().Tracer(""),
+		indexConfig:         DefaultIndexConfig(),
+		indexDegree:         2,
+		splitSize:           2,
+		granuleSizeBytes:    1 * MiB,
+		activeMemorySize:    512 * MiB,
 	}
 
 	for _, option := range options {
@@ -443,12 +444,26 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 
 	// Need to double-check that in the meantime a database with the same name
 	// wasn't concurrently created.
-	db, ok = s.dbs[name]
-	if ok {
-		if err := applyOptsToDB(db); err != nil {
-			return nil, err
+	for {
+		db, ok = s.dbs[name]
+		if ok {
+			if err := applyOptsToDB(db); err != nil {
+				return nil, err
+			}
+			return db, nil
 		}
-		return db, nil
+
+		// DB has not yet been created. However, another goroutine might be
+		// replaying the WAL in the background (the store mutex is released
+		// during replay.).
+		waitForReplay, ok := s.dbReplaysInProgress[name]
+		if !ok {
+			// No replay in progress, it is safe to create the DB.
+			break
+		}
+		s.mtx.Unlock()
+		<-waitForReplay
+		s.mtx.Lock()
 	}
 
 	reg := prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg)
@@ -502,9 +517,16 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 			if err := func() error {
 				// Unlock the store mutex while the WAL is replayed, otherwise
 				// if multiple DBs are opened in parallel, WAL replays will not
-				// happen in parallel.
+				// happen in parallel. However, create a channel for any
+				// goroutines that might concurrently try to open the same DB
+				// to listen on.
+				s.dbReplaysInProgress[name] = make(chan struct{})
 				s.mtx.Unlock()
-				defer s.mtx.Lock()
+				defer func() {
+					s.mtx.Lock()
+					close(s.dbReplaysInProgress[name])
+					delete(s.dbReplaysInProgress, name)
+				}()
 				var err error
 				db.wal, err = db.openWAL(ctx)
 				return err
