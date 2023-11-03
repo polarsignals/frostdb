@@ -1875,7 +1875,8 @@ func Test_DB_DropStorage(t *testing.T) {
 		_ = c.Close()
 	}()
 	require.NoError(t, err)
-	db, err := c.DB(context.Background(), "test")
+	const dbName = "test"
+	db, err := c.DB(context.Background(), dbName)
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
@@ -1904,7 +1905,7 @@ func Test_DB_DropStorage(t *testing.T) {
 	countRows(300)
 
 	level.Debug(logger).Log("msg", "dropping storage")
-	require.NoError(t, db.Close(WithClearStorage()))
+	require.NoError(t, c.DropDB(dbName))
 
 	// Open a new store against the dropped storage, and expect empty db
 	c, err = New(

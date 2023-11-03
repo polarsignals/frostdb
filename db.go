@@ -599,6 +599,30 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 	return db, nil
 }
 
+func (s *ColumnStore) GetDB(name string) (*DB, error) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+	db, ok := s.dbs[name]
+	if !ok {
+		return nil, fmt.Errorf("db %s not found", name)
+	}
+	return db, nil
+}
+
+func (s *ColumnStore) DropDB(name string) error {
+	db, err := s.GetDB(name)
+	if err != nil {
+		return err
+	}
+	if err := db.Close(WithClearStorage()); err != nil {
+		return err
+	}
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	delete(s.dbs, name)
+	return nil
+}
+
 func (db *DB) openWAL(ctx context.Context) (WAL, error) {
 	wal, err := wal.Open(
 		db.logger,
