@@ -620,7 +620,7 @@ func (s *ColumnStore) DropDB(name string) error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 	delete(s.dbs, name)
-	return nil
+	return os.Remove(filepath.Join(s.DatabasesDir(), name))
 }
 
 func (db *DB) openWAL(ctx context.Context) (WAL, error) {
