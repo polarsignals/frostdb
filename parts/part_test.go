@@ -74,6 +74,12 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 			expectedNonOverlapping: []rng{{1, 3}, {4, 5}, {6, 7}},
 			expectedOverlapping:    []rng{{2, 4}},
 		},
+		{
+			name:                   "OnlyTwoOverlap",
+			ranges:                 []rng{{1, 3}, {2, 4}},
+			expectedNonOverlapping: []rng{},
+			expectedOverlapping:    []rng{{2, 4}, {1, 3}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parts := make([]*Part, len(tc.ranges))
