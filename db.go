@@ -58,6 +58,7 @@ type ColumnStore struct {
 	manualBlockRotation bool
 	snapshotTriggerSize int64
 	metrics             metrics
+	recoveryConcurrency int
 
 	// indexDegree is the degree of the btree index (default = 2)
 	indexDegree int
@@ -262,6 +263,16 @@ func WithSnapshotTriggerSize(size int64) Option {
 	}
 }
 
+// WithRecoveryConcurrency limits the number of databases that are recovered
+// simultaneously when calling frostdb.New. This helps limit memory usage on
+// recovery.
+func WithRecoveryConcurrency(concurrency int) Option {
+	return func(s *ColumnStore) error {
+		s.recoveryConcurrency = concurrency
+		return nil
+	}
+}
+
 // Close persists all data from the columnstore to storage.
 // It is no longer valid to use the coumnstore for reads or writes, and the object should not longer be reused.
 func (s *ColumnStore) Close() error {
@@ -315,7 +326,10 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 
 	g, ctx := errgroup.WithContext(ctx)
 	// Limit this operation since WAL recovery could be very memory intensive.
-	g.SetLimit(runtime.GOMAXPROCS(0))
+	if s.recoveryConcurrency == 0 {
+		s.recoveryConcurrency = runtime.GOMAXPROCS(0)
+	}
+	g.SetLimit(s.recoveryConcurrency)
 	for _, f := range files {
 		databaseName := f.Name()
 		g.Go(func() error {
@@ -597,6 +611,13 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 
 	s.dbs[name] = db
 	return db, nil
+}
+
+// DBs returns all the DB names of this column store.
+func (s *ColumnStore) DBs() []string {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+	return maps.Keys(s.dbs)
 }
 
 func (s *ColumnStore) GetDB(name string) (*DB, error) {
