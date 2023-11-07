@@ -306,6 +306,7 @@ func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*
 	}
 	nonOverlapping := make([]*Part, 0, len(parts))
 	overlapping := make([]*Part, 0, len(parts))
+	var missing *Part
 	for i := 1; i < len(parts); i++ {
 		start, err := parts[i].Least()
 		if err != nil {
@@ -334,6 +335,10 @@ func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*
 			// The current part must be removed. Don't update prevEnd or prev,
 			// this will be used in the next iteration and must stay the same.
 			overlapping = append(overlapping, parts[i])
+
+			if i == len(parts)-1 { // This is the last iteration mark this one as missing
+				missing = parts[prev]
+			}
 		}
 	}
 	if len(overlapping) == 0 || overlapping[len(overlapping)-1] != parts[len(parts)-1] {
@@ -342,6 +347,8 @@ func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*
 		// previous part is in the overlapping slice). The last part must be
 		// appended to nonOverlapping.
 		nonOverlapping = append(nonOverlapping, parts[len(parts)-1])
+	} else if missing != nil {
+		overlapping = append(overlapping, missing)
 	}
 	return nonOverlapping, overlapping, nil
 }
