@@ -146,7 +146,7 @@ func Benchmark_TXList_InsertAndDrain(b *testing.B) {
 				// Wait for the sweeper to drain
 				for v := wm.Load().TxnID; v < tx.Load(); v = wm.Load().TxnID {
 				}
-				require.Equal(b, tx.Load(), wm.Load())
+				require.Equal(b, tx.Load(), wm.Load().TxnID)
 			}
 			p.Stop()
 		})
