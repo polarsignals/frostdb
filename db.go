@@ -1001,7 +1001,7 @@ func (db *DB) Close(options ...CloseOption) error {
 	}
 	level.Info(db.logger).Log("msg", "closed all tables")
 
-	if !shouldPersist && db.columnStore.snapshotTriggerSize != 0 {
+	if !shouldPersist && db.columnStore.snapshotTriggerSize != 0 && !opts.clearStorage {
 		start := time.Now()
 		db.snapshot(context.Background(), false, func() {
 			level.Info(db.logger).Log("msg", "snapshot on close completed", "duration", time.Since(start))
