@@ -126,9 +126,26 @@ type Schema struct {
 	parquetSchemas *sync.Map
 }
 
-// IsDynamicColumn returns true if the passed in column is a dynamic column.
-func (s *Schema) IsDynamicColumn(col string) bool {
-	return s.columns[s.columnIndexes[col]].Dynamic
+// IsDynamicColumn returns true if the passed in column name of the type
+// "labels.label1" is a dynamic column the schema recognizes.
+func (s *Schema) IsDynamicColumn(column string) bool {
+	periodPosition := 0
+	foundPeriod := false
+	for i, c := range column {
+		if c != '.' {
+			continue
+		}
+		if foundPeriod {
+			// Can't have more than one period.
+			return false
+		}
+		foundPeriod = true
+		periodPosition = i
+	}
+	if !foundPeriod {
+		return false
+	}
+	return s.columns[s.columnIndexes[column[0:periodPosition]]].Dynamic
 }
 
 func findLeavesFromNode(node *schemav2pb.Node) []ColumnDefinition {

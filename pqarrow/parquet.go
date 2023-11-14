@@ -75,7 +75,7 @@ func getRecordRow(schema *dynparquet.Schema, record arrow.Record, index int, fin
 		for j, af := range recordFields {
 			if f.Name() == af.Name {
 				def := 0
-				if isDynamicColumn(schema, af.Name) {
+				if schema.IsDynamicColumn(af.Name) {
 					def = 1
 				}
 				row, err = appendToRow(row, record.Column(j), index, 0, def, i)
@@ -94,11 +94,6 @@ func getRecordRow(schema *dynparquet.Schema, record arrow.Record, index int, fin
 	}
 
 	return row, nil
-}
-
-func isDynamicColumn(schema *dynparquet.Schema, column string) bool {
-	parts := strings.SplitN(column, ".", 2)
-	return len(parts) == 2 && schema.IsDynamicColumn(parts[0]) // dynamic column
 }
 
 func RecordDynamicCols(record arrow.Record) map[string][]string {

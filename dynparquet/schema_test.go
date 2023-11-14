@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
+
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
 func TestMergeRowBatches(t *testing.T) {
@@ -283,4 +285,74 @@ func Test_SchemaFromParquetFile(t *testing.T) {
 	def, err := DefinitionFromParquetFile(file)
 	require.NoError(t, err)
 	require.Equal(t, SampleDefinition(), def)
+}
+
+func TestIsDynamicColumn(t *testing.T) {
+	for _, tc := range []struct {
+		input      string
+		cName      string
+		notDynamic bool
+		expected   bool
+	}{
+		{
+			input:    "labels.label1",
+			cName:    "labels",
+			expected: true,
+		},
+		{
+			input:    "labels.label1.cannothavetwoperiods",
+			cName:    "labels",
+			expected: false,
+		},
+		{
+			input:    "columnnotfound.label1",
+			cName:    "labels",
+			expected: false,
+		},
+		{
+			input:      "labels.columnnotdynamic",
+			cName:      "labels",
+			notDynamic: true,
+			expected:   false,
+		},
+		{
+			input:    "",
+			cName:    "labels",
+			expected: false,
+		},
+	} {
+		def := &schemapb.Schema{
+			Name: "test_schema",
+			Columns: []*schemapb.Column{{
+				Name: tc.cName,
+				StorageLayout: &schemapb.StorageLayout{
+					Type:     schemapb.StorageLayout_TYPE_INT64,
+					Encoding: schemapb.StorageLayout_ENCODING_PLAIN_UNSPECIFIED,
+				},
+				Dynamic: !tc.notDynamic,
+			}},
+		}
+		schema, err := SchemaFromDefinition(def)
+		require.NoError(t, err)
+		schema.IsDynamicColumn(tc.cName)
+	}
+}
+
+func BenchmarkIsDynamicColumn(b *testing.B) {
+	def := &schemapb.Schema{
+		Name: "test_schema",
+		Columns: []*schemapb.Column{{
+			Name: "labels",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_INT64,
+				Encoding: schemapb.StorageLayout_ENCODING_PLAIN_UNSPECIFIED,
+			},
+			Dynamic: true,
+		}},
+	}
+	schema, err := SchemaFromDefinition(def)
+	require.NoError(b, err)
+	for i := 0; i < b.N; i++ {
+		_ = schema.IsDynamicColumn("labels.label1")
+	}
 }
