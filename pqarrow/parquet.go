@@ -37,63 +37,103 @@ func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 	}
 }
 
-func appendToRow(row []parquet.Value, c arrow.Array, index, rep, def, col int) ([]parquet.Value, error) {
-	if c.IsNull(index) {
-		row = append(row, parquet.ValueOf(nil).Level(rep, 0, col))
-		return row, nil
-	}
-
-	switch arr := c.(type) {
-	case *array.List:
-		if err := arrowutils.ForEachValueInList(index, arr, func(i int, v any) {
-			switch i {
-			case 0:
-				row = append(row, parquet.ValueOf(v).Level(rep, def+1, col))
-			default:
-				row = append(row, parquet.ValueOf(v).Level(rep+1, def+1, col))
-			}
-		}); err != nil {
-			return nil, err
-		}
-	default:
-		row = append(row, parquet.ValueOf(arr.GetOneForMarshal(index)).Level(rep, def, col))
-	}
-
-	return row, nil
-}
-
 // RecordToRow converts an arrow record with dynamic columns into a row using a dynamic parquet schema.
 func RecordToRow(schema *dynparquet.Schema, final *parquet.Schema, record arrow.Record, index int) (parquet.Row, error) {
-	return getRecordRow(schema, record, index, final.Fields(), record.Schema().Fields())
+	rows, err := recordToRows(schema, record, index, index+1, final.Fields(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) != 1 {
+		return nil, fmt.Errorf("converted wrong number of rows, expected 1, got %d", len(rows))
+	}
+	return rows[0], err
 }
 
-func getRecordRow(schema *dynparquet.Schema, record arrow.Record, index int, finalFields []parquet.Field, recordFields []arrow.Field) (parquet.Row, error) {
-	var err error
-	row := make([]parquet.Value, 0, len(finalFields))
-	for i, f := range finalFields { // assuming flat schema
-		found := false
-		for j, af := range recordFields {
-			if f.Name() == af.Name {
-				def := 0
-				if schema.IsDynamicColumn(af.Name) {
-					def = 1
-				}
-				row, err = appendToRow(row, record.Column(j), index, 0, def, i)
-				if err != nil {
-					return nil, err
-				}
-				found = true
-				break
-			}
+// recordToRows converts a full arrow record to a slice of parquet rows.
+// scratchRows is used to append the conversion results to.
+// The caller should use recordStart=0 and recordEnd=record.NumRows() to convert
+// the entire record. Alternatively, the caller may only convert a subset of
+// rows by specifying a range of [recordStart, recordEnd).
+func recordToRows(
+	schema *dynparquet.Schema,
+	record arrow.Record,
+	recordStart, recordEnd int,
+	finalFields []parquet.Field,
+	scratchRows []parquet.Row,
+) ([]parquet.Row, error) {
+	numRows := recordEnd - recordStart
+	if cap(scratchRows) < numRows {
+		scratchRows = make([]parquet.Row, 0, numRows)
+	}
+	scratchRows = scratchRows[:numRows]
+	for i := range scratchRows {
+		if cap(scratchRows[i]) < len(finalFields) {
+			scratchRows[i] = make([]parquet.Value, 0, len(finalFields))
 		}
-
-		// No record field found; append null
-		if !found {
-			row = append(row, parquet.ValueOf(nil).Level(0, 0, i))
-		}
+		scratchRows[i] = scratchRows[i][:0]
 	}
 
-	return row, nil
+	// This code converts the arrow record column-by-column for better cache
+	// locality.
+	for j, f := range finalFields {
+		columnIndexes := record.Schema().FieldIndices(f.Name())
+		if len(columnIndexes) == 0 {
+			// Column not found in record, append null to all rows.
+			for i := 0; i < numRows; i++ {
+				scratchRows[i] = append(
+					scratchRows[i], parquet.ValueOf(nil).Level(0, 0, j),
+				)
+			}
+			continue
+		}
+
+		def := 0
+		if schema.IsDynamicColumn(f.Name()) {
+			def = 1
+		}
+
+		col := record.Column(columnIndexes[0])
+		switch arr := col.(type) {
+		case *array.List:
+			dictionaryList, binaryDictionaryList, err := arrowutils.ToConcreteList(arr)
+			if err != nil {
+				return nil, err
+			}
+			for i := 0; i < numRows; i++ {
+				indexIntoRecord := recordStart + i
+				if col.IsNull(indexIntoRecord) {
+					scratchRows[i] = append(
+						scratchRows[i], parquet.ValueOf(nil).Level(0, 0, j),
+					)
+					continue
+				}
+
+				start, end := arr.ValueOffsets(indexIntoRecord)
+				for k := start; k < end; k++ {
+					v := binaryDictionaryList.Value(dictionaryList.GetValueIndex(int(k)))
+					rep := 0
+					if k != start {
+						rep = 1
+					}
+					scratchRows[i] = append(scratchRows[i], parquet.ValueOf(v).Level(rep, def+1, j))
+				}
+			}
+		default:
+			for i := 0; i < numRows; i++ {
+				indexIntoRecord := recordStart + i
+				if col.IsNull(indexIntoRecord) {
+					scratchRows[i] = append(
+						scratchRows[i], parquet.ValueOf(nil).Level(0, 0, j),
+					)
+					continue
+				}
+				scratchRows[i] = append(
+					scratchRows[i], parquet.ValueOf(col.GetOneForMarshal(indexIntoRecord)).Level(0, def, j),
+				)
+			}
+		}
+	}
+	return scratchRows, nil
 }
 
 func RecordDynamicCols(record arrow.Record) map[string][]string {
@@ -141,18 +181,12 @@ func RecordsToFile(schema *dynparquet.Schema, w dynparquet.ParquetWriter, recs [
 
 	finalFields := ps.Schema.Fields()
 
-	rows := make([]parquet.Row, 0)
+	var rows []parquet.Row
 	for _, r := range recs {
-		rows = rows[:0]
-		recordFields := r.Schema().Fields()
-		for i := 0; i < int(r.NumRows()); i++ {
-			row, err := getRecordRow(schema, r, i, finalFields, recordFields)
-			if err != nil {
-				return err
-			}
-			rows = append(rows, row)
+		rows, err = recordToRows(schema, r, 0, int(r.NumRows()), finalFields, rows)
+		if err != nil {
+			return err
 		}
-
 		if _, err := w.WriteRows(rows); err != nil {
 			return err
 		}
