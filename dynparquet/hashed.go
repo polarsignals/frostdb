@@ -105,15 +105,17 @@ func HashArray(arr arrow.Array) []uint64 {
 func hashListArray(arr *array.List) []uint64 {
 	res := make([]uint64, arr.Len())
 	digest := xxhash.New()
+
+	dictionaryList, binaryDictionaryList, err := arrowutils.ToConcreteList(arr)
+	if err != nil {
+		panic(err)
+	}
 	for i := 0; i < arr.Len(); i++ {
-		if err := arrowutils.ForEachValueInList(i, arr, func(_ int, v any) {
-			switch val := v.(type) {
-			case []byte:
-				// NOTE: We can ignore the return here because from the xxhash Write function is says: It always returns len(b), nil.
-				_, _ = digest.Write(val)
-			}
-		}); err != nil {
-			panic(err)
+		start, end := arr.ValueOffsets(i)
+		for j := start; j < end; j++ {
+			// NOTE: We can ignore the return here because the xxhash Write
+			// function says it always returns len(b), nil.
+			_, _ = digest.Write(binaryDictionaryList.Value(dictionaryList.GetValueIndex(int(j))))
 		}
 
 		res[i] = digest.Sum64()

@@ -6,23 +6,22 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 )
 
-func ForEachValueInList(index int, arr *array.List, iterator func(int, any)) error {
-	start, end := arr.ValueOffsets(index)
-	list := array.NewSlice(arr.ListValues(), start, end)
-	defer list.Release()
-	switch l := list.(type) {
+func ToConcreteList(arr *array.List) (*array.Dictionary, *array.Binary, error) {
+	var (
+		dictionaryList       *array.Dictionary
+		binaryDictionaryList *array.Binary
+	)
+	switch list := arr.ListValues().(type) {
 	case *array.Dictionary:
-		switch dict := l.Dictionary().(type) {
+		dictionaryList = list
+		switch dict := list.Dictionary().(type) {
 		case *array.Binary:
-			for i := 0; i < l.Len(); i++ {
-				iterator(i, dict.Value(l.GetValueIndex(i)))
-			}
+			binaryDictionaryList = dict
 		default:
-			return fmt.Errorf("list dictionary not of expected type: %T", list)
+			return nil, nil, fmt.Errorf("list dictionary not of expected type: %T", list)
 		}
 	default:
-		return fmt.Errorf("list not of expected type: %T", list)
+		return nil, nil, fmt.Errorf("list not of expected type: %T", list)
 	}
-
-	return nil
+	return dictionaryList, binaryDictionaryList, nil
 }
