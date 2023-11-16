@@ -13,14 +13,13 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/apache/arrow/go/v14/arrow/ipc"
+	"github.com/apache/arrow/go/v14/arrow/util"
+	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/protobuf/proto"
-
-	"github.com/apache/arrow/go/v14/arrow/ipc"
-	"github.com/apache/arrow/go/v14/arrow/util"
-	"github.com/go-kit/log/level"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
@@ -621,20 +620,23 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 					}
 					startOffset := partMeta.StartOffset
 					endOffset := partMeta.EndOffset
-					partBytes := make([]byte, endOffset-startOffset)
-					if _, err := r.ReadAt(partBytes, startOffset); err != nil {
-						return err
-					}
 					partOptions := parts.WithCompactionLevel(int(partMeta.CompactionLevel))
+					partReader := io.NewSectionReader(r, startOffset, endOffset-startOffset)
 					switch partMeta.Encoding {
 					case snapshotpb.Part_ENCODING_PARQUET:
-						serBuf, err := dynparquet.ReaderFromBytes(partBytes)
+						// Copy the full part here since parquet reads lazily
+						// and the file is closed after the snapshot is read.
+						var b bytes.Buffer
+						if _, err := io.Copy(&b, partReader); err != nil {
+							return err
+						}
+						serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
 						if err != nil {
 							return err
 						}
 						resultParts = append(resultParts, parts.NewPart(partMeta.Tx, serBuf, partOptions))
 					case snapshotpb.Part_ENCODING_ARROW:
-						arrowReader, err := ipc.NewReader(bytes.NewReader(partBytes))
+						arrowReader, err := ipc.NewReader(partReader)
 						if err != nil {
 							return err
 						}
