@@ -12,11 +12,11 @@ require (
 	github.com/go-kit/log v0.2.1
 	github.com/google/uuid v1.3.0
 	github.com/oklog/ulid v1.3.1
-	github.com/parquet-go/parquet-go v0.18.1-0.20231004061202-cde8189c4c26
+	github.com/parquet-go/parquet-go v0.19.1-0.20231121122118-5df9b59a7d50
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
 	github.com/polarsignals/wal v0.0.0-20230809145250-99ef415c5a6c
 	github.com/prometheus/client_golang v1.16.0
-	github.com/stretchr/testify v1.8.3
+	github.com/stretchr/testify v1.8.4
 	github.com/thanos-io/objstore v0.0.0-20230713070940-eb01c83b89a4
 	go.opentelemetry.io/otel v1.16.0
 	go.opentelemetry.io/otel/trace v1.16.0
