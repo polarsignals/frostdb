@@ -115,7 +115,7 @@ func recordToRows(
 					if k != start {
 						rep = 1
 					}
-					scratchRows[i] = append(scratchRows[i], parquet.ValueOf(v).Level(rep, def+1, j))
+					scratchRows[i] = append(scratchRows[i], parquet.ByteArrayValue(v).Level(rep, def+1, j))
 				}
 			}
 		default:
@@ -134,7 +134,7 @@ func recordToRows(
 					vidx := arr.GetValueIndex(indexIntoRecord)
 					switch dict := arr.Dictionary().(type) {
 					case *array.Binary:
-						scratchRows[i] = append(scratchRows[i], parquet.ValueOf(dict.Value(vidx)).Level(0, def, j))
+						scratchRows[i] = append(scratchRows[i], parquet.ByteArrayValue(dict.Value(vidx)).Level(0, def, j))
 					default:
 						scratchRows[i] = append(scratchRows[i], parquet.ValueOf(dict.GetOneForMarshal(vidx)).Level(0, def, j))
 					}
