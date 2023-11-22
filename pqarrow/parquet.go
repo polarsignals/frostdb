@@ -127,9 +127,22 @@ func recordToRows(
 					)
 					continue
 				}
-				scratchRows[i] = append(
-					scratchRows[i], parquet.ValueOf(col.GetOneForMarshal(indexIntoRecord)).Level(0, def, j),
-				)
+				switch arr := col.(type) {
+				case *array.Dictionary:
+					// GetOneForMashal is expensive for binary types because it causes an allocation when converting interface{} to []byte.
+					// So instead we direct cast the array types to get a []byte.
+					vidx := arr.GetValueIndex(indexIntoRecord)
+					switch dict := arr.Dictionary().(type) {
+					case *array.Binary:
+						scratchRows[i] = append(scratchRows[i], parquet.ValueOf(dict.Value(vidx)).Level(0, def, j))
+					default:
+						scratchRows[i] = append(scratchRows[i], parquet.ValueOf(dict.GetOneForMarshal(vidx)).Level(0, def, j))
+					}
+				default:
+					scratchRows[i] = append(
+						scratchRows[i], parquet.ValueOf(col.GetOneForMarshal(indexIntoRecord)).Level(0, def, j),
+					)
+				}
 			}
 		}
 	}
