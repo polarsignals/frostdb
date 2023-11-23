@@ -567,9 +567,9 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 		}
 	}()
 
+	var entry types.LogEntry
 	for ; tx <= lastIndex; tx++ {
 		level.Debug(w.logger).Log("msg", "replaying WAL record", "tx", tx)
-		var entry types.LogEntry
 		if err := w.log.GetLog(tx, &entry); err != nil {
 			// Panic since this is most likely a corruption issue. The recover
 			// call above will truncate the WAL to the last valid transaction.
