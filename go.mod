@@ -14,7 +14,7 @@ require (
 	github.com/oklog/ulid v1.3.1
 	github.com/parquet-go/parquet-go v0.19.1-0.20231121122118-5df9b59a7d50
 	github.com/pingcap/tidb/parser v0.0.0-20220921115303-5aab87679fde
-	github.com/polarsignals/wal v0.0.0-20230809145250-99ef415c5a6c
+	github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9
 	github.com/prometheus/client_golang v1.16.0
 	github.com/stretchr/testify v1.8.4
 	github.com/thanos-io/objstore v0.0.0-20230713070940-eb01c83b89a4
