@@ -1739,6 +1739,12 @@ type remappedPage struct {
 	remappedIndex int
 }
 
+type releasable interface {
+	Release()
+}
+
+var _ releasable = (*remappedPage)(nil)
+
 // Column returns the page's column index in the schema. It returns the
 // configured remapped index. Implements the parquet.Page interface.
 func (p *remappedPage) Column() int {
@@ -1753,6 +1759,10 @@ func (p *remappedPage) Values() parquet.ValueReader {
 		ValueReader:   p.Page.Values(),
 		remappedIndex: p.remappedIndex,
 	}
+}
+
+func (p *remappedPage) Release() {
+	parquet.Release(p.Page)
 }
 
 // Values returns the page's values. It ensures that all values read will be
