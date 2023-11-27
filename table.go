@@ -939,12 +939,8 @@ type parquetRowWriter struct {
 type parquetRowWriterOption func(p *parquetRowWriter)
 
 // rowWriter returns a new Parquet row writer with the given dynamic columns.
-func (t *TableBlock) rowWriter(writer io.Writer, dynCols map[string][]string, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
-	w, err := t.table.schema.NewWriter(writer, dynCols, false)
-	if err != nil {
-		return nil, err
-	}
-
+// TODO(asubiotto): Can we delete this parquetRowWriter?
+func (t *TableBlock) rowWriter(w ParquetWriter, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
 	buffSize := 256
 	if t.table.config.RowGroupSize > 0 {
 		buffSize = int(t.table.config.RowGroupSize)
@@ -1199,7 +1195,12 @@ func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) 
 		return 0, err
 	}
 	err = func() error {
-		p, err := t.active.rowWriter(w, merged.DynamicColumns())
+		pw, err := t.schema.GetWriter(w, merged.DynamicColumns(), false)
+		if err != nil {
+			return err
+		}
+		defer t.schema.PutWriter(pw)
+		p, err := t.active.rowWriter(pw)
 		if err != nil {
 			return err
 		}

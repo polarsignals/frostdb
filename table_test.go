@@ -739,9 +739,12 @@ func Test_RowWriter(t *testing.T) {
 	defer c.Close()
 
 	b := &bytes.Buffer{}
-	rowWriter, err := table.ActiveBlock().rowWriter(b, map[string][]string{
+	pw, err := table.schema.GetWriter(b, map[string][]string{
 		"labels": {"node"},
-	})
+	}, false)
+	defer table.schema.PutWriter(pw)
+	require.NoError(t, err)
+	rowWriter, err := table.ActiveBlock().rowWriter(pw)
 	require.NoError(t, err)
 
 	// Write 17(8,9) rows, expect 3 row groups of 5 rows and 1 row group of 2 rows
