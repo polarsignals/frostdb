@@ -240,7 +240,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 		return err
 	}
 	// If the schema has no fields we simply ignore this RowGroup that has no data.
-	if len(schema.Fields()) == 0 {
+	if schema.NumFields() == 0 {
 		return nil
 	}
 
@@ -615,7 +615,7 @@ func rowBasedParquetRowGroupToArrowRecord(
 ) error {
 	parquetFields := rg.Schema().Fields()
 
-	if len(schema.Fields()) != len(parquetFields) {
+	if schema.NumFields() != len(parquetFields) {
 		return fmt.Errorf("inconsistent schema between arrow and parquet")
 	}
 
@@ -1151,7 +1151,8 @@ func mergeArrowSchemas(schemas []*arrow.Schema) *arrow.Schema {
 	fieldsMap := make(map[string]arrow.Field)
 
 	for _, schema := range schemas {
-		for _, f := range schema.Fields() {
+		for i := 0; i < schema.NumFields(); i++ {
+			f := schema.Field(i)
 			if _, ok := fieldsMap[f.Name]; !ok {
 				fieldNames = append(fieldNames, f.Name)
 				fieldsMap[f.Name] = f

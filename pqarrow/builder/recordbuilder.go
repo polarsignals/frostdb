@@ -28,11 +28,11 @@ func NewRecordBuilder(mem memory.Allocator, schema *arrow.Schema) *RecordBuilder
 		refCount: 1,
 		mem:      mem,
 		schema:   schema,
-		fields:   make([]ColumnBuilder, len(schema.Fields())),
+		fields:   make([]ColumnBuilder, schema.NumFields()),
 	}
 
-	for i, f := range schema.Fields() {
-		b.fields[i] = NewBuilder(mem, f.Type)
+	for i := 0; i < schema.NumFields(); i++ {
+		b.fields[i] = NewBuilder(mem, schema.Field(i).Type)
 	}
 
 	return b
@@ -97,9 +97,11 @@ func (b *RecordBuilder) NewRecord() arrow.Record {
 
 // ExpandSchema expands the record builder schema by adding new fields.
 func (b *RecordBuilder) ExpandSchema(schema *arrow.Schema) {
-	for i, f := range schema.Fields() {
+	for i := 0; i < schema.NumFields(); i++ {
+		f := schema.Field(i)
 		found := false
-		for _, old := range b.schema.Fields() {
+		for j := 0; j < b.schema.NumFields(); j++ {
+			old := b.schema.Field(j)
 			if f.Equal(old) {
 				found = true
 				break

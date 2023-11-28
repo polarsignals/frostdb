@@ -157,7 +157,8 @@ func (o *OrderedSynchronizer) ensureSameSchema(records []arrow.Record) error {
 	for i, orderCol := range o.orderByExprs {
 		orderCols[i] = make(map[string]arrow.Field)
 		for _, r := range records {
-			for _, field := range r.Schema().Fields() {
+			for j := 0; j < r.Schema().NumFields(); j++ {
+				field := r.Schema().Field(j)
 				if ok := orderCol.MatchColumn(field.Name); ok {
 					orderCols[i][field.Name] = field
 				} else {
@@ -213,7 +214,8 @@ func (o *OrderedSynchronizer) ensureSameSchema(records []arrow.Record) error {
 		}
 
 		var columns []arrow.Array
-		for _, field := range schema.Fields() {
+		for j := 0; j < schema.NumFields(); j++ {
+			field := schema.Field(j)
 			if otherFields := otherSchema.FieldIndices(field.Name); otherFields != nil {
 				if len(otherFields) > 1 {
 					fieldsFound, _ := otherSchema.FieldsByName(field.Name)

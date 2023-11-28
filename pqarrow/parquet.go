@@ -151,7 +151,8 @@ func recordToRows(
 
 func RecordDynamicCols(record arrow.Record) map[string][]string {
 	dyncols := map[string][]string{}
-	for _, af := range record.Schema().Fields() {
+	for i := 0; i < record.Schema().NumFields(); i++ {
+		af := record.Schema().Field(i)
 		parts := strings.SplitN(af.Name, ".", 2)
 		if len(parts) == 2 { // dynamic column
 			dyncols[parts[0]] = append(dyncols[parts[0]], parts[1])

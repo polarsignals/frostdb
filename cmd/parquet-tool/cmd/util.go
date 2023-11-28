@@ -63,7 +63,8 @@ func inspectRecord(record arrow.Record, columns []string) {
 	} else {
 		fields := make([]arrow.Field, 0, len(columns))
 		cols := make([]arrow.Array, 0, len(columns))
-		for i, field := range record.Schema().Fields() {
+		for i := 0; i < record.Schema().NumFields(); i++ {
+			field := record.Schema().Field(i)
 			for _, col := range columns {
 				if col == field.Name {
 					fields = append(fields, field)

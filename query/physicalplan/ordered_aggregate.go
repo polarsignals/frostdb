@@ -175,7 +175,8 @@ func (a *OrderedAggregate) Callback(_ context.Context, r arrow.Record) error {
 	var columnToAggregate arrow.Array
 	aggregateFieldFound := false
 	foundNewColumns := false
-	for i, field := range r.Schema().Fields() {
+	for i := 0; i < r.Schema().NumFields(); i++ {
+		field := r.Schema().Field(i)
 		for _, matcher := range a.groupByColumnMatchers {
 			if matcher.MatchColumn(field.Name) {
 				a.scratch.groupByMap[field.Name] = groupColInfo{field: field, arr: r.Column(i)}

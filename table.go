@@ -797,8 +797,8 @@ func (t *Table) SchemaIterator(
 
 					switch t := rg.(type) {
 					case arrow.Record:
-						for _, f := range t.Schema().Fields() {
-							b.Field(0).(*array.StringBuilder).Append(f.Name)
+						for i := 0; i < t.Schema().NumFields(); i++ {
+							b.Field(0).(*array.StringBuilder).Append(t.Schema().Field(i).Name)
 						}
 						record := b.NewRecord()
 						err := callback(ctx, record)
