@@ -328,7 +328,8 @@ func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
 	concreteAggregateFieldsFound := 0
 	dynamicAggregateFieldsFound := 0
 
-	for i, field := range r.Schema().Fields() {
+	for i := 0; i < r.Schema().NumFields(); i++ {
+		field := r.Schema().Field(i)
 		for _, matcher := range a.groupByColumnMatchers {
 			if matcher.MatchColumn(field.Name) {
 				groupByFields = append(groupByFields, field)

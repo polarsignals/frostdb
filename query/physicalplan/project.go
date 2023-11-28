@@ -45,7 +45,8 @@ func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow
 		}
 		return fields, array, nil
 	case *logicalplan.Column:
-		for i, field := range ar.Schema().Fields() {
+		for i := 0; i < ar.Schema().NumFields(); i++ {
+			field := ar.Schema().Field(i)
 			if a.expr.MatchColumn(field.Name) {
 				field.Name = a.name
 				ar.Column(i).Retain() // Retain the column since we're keeping it.
@@ -134,7 +135,8 @@ func (p plainProjection) Name() string {
 }
 
 func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
-	for i, field := range ar.Schema().Fields() {
+	for i := 0; i < ar.Schema().NumFields(); i++ {
+		field := ar.Schema().Field(i)
 		if p.expr.MatchColumn(field.Name) {
 			ar.Column(i).Retain() // Retain the column since we're keeping it.
 			return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
@@ -155,7 +157,8 @@ func (p dynamicProjection) Name() string {
 func (p dynamicProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	fields := []arrow.Field{}
 	arrays := []arrow.Array{}
-	for i, field := range ar.Schema().Fields() {
+	for i := 0; i < ar.Schema().NumFields(); i++ {
+		field := ar.Schema().Field(i)
 		if p.expr.MatchColumn(field.Name) {
 			fields = append(fields, field)
 			arrays = append(arrays, ar.Column(i))
@@ -324,11 +327,12 @@ func (a *averageProjection) Project(mem memory.Allocator, r arrow.Record) ([]arr
 	sums := r.Column(sumIndex[0])
 	counts := r.Column(countIndex[0])
 
-	fields := make([]arrow.Field, 0, len(schema.Fields())-1)
-	columns := make([]arrow.Array, 0, len(schema.Fields())-1)
+	fields := make([]arrow.Field, 0, schema.NumFields()-1)
+	columns := make([]arrow.Array, 0, schema.NumFields()-1)
 
 	// Only add the fields and columns that aren't the average's underlying sum and count columns.
-	for i, field := range schema.Fields() {
+	for i := 0; i < schema.NumFields(); i++ {
+		field := schema.Field(i)
 		if i != sumIndex[0] && i != countIndex[0] {
 			fields = append(fields, field)
 			columns = append(columns, r.Column(i))

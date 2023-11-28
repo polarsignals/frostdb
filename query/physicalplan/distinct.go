@@ -76,7 +76,8 @@ func (d *Distinction) Callback(ctx context.Context, r arrow.Record) error {
 	distinctFieldHashes := make([]uint64, 0, 10)
 	distinctArrays := make([]arrow.Array, 0, 10)
 
-	for i, field := range r.Schema().Fields() {
+	for i := 0; i < r.Schema().NumFields(); i++ {
+		field := r.Schema().Field(i)
 		for _, col := range d.columns {
 			if col.MatchColumn(field.Name) {
 				distinctFields = append(distinctFields, field)

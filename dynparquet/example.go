@@ -98,7 +98,7 @@ func (s Samples) ToRecord() (arrow.Record, error) {
 	bld := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
 	defer bld.Release()
 
-	numLabels := len(schema.Fields()) - 4
+	numLabels := schema.NumFields() - 4
 
 	for _, sample := range s {
 		if err := bld.Field(0).(*array.BinaryDictionaryBuilder).Append([]byte(sample.ExampleType)); err != nil {
