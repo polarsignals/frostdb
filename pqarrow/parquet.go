@@ -131,6 +131,14 @@ func recordToRows(w dynparquet.ParquetWriter, dcv dynamicColumnVerifier, record 
 				default:
 					row = append(row, parquet.ValueOf(dict.GetOneForMarshal(vidx)).Level(0, def, j))
 				}
+			case *array.Int32:
+				row = append(
+					row, parquet.Int32Value(arr.Value(indexIntoRecord)).Level(0, def, j),
+				)
+			case *array.Int64:
+				row = append(
+					row, parquet.Int64Value(arr.Value(indexIntoRecord)).Level(0, def, j),
+				)
 			default:
 				row = append(
 					row, parquet.ValueOf(col.GetOneForMarshal(indexIntoRecord)).Level(0, def, j),
