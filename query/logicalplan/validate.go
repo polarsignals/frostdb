@@ -409,11 +409,11 @@ type findExpressionForTypeVisitor struct {
 	result Expr
 }
 
-func (v *findExpressionForTypeVisitor) PreVisit(expr Expr) bool {
+func (v *findExpressionForTypeVisitor) PreVisit(_ Expr) bool {
 	return true
 }
 
-func (v *findExpressionForTypeVisitor) Visit(expr Expr) bool {
+func (v *findExpressionForTypeVisitor) Visit(_ Expr) bool {
 	return true
 }
 

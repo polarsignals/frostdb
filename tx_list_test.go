@@ -87,6 +87,8 @@ func Test_TXList_Async(t *testing.T) {
 	p.Insert(Txn{TxnID: 1}) // insert the missing tx to drain the pool
 
 	for v := wm.Load().TxnID; v < tx.Load(); v = wm.Load().TxnID {
+		// Satisfy linter with statement.
+		continue
 	}
 	require.Equal(t, tx.Load(), wm.Load().TxnID)
 
@@ -145,6 +147,8 @@ func Benchmark_TXList_InsertAndDrain(b *testing.B) {
 
 				// Wait for the sweeper to drain
 				for v := wm.Load().TxnID; v < tx.Load(); v = wm.Load().TxnID {
+					// Satisfy linter with statement.
+					continue
 				}
 				require.Equal(b, tx.Load(), wm.Load().TxnID)
 			}

@@ -16,7 +16,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 )
 
-func parquetCompaction(compact []*parts.Part, options ...parts.Option) ([]*parts.Part, int64, int64, error) {
+func parquetCompaction(compact []*parts.Part, _ ...parts.Option) ([]*parts.Part, int64, int64, error) {
 	b := &bytes.Buffer{}
 	size, err := compactParts(b, compact)
 	if err != nil {

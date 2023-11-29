@@ -107,6 +107,8 @@ func (l *TxPool) Insert(tx Txn) {
 		return false
 	}
 	for !tryInsert() {
+		// Satisfy linter with statement.
+		continue
 	}
 }
 

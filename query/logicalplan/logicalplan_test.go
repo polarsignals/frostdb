@@ -18,26 +18,26 @@ func (m *mockTableReader) Schema() *dynparquet.Schema {
 	return m.schema
 }
 
-func (m *mockTableReader) View(ctx context.Context, fn func(ctx context.Context, tx uint64) error) error {
+func (m *mockTableReader) View(_ context.Context, _ func(ctx context.Context, tx uint64) error) error {
 	return nil
 }
 
 func (m *mockTableReader) Iterator(
-	ctx context.Context,
-	tx uint64,
-	pool memory.Allocator,
-	callbacks []Callback,
-	iterOpts ...Option,
+	_ context.Context,
+	_ uint64,
+	_ memory.Allocator,
+	_ []Callback,
+	_ ...Option,
 ) error {
 	return nil
 }
 
 func (m *mockTableReader) SchemaIterator(
-	ctx context.Context,
-	tx uint64,
-	pool memory.Allocator,
-	callbacks []Callback,
-	iterOpts ...Option,
+	_ context.Context,
+	_ uint64,
+	_ memory.Allocator,
+	_ []Callback,
+	_ ...Option,
 ) error {
 	return nil
 }
@@ -46,7 +46,7 @@ type mockTableProvider struct {
 	schema *dynparquet.Schema
 }
 
-func (m *mockTableProvider) GetTable(name string) (TableReader, error) {
+func (m *mockTableProvider) GetTable(_ string) (TableReader, error) {
 	return &mockTableReader{
 		schema: m.schema,
 	}, nil

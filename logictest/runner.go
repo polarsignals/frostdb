@@ -105,7 +105,7 @@ func (r *Runner) handleCmd(ctx context.Context, c *datadriven.TestData) (string,
 	return "", fmt.Errorf("unknown command %s", c.Cmd)
 }
 
-func (r *Runner) handleCreateTable(ctx context.Context, c *datadriven.TestData) (string, error) {
+func (r *Runner) handleCreateTable(_ context.Context, c *datadriven.TestData) (string, error) {
 	var schema *schemapb.Schema
 	for _, arg := range c.CmdArgs {
 		if arg.Key == "schema" {

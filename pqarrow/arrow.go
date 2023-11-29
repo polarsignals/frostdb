@@ -270,7 +270,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) err
 	}
 
 	if _, ok := rg.(*dynparquet.MergedRowGroup); ok {
-		return rowBasedParquetRowGroupToArrowRecord(ctx, c.pool, rg, c.outputSchema, c.builder)
+		return rowBasedParquetRowGroupToArrowRecord(ctx, rg, c.outputSchema, c.builder)
 	}
 
 	parquetSchema := rg.Schema()
@@ -608,7 +608,6 @@ var rowBufPool = &sync.Pool{
 // record row by row. The result is appended to b.
 func rowBasedParquetRowGroupToArrowRecord(
 	ctx context.Context,
-	pool memory.Allocator,
 	rg parquet.RowGroup,
 	schema *arrow.Schema,
 	builder *builder.RecordBuilder,
@@ -852,11 +851,11 @@ func (f PreExprVisitorFunc) PreVisit(expr logicalplan.Expr) bool {
 	return f(expr)
 }
 
-func (f PreExprVisitorFunc) Visit(expr logicalplan.Expr) bool {
+func (f PreExprVisitorFunc) Visit(_ logicalplan.Expr) bool {
 	return false
 }
 
-func (f PreExprVisitorFunc) PostVisit(expr logicalplan.Expr) bool {
+func (f PreExprVisitorFunc) PostVisit(_ logicalplan.Expr) bool {
 	return false
 }
 

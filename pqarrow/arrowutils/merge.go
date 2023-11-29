@@ -120,7 +120,7 @@ func (h cursorHeap) Swap(i, j int) {
 	h.cursors[i], h.cursors[j] = h.cursors[j], h.cursors[i]
 }
 
-func (h cursorHeap) Push(x any) {
+func (h cursorHeap) Push(_ any) {
 	panic(
 		"number of cursors are known at Init time, none should ever be pushed",
 	)

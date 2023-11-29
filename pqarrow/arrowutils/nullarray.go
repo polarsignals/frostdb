@@ -76,6 +76,6 @@ func (n VirtualNullArray) Release() {}
 
 func (n VirtualNullArray) String() string { return "VirtualNullArray" }
 
-func (n VirtualNullArray) ValueStr(i int) string { return "" }
+func (n VirtualNullArray) ValueStr(_ int) string { return "" }
 
 func (n VirtualNullArray) GetOneForMarshal(_ int) any { return nil }

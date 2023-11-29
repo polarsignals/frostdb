@@ -611,11 +611,11 @@ func (d *DurationExpr) Clone() Expr {
 	}
 }
 
-func (d *DurationExpr) DataType(schema *parquet.Schema) (arrow.DataType, error) {
+func (d *DurationExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
 	return &arrow.DurationType{}, nil
 }
 
-func (d *DurationExpr) MatchPath(path string) bool {
+func (d *DurationExpr) MatchPath(_ string) bool {
 	return false
 }
 
@@ -716,7 +716,7 @@ func (a *RegexpColumnMatch) Clone() Expr {
 	}
 }
 
-func (a *RegexpColumnMatch) DataType(s *parquet.Schema) (arrow.DataType, error) {
+func (a *RegexpColumnMatch) DataType(_ *parquet.Schema) (arrow.DataType, error) {
 	return nil, nil
 }
 
@@ -768,10 +768,10 @@ func (a *AllExpr) Name() string { return "all" }
 func (a *AllExpr) ColumnsUsedExprs() []Expr {
 	return []Expr{&AllExpr{}}
 }
-func (a *AllExpr) MatchColumn(columnName string) bool { return true }
-func (a *AllExpr) MatchPath(path string) bool         { return true }
-func (a *AllExpr) Computed() bool                     { return false }
-func (a *AllExpr) Clone() Expr                        { return &AllExpr{} }
+func (a *AllExpr) MatchColumn(_ string) bool { return true }
+func (a *AllExpr) MatchPath(_ string) bool   { return true }
+func (a *AllExpr) Computed() bool            { return false }
+func (a *AllExpr) Clone() Expr               { return &AllExpr{} }
 
 type NotExpr struct {
 	Expr Expr

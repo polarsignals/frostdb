@@ -469,7 +469,7 @@ func (s *v2storageLayoutWrapper) GetCompressionInt32() int32 {
 	return int32(s.StorageLayout.GetCompression())
 }
 
-func StorageLayoutWrapper(layout *schemav2pb.StorageLayout) StorageLayout {
+func StorageLayoutWrapper(_ *schemav2pb.StorageLayout) StorageLayout {
 	return nil
 }
 
@@ -1290,13 +1290,13 @@ func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string, sort
 	pool, _ := s.writers.LoadOrStore(fmt.Sprintf("%s,sorting=%t", key, sorting), &sync.Pool{})
 	pooled := pool.(*sync.Pool).Get()
 	if pooled == nil {
-		new, err := s.NewWriter(w, dynamicColumns, sorting)
+		pw, err := s.NewWriter(w, dynamicColumns, sorting)
 		if err != nil {
 			return nil, err
 		}
 		return &PooledWriter{
 			pool:          pool.(*sync.Pool),
-			ParquetWriter: new,
+			ParquetWriter: pw,
 		}, nil
 	}
 	pooled.(*PooledWriter).ParquetWriter.Reset(w)
@@ -1372,13 +1372,13 @@ func (s *Schema) GetBuffer(dynamicColumns map[string][]string) (*PooledBuffer, e
 	pool, _ := s.buffers.LoadOrStore(key, &sync.Pool{})
 	pooled := pool.(*sync.Pool).Get()
 	if pooled == nil {
-		new, err := s.NewBuffer(dynamicColumns)
+		pw, err := s.NewBuffer(dynamicColumns)
 		if err != nil {
 			return nil, err
 		}
 		return &PooledBuffer{
 			pool:   pool.(*sync.Pool),
-			Buffer: new,
+			Buffer: pw,
 		}, nil
 	}
 	return pooled.(*PooledBuffer), nil
