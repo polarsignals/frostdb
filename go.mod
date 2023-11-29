@@ -78,7 +78,3 @@ require (
 // - https://github.com/apache/arrow/pull/38729
 // - https://github.com/apache/arrow/pull/38919
 replace github.com/apache/arrow/go/v14 => github.com/asubiotto/arrow/go/v14 v14.0.0-20231129090719-b321865d34e9
-
-// Remove when the following PRs are available in a release.
-// - https://github.com/parquet-go/parquet-go/pull/96
-replace github.com/parquet-go/parquet-go => github.com/asubiotto/parquet-go v0.0.0-20231129095010-9bfc4cead953
