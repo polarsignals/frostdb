@@ -382,7 +382,7 @@ func (db *DB) offlineSnapshotWriter(tx uint64, txnMetadata []byte) func(context.
 	}
 }
 
-func WriteSnapshot(ctx context.Context, tx uint64, txnMetadata []byte, db *DB, w io.Writer, offline bool) error {
+func WriteSnapshot(ctx context.Context, _ uint64, txnMetadata []byte, db *DB, w io.Writer, offline bool) error {
 	offW := newOffsetWriter(w)
 	w = offW
 	var tables []*Table

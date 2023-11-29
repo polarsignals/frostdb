@@ -525,7 +525,7 @@ func (b *OptBooleanBuilder) Value(i int) bool {
 	return bitutil.BitIsSet(b.data, i)
 }
 
-func (b *OptBooleanBuilder) AppendData(data []byte) {
+func (b *OptBooleanBuilder) AppendData(_ []byte) {
 	panic("do not use AppendData for opt boolean builder, use Append instead")
 }
 

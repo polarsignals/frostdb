@@ -478,7 +478,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 	}
 }
 
-func (t *Table) RotateBlock(ctx context.Context, block *TableBlock, skipPersist bool) error {
+func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bool) error {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
@@ -566,11 +566,11 @@ func (t *Table) Write(ctx context.Context, vals ...any) (uint64, error) {
 }
 
 func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, error) {
-	block, close, err := t.appender(ctx)
+	block, finish, err := t.appender(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("get appender: %w", err)
 	}
-	defer close()
+	defer finish()
 
 	tx, _, metadata, commit := t.db.begin()
 	defer commit()
@@ -590,7 +590,7 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 	for {
 		// Using active write block is important because it ensures that we don't
 		// miss pending writers when synchronizing the block.
-		block, close, err := t.ActiveWriteBlock()
+		block, finish, err := t.ActiveWriteBlock()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -624,11 +624,11 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 		}
 		blockSize := block.Size()
 		if blockSize < t.db.columnStore.activeMemorySize || t.db.columnStore.manualBlockRotation {
-			return block, close, nil
+			return block, finish, nil
 		}
 
 		// We need to rotate the block and the writer won't actually be used.
-		close()
+		finish()
 
 		err = t.RotateBlock(ctx, block, false)
 		if err != nil {
@@ -880,7 +880,7 @@ func (t *TableBlock) EnsureCompaction() error {
 	return t.index.EnsureCompaction()
 }
 
-func (t *TableBlock) InsertRecord(ctx context.Context, tx uint64, record arrow.Record) error {
+func (t *TableBlock) InsertRecord(_ context.Context, tx uint64, record arrow.Record) error {
 	recordSize := util.TotalRecordSize(record)
 	defer func() {
 		t.table.metrics.rowsInserted.Add(float64(record.NumRows()))

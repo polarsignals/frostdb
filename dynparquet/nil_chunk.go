@@ -217,7 +217,7 @@ func (p *nilPage) Data() encoding.Values {
 	panic("not implemented")
 }
 
-func (p *nilPage) Slice(i, j int64) parquet.Page {
+func (p *nilPage) Slice(_, _ int64) parquet.Page {
 	return &nilPage{
 		numValues:   p.numValues,
 		columnIndex: p.columnIndex,

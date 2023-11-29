@@ -203,7 +203,7 @@ func (l *LSM) String() string {
 	return s
 }
 
-func (l *LSM) Prefixes(ctx context.Context, prefix string) ([]string, error) {
+func (l *LSM) Prefixes(_ context.Context, _ string) ([]string, error) {
 	return []string{l.prefix}, nil
 }
 
@@ -298,12 +298,16 @@ func (l *LSM) findNode(node *Node) *Node {
 // levels are below the target size.
 func (l *LSM) EnsureCompaction() error {
 	for !l.compacting.CompareAndSwap(false, true) { // TODO: should backoff retry this probably
+		// Satisfy linter with a statement.
+		continue
 	}
 	return l.compact(true /* ignoreSizes */)
 }
 
 func (l *LSM) Rotate(level SentinelType, externalWriter func([]*parts.Part) (*parts.Part, int64, int64, error)) error {
 	for !l.compacting.CompareAndSwap(false, true) { // TODO: should backoff retry this probably
+		// Satisfy linter with a statement.
+		continue
 	}
 	defer l.compacting.Store(false)
 	start := time.Now()

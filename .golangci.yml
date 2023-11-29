@@ -23,15 +23,21 @@ issues:
 
 linters-settings:
   depguard:
-    list-type: blacklist
-    include-go-root: true
-    packages-with-error-message:
-      - go.uber.org/atomic: "Use sync/atomic instead of go.uber.org/atomic"
-      - debug/elf: "Use github.com/parca-dev/parca/internal/go/debug/elf instead of debug/elf"
-      - github.com/stretchr/testify/assert: "Use github.com/stretchr/testify/require instead of github.com/stretchr/testify/assert"
-      - github.com/go-kit/kit/log: "Use github.com/go-kit/log instead of github.com/go-kit/kit/log"
-      - github.com/pkg/errors: "Use fmt.Errorf instead"
-      - github.com/segmentio/parquet-go: "Use github.com/parquet-go/parquet-go instead"
+    rules:
+      main:
+        deny:
+          - pkg: go.uber.org/atomic
+            desc: "Use sync/atomic instead of go.uber.org/atomic"
+          - pkg: debug/elg
+            desc: "Use github.com/parca-dev/parca/internal/go/debug/elf instead of debug/elf"
+          - pkg: github.com/stretchr/testify/assert
+            desc: "Use github.com/stretchr/testify/require instead of github.com/stretchr/testify/assert"
+          - pkg: github.com/go-kit/kit/log
+            desc: "Use github.com/go-kit/log instead of github.com/go-kit/kit/log"
+          - pkg: github.com/pkg/errors
+            desc: "Use fmt.Errorf instead"
+          - pkg: github.com/segmentio/parquet-go
+            desc: "Use github.com/parquet-go/parquet-go instead"
   errcheck:
     exclude: ./.errcheck_excludes.txt
   goimports:

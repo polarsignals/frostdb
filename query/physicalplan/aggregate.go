@@ -305,7 +305,7 @@ func (d *durationHashCombine) hashCombine(rhs uint64) uint64 {
 	return rhs / d.milliseconds // floors by default
 }
 
-func (a *HashAggregate) Callback(ctx context.Context, r arrow.Record) error {
+func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 	// Generates high volume of spans. Comment out if needed during development.
 	// ctx, span := a.tracer.Start(ctx, "HashAggregate/Callback")
 	// defer span.End()

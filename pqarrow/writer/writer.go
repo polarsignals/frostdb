@@ -24,7 +24,7 @@ type binaryValueWriter struct {
 
 type NewWriterFunc func(b builder.ColumnBuilder, numValues int) ValueWriter
 
-func NewBinaryValueWriter(b builder.ColumnBuilder, numValues int) ValueWriter {
+func NewBinaryValueWriter(b builder.ColumnBuilder, _ int) ValueWriter {
 	return &binaryValueWriter{
 		b: b.(*builder.OptBinaryBuilder),
 	}
@@ -455,11 +455,11 @@ func NewMapWriter(b builder.ColumnBuilder, _ int) ValueWriter {
 	}
 }
 
-func (m *mapWriter) WritePage(p parquet.Page) error {
+func (m *mapWriter) WritePage(_ parquet.Page) error {
 	panic("not implemented")
 }
 
-func (m *mapWriter) Write(values []parquet.Value) {
+func (m *mapWriter) Write(_ []parquet.Value) {
 	panic("not implemented")
 }
 

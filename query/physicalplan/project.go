@@ -134,7 +134,7 @@ func (p plainProjection) Name() string {
 	return p.expr.ColumnName
 }
 
-func (p plainProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+func (p plainProjection) Project(_ memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i := 0; i < ar.Schema().NumFields(); i++ {
 		field := ar.Schema().Field(i)
 		if p.expr.MatchColumn(field.Name) {
@@ -154,7 +154,7 @@ func (p dynamicProjection) Name() string {
 	return p.expr.ColumnName
 }
 
-func (p dynamicProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+func (p dynamicProjection) Project(_ memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	fields := []arrow.Field{}
 	arrays := []arrow.Array{}
 	for i := 0; i < ar.Schema().NumFields(); i++ {
@@ -367,6 +367,6 @@ type allProjection struct{}
 
 func (a allProjection) Name() string { return "all" }
 
-func (a allProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+func (a allProjection) Project(_ memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	return ar.Schema().Fields(), ar.Columns(), nil
 }
