@@ -689,7 +689,10 @@ func (c *ParquetConverter) writeColumnToArray(
 		// the index values.
 		// TODO(asubiotto): This optimization can be applied at a finer
 		// granularity at the page level as well.
-		columnIndex := columnChunk.ColumnIndex()
+		columnIndex, err := columnChunk.ColumnIndex()
+		if err != nil {
+			return err
+		}
 		columnType := columnChunk.Type()
 
 		globalMinValue := columnIndex.MinValue(0)
@@ -890,7 +893,10 @@ func binaryDistinctExpr(
 	value := *info.v
 	switch expr.Op {
 	case logicalplan.OpGt:
-		index := columnChunk.ColumnIndex()
+		index, err := columnChunk.ColumnIndex()
+		if err != nil {
+			return false, err
+		}
 		allGreater, noneGreater := allOrNoneGreaterThan(
 			typ,
 			index,
