@@ -81,7 +81,11 @@ var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 // returns false, it means that the operator will definitely not be satisfied
 // by any value in the column chunk.
 func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Op) (bool, error) {
-	numNulls := NullCount(left)
+	leftColumnIndex, err := left.ColumnIndex()
+	if err != nil {
+		return true, err
+	}
+	numNulls := NullCount(leftColumnIndex)
 	fullOfNulls := numNulls == left.NumValues()
 	if operator == logicalplan.OpEq {
 		if right.IsNull() {
@@ -96,7 +100,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		bloomFilter := left.BloomFilter()
 		if bloomFilter == nil {
 			// If there is no bloom filter then we cannot make a statement about true negative, instead check the min max values of the column chunk
-			return compare(right, Max(left)) <= 0 && compare(right, Min(left)) >= 0, nil
+			return compare(right, Max(leftColumnIndex)) <= 0 && compare(right, Min(leftColumnIndex)) >= 0, nil
 		}
 
 		ok, err := bloomFilter.Check(right)
@@ -129,7 +133,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 
 	switch operator {
 	case logicalplan.OpLtEq:
-		min := Min(left)
+		min := Min(leftColumnIndex)
 		if min.IsNull() {
 			// If min is null, we don't know what the non-null min value is, so
 			// we need to let the execution engine scan this column chunk
@@ -138,7 +142,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		}
 		return compare(min, right) <= 0, nil
 	case logicalplan.OpLt:
-		min := Min(left)
+		min := Min(leftColumnIndex)
 		if min.IsNull() {
 			// If min is null, we don't know what the non-null min value is, so
 			// we need to let the execution engine scan this column chunk
@@ -147,7 +151,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		}
 		return compare(min, right) < 0, nil
 	case logicalplan.OpGt:
-		max := Max(left)
+		max := Max(leftColumnIndex)
 		if max.IsNull() {
 			// If max is null, we don't know what the non-null max value is, so
 			// we need to let the execution engine scan this column chunk
@@ -156,7 +160,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		}
 		return compare(max, right) > 0, nil
 	case logicalplan.OpGtEq:
-		max := Max(left)
+		max := Max(leftColumnIndex)
 		if max.IsNull() {
 			// If max is null, we don't know what the non-null max value is, so
 			// we need to let the execution engine scan this column chunk
@@ -170,8 +174,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 }
 
 // Min returns the minimum value found in the column chunk across all pages.
-func Min(chunk parquet.ColumnChunk) parquet.Value {
-	columnIndex := chunk.ColumnIndex()
+func Min(columnIndex parquet.ColumnIndex) parquet.Value {
 	min := columnIndex.MinValue(0)
 	for i := 1; i < columnIndex.NumPages(); i++ {
 		v := columnIndex.MinValue(i)
@@ -188,8 +191,7 @@ func Min(chunk parquet.ColumnChunk) parquet.Value {
 	return min
 }
 
-func NullCount(chunk parquet.ColumnChunk) int64 {
-	columnIndex := chunk.ColumnIndex()
+func NullCount(columnIndex parquet.ColumnIndex) int64 {
 	numNulls := int64(0)
 	for i := 0; i < columnIndex.NumPages(); i++ {
 		numNulls += columnIndex.NullCount(i)
@@ -198,8 +200,7 @@ func NullCount(chunk parquet.ColumnChunk) int64 {
 }
 
 // Max returns the maximum value found in the column chunk across all pages.
-func Max(chunk parquet.ColumnChunk) parquet.Value {
-	columnIndex := chunk.ColumnIndex()
+func Max(columnIndex parquet.ColumnIndex) parquet.Value {
 	max := columnIndex.MaxValue(0)
 	for i := 1; i < columnIndex.NumPages(); i++ {
 		v := columnIndex.MaxValue(i)

@@ -14,13 +14,13 @@ type FakeColumnChunk struct {
 	numValues int64
 }
 
-func (f *FakeColumnChunk) Type() parquet.Type               { return nil }
-func (f *FakeColumnChunk) Column() int                      { return 0 }
-func (f *FakeColumnChunk) Pages() parquet.Pages             { return nil }
-func (f *FakeColumnChunk) ColumnIndex() parquet.ColumnIndex { return f.index }
-func (f *FakeColumnChunk) OffsetIndex() parquet.OffsetIndex { return nil }
-func (f *FakeColumnChunk) BloomFilter() parquet.BloomFilter { return nil }
-func (f *FakeColumnChunk) NumValues() int64                 { return f.numValues }
+func (f *FakeColumnChunk) Type() parquet.Type                        { return nil }
+func (f *FakeColumnChunk) Column() int                               { return 0 }
+func (f *FakeColumnChunk) Pages() parquet.Pages                      { return nil }
+func (f *FakeColumnChunk) ColumnIndex() (parquet.ColumnIndex, error) { return f.index, nil }
+func (f *FakeColumnChunk) OffsetIndex() (parquet.OffsetIndex, error) { return nil, nil }
+func (f *FakeColumnChunk) BloomFilter() parquet.BloomFilter          { return nil }
+func (f *FakeColumnChunk) NumValues() int64                          { return f.numValues }
 
 type FakeColumnIndex struct {
 	numPages  int
@@ -43,16 +43,14 @@ func (f *FakeColumnIndex) IsDescending() bool         { return false }
 // value (instead of panicing) should they be passed a column chunk that only
 // has null values.
 func Test_MinMax_EmptyColumnChunk(t *testing.T) {
-	fakeChunk := &FakeColumnChunk{
-		index: &FakeColumnIndex{
-			numPages: 10,
-		},
+	fakeIndex := &FakeColumnIndex{
+		numPages: 10,
 	}
 
-	v := Min(fakeChunk)
+	v := Min(fakeIndex)
 	require.True(t, v.IsNull())
 
-	v = Max(fakeChunk)
+	v = Max(fakeIndex)
 	require.True(t, v.IsNull())
 }
 

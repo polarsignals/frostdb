@@ -243,15 +243,15 @@ func (p *nilPages) SeekToRow(row int64) error {
 // ColumnIndex returns the column index of the column chunk. Since the
 // NilColumnChunk is a virtual column chunk only for in-memory purposes, it
 // returns nil. Implements the parquet.ColumnChunk interface.
-func (c *NilColumnChunk) ColumnIndex() parquet.ColumnIndex {
-	return nil
+func (c *NilColumnChunk) ColumnIndex() (parquet.ColumnIndex, error) {
+	return nil, nil
 }
 
 // OffsetIndex returns the offset index of the column chunk. Since the
 // NilColumnChunk is a virtual column chunk only for in-memory purposes, it
 // returns nil. Implements the parquet.ColumnChunk interface.
-func (c *NilColumnChunk) OffsetIndex() parquet.OffsetIndex {
-	return nil
+func (c *NilColumnChunk) OffsetIndex() (parquet.OffsetIndex, error) {
+	return nil, nil
 }
 
 // BloomFilter returns the bloomfilter of the column chunk. Since the
