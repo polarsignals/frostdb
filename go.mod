@@ -10,7 +10,7 @@ require (
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-kit/log v0.2.1
-	github.com/google/uuid v1.3.0
+	github.com/google/uuid v1.3.1
 	github.com/oklog/ulid v1.3.1
 	github.com/parquet-go/parquet-go v0.19.1-0.20231121122118-5df9b59a7d50
 	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
@@ -21,8 +21,8 @@ require (
 	go.opentelemetry.io/otel v1.16.0
 	go.opentelemetry.io/otel/trace v1.16.0
 	go.uber.org/goleak v1.2.0
-	golang.org/x/exp v0.0.0-20230206171751-46f607a40771
-	golang.org/x/sync v0.3.0
+	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
+	golang.org/x/sync v0.4.0
 	google.golang.org/protobuf v1.31.0
 )
 
@@ -39,12 +39,12 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/efficientgo/core v1.0.0-rc.2 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
-	github.com/goccy/go-json v0.10.0 // indirect
+	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
-	github.com/google/flatbuffers v23.1.21+incompatible // indirect
+	github.com/google/flatbuffers v23.5.26+incompatible // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/klauspost/compress v1.16.7 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.3 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.5 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
@@ -65,11 +65,16 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.25.0 // indirect
-	golang.org/x/mod v0.8.0 // indirect
-	golang.org/x/sys v0.10.0 // indirect
-	golang.org/x/text v0.12.0 // indirect
-	golang.org/x/tools v0.6.0 // indirect
+	golang.org/x/mod v0.13.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/text v0.13.0 // indirect
+	golang.org/x/tools v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// Remove when the following PRs are available in a release.
+// - https://github.com/apache/arrow/pull/38729
+// - https://github.com/apache/arrow/pull/38919
+replace github.com/apache/arrow/go/v14 => github.com/asubiotto/arrow/go/v14 v14.0.0-20231129090719-b321865d34e9
