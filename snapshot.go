@@ -634,17 +634,27 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 						}
 						resultParts = append(resultParts, parts.NewPart(partMeta.Tx, serBuf, partOptions))
 					case snapshotpb.Part_ENCODING_ARROW:
-						arrowReader, err := ipc.NewReader(bytes.NewReader(partBytes))
-						if err != nil {
+						if err := func() error {
+							arrowReader, err := ipc.NewReader(bytes.NewReader(partBytes))
+							if err != nil {
+								return err
+							}
+							defer arrowReader.Release()
+
+							record, err := arrowReader.Read()
+							if err != nil {
+								return err
+							}
+
+							record.Retain()
+							resultParts = append(
+								resultParts,
+								parts.NewArrowPart(partMeta.Tx, record, int(util.TotalRecordSize(record)), table.schema, partOptions),
+							)
+							return nil
+						}(); err != nil {
 							return err
 						}
-
-						record, err := arrowReader.Read()
-						if err != nil {
-							return err
-						}
-
-						resultParts = append(resultParts, parts.NewArrowPart(partMeta.Tx, record, int(util.TotalRecordSize(record)), table.schema, partOptions))
 					default:
 						return fmt.Errorf("unknown part encoding: %s", partMeta.Encoding)
 					}
