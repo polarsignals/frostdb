@@ -92,10 +92,11 @@ func findAll(fileOrDir, column string) error {
 }
 
 func find(file, column string, t *table.Table) error {
-	pf, err := openParquetFile(file)
+	pf, closer, err := openParquetFile(file)
 	if err != nil {
 		return err
 	}
+	defer closer.Close()
 
 	columns, err := parseColumnArg(column)
 	if err != nil {

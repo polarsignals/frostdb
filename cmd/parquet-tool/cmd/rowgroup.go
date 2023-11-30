@@ -24,10 +24,11 @@ var rowgroupCmd = &cobra.Command{
 }
 
 func rowgroup(file string, rg int) error {
-	f, err := openParquetFile(file)
+	f, closer, err := openParquetFile(file)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to open file :", err)
 	}
+	defer closer.Close()
 
 	t := table.New().
 		Border(lipgloss.NormalBorder()).

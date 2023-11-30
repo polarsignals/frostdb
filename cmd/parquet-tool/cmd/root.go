@@ -28,4 +28,5 @@ func init() {
 	rootCmd.AddCommand(walCmd)
 	rootCmd.AddCommand(snapshotCmd)
 	rootCmd.AddCommand(rowgroupCmd)
+	rootCmd.AddCommand(columnCmd)
 }
