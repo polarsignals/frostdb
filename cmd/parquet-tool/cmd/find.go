@@ -37,13 +37,19 @@ var OddRowStyle = lipgloss.NewStyle().
 	Bold(false).
 	Foreground(lipgloss.Color("#a6a4a4"))
 
-func parseColumnArg(columnArg string) (string, string, error) {
-	splits := strings.Split(columnArg, "=")
-	if len(splits) != 2 {
-		return "", "", fmt.Errorf("invalid column argument: %s; expected format of <column>=<value>", columnArg)
+func parseColumnArg(columnArg string) (map[string]string, error) {
+	columns := make(map[string]string)
+	matchers := strings.Split(columnArg, ",") // csv separated list
+	for _, matcher := range matchers {
+		splits := strings.Split(matcher, "=")
+		if len(splits) != 2 {
+			return nil, fmt.Errorf("invalid column argument: %s; expected format of <column>=<value>", matcher)
+		}
+
+		columns[splits[0]] = splits[1]
 	}
 
-	return splits[0], splits[1], nil
+	return columns, nil
 }
 
 func findAll(fileOrDir, column string) error {
@@ -65,7 +71,7 @@ func findAll(fileOrDir, column string) error {
 				return OddRowStyle
 			}
 		}).
-		Headers("FILE", "ROW GROUP", "MIN", "MAX")
+		Headers("FILE", "ROW GROUP")
 	defer fmt.Println(t)
 
 	if !info.IsDir() {
@@ -91,17 +97,18 @@ func find(file, column string, t *table.Table) error {
 		return err
 	}
 
-	// TODO: would be nice to support humand readable timestamps; and parse them into int64s
-	column, val, err := parseColumnArg(column)
+	columns, err := parseColumnArg(column)
 	if err != nil {
 		return err
 	}
 
 	for i, rg := range pf.RowGroups() {
 		schema := rg.Schema()
+		found := 0 // We must find all columns that match or the whole row group does not match
 		for j, field := range schema.Fields() {
-			if field.Name() != column {
-				continue
+			val, ok := columns[field.Name()]
+			if !ok {
+				continue // skip if column not found
 			}
 
 			v, err := getValue(val, field.Type().Kind())
@@ -110,14 +117,22 @@ func find(file, column string, t *table.Table) error {
 			}
 
 			// Check the min max values of each column
-			index := rg.ColumnChunks()[j].ColumnIndex()
-			for k := 0; k < index.NumPages(); k++ {
+			index, err := rg.ColumnChunks()[j].ColumnIndex()
+			if err != nil {
+				return err
+			}
 
+			for k := 0; k < index.NumPages(); k++ {
 				if compare(index.MinValue(k), v) <= 0 &&
 					compare(index.MaxValue(k), v) >= 0 {
-					t.Row(file, fmt.Sprint(i), fmt.Sprint(index.MinValue(k)), fmt.Sprint(index.MaxValue(k)))
+					found++
+					break
 				}
 			}
+		}
+
+		if found == len(columns) {
+			t.Row(file, fmt.Sprint(i))
 		}
 	}
 
@@ -133,6 +148,8 @@ func getValue(val string, kind parquet.Kind) (parquet.Value, error) {
 		}
 
 		return parquet.ValueOf(i), nil
+	case parquet.ByteArray:
+		return parquet.ValueOf([]byte(val)), nil
 	case parquet.Int96:
 		fallthrough
 	case parquet.Boolean:
@@ -143,11 +160,9 @@ func getValue(val string, kind parquet.Kind) (parquet.Value, error) {
 		fallthrough
 	case parquet.Double:
 		fallthrough
-	case parquet.ByteArray:
-		fallthrough
 	case parquet.FixedLenByteArray:
 		fallthrough
 	default:
-		return parquet.Value{}, fmt.Errorf("unsupported kind: %T", kind)
+		return parquet.Value{}, fmt.Errorf("unsupported kind: %v", kind)
 	}
 }
