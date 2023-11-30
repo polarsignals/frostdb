@@ -166,7 +166,7 @@ func TestSnapshot(t *testing.T) {
 			// Reset sync.Maps so reflect.DeepEqual can be used below.
 			db.tables[testCase.name].schema.ResetWriters()
 			db.tables[testCase.name].schema.ResetBuffers()
-			require.Equal(t, db.tables[testCase.name].config, snapshotDB.tables[testCase.name].config)
+			require.Equal(t, db.tables[testCase.name].config.Load(), snapshotDB.tables[testCase.name].config.Load())
 		}
 	})
 

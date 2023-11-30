@@ -419,7 +419,7 @@ func WriteSnapshot(ctx context.Context, _ uint64, txnMetadata []byte, db *DB, w 
 			}
 			tableMeta := &snapshotpb.Table{
 				Name:   t.name,
-				Config: t.config,
+				Config: t.config.Load(),
 				ActiveBlock: &snapshotpb.Table_TableBlock{
 					Ulid:   blockUlid,
 					Size:   block.Size(),

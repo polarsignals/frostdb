@@ -157,7 +157,7 @@ type Table struct {
 	logger  log.Logger
 	tracer  trace.Tracer
 
-	config *tablepb.TableConfig
+	config atomic.Pointer[tablepb.TableConfig]
 	schema *dynparquet.Schema
 
 	pendingBlocks   map[*TableBlock]struct{}
@@ -273,7 +273,6 @@ func newTable(
 
 	t := &Table{
 		db:     db,
-		config: tableConfig,
 		name:   name,
 		logger: logger,
 		tracer: tracer,
@@ -318,6 +317,9 @@ func newTable(
 		},
 	}
 
+	// Store the table config
+	t.config.Store(tableConfig)
+
 	// Disable the WAL for this table by replacing any given WAL with a nop wal
 	if tableConfig.DisableWal {
 		t.wal = &walpkg.NopWAL{}
@@ -350,7 +352,7 @@ func (t *Table) newTableBlock(prevTx, tx uint64, txnMetadata []byte, id ulid.ULI
 				NewTableBlock: &walpb.Entry_NewTableBlock{
 					TableName: t.name,
 					BlockId:   b,
-					Config:    t.config,
+					Config:    t.config.Load(),
 				},
 			},
 		},
@@ -535,7 +537,7 @@ func (t *Table) ActiveWriteBlock() (*TableBlock, func(), error) {
 }
 
 func (t *Table) Schema() *dynparquet.Schema {
-	if t.config == nil {
+	if t.config.Load() == nil {
 		return nil
 	}
 	return t.schema
@@ -942,15 +944,16 @@ type parquetRowWriterOption func(p *parquetRowWriter)
 // TODO(asubiotto): Can we delete this parquetRowWriter?
 func (t *TableBlock) rowWriter(w ParquetWriter, options ...parquetRowWriterOption) (*parquetRowWriter, error) {
 	buffSize := 256
-	if t.table.config.RowGroupSize > 0 {
-		buffSize = int(t.table.config.RowGroupSize)
+	config := t.table.config.Load()
+	if config.RowGroupSize > 0 {
+		buffSize = int(config.RowGroupSize)
 	}
 
 	p := &parquetRowWriter{
 		w:            w,
 		schema:       t.table.schema,
 		rowsBuf:      make([]parquet.Row, buffSize),
-		rowGroupSize: int(t.table.config.RowGroupSize),
+		rowGroupSize: int(config.RowGroupSize),
 	}
 
 	for _, option := range options {

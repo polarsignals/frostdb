@@ -1558,7 +1558,7 @@ func TestDBRecover(t *testing.T) {
 
 		db, err := c.DB(ctx, dbAndTableName)
 		require.NoError(t, err)
-		table, err := db.Table(dbAndTableName, nil)
+		table, err := db.GetTable(dbAndTableName)
 		require.NoError(t, err)
 		newWriteAndExpectWALRecord(t, db, table)
 	})
@@ -1658,7 +1658,7 @@ func TestDBRecover(t *testing.T) {
 
 		db, err := c.DB(ctx, dbAndTableName)
 		require.NoError(t, err)
-		table, err := db.Table(dbAndTableName, nil)
+		table, err := db.GetTable(dbAndTableName)
 		require.NoError(t, err)
 
 		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
@@ -1730,7 +1730,7 @@ func Test_DB_WalReplayTableConfig(t *testing.T) {
 	require.NoError(t, err)
 	table, err := db.Table("test", config)
 	require.NoError(t, err)
-	require.Equal(t, uint64(10), table.config.RowGroupSize)
+	require.Equal(t, uint64(10), table.config.Load().RowGroupSize)
 
 	samples := dynparquet.NewTestSamples()
 
@@ -1754,9 +1754,9 @@ func Test_DB_WalReplayTableConfig(t *testing.T) {
 	db, err = c.DB(ctx, "test")
 	require.NoError(t, err)
 
-	table, err = db.Table("test", nil) // Pass nil because we expect the table to already exist because of wal replay
+	table, err = db.GetTable("test")
 	require.NoError(t, err)
-	require.Equal(t, uint64(10), table.config.RowGroupSize)
+	require.Equal(t, uint64(10), table.config.Load().RowGroupSize)
 }
 
 func TestDBMinTXPersisted(t *testing.T) {

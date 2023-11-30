@@ -551,12 +551,12 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 			// they are loaded from object storage and snapshots with a no-op
 			// WAL by default.
 			for _, table := range db.tables {
-				if !table.config.DisableWal {
+				if !table.config.Load().DisableWal {
 					table.wal = db.wal
 				}
 			}
 			for _, table := range db.roTables {
-				if !table.config.DisableWal {
+				if !table.config.Load().DisableWal {
 					table.wal = db.wal
 				}
 			}
@@ -847,9 +847,9 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			protoEqual := false
 			switch schema.(type) {
 			case *schemav2pb.Schema:
-				protoEqual = proto.Equal(schema, table.config.GetSchemaV2())
+				protoEqual = proto.Equal(schema, table.config.Load().GetSchemaV2())
 			case *schemapb.Schema:
-				protoEqual = proto.Equal(schema, table.config.GetDeprecatedSchema())
+				protoEqual = proto.Equal(schema, table.config.Load().GetDeprecatedSchema())
 			}
 			if !protoEqual {
 				// If schemas are identical from block to block we should we
@@ -1123,13 +1123,17 @@ func (db *DB) promoteReadOnlyTableLocked(name string, config *tablepb.TableConfi
 	if err != nil {
 		return nil, err
 	}
-	table.config = config
+	table.config.Store(config)
 	table.schema = schema
 	delete(db.roTables, name)
 	return table, nil
 }
 
+// Table will get or create a new table with the given name and config. If a table already exists with the given name, it will have it's configuration updated.
 func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
+	if config == nil {
+		return nil, fmt.Errorf("table config cannot be nil")
+	}
 	if !validateName(name) {
 		return nil, errors.New("invalid table name")
 	}
@@ -1137,6 +1141,7 @@ func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	table, ok := db.tables[name]
 	db.mtx.RUnlock()
 	if ok {
+		table.config.Store(config)
 		return table, nil
 	}
 
