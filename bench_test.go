@@ -409,7 +409,7 @@ func BenchmarkSnapshot(b *testing.B) {
 	bytesWritten := 0
 	for i := 0; i < b.N; i++ {
 		wc := &writeCounter{Writer: io.Discard}
-		require.NoError(b, WriteSnapshot(ctx, db.HighWatermark().TxnID, nil, db, wc, false))
+		require.NoError(b, WriteSnapshot(ctx, db.HighWatermark(), db, wc, false))
 		bytesWritten += wc.count
 	}
 	b.ReportMetric(float64(bytesWritten)/float64(b.N), "size/op")

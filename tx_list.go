@@ -8,7 +8,7 @@ import (
 type TxNode struct {
 	next     *atomic.Pointer[TxNode]
 	original *atomic.Pointer[TxNode]
-	tx       Txn
+	tx       uint64
 }
 
 type TxPool struct {
@@ -52,7 +52,7 @@ type TxPool struct {
 //
 // TxPool is a sorted lockless linked-list described in
 // https://timharris.uk/papers/2001-disc.pdf
-func NewTxPool(watermark *atomicTxn) *TxPool {
+func NewTxPool(watermark *atomic.Uint64) *TxPool {
 	tail := &TxNode{
 		next:     &atomic.Pointer[TxNode]{},
 		original: &atomic.Pointer[TxNode]{},
@@ -79,7 +79,7 @@ func NewTxPool(watermark *atomicTxn) *TxPool {
 }
 
 // Insert performs an insertion sort of the given tx.
-func (l *TxPool) Insert(tx Txn) {
+func (l *TxPool) Insert(tx uint64) {
 	n := &TxNode{
 		tx:       tx,
 		next:     &atomic.Pointer[TxNode]{},
@@ -89,7 +89,7 @@ func (l *TxPool) Insert(tx Txn) {
 	tryInsert := func() bool {
 		prev := l.head.Load()
 		for node := l.head.Load().next.Load(); node != nil; node = getUnmarked(node) {
-			if node.tx.TxnID == 0 { // end of list
+			if node.tx == 0 { // end of list
 				return l.insert(n, prev, node)
 			}
 
@@ -99,7 +99,7 @@ func (l *TxPool) Insert(tx Txn) {
 				return false
 			}
 
-			if node.tx.TxnID > tx.TxnID {
+			if node.tx > tx {
 				return l.insert(n, prev, node)
 			}
 			prev = node
@@ -125,8 +125,8 @@ func (l *TxPool) insert(node, prev, next *TxNode) bool {
 	return success
 }
 
-func (l *TxPool) Iterate(iterate func(txn Txn) bool) {
-	for node := l.head.Load().next.Load(); node.tx.TxnID != 0; node = getUnmarked(node) {
+func (l *TxPool) Iterate(iterate func(txn uint64) bool) {
+	for node := l.head.Load().next.Load(); node.tx != 0; node = getUnmarked(node) {
 		if isMarked(node) == nil && !iterate(node.tx) {
 			return
 		}
@@ -134,8 +134,8 @@ func (l *TxPool) Iterate(iterate func(txn Txn) bool) {
 }
 
 // delete iterates over the list and deletes until the delete function returns false.
-func (l *TxPool) delete(deleteFunc func(txn Txn) bool) {
-	for node := l.head.Load().next.Load(); node.tx.TxnID != 0; node = getUnmarked(node) {
+func (l *TxPool) delete(deleteFunc func(txn uint64) bool) {
+	for node := l.head.Load().next.Load(); node.tx != 0; node = getUnmarked(node) {
 		if !deleteFunc(node.tx) {
 			return
 		}
@@ -184,19 +184,19 @@ func getUnmarked(node *TxNode) *TxNode {
 
 // cleaner sweeps the pool periodically, and bubbles up the given watermark.
 // this function does not return.
-func (l *TxPool) cleaner(ctx context.Context, watermark *atomicTxn) {
+func (l *TxPool) cleaner(ctx context.Context, watermark *atomic.Uint64) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-l.drain:
-			l.delete(func(txn Txn) bool {
-				mark := watermark.Load().TxnID
+			l.delete(func(txn uint64) bool {
+				mark := watermark.Load()
 				switch {
-				case mark+1 == txn.TxnID:
+				case mark+1 == txn:
 					watermark.Store(txn)
 					return true // return true to indicate that this node should be removed from the tx list.
-				case mark >= txn.TxnID:
+				case mark >= txn:
 					return true
 				default:
 					return false
