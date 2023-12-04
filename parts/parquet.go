@@ -5,6 +5,7 @@ import (
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/parquet-go/parquet-go"
+
 	"github.com/polarsignals/frostdb/dynparquet"
 )
 
@@ -19,11 +20,11 @@ func (p *parquetPart) Record() arrow.Record {
 	return nil
 }
 
-func (p *parquetPart) SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error {
+func (p *parquetPart) SerializeBuffer(_ *dynparquet.Schema, _ dynparquet.ParquetWriter) error {
 	return fmt.Errorf("not a record part")
 }
 
-func (p *parquetPart) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error) {
+func (p *parquetPart) AsSerializedBuffer(_ *dynparquet.Schema) (*dynparquet.SerializedBuffer, error) {
 	return p.buf, nil
 }
 
