@@ -632,7 +632,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 						if err != nil {
 							return err
 						}
-						resultParts = append(resultParts, parts.NewPart(partMeta.Tx, serBuf, partOptions))
+						resultParts = append(resultParts, parts.NewParquetPart(partMeta.Tx, serBuf, partOptions))
 					case snapshotpb.Part_ENCODING_ARROW:
 						if err := func() error {
 							arrowReader, err := ipc.NewReader(bytes.NewReader(partBytes))
@@ -649,7 +649,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 							record.Retain()
 							resultParts = append(
 								resultParts,
-								parts.NewArrowPart(partMeta.Tx, record, int(util.TotalRecordSize(record)), table.schema, partOptions),
+								parts.NewArrowPart(partMeta.Tx, record, uint64(util.TotalRecordSize(record)), table.schema, partOptions),
 							)
 							return nil
 						}(); err != nil {

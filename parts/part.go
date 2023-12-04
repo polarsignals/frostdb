@@ -1,16 +1,11 @@
 package parts
 
 import (
-	"bytes"
-	"fmt"
-	"math"
 	"sort"
 
 	"github.com/apache/arrow/go/v14/arrow"
-	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/polarsignals/frostdb/pqarrow"
 )
 
 type Part interface {
@@ -28,235 +23,25 @@ type Part interface {
 	OverlapsWith(schema *dynparquet.Schema, otherPart Part) (bool, error)
 }
 
-type part struct {
-	buf    *dynparquet.SerializedBuffer
-	record arrow.Record
-	// record relative size is how many bytes are roughly attributed to this record.
-	// It's considered rough because it may be sharing underlying dictionaries with other records.
-	recordRelativeSize int
-	schema             *dynparquet.Schema
-
-	// tx is the id of the transaction that created this part.
-	tx uint64
-
+type basePart struct {
+	tx              uint64
 	compactionLevel int
-
-	minRow *dynparquet.DynamicRow
-	maxRow *dynparquet.DynamicRow
+	minRow          *dynparquet.DynamicRow
+	maxRow          *dynparquet.DynamicRow
 }
 
-func (p *part) Record() arrow.Record {
-	return p.record
-}
-
-func (p *part) SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error {
-	if p.record == nil {
-		return fmt.Errorf("not a record part")
-	}
-
-	return pqarrow.RecordToFile(schema, w, p.record)
-}
-
-func (p *part) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error) {
-	if p.buf != nil {
-		return p.buf, nil
-	}
-
-	// If this is a Arrow record part, convert the record into a serialized buffer
-	b := &bytes.Buffer{}
-
-	w, err := schema.GetWriter(b, pqarrow.RecordDynamicCols(p.record), false)
-	if err != nil {
-		return nil, err
-	}
-	defer schema.PutWriter(w)
-	if err := p.SerializeBuffer(schema, w.ParquetWriter); err != nil {
-		return nil, err
-	}
-
-	f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
-	if err != nil {
-		return nil, err
-	}
-
-	buf, err := dynparquet.NewSerializedBuffer(f)
-	if err != nil {
-		return nil, err
-	}
-
-	return buf, nil
-}
-
-type Option func(*part)
-
-func WithCompactionLevel(level int) Option {
-	return func(p *part) {
-		p.compactionLevel = level
-	}
-}
-
-// NewArrowPart returns a new Arrow part.
-func NewArrowPart(tx uint64, record arrow.Record, size int, schema *dynparquet.Schema, options ...Option) Part {
-	p := &part{
-		tx:                 tx,
-		record:             record,
-		recordRelativeSize: size,
-		schema:             schema,
-	}
-
-	for _, opt := range options {
-		opt(p)
-	}
-
-	return p
-}
-
-func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) Part {
-	p := &part{
-		tx:  tx,
-		buf: buf,
-	}
-
-	for _, opt := range options {
-		opt(p)
-	}
-
-	return p
-}
-
-func (p *part) NumRows() int64 {
-	if p.buf != nil {
-		return p.buf.NumRows()
-	}
-
-	return p.record.NumRows()
-}
-
-func (p *part) Size() int64 {
-	if p.buf != nil {
-		return p.buf.ParquetFile().Size()
-	}
-
-	return int64(p.recordRelativeSize)
-}
-
-func (p *part) CompactionLevel() int {
+func (p *basePart) CompactionLevel() int {
 	return p.compactionLevel
 }
 
-// TX returns the transaction id for the part.
-func (p *part) TX() uint64 { return p.tx }
+func (p *basePart) TX() uint64 { return p.tx }
 
-// Least returns the least row  in the part.
-func (p *part) Least() (*dynparquet.DynamicRow, error) {
-	if p.minRow != nil {
-		return p.minRow, nil
+type Option func(*basePart)
+
+func WithCompactionLevel(level int) Option {
+	return func(p *basePart) {
+		p.compactionLevel = level
 	}
-
-	if p.record != nil {
-		dynCols := pqarrow.RecordDynamicCols(p.record)
-		pooledSchema, err := p.schema.GetDynamicParquetSchema(dynCols)
-		if err != nil {
-			return nil, err
-		}
-		defer p.schema.PutPooledParquetSchema(pooledSchema)
-		p.minRow, err = pqarrow.RecordToDynamicRow(p.schema, pooledSchema.Schema, p.record, dynCols, 0)
-		if err != nil {
-			return nil, err
-		}
-
-		return p.minRow, nil
-	}
-
-	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	reader := p.buf.DynamicRowGroup(0).DynamicRows()
-	defer reader.Close()
-
-	if n, err := reader.ReadRows(rowBuf); err != nil {
-		return nil, fmt.Errorf("read first row of part: %w", err)
-	} else if n != 1 {
-		return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
-	}
-
-	// Copy here so that this reference does not prevent the decompressed page
-	// from being GCed.
-	p.minRow = rowBuf.GetCopy(0)
-	return p.minRow, nil
-}
-
-func (p *part) Most() (*dynparquet.DynamicRow, error) {
-	if p.maxRow != nil {
-		return p.maxRow, nil
-	}
-
-	if p.record != nil {
-		dynCols := pqarrow.RecordDynamicCols(p.record)
-		pooledSchema, err := p.schema.GetDynamicParquetSchema(dynCols)
-		if err != nil {
-			return nil, err
-		}
-		defer p.schema.PutPooledParquetSchema(pooledSchema)
-		p.maxRow, err = pqarrow.RecordToDynamicRow(p.schema, pooledSchema.Schema, p.record, dynCols, int(p.record.NumRows()-1))
-		if err != nil {
-			return nil, err
-		}
-
-		return p.maxRow, nil
-	}
-
-	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	rg := p.buf.DynamicRowGroup(p.buf.NumRowGroups() - 1)
-	reader := rg.DynamicRows()
-	defer reader.Close()
-
-	if err := reader.SeekToRow(rg.NumRows() - 1); err != nil {
-		return nil, fmt.Errorf("seek to last row of part: %w", err)
-	}
-
-	if n, err := reader.ReadRows(rowBuf); err != nil {
-		return nil, fmt.Errorf("read last row of part: %w", err)
-	} else if n != 1 {
-		return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
-	}
-
-	// Copy here so that this reference does not prevent the decompressed page
-	// from being GCed.
-	p.maxRow = rowBuf.GetCopy(0)
-	return p.maxRow, nil
-}
-
-func (p *part) OverlapsWith(schema *dynparquet.Schema, otherPart Part) (bool, error) {
-	a, err := p.Least()
-	if err != nil {
-		return false, err
-	}
-	b, err := p.Most()
-	if err != nil {
-		return false, err
-	}
-	c, err := otherPart.Least()
-	if err != nil {
-		return false, err
-	}
-	d, err := otherPart.Most()
-	if err != nil {
-		return false, err
-	}
-
-	return schema.Cmp(a, d) <= 0 && schema.Cmp(c, b) <= 0, nil
-}
-
-// Tombstone marks all the parts with the max tx id to ensure they aren't
-// included in reads. Tombstoned parts will be eventually be dropped from the
-// database during compaction.
-func Tombstone(parts []*part) {
-	for _, part := range parts {
-		part.tx = math.MaxUint64
-	}
-}
-
-func (p *part) HasTombstone() bool {
-	return p.tx == math.MaxUint64
 }
 
 type PartSorter struct {

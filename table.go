@@ -1144,7 +1144,7 @@ func (t *Table) parquetCompaction(compact []parts.Part, options ...parts.Option)
 		postCompactionSize = buf.ParquetFile().Size()
 	}
 
-	return []parts.Part{parts.NewPart(0, buf, options...)}, preCompactionSize, postCompactionSize, nil
+	return []parts.Part{parts.NewParquetPart(0, buf, options...)}, preCompactionSize, postCompactionSize, nil
 }
 
 func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []parts.Part) (parts.Part, int64, int64, error) {

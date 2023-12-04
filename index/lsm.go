@@ -167,7 +167,7 @@ func (l *LSM) MaxLevel() SentinelType {
 func (l *LSM) Add(tx uint64, record arrow.Record) {
 	record.Retain()
 	size := util.TotalRecordSize(record)
-	l.levels.Prepend(parts.NewArrowPart(tx, record, int(size), l.schema, parts.WithCompactionLevel(int(L0))))
+	l.levels.Prepend(parts.NewArrowPart(tx, record, uint64(size), l.schema, parts.WithCompactionLevel(int(L0))))
 	l0 := l.sizes[L0].Add(int64(size))
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
 	if l0 >= l.configs[L0].MaxSize {
