@@ -129,7 +129,7 @@ func (db *DB) snapshot(ctx context.Context, async bool, onSuccess func()) {
 		return
 	}
 
-	tx, _, metadata, commit := db.begin()
+	tx, _, commit := db.begin()
 	level.Debug(db.logger).Log(
 		"msg", "starting a new snapshot",
 		"tx", tx,
@@ -150,7 +150,6 @@ func (db *DB) snapshot(ctx context.Context, async bool, onSuccess func()) {
 					Entry: &walpb.Entry{
 						EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
 					},
-					TxnMetadata: metadata,
 				},
 			); err != nil {
 				level.Error(db.logger).Log(
@@ -175,9 +174,9 @@ func (db *DB) snapshot(ctx context.Context, async bool, onSuccess func()) {
 	}
 
 	if async {
-		go doSnapshot(db.snapshotWriter(tx, metadata))
+		go doSnapshot(db.snapshotWriter(tx))
 	} else {
-		doSnapshot(db.offlineSnapshotWriter(tx, metadata))
+		doSnapshot(db.offlineSnapshotWriter(tx))
 	}
 }
 
@@ -239,14 +238,14 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, writeSnapshot func(co
 
 // loadLatestSnapshot loads the latest snapshot (i.e. the snapshot with the
 // highest txn) from the snapshots dir into the database.
-func (db *DB) loadLatestSnapshot(ctx context.Context) (Txn, error) {
+func (db *DB) loadLatestSnapshot(ctx context.Context) (uint64, error) {
 	return db.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
 }
 
-func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (Txn, error) {
+func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64, error) {
 	var (
 		lastErr   error
-		loadedTxn Txn
+		loadedTxn uint64
 	)
 	// No error should be returned from snapshotsDo.
 	_ = db.snapshotsDo(ctx, dir, func(parsedTx uint64, entry os.DirEntry) (bool, error) {
@@ -278,24 +277,23 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (Txn, e
 		}
 		return false, nil
 	})
-	if loadedTxn.TxnID != 0 {
+	if loadedTxn != 0 {
 		// Successfully loaded a snapshot.
 		return loadedTxn, nil
 	}
 
 	errString := "no valid snapshots found"
 	if lastErr != nil {
-		return Txn{}, fmt.Errorf("%s: lastErr: %w", errString, lastErr)
+		return 0, fmt.Errorf("%s: lastErr: %w", errString, lastErr)
 	}
-	return Txn{}, fmt.Errorf("%s", errString)
+	return 0, fmt.Errorf("%s", errString)
 }
 
-func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64, truncateWAL bool) (Txn, error) {
-	txnMetadata, err := loadSnapshot(ctx, db, r, size)
-	if err != nil {
-		return Txn{}, err
+func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64, truncateWAL bool) (uint64, error) {
+	if err := loadSnapshot(ctx, db, r, size); err != nil {
+		return 0, err
 	}
-	watermark := Txn{TxnID: tx, TxnMetadata: txnMetadata}
+	watermark := tx
 	var wal WAL
 	if truncateWAL {
 		wal = db.wal
@@ -369,20 +367,20 @@ func (w *offsetWriter) checksum() uint32 {
 	return w.runningChecksum.Sum32()
 }
 
-func (db *DB) snapshotWriter(tx uint64, txnMetadata []byte) func(context.Context, io.Writer) error {
+func (db *DB) snapshotWriter(tx uint64) func(context.Context, io.Writer) error {
 	return func(ctx context.Context, w io.Writer) error {
-		return WriteSnapshot(ctx, tx, txnMetadata, db, w, false)
+		return WriteSnapshot(ctx, tx, db, w, false)
 	}
 }
 
 // offlineSnapshotWriter is used when a database is closing after all the tables have closed.
-func (db *DB) offlineSnapshotWriter(tx uint64, txnMetadata []byte) func(context.Context, io.Writer) error {
+func (db *DB) offlineSnapshotWriter(tx uint64) func(context.Context, io.Writer) error {
 	return func(ctx context.Context, w io.Writer) error {
-		return WriteSnapshot(ctx, tx, txnMetadata, db, w, true)
+		return WriteSnapshot(ctx, tx, db, w, true)
 	}
 }
 
-func WriteSnapshot(ctx context.Context, _ uint64, txnMetadata []byte, db *DB, w io.Writer, offline bool) error {
+func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline bool) error {
 	offW := newOffsetWriter(w)
 	w = offW
 	var tables []*Table
@@ -396,7 +394,7 @@ func WriteSnapshot(ctx context.Context, _ uint64, txnMetadata []byte, db *DB, w 
 		return err
 	}
 
-	metadata := &snapshotpb.FooterData{TxnMetadata: txnMetadata}
+	metadata := &snapshotpb.FooterData{}
 	for _, t := range tables {
 		if err := func() error {
 			// Obtain a write block to prevent racing with
@@ -561,10 +559,10 @@ func readFooter(r io.ReaderAt, size int64) (*snapshotpb.FooterData, error) {
 // loadSnapshot loads a snapshot from the given io.ReaderAt and returns the
 // txnMetadata (if any) the snapshot was created with and an error if any
 // occurred.
-func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byte, error) {
+func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error {
 	footer, err := readFooter(r, size)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	for i, tableMeta := range footer.TableMetadata {
@@ -672,11 +670,11 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 				delete(db.tables, cleanupTable.Name)
 			}
 			db.mtx.Unlock()
-			return nil, err
+			return err
 		}
 	}
 
-	return footer.TxnMetadata, nil
+	return nil
 }
 
 // cleanupSnapshotDir should be called with a tx at which the caller is certain

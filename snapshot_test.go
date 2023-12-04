@@ -2,7 +2,6 @@ package frostdb
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -66,16 +65,16 @@ func TestSnapshot(t *testing.T) {
 
 		// Complete a txn so that the snapshot is created at txn 1, snapshots at
 		// txn 0 are considered empty so ignored.
-		_, _, metadata, commit := db.begin()
+		_, _, commit := db.begin()
 		commit()
 
 		tx := db.highWatermark.Load()
-		require.NoError(t, db.snapshotAtTX(ctx, tx.TxnID, db.snapshotWriter(tx.TxnID, metadata)))
+		require.NoError(t, db.snapshotAtTX(ctx, tx, db.snapshotWriter(tx)))
 
-		txBefore := db.highWatermark.Load().TxnID
+		txBefore := db.highWatermark.Load()
 		tx, err = db.loadLatestSnapshot(ctx)
 		require.NoError(t, err)
-		require.Equal(t, txBefore, tx.TxnID)
+		require.Equal(t, txBefore, tx)
 	})
 
 	t.Run("WithData", func(t *testing.T) {
@@ -110,11 +109,11 @@ func TestSnapshot(t *testing.T) {
 		_, err = db.Table("empty", config)
 		require.NoError(t, err)
 
-		highWatermark := db.highWatermark.Load().TxnID
+		highWatermark := db.highWatermark.Load()
 
 		// Insert a sample that should not be snapshot.
 		insertSampleRecords(ctx, t, table, 10)
-		require.NoError(t, db.snapshotAtTX(ctx, highWatermark, db.snapshotWriter(highWatermark, nil)))
+		require.NoError(t, db.snapshotAtTX(ctx, highWatermark, db.snapshotWriter(highWatermark)))
 
 		// Create another db and verify.
 		snapshotDB, err := c.DB(ctx, "testsnapshot")
@@ -123,8 +122,8 @@ func TestSnapshot(t *testing.T) {
 		// Load the other db's latest snapshot.
 		tx, err := snapshotDB.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
 		require.NoError(t, err)
-		require.Equal(t, highWatermark, tx.TxnID)
-		require.Equal(t, highWatermark, snapshotDB.highWatermark.Load().TxnID)
+		require.Equal(t, highWatermark, tx)
+		require.Equal(t, highWatermark, snapshotDB.highWatermark.Load())
 
 		require.Equal(t, len(db.tables), len(snapshotDB.tables))
 
@@ -189,7 +188,7 @@ func TestSnapshot(t *testing.T) {
 		table, err := db.Table(tableName, config)
 		require.NoError(t, err)
 
-		highWatermarkAtStart := db.highWatermark.Load().TxnID
+		highWatermarkAtStart := db.highWatermark.Load()
 		shouldStartSnapshotChan := make(chan struct{})
 		var errg errgroup.Group
 		errg.Go(func() error {
@@ -214,7 +213,7 @@ func TestSnapshot(t *testing.T) {
 		snapshotDB, err := c.DB(ctx, "testsnapshot")
 		require.NoError(t, err)
 		tx := db.highWatermark.Load()
-		require.NoError(t, db.snapshotAtTX(ctx, tx.TxnID, db.snapshotWriter(tx.TxnID, nil)))
+		require.NoError(t, db.snapshotAtTX(ctx, tx, db.snapshotWriter(tx)))
 		snapshotTx, err := snapshotDB.loadLatestSnapshotFromDir(ctx, db.snapshotsDir())
 		require.NoError(t, err)
 		require.NoError(
@@ -225,7 +224,7 @@ func TestSnapshot(t *testing.T) {
 				[]logicalplan.Expr{logicalplan.Max(logicalplan.Col("timestamp"))}, nil,
 			).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 				require.Equal(
-					t, int(snapshotTx.TxnID-highWatermarkAtStart), int(r.Column(0).(*array.Int64).Int64Values()[0]),
+					t, int(snapshotTx-highWatermarkAtStart), int(r.Column(0).(*array.Int64).Int64Values()[0]),
 				)
 				return nil
 			}),
@@ -246,9 +245,6 @@ func TestSnapshotWithWAL(t *testing.T) {
 		snapshotTx          uint64
 		firstWriteTimestamp int64
 	)
-	txnMetadataProvider := func(tx uint64) []byte {
-		return []byte(fmt.Sprintf("%d-metadata", tx))
-	}
 	func() {
 		c, err := New(
 			WithWAL(),
@@ -258,7 +254,7 @@ func TestSnapshotWithWAL(t *testing.T) {
 		require.NoError(t, err)
 		defer c.Close()
 
-		db, err := c.DB(ctx, dbAndTableName, WithUserDefinedTxnMetadataProvider(txnMetadataProvider))
+		db, err := c.DB(ctx, dbAndTableName)
 		require.NoError(t, err)
 
 		schema := dynparquet.SampleDefinition()
@@ -313,10 +309,6 @@ func TestSnapshotWithWAL(t *testing.T) {
 
 	verifyDB, err := verifyC.DB(ctx, dbAndTableName)
 	require.NoError(t, err)
-
-	// Verify txn metadata is persisted.
-	watermark := verifyDB.highWatermark.Load()
-	require.Equal(t, txnMetadataProvider(watermark.TxnID), watermark.TxnMetadata)
 
 	// Truncate all entries from the WAL up to but not including the second
 	// insert.

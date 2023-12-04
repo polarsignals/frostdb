@@ -34,17 +34,17 @@ func Test_TXList_Mark(t *testing.T) {
 }
 
 func Test_TXList_Basic(t *testing.T) {
-	wm := atomicTxn{}
-	wm.Store(Txn{TxnID: 1}) // set the watermark so that the sweeper won't remove any of our txs
+	wm := atomic.Uint64{}
+	wm.Store(1) // set the watermark so that the sweeper won't remove any of our txs
 	p := NewTxPool(&wm)
 	txs := []uint64{9, 8, 7, 6, 4, 5, 3, 10}
 	for _, tx := range txs {
-		p.Insert(Txn{TxnID: tx})
+		p.Insert(tx)
 	}
 
 	found := make(Uint64Slice, 0, len(txs))
-	p.Iterate(func(tx Txn) bool {
-		found = append(found, tx.TxnID)
+	p.Iterate(func(tx uint64) bool {
+		found = append(found, tx)
 		return true
 	})
 
@@ -54,7 +54,7 @@ func Test_TXList_Basic(t *testing.T) {
 }
 
 func Test_TXList_Async(t *testing.T) {
-	wm := atomicTxn{}
+	wm := atomic.Uint64{}
 	p := NewTxPool(&wm)
 
 	tx := &atomic.Uint64{}
@@ -69,7 +69,7 @@ func Test_TXList_Async(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < n; j++ {
-				p.Insert(Txn{TxnID: tx.Add(1)})
+				p.Insert(tx.Add(1))
 			}
 		}()
 	}
@@ -77,24 +77,24 @@ func Test_TXList_Async(t *testing.T) {
 	wg.Wait()
 
 	found := make(Uint64Slice, 0, writers*n)
-	p.Iterate(func(tx Txn) bool {
-		found = append(found, tx.TxnID)
+	p.Iterate(func(tx uint64) bool {
+		found = append(found, tx)
 		return true
 	})
 	require.True(t, sort.IsSorted(found))
 	require.Equal(t, n*writers, len(found))
 
-	p.Insert(Txn{TxnID: 1}) // insert the missing tx to drain the pool
+	p.Insert(1) // insert the missing tx to drain the pool
 
-	for v := wm.Load().TxnID; v < tx.Load(); v = wm.Load().TxnID {
+	for v := wm.Load(); v < tx.Load(); v = wm.Load() {
 		// Satisfy linter with statement.
 		continue
 	}
-	require.Equal(t, tx.Load(), wm.Load().TxnID)
+	require.Equal(t, tx.Load(), wm.Load())
 
 	// Verify the pool is empty
 	foundtx := false
-	p.Iterate(func(tx Txn) bool {
+	p.Iterate(func(tx uint64) bool {
 		foundtx = true
 		return true
 	})
@@ -128,7 +128,7 @@ func Benchmark_TXList_InsertAndDrain(b *testing.B) {
 
 	for name, benchmark := range benchmarks {
 		b.Run(name, func(b *testing.B) {
-			wm := atomicTxn{}
+			wm := atomic.Uint64{}
 			p := NewTxPool(&wm)
 			tx := &atomic.Uint64{}
 			wg := &sync.WaitGroup{}
@@ -138,7 +138,7 @@ func Benchmark_TXList_InsertAndDrain(b *testing.B) {
 					go func() {
 						defer wg.Done()
 						for j := 0; j < benchmark.values; j++ {
-							p.Insert(Txn{TxnID: tx.Add(1)})
+							p.Insert(tx.Add(1))
 						}
 					}()
 				}
@@ -146,11 +146,11 @@ func Benchmark_TXList_InsertAndDrain(b *testing.B) {
 				wg.Wait()
 
 				// Wait for the sweeper to drain
-				for v := wm.Load().TxnID; v < tx.Load(); v = wm.Load().TxnID {
+				for v := wm.Load(); v < tx.Load(); v = wm.Load() {
 					// Satisfy linter with statement.
 					continue
 				}
-				require.Equal(b, tx.Load(), wm.Load().TxnID)
+				require.Equal(b, tx.Load(), wm.Load())
 			}
 			p.Stop()
 		})

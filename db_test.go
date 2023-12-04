@@ -1413,9 +1413,6 @@ func TestDBRecover(t *testing.T) {
 		dbAndTableName = "test"
 		numInserts     = 3
 	)
-	txnMetadataProvider := func(tx uint64) []byte {
-		return []byte(fmt.Sprintf("%d-metadata", tx))
-	}
 	setup := func(t *testing.T, blockRotation bool, options ...Option) string {
 		dir := t.TempDir()
 		c, err := New(
@@ -1435,7 +1432,7 @@ func TestDBRecover(t *testing.T) {
 		require.NoError(t, err)
 		defer c.Close()
 
-		db, err := c.DB(ctx, dbAndTableName, WithUserDefinedTxnMetadataProvider(txnMetadataProvider))
+		db, err := c.DB(ctx, dbAndTableName)
 		require.NoError(t, err)
 		schema := dynparquet.SampleDefinition()
 		table, err := db.Table(dbAndTableName, NewTableConfig(schema))
@@ -1500,10 +1497,6 @@ func TestDBRecover(t *testing.T) {
 
 		db, err := c.DB(ctx, dbAndTableName)
 		require.NoError(t, err)
-
-		// Verify metadata is stored.
-		watermark := db.highWatermark.Load()
-		require.Equal(t, txnMetadataProvider(watermark.TxnID), watermark.TxnMetadata)
 
 		engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
 		nrows := 0
