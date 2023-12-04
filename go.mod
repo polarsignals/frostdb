@@ -1,6 +1,6 @@
 module github.com/polarsignals/frostdb
 
-go 1.19
+go 1.21
 
 require (
 	github.com/RoaringBitmap/roaring v0.9.4
