@@ -13,7 +13,22 @@ import (
 	"github.com/polarsignals/frostdb/pqarrow"
 )
 
-type Part struct {
+type Part interface {
+	// Record returns the Arrow record for the part. If the part is not an Arrow
+	// record part, nil is returned.
+	Record() arrow.Record
+	SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error
+	AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error)
+	NumRows() int64
+	Size() int64
+	CompactionLevel() int
+	TX() uint64
+	Least() (*dynparquet.DynamicRow, error)
+	Most() (*dynparquet.DynamicRow, error)
+	OverlapsWith(schema *dynparquet.Schema, otherPart Part) (bool, error)
+}
+
+type part struct {
 	buf    *dynparquet.SerializedBuffer
 	record arrow.Record
 	// record relative size is how many bytes are roughly attributed to this record.
@@ -30,11 +45,11 @@ type Part struct {
 	maxRow *dynparquet.DynamicRow
 }
 
-func (p *Part) Record() arrow.Record {
+func (p *part) Record() arrow.Record {
 	return p.record
 }
 
-func (p *Part) SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error {
+func (p *part) SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error {
 	if p.record == nil {
 		return fmt.Errorf("not a record part")
 	}
@@ -42,7 +57,7 @@ func (p *Part) SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWr
 	return pqarrow.RecordToFile(schema, w, p.record)
 }
 
-func (p *Part) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error) {
+func (p *part) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error) {
 	if p.buf != nil {
 		return p.buf, nil
 	}
@@ -72,17 +87,17 @@ func (p *Part) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.Serial
 	return buf, nil
 }
 
-type Option func(*Part)
+type Option func(*part)
 
 func WithCompactionLevel(level int) Option {
-	return func(p *Part) {
+	return func(p *part) {
 		p.compactionLevel = level
 	}
 }
 
 // NewArrowPart returns a new Arrow part.
-func NewArrowPart(tx uint64, record arrow.Record, size int, schema *dynparquet.Schema, options ...Option) *Part {
-	p := &Part{
+func NewArrowPart(tx uint64, record arrow.Record, size int, schema *dynparquet.Schema, options ...Option) Part {
+	p := &part{
 		tx:                 tx,
 		record:             record,
 		recordRelativeSize: size,
@@ -96,8 +111,8 @@ func NewArrowPart(tx uint64, record arrow.Record, size int, schema *dynparquet.S
 	return p
 }
 
-func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) *Part {
-	p := &Part{
+func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) Part {
+	p := &part{
 		tx:  tx,
 		buf: buf,
 	}
@@ -109,7 +124,7 @@ func NewPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Option) *Pa
 	return p
 }
 
-func (p *Part) NumRows() int64 {
+func (p *part) NumRows() int64 {
 	if p.buf != nil {
 		return p.buf.NumRows()
 	}
@@ -117,7 +132,7 @@ func (p *Part) NumRows() int64 {
 	return p.record.NumRows()
 }
 
-func (p *Part) Size() int64 {
+func (p *part) Size() int64 {
 	if p.buf != nil {
 		return p.buf.ParquetFile().Size()
 	}
@@ -125,15 +140,15 @@ func (p *Part) Size() int64 {
 	return int64(p.recordRelativeSize)
 }
 
-func (p *Part) CompactionLevel() int {
+func (p *part) CompactionLevel() int {
 	return p.compactionLevel
 }
 
 // TX returns the transaction id for the part.
-func (p *Part) TX() uint64 { return p.tx }
+func (p *part) TX() uint64 { return p.tx }
 
 // Least returns the least row  in the part.
-func (p *Part) Least() (*dynparquet.DynamicRow, error) {
+func (p *part) Least() (*dynparquet.DynamicRow, error) {
 	if p.minRow != nil {
 		return p.minRow, nil
 	}
@@ -169,7 +184,7 @@ func (p *Part) Least() (*dynparquet.DynamicRow, error) {
 	return p.minRow, nil
 }
 
-func (p *Part) most() (*dynparquet.DynamicRow, error) {
+func (p *part) Most() (*dynparquet.DynamicRow, error) {
 	if p.maxRow != nil {
 		return p.maxRow, nil
 	}
@@ -210,12 +225,12 @@ func (p *Part) most() (*dynparquet.DynamicRow, error) {
 	return p.maxRow, nil
 }
 
-func (p *Part) OverlapsWith(schema *dynparquet.Schema, otherPart *Part) (bool, error) {
+func (p *part) OverlapsWith(schema *dynparquet.Schema, otherPart Part) (bool, error) {
 	a, err := p.Least()
 	if err != nil {
 		return false, err
 	}
-	b, err := p.most()
+	b, err := p.Most()
 	if err != nil {
 		return false, err
 	}
@@ -223,7 +238,7 @@ func (p *Part) OverlapsWith(schema *dynparquet.Schema, otherPart *Part) (bool, e
 	if err != nil {
 		return false, err
 	}
-	d, err := otherPart.most()
+	d, err := otherPart.Most()
 	if err != nil {
 		return false, err
 	}
@@ -234,23 +249,23 @@ func (p *Part) OverlapsWith(schema *dynparquet.Schema, otherPart *Part) (bool, e
 // Tombstone marks all the parts with the max tx id to ensure they aren't
 // included in reads. Tombstoned parts will be eventually be dropped from the
 // database during compaction.
-func Tombstone(parts []*Part) {
+func Tombstone(parts []*part) {
 	for _, part := range parts {
 		part.tx = math.MaxUint64
 	}
 }
 
-func (p *Part) HasTombstone() bool {
+func (p *part) HasTombstone() bool {
 	return p.tx == math.MaxUint64
 }
 
 type PartSorter struct {
 	schema *dynparquet.Schema
-	parts  []*Part
+	parts  []Part
 	err    error
 }
 
-func NewPartSorter(schema *dynparquet.Schema, parts []*Part) *PartSorter {
+func NewPartSorter(schema *dynparquet.Schema, parts []Part) *PartSorter {
 	return &PartSorter{
 		schema: schema,
 		parts:  parts,
@@ -288,7 +303,7 @@ func (p *PartSorter) Err() error {
 // The function returns the non-overlapping parts first and any overlapping
 // parts second. The parts returned are in sorted order according to their Least
 // row.
-func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*Part, []*Part, error) {
+func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []Part) ([]Part, []Part, error) {
 	if len(parts) < 2 {
 		return parts, nil, nil
 	}
@@ -300,19 +315,19 @@ func FindMaximumNonOverlappingSet(schema *dynparquet.Schema, parts []*Part) ([]*
 
 	// Parts are now sorted according to their Least row.
 	prev := 0
-	prevEnd, err := parts[0].most()
+	prevEnd, err := parts[0].Most()
 	if err != nil {
 		return nil, nil, err
 	}
-	nonOverlapping := make([]*Part, 0, len(parts))
-	overlapping := make([]*Part, 0, len(parts))
-	var missing *Part
+	nonOverlapping := make([]Part, 0, len(parts))
+	overlapping := make([]Part, 0, len(parts))
+	var missing Part
 	for i := 1; i < len(parts); i++ {
 		start, err := parts[i].Least()
 		if err != nil {
 			return nil, nil, err
 		}
-		curEnd, err := parts[i].most()
+		curEnd, err := parts[i].Most()
 		if err != nil {
 			return nil, nil, err
 		}

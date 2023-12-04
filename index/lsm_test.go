@@ -16,7 +16,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 )
 
-func parquetCompaction(compact []*parts.Part, _ ...parts.Option) ([]*parts.Part, int64, int64, error) {
+func parquetCompaction(compact []parts.Part, _ ...parts.Option) ([]parts.Part, int64, int64, error) {
 	b := &bytes.Buffer{}
 	size, err := compactParts(b, compact)
 	if err != nil {
@@ -27,10 +27,10 @@ func parquetCompaction(compact []*parts.Part, _ ...parts.Option) ([]*parts.Part,
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	return []*parts.Part{parts.NewPart(0, buf)}, size, int64(b.Len()), nil
+	return []parts.Part{parts.NewPart(0, buf)}, size, int64(b.Len()), nil
 }
 
-func compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
+func compactParts(w io.Writer, compact []parts.Part) (int64, error) {
 	schema := dynparquet.NewSampleSchema()
 	bufs := []dynparquet.DynamicRowGroup{}
 	var size int64

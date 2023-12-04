@@ -56,7 +56,7 @@ type LSMMetrics struct {
 type LevelConfig struct {
 	Level   SentinelType
 	MaxSize int64
-	Compact func([]*parts.Part, ...parts.Option) ([]*parts.Part, int64, int64, error)
+	Compact func([]parts.Part, ...parts.Option) ([]parts.Part, int64, int64, error)
 }
 
 type LSMOption func(*LSM)
@@ -187,7 +187,7 @@ func (l *LSM) WaitForPendingCompactions() {
 
 // InsertPart inserts a part into the LSM tree. It will be inserted into the correct level. It does not check if the insert should cause a compaction.
 // This should only be used during snapshot recovery.
-func (l *LSM) InsertPart(level SentinelType, part *parts.Part) {
+func (l *LSM) InsertPart(level SentinelType, part parts.Part) {
 	l.findLevel(level).Prepend(part)
 	size := l.sizes[level].Add(int64(part.Size()))
 	l.metrics.LevelSize.WithLabelValues(level.String()).Set(float64(size))
@@ -304,7 +304,7 @@ func (l *LSM) EnsureCompaction() error {
 	return l.compact(true /* ignoreSizes */)
 }
 
-func (l *LSM) Rotate(level SentinelType, externalWriter func([]*parts.Part) (*parts.Part, int64, int64, error)) error {
+func (l *LSM) Rotate(level SentinelType, externalWriter func([]parts.Part) (parts.Part, int64, int64, error)) error {
 	for !l.compacting.CompareAndSwap(false, true) { // TODO: should backoff retry this probably
 		// Satisfy linter with a statement.
 		continue
@@ -325,7 +325,7 @@ func (l *LSM) Rotate(level SentinelType, externalWriter func([]*parts.Part) (*pa
 
 // Merge will merge the given level into an arrow record for the next level using the configured Compact function for the given level.
 // If this is the max level of the LSM an external writer must be provided to write the merged part elsewhere.
-func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*parts.Part, int64, int64, error)) error {
+func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts.Part, int64, int64, error)) error {
 	if int(level) > len(l.configs) {
 		return fmt.Errorf("level %d does not exist", level)
 	}
@@ -364,9 +364,9 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]*parts.Part) (*par
 
 	var size int64
 	var compactedSize int64
-	var compacted []*parts.Part
+	var compacted []parts.Part
 	var err error
-	mergeList := make([]*parts.Part, 0, len(nodeList))
+	mergeList := make([]parts.Part, 0, len(nodeList))
 	for _, node := range nodeList {
 		mergeList = append(mergeList, node.part)
 	}

@@ -614,7 +614,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) ([]byt
 			table.mtx.Unlock()
 
 			for _, granuleMeta := range tableMeta.GranuleMetadata {
-				resultParts := make([]*parts.Part, 0, len(granuleMeta.PartMetadata))
+				resultParts := make([]parts.Part, 0, len(granuleMeta.PartMetadata))
 				for _, partMeta := range granuleMeta.PartMetadata {
 					if err := ctx.Err(); err != nil {
 						return err
