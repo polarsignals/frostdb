@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
@@ -245,6 +246,125 @@ func TestAggregationProjection(t *testing.T) {
 	require.True(t, record.Schema().HasField("labels.label4"))
 	require.True(t, record.Schema().HasField("sum(value)"))
 	require.True(t, record.Schema().HasField("max(value)"))
+}
+
+func TestDurationAggregation(t *testing.T) {
+	c, err := New()
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	schema := &schemapb.Schema{
+		Name: "test",
+		Columns: []*schemapb.Column{
+			{
+				Name: "timestamp",
+				StorageLayout: &schemapb.StorageLayout{
+					Type: schemapb.StorageLayout_TYPE_INT64,
+				},
+				Dynamic: false,
+			},
+			{
+				Name: "stacktrace",
+				StorageLayout: &schemapb.StorageLayout{
+					Type: schemapb.StorageLayout_TYPE_STRING,
+				},
+				Dynamic: false,
+			},
+			{
+				Name: "value",
+				StorageLayout: &schemapb.StorageLayout{
+					Type: schemapb.StorageLayout_TYPE_INT64,
+				},
+				Dynamic: false,
+			},
+		},
+		SortingColumns: []*schemapb.SortingColumn{
+			{
+				Name:      "timestamp",
+				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+			},
+		},
+	}
+
+	config := NewTableConfig(schema)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	records := []struct {
+		Timestamp  int64
+		Stacktrace string
+		Value      int64
+	}{
+		{
+			Timestamp:  1 * int64(time.Second),
+			Stacktrace: "stack1",
+			Value:      3,
+		},
+		{
+			Timestamp:  1 * int64(time.Second),
+			Stacktrace: "stack2",
+			Value:      5,
+		},
+		{
+			Timestamp:  1 * int64(time.Second),
+			Stacktrace: "stack3",
+			Value:      8,
+		},
+		{
+			Timestamp:  2 * int64(time.Second),
+			Stacktrace: "stack1",
+			Value:      2,
+		},
+		{
+			Timestamp:  2 * int64(time.Second),
+			Stacktrace: "stack2",
+			Value:      3,
+		},
+	}
+
+	for _, record := range records {
+		_, err := table.Write(context.Background(), record)
+		require.NoError(t, err)
+	}
+
+	engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
+
+	results := []arrow.Record{}
+	defer func() {
+		for _, r := range results {
+			r.Release()
+		}
+	}()
+
+	_ = engine.ScanTable("test").
+		Aggregate(
+			[]logicalplan.Expr{
+				logicalplan.Sum(logicalplan.Col("value")),
+			},
+			[]logicalplan.Expr{
+				logicalplan.Duration(time.Second),
+			},
+		).
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
+			r.Retain()
+			results = append(results, r)
+			return nil
+		})
+
+	require.Equal(t, 1, len(results))
+	require.Equal(t, int64(2), results[0].NumRows())
+
+	for i := 0; int64(i) < results[0].NumRows(); i++ {
+		switch results[0].Column(0).(*array.Int64).Value(i) {
+		case 1 * int64(time.Second):
+			require.Equal(t, int64(16), results[0].Column(1).(*array.Int64).Value(i))
+		case 2 * int64(time.Second):
+			require.Equal(t, int64(5), results[0].Column(1).(*array.Int64).Value(i))
+		}
+	}
 }
 
 // go test -bench=BenchmarkAggregation -benchmem -count=10 . | tee BenchmarkAggregation
