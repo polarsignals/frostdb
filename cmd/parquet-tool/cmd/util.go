@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -9,22 +10,21 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
-func openParquetFile(file string) (*parquet.File, error) {
+func openParquetFile(file string) (*parquet.File, io.Closer, error) {
 	f, err := os.Open(file)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	defer f.Close()
 	stats, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, f, err
 	}
 	pf, err := parquet.OpenFile(f, stats.Size())
 	if err != nil {
-		return nil, err
+		return nil, f, err
 	}
 
-	return pf, nil
+	return pf, f, nil
 }
 
 func compare(v1, v2 parquet.Value) int {

@@ -21,10 +21,12 @@ var dumpCmd = &cobra.Command{
 }
 
 func dump(file string) error {
-	pf, err := openParquetFile(file)
+	pf, closer, err := openParquetFile(file)
 	if err != nil {
 		return err
 	}
+	defer closer.Close()
+
 	fmt.Println("schema:", pf.Schema())
 	meta := pf.Metadata()
 	fmt.Println("Num Rows:", meta.NumRows)
