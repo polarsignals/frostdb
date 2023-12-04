@@ -3,7 +3,6 @@ package builder
 import (
 	"fmt"
 	"math"
-	"reflect"
 	"sync/atomic"
 	"unsafe"
 
@@ -175,14 +174,7 @@ func (b *OptBinaryBuilder) AppendNulls(n int) {
 // a new array.
 func (b *OptBinaryBuilder) NewArray() arrow.Array {
 	b.offsets = append(b.offsets, uint32(len(b.data)))
-	var offsetsAsBytes []byte
-
-	fromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&b.offsets))
-	toHeader := (*reflect.SliceHeader)(unsafe.Pointer(&offsetsAsBytes))
-	toHeader.Data = fromHeader.Data
-	toHeader.Len = fromHeader.Len * arrow.Uint32SizeBytes
-	toHeader.Cap = fromHeader.Cap * arrow.Uint32SizeBytes
-
+	offsetsAsBytes := unsafe.Slice((*byte)(unsafe.Pointer(&b.offsets[0])), len(b.offsets)*arrow.Uint32SizeBytes)
 	data := array.NewData(
 		b.dtype,
 		b.length,
@@ -348,14 +340,7 @@ func (b *OptInt64Builder) AppendNulls(n int) {
 }
 
 func (b *OptInt64Builder) NewArray() arrow.Array {
-	var dataAsBytes []byte
-
-	fromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&b.data))
-	toHeader := (*reflect.SliceHeader)(unsafe.Pointer(&dataAsBytes))
-	toHeader.Data = fromHeader.Data
-	toHeader.Len = fromHeader.Len * arrow.Int64SizeBytes
-	toHeader.Cap = fromHeader.Cap * arrow.Int64SizeBytes
-
+	dataAsBytes := unsafe.Slice((*byte)(unsafe.Pointer(&b.data[0])), len(b.data)*arrow.Int64SizeBytes)
 	data := array.NewData(
 		b.dtype,
 		b.length,
@@ -611,14 +596,7 @@ func (b *OptInt32Builder) AppendNulls(n int) {
 }
 
 func (b *OptInt32Builder) NewArray() arrow.Array {
-	var dataAsBytes []byte
-
-	fromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&b.data))
-	toHeader := (*reflect.SliceHeader)(unsafe.Pointer(&dataAsBytes))
-	toHeader.Data = fromHeader.Data
-	toHeader.Len = fromHeader.Len * arrow.Int32SizeBytes
-	toHeader.Cap = fromHeader.Cap * arrow.Int32SizeBytes
-
+	dataAsBytes := unsafe.Slice((*byte)(unsafe.Pointer(&b.data[0])), len(b.data)*arrow.Int32SizeBytes)
 	data := array.NewData(
 		b.dtype,
 		b.length,

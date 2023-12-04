@@ -6,6 +6,7 @@ import "frostdb/table/v1alpha1/config.proto";
 
 // Record describes a single entry into the WAL.
 message Record {
+  reserved 2; // Previously used for transaction metadata.
   // Data of the record. This is intentionally nested so the only thing in
   // the entry can be a protobuf `oneof` and have forward compatilibity.
   Entry entry = 1;

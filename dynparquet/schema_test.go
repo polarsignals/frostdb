@@ -6,7 +6,6 @@ import (
 	"io"
 	"math/rand"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
@@ -27,7 +26,6 @@ func TestMergeRowBatches(t *testing.T) {
 		rowGroups = append(rowGroups, rg)
 	}
 
-	rand.Seed(time.Now().UnixNano())
 	rand.Shuffle(len(rowGroups), func(i, j int) { rowGroups[i], rowGroups[j] = rowGroups[j], rowGroups[i] })
 
 	merge, err := schema.MergeDynamicRowGroups(rowGroups)
