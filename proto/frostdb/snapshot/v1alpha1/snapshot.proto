@@ -7,6 +7,7 @@ import "frostdb/table/v1alpha1/config.proto";
 // FooterData is a message stored in the footer of a snapshot file that encodes
 // data about the rest of the file.
 message FooterData {
+  reserved 2; // Previously used for transaction metadata.
   repeated Table table_metadata = 1;
 }
 
