@@ -27,7 +27,7 @@ func parquetCompaction(compact []parts.Part, _ ...parts.Option) ([]parts.Part, i
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	return []parts.Part{parts.NewPart(0, buf)}, size, int64(b.Len()), nil
+	return []parts.Part{parts.NewParquetPart(0, buf)}, size, int64(b.Len()), nil
 }
 
 func compactParts(w io.Writer, compact []parts.Part) (int64, error) {

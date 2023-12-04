@@ -92,7 +92,7 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 				require.NoError(t, testSchema.SerializeBuffer(&b, buf))
 				serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
 				require.NoError(t, err)
-				parts[i] = NewPart(0, serBuf)
+				parts[i] = NewParquetPart(0, serBuf)
 			}
 			nonOverlapping, overlapping, err := FindMaximumNonOverlappingSet(testSchema, parts)
 			require.NoError(t, err)
