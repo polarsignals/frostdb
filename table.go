@@ -1114,7 +1114,7 @@ func (t *Table) configureLSMLevels(levels []*index.LevelConfig) []*index.LevelCo
 	return config
 }
 
-func (t *Table) parquetCompaction(compact []*parts.Part, options ...parts.Option) ([]*parts.Part, int64, int64, error) {
+func (t *Table) parquetCompaction(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
 	var (
 		buf                                   *dynparquet.SerializedBuffer
 		preCompactionSize, postCompactionSize int64
@@ -1144,11 +1144,11 @@ func (t *Table) parquetCompaction(compact []*parts.Part, options ...parts.Option
 		postCompactionSize = buf.ParquetFile().Size()
 	}
 
-	return []*parts.Part{parts.NewPart(0, buf, options...)}, preCompactionSize, postCompactionSize, nil
+	return []parts.Part{parts.NewPart(0, buf, options...)}, preCompactionSize, postCompactionSize, nil
 }
 
-func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []*parts.Part) (*parts.Part, int64, int64, error) {
-	return func(compact []*parts.Part) (*parts.Part, int64, int64, error) {
+func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []parts.Part) (parts.Part, int64, int64, error) {
+	return func(compact []parts.Part) (parts.Part, int64, int64, error) {
 		size, err := t.compactParts(writer, compact)
 		if err != nil {
 			return nil, 0, 0, err
@@ -1160,7 +1160,7 @@ func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []*part
 
 // compactParts will compact the given parts into a Parquet file written to w.
 // It returns the size in bytes of the compacted parts.
-func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) {
+func (t *Table) compactParts(w io.Writer, compact []parts.Part) (int64, error) {
 	preCompactionSize := int64(0)
 	for _, p := range compact {
 		preCompactionSize += p.Size()
@@ -1237,7 +1237,7 @@ func (t *Table) compactParts(w io.Writer, compact []*parts.Part) (int64, error) 
 // the minimum slice of dynamic row groups to be merged together for compaction.
 // If nil, nil is returned, the resulting serialized buffer is written directly
 // to w as an optimization.
-func (t *Table) buffersForCompaction(w io.Writer, inputParts []*parts.Part) ([]dynparquet.DynamicRowGroup, error) {
+func (t *Table) buffersForCompaction(w io.Writer, inputParts []parts.Part) ([]dynparquet.DynamicRowGroup, error) {
 	nonOverlappingParts, overlappingParts, err := parts.FindMaximumNonOverlappingSet(t.schema, inputParts)
 	if err != nil {
 		return nil, err
@@ -1335,7 +1335,7 @@ func (t *Table) writeRecordsToParquet(w io.Writer, records []arrow.Record, sortI
 // least one non-arrow part is found, nil, nil is returned in which case, the
 // caller should fall back to normal compaction. On success, the caller is
 // responsible for releasing the returned records.
-func (t *Table) distinctRecordsForCompaction(compact []*parts.Part) ([]arrow.Record, error) {
+func (t *Table) distinctRecordsForCompaction(compact []parts.Part) ([]arrow.Record, error) {
 	sortingCols := t.schema.SortingColumns()
 	columnExprs := make([]logicalplan.Expr, 0, len(sortingCols))
 	for _, col := range sortingCols {

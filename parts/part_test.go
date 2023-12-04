@@ -82,7 +82,7 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			parts := make([]*Part, len(tc.ranges))
+			parts := make([]Part, len(tc.ranges))
 			for i := range parts {
 				start := dataModel{Ints: tc.ranges[i].start}
 				end := dataModel{Ints: tc.ranges[i].end}
@@ -97,13 +97,13 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 			nonOverlapping, overlapping, err := FindMaximumNonOverlappingSet(testSchema, parts)
 			require.NoError(t, err)
 
-			verify := func(t *testing.T, expected []rng, actual []*Part) {
+			verify := func(t *testing.T, expected []rng, actual []Part) {
 				t.Helper()
 				require.Len(t, actual, len(expected))
 				for i := range actual {
 					start, err := actual[i].Least()
 					require.NoError(t, err)
-					end, err := actual[i].most()
+					end, err := actual[i].Most()
 					require.NoError(t, err)
 					require.Equal(t, expected[i].start, start.Row[0].Int64())
 					require.Equal(t, expected[i].end, end.Row[0].Int64())

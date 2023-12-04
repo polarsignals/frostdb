@@ -22,12 +22,12 @@ func (s SentinelType) String() string {
 // Node is a Part that is a part of a linked-list.
 type Node struct {
 	next atomic.Pointer[Node]
-	part *parts.Part
+	part parts.Part
 
 	sentinel SentinelType // sentinel nodes contain no parts, and are to indicate the start of a new sub list
 }
 
-func (n *Node) Part() *parts.Part {
+func (n *Node) Part() parts.Part {
 	return n.part
 }
 
@@ -69,7 +69,7 @@ func (n *Node) Sentinel(s SentinelType) *Node {
 }
 
 // Prepend a node onto the front of the list.
-func (n *Node) Prepend(part *parts.Part) *Node {
+func (n *Node) Prepend(part parts.Part) *Node {
 	return n.prepend(&Node{
 		part: part,
 	})
