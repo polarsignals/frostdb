@@ -1,6 +1,8 @@
 package logicalplan
 
 import (
+	"fmt"
+
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/parquet-go/parquet-go"
 )
@@ -60,6 +62,7 @@ type Expr interface {
 	DataType(*parquet.Schema) (arrow.DataType, error)
 	Accept(Visitor) bool
 	Name() string
+	fmt.Stringer
 
 	// ColumnsUsedExprs extracts all the expressions that are used that cause
 	// physical data to be read from a column.

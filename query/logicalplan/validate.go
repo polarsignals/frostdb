@@ -52,7 +52,7 @@ func (e *ExprValidationError) Error() string {
 	message := make([]string, 0)
 	message = append(message, e.message)
 	message = append(message, ": ")
-	message = append(message, fmt.Sprintf("%s", e.expr))
+	message = append(message, e.expr.String())
 	for _, child := range e.children {
 		message = append(message, "\n     -> invalid sub-expression: ")
 		message = append(message, child.Error())

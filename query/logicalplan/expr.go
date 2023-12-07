@@ -102,6 +102,8 @@ func (e *BinaryExpr) Name() string {
 	return e.Left.Name() + " " + e.Op.String() + " " + e.Right.Name()
 }
 
+func (e *BinaryExpr) String() string { return e.Name() }
+
 func (e *BinaryExpr) ColumnsUsedExprs() []Expr {
 	return append(e.Left.ColumnsUsedExprs(), e.Right.ColumnsUsedExprs()...)
 }
@@ -146,6 +148,8 @@ func (c *Column) Accept(visitor Visitor) bool {
 func (c *Column) Name() string {
 	return c.ColumnName
 }
+
+func (c *Column) String() string { return c.Name() }
 
 func (c *Column) DataType(s *parquet.Schema) (arrow.DataType, error) {
 	for _, field := range s.Fields() {
@@ -368,6 +372,8 @@ func (c *DynamicColumn) Name() string {
 	return c.ColumnName
 }
 
+func (c *DynamicColumn) String() string { return c.Name() }
+
 func (c *DynamicColumn) Accept(visitor Visitor) bool {
 	return visitor.PreVisit(c) && visitor.PostVisit(c)
 }
@@ -407,6 +413,8 @@ func (e *LiteralExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
 func (e *LiteralExpr) Name() string {
 	return e.Value.String()
 }
+
+func (e *LiteralExpr) String() string { return e.Name() }
 
 func (e *LiteralExpr) Accept(visitor Visitor) bool {
 	continu := visitor.PreVisit(e)
@@ -464,6 +472,8 @@ func (f *AggregationFunction) Computed() bool {
 func (f *AggregationFunction) Name() string {
 	return f.Func.String() + "(" + f.Expr.Name() + ")"
 }
+
+func (f *AggregationFunction) String() string { return f.Name() }
 
 func (f *AggregationFunction) ColumnsUsedExprs() []Expr {
 	return f.Expr.ColumnsUsedExprs()
@@ -560,6 +570,8 @@ func (e *AliasExpr) Name() string {
 	return e.Alias
 }
 
+func (e *AliasExpr) String() string { return e.Name() }
+
 func (e *AliasExpr) Computed() bool {
 	return e.Expr.Computed()
 }
@@ -632,6 +644,8 @@ func (d *DurationExpr) Name() string {
 	return ""
 }
 
+func (d *DurationExpr) String() string { return d.Name() }
+
 func (d *DurationExpr) ColumnsUsedExprs() []Expr {
 	// DurationExpr expect to work on a timestamp column
 	return []Expr{Col("timestamp")}
@@ -666,6 +680,8 @@ func (a *AverageExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
 func (a *AverageExpr) Name() string {
 	return a.Expr.Name()
 }
+
+func (a *AverageExpr) String() string { return a.Name() }
 
 func (a *AverageExpr) ColumnsUsedExprs() []Expr {
 	return a.Expr.ColumnsUsedExprs()
@@ -724,6 +740,8 @@ func (a *RegexpColumnMatch) Name() string {
 	return a.match.String()
 }
 
+func (a *RegexpColumnMatch) String() string { return a.Name() }
+
 func (a *RegexpColumnMatch) ColumnsUsedExprs() []Expr {
 	return []Expr{a}
 }
@@ -764,7 +782,8 @@ func (a *AllExpr) Accept(visitor Visitor) bool {
 
 	return visitor.PostVisit(a)
 }
-func (a *AllExpr) Name() string { return "all" }
+func (a *AllExpr) Name() string   { return "all" }
+func (a *AllExpr) String() string { return a.Name() }
 func (a *AllExpr) ColumnsUsedExprs() []Expr {
 	return []Expr{&AllExpr{}}
 }
@@ -792,7 +811,8 @@ func (n *NotExpr) Accept(visitor Visitor) bool {
 
 	return visitor.PostVisit(n)
 }
-func (n *NotExpr) Name() string { return "not " + n.Expr.Name() }
+func (n *NotExpr) Name() string   { return "not " + n.Expr.Name() }
+func (n *NotExpr) String() string { return n.Name() }
 func (n *NotExpr) ColumnsUsedExprs() []Expr {
 	return []Expr{&NotExpr{Expr: n.Expr}}
 }
