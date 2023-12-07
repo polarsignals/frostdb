@@ -20,8 +20,10 @@ func TestSynchronize(t *testing.T) {
 	op := &OutputPlan{
 		scan: &mockTableScan{plans: plans},
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	synchronizer := Synchronize(len(plans))
+	synchronizer := Synchronize(ctx, len(plans))
 	synchronizer.SetNext(op)
 
 	for _, p := range plans {

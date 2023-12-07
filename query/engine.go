@@ -132,7 +132,8 @@ func (b LocalQueryBuilder) Project(
 func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(ctx context.Context, r arrow.Record) error) error {
 	ctx, span := b.tracer.Start(ctx, "LocalQueryBuilder/Execute")
 	defer span.End()
-
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	phyPlan, err := b.buildPhysical(ctx)
 	if err != nil {
 		return err
@@ -142,6 +143,8 @@ func (b LocalQueryBuilder) Execute(ctx context.Context, callback func(ctx contex
 }
 
 func (b LocalQueryBuilder) Explain(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	phyPlan, err := b.buildPhysical(ctx)
 	if err != nil {
 		return "", err

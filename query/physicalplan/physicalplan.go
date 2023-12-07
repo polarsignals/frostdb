@@ -371,7 +371,7 @@ func Build(
 			var sync *Synchronizer
 			if len(prev) > 1 {
 				// These distinct operators need to be synchronized.
-				sync = Synchronize(len(prev))
+				sync = Synchronize(ctx, len(prev))
 			}
 			for i := 0; i < len(prev); i++ {
 				d := Distinct(pool, tracer, plan.Distinct.Exprs)
@@ -416,7 +416,7 @@ func Build(
 				if ordered && len(plan.Aggregation.GroupExprs) > 0 {
 					sync = NewOrderedSynchronizer(pool, len(prev), plan.Aggregation.GroupExprs)
 				} else {
-					sync = Synchronize(len(prev))
+					sync = Synchronize(ctx, len(prev))
 				}
 			}
 			seed := maphash.MakeSeed()
@@ -463,7 +463,7 @@ func Build(
 	// Synchronize the last stage if necessary.
 	var sync *Synchronizer
 	if len(prev) > 1 {
-		sync = Synchronize(len(prev))
+		sync = Synchronize(ctx, len(prev))
 		for i := range prev {
 			prev[i].SetNext(sync)
 		}

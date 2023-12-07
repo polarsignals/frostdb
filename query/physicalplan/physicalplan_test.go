@@ -74,9 +74,10 @@ func TestBuildPhysicalPlan(t *testing.T) {
 	for _, optimizer := range optimizers {
 		optimizer.Optimize(p)
 	}
-
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	_, err := Build(
-		context.Background(),
+		ctx,
 		memory.DefaultAllocator,
 		trace.NewNoopTracerProvider().Tracer(""),
 		dynparquet.NewSampleSchema(),

@@ -2,8 +2,6 @@ package physicalplan
 
 import (
 	"context"
-	"errors"
-	"sync"
 	"sync/atomic"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -14,42 +12,91 @@ import (
 // finishers, by waiting to call next plan's finish until all previous parallel
 // stages have finished.
 type Synchronizer struct {
-	next    PhysicalPlan
-	nextMtx sync.Mutex
-	running *atomic.Int64
-	open    *atomic.Int64
+	next   PhysicalPlan
+	buffer chan *syncCmd
+	err    atomic.Value
 }
 
-func Synchronize(concurrency int) *Synchronizer {
-	running := &atomic.Int64{}
-	running.Add(int64(concurrency))
-	open := &atomic.Int64{}
-	open.Add(int64(concurrency))
-	return &Synchronizer{running: running, open: open}
+type syncCmd struct {
+	typ  syncCmdType
+	r    arrow.Record
+	done chan struct{}
 }
 
-func (m *Synchronizer) Callback(ctx context.Context, r arrow.Record) error {
-	// multiple threads can emit the results to the next step, but they will do
-	// it synchronously
-	m.nextMtx.Lock()
-	defer m.nextMtx.Unlock()
+type syncCmdType byte
 
-	err := m.next.Callback(ctx, r)
-	if err != nil {
-		return err
+const (
+	syncCallback syncCmdType = iota
+	syncFinish
+	syncClose
+)
+
+func Synchronize(ctx context.Context, concurrency int) *Synchronizer {
+	s := &Synchronizer{
+		buffer: make(chan *syncCmd, concurrency),
+	}
+	go s.run(ctx)
+	return s
+}
+
+func (m *Synchronizer) run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			m.err.Store(ctx.Err())
+			return
+		case cmd := <-m.buffer:
+			switch cmd.typ {
+			case syncCallback:
+				err := m.next.Callback(ctx, cmd.r)
+				if err != nil {
+					// TODO:(gernest) handle this ?
+					// There is no clear way to give feedback on error.
+					//  - Halt everything on first sight of error ?
+					//  - Log the error and continue?
+					_ = err
+				}
+			case syncFinish:
+				err := m.next.Finish(ctx)
+				if err != nil {
+					m.err.Store(err)
+				}
+				cmd.done <- struct{}{}
+			case syncClose:
+				err := m.next.Finish(ctx)
+				if err != nil {
+					m.err.Store(err)
+				}
+				cmd.done <- struct{}{}
+				return
+			}
+		}
+	}
+}
+
+func (m *Synchronizer) hasErr() error {
+	if err := m.err.Load(); err != nil {
+		return err.(error)
 	}
 	return nil
 }
 
+func (m *Synchronizer) Callback(ctx context.Context, r arrow.Record) error {
+	if err := m.hasErr(); err != nil {
+		return err
+	}
+	m.buffer <- &syncCmd{typ: syncCallback, r: r}
+	return nil
+}
+
 func (m *Synchronizer) Finish(ctx context.Context) error {
-	running := m.running.Add(-1)
-	if running < 0 {
-		return errors.New("too many Synchronizer Finish calls")
+	if err := m.hasErr(); err != nil {
+		return err
 	}
-	if running > 0 {
-		return nil
-	}
-	return m.next.Finish(ctx)
+	cmd := &syncCmd{typ: syncFinish, done: make(chan struct{})}
+	m.buffer <- cmd
+	<-cmd.done
+	return m.hasErr()
 }
 
 func (m *Synchronizer) SetNext(next PhysicalPlan) {
@@ -65,12 +112,7 @@ func (m *Synchronizer) Draw() *Diagram {
 }
 
 func (m *Synchronizer) Close() {
-	open := m.open.Add(-1)
-	if open < 0 {
-		panic("too many Synchronizer Close calls")
-	}
-	if open > 0 {
-		return
-	}
-	m.next.Close()
+	cmd := &syncCmd{typ: syncClose, done: make(chan struct{})}
+	m.buffer <- cmd
+	<-cmd.done
 }
