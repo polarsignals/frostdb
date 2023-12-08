@@ -44,6 +44,8 @@ message StorageLayout {
     TYPE_BOOL = 4;
     // Represents a int32 type.
     TYPE_INT32 = 5;
+    // Represents a uint64 type.
+    TYPE_UINT64 = 6;
   }
 
   // Type of the column.
