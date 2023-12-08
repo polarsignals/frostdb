@@ -38,6 +38,7 @@ func main() {
 		City     interface{}
 		Day      string
 		Snowfall int64
+		// Snowfall2 float64
 	}
 
 	type CityInProvince struct {
@@ -65,7 +66,7 @@ func main() {
 		WeatherRecord{Day: "Wed", Snowfall: 30, City: toronto},
 		WeatherRecord{Day: "Thu", Snowfall: 00, City: toronto},
 		WeatherRecord{Day: "Fri", Snowfall: 05, City: toronto},
-		WeatherRecord{Day: "Mon", Snowfall: 40, City: minneapolis},
+		WeatherRecord{Day: "Mon", Snowfall: 40.0, City: minneapolis},
 		WeatherRecord{Day: "Tue", Snowfall: 15, City: minneapolis},
 		WeatherRecord{Day: "Wed", Snowfall: 32, City: minneapolis},
 		WeatherRecord{Day: "Thu", Snowfall: 10, City: minneapolis},
@@ -81,7 +82,7 @@ func main() {
 			[]logicalplan.Expr{
 				logicalplan.Max(logicalplan.Col("snowfall")),
 				logicalplan.Min(logicalplan.Col("snowfall")),
-				logicalplan.Avg(logicalplan.Col("snowfall")),
+				// logicalplan.Avg(logicalplan.Col("snowfall")),
 			},
 			[]logicalplan.Expr{logicalplan.Col("city.name")},
 		).
@@ -92,18 +93,18 @@ func main() {
 		})
 
 	// Total snowfall on each day of week:
-	_ = engine.ScanTable("snowfall_table").
-		Aggregate(
-			[]logicalplan.Expr{
-				logicalplan.Sum(logicalplan.Col("snowfall")),
-			},
-			[]logicalplan.Expr{logicalplan.Col("day")},
-		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-			// print the results
-			fmt.Println(r)
-			return nil
-		})
+	// _ = engine.ScanTable("snowfall_table").
+	// 	Aggregate(
+	// 		[]logicalplan.Expr{
+	// 			logicalplan.Sum(logicalplan.Col("snowfall2")),
+	// 		},
+	// 		[]logicalplan.Expr{logicalplan.Col("day")},
+	// 	).
+	// 	Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+	// 		// print the results
+	// 		fmt.Println(r)
+	// 		return nil
+	// 	})
 }
 
 func aggregationSchema() *schemapb.Schema {
@@ -130,7 +131,7 @@ func aggregationSchema() *schemapb.Schema {
 			{
 				Name: "snowfall",
 				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_INT64,
+					Type: schemapb.StorageLayout_TYPE_DOUBLE,
 				},
 				Dynamic: false,
 			},

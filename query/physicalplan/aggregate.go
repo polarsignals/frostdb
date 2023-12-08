@@ -109,8 +109,8 @@ func chooseAggregationFunction(
 		}
 	case logicalplan.AggFuncMin:
 		switch dataType.ID() {
-		case arrow.INT64:
-			return &Int64MinAggregation{}, nil
+		case arrow.INT64, arrow.FLOAT64:
+			return &MinAggregation{}, nil
 		default:
 			return nil, fmt.Errorf("unsupported min of type: %s", dataType.Name())
 		}
@@ -118,6 +118,8 @@ func chooseAggregationFunction(
 		switch dataType.ID() {
 		case arrow.INT64:
 			return &Int64MaxAggregation{}, nil
+		case arrow.FLOAT64:
+			return &Float64MaxAggregation{}, nil
 		default:
 			return nil, fmt.Errorf("unsupported max of type: %s", dataType.Name())
 		}
@@ -706,9 +708,9 @@ func sumInt64array(arr *array.Int64) int64 {
 
 var ErrUnsupportedMinType = errors.New("unsupported type for max aggregation, expected int64")
 
-type Int64MinAggregation struct{}
+type MinAggregation struct{}
 
-func (a *Int64MinAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+func (a *MinAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	if len(arrs) == 0 {
 		return array.NewInt64Builder(pool).NewArray(), nil
 	}
@@ -717,6 +719,8 @@ func (a *Int64MinAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Arra
 	switch typ {
 	case arrow.INT64:
 		return minInt64arrays(pool, arrs), nil
+	case arrow.FLOAT64:
+		return minFloat64arrays(pool, arrs), nil
 	default:
 		return nil, fmt.Errorf("min array of %s: %w", typ, ErrUnsupportedMinType)
 	}
@@ -743,6 +747,34 @@ func minInt64array(arr *array.Int64) int64 {
 	// Note that the zero-length check must be performed before calling this
 	// function.
 	vals := arr.Int64Values()
+	min := vals[0]
+	for _, v := range vals {
+		if v < min {
+			min = v
+		}
+	}
+	return min
+}
+
+func minFloat64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
+	res := array.NewFloat64Builder(pool)
+	defer res.Release()
+	for _, arr := range arrs {
+		if arr.Len() == 0 {
+			res.AppendNull()
+			continue
+		}
+		res.Append(minFloat64array(arr.(*array.Float64)))
+	}
+
+	return res.NewArray()
+}
+
+// Same as minInt64array but for Float64
+func minFloat64array(arr *array.Float64) float64 {
+	// Note that the zero-length check must be performed before calling this
+	// function.
+	vals := arr.Float64Values()
 	min := vals[0]
 	for _, v := range vals {
 		if v < min {
@@ -798,6 +830,51 @@ func maxInt64array(arr *array.Int64) int64 {
 		}
 	}
 	return max
+}
+
+func maxFloat64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
+	res := array.NewFloat64Builder(pool)
+	defer res.Release()
+	for _, arr := range arrs {
+		if arr.Len() == 0 {
+			res.AppendNull()
+			continue
+		}
+		fmt.Println("ARRS", arr)
+		res.Append(maxFloat64array(arr.(*array.Float64)))
+	}
+
+	return res.NewArray()
+}
+
+func maxFloat64array(arr *array.Float64) float64 {
+	// Note that the zero-length check must be performed before calling this
+	// function.
+	vals := arr.Float64Values()
+	max := vals[0]
+	for _, v := range vals {
+		fmt.Printf("f %f", v)
+		if v > max {
+			max = v
+		}
+	}
+	return max
+}
+
+type Float64MaxAggregation struct{}
+
+func (a *Float64MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	if len(arrs) == 0 {
+		return array.NewInt64Builder(pool).NewArray(), nil
+	}
+
+	typ := arrs[0].DataType().ID()
+	switch typ {
+	case arrow.FLOAT64:
+		return maxFloat64arrays(pool, arrs), nil
+	default:
+		return nil, fmt.Errorf("max array of %s: %w", typ, ErrUnsupportedMaxType)
+	}
 }
 
 type CountAggregation struct{}
