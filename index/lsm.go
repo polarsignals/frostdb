@@ -421,9 +421,7 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts
 	l.Lock()
 	defer l.Unlock()
 	for _, part := range mergeList {
-		if r := part.Record(); r != nil {
-			r.Release()
-		}
+		part.Release()
 	}
 
 	return nil
