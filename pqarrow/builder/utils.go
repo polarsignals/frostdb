@@ -65,6 +65,8 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 		b.AppendSingle(arr.(*array.Boolean).Value(i))
 	case *array.Int64Builder:
 		b.Append(arr.(*array.Int64).Value(i))
+	case *array.Uint64Builder:
+		b.Append(arr.(*array.Uint64).Value(i))
 	case *array.Float64Builder:
 		b.Append(arr.(*array.Float64).Value(i))
 	case *array.StringBuilder:
