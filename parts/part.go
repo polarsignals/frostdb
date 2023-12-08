@@ -12,6 +12,7 @@ type Part interface {
 	// Record returns the Arrow record for the part. If the part is not an Arrow
 	// record part, nil is returned.
 	Record() arrow.Record
+	Release()
 	SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error
 	AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error)
 	NumRows() int64

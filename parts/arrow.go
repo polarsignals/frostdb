@@ -41,6 +41,8 @@ func (p *arrowPart) Record() arrow.Record {
 	return p.record
 }
 
+func (p *arrowPart) Release() { p.record.Release() }
+
 func (p *arrowPart) SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error {
 	return pqarrow.RecordToFile(schema, w, p.record)
 }
