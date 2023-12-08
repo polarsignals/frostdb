@@ -1426,9 +1426,9 @@ type fileCompaction struct {
 	ref     []int64    // Number of references to each level file.
 }
 
-func (t *fileCompaction) Close() error {
-	for _, f := range t.files {
-		if err := f.Close(); err != nil {
+func (f *fileCompaction) Close() error {
+	for _, file := range f.files {
+		if err := file.Close(); err != nil {
 			return err
 		}
 	}
@@ -1468,20 +1468,20 @@ func (a *accountingWriter) Write(p []byte) (int, error) {
 }
 
 // writeRecordsToParquetFile will compact the given parts into a Parquet file written to the next level file.
-func (t *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
+func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
 	level := compact[0].CompactionLevel() // level that we're compacting from
-	accountant := &accountingWriter{w: t.files[level]}
-	preCompactionSize, err := t.t.compactParts(accountant, compact) // compact into the next level
+	accountant := &accountingWriter{w: f.files[level]}
+	preCompactionSize, err := f.t.compactParts(accountant, compact) // compact into the next level
 	if err != nil {
 		return nil, 0, 0, err
 	}
 
 	// Record the writing offset into the file.
-	prevOffset := t.offsets[level]
-	t.offsets[level] += accountant.n
-	t.ref[level]++
+	prevOffset := f.offsets[level]
+	f.offsets[level] += accountant.n
+	f.ref[level]++
 
-	return []parts.Part{parts.NewFileParquetPart(0, io.NewSectionReader(t.files[level], prevOffset, accountant.n), accountant.n, t.release(level), options...)}, preCompactionSize, accountant.n, nil
+	return []parts.Part{parts.NewFileParquetPart(0, io.NewSectionReader(f.files[level], prevOffset, accountant.n), accountant.n, f.release(level), options...)}, preCompactionSize, accountant.n, nil
 }
 
 // release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.
@@ -1496,7 +1496,9 @@ func (f *fileCompaction) release(lvl int) func() {
 			}
 
 			f.offsets[lvl] = 0
-			f.files[lvl].Seek(0, io.SeekStart)
+			if _, err := f.files[lvl].Seek(0, io.SeekStart); err != nil {
+				panic(fmt.Errorf("failed to seek the level file: %v", err))
+			}
 		}
 	}
 }

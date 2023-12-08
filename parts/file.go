@@ -6,6 +6,7 @@ import (
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/parquet-go/parquet-go"
+
 	"github.com/polarsignals/frostdb/dynparquet"
 )
 
