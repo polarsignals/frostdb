@@ -2250,3 +2250,56 @@ func TestDBConcurrentOpen(t *testing.T) {
 	}
 	require.NoError(t, errg.Wait())
 }
+
+func Test_DB_WithParquetDiskCompaction(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	logger := newTestLogger(t)
+
+	cfg := DefaultIndexConfig()
+	cfg[0].Type = CompactionTypeParquetDisk // Create disk compaction
+	cfg[1].Type = CompactionTypeParquetDisk
+	c, err := New(
+		WithLogger(logger),
+		WithIndexConfig(cfg),
+	)
+	t.Cleanup(func() {
+		require.NoError(t, c.Close())
+	})
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+	require.NoError(t, table.EnsureCompaction())
+
+	// Ensure that disk compacted data can be recovered
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	rows := int64(0)
+	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+		return table.Iterator(
+			ctx,
+			tx,
+			pool,
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				rows += ar.NumRows()
+				return nil
+			}},
+		)
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(300), rows)
+}

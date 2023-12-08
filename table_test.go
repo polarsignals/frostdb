@@ -451,9 +451,9 @@ func Test_Table_NewTableValidSplitSize(t *testing.T) {
 
 func Test_Table_Bloomfilter(t *testing.T) {
 	c, table := basicTable(t, WithIndexConfig(
-		[]*index.LevelConfig{
-			{Level: index.L0, MaxSize: 452}, // NOTE: 452 is the current size of the 3 records that are inserted
-			{Level: index.L1, MaxSize: 100000},
+		[]*IndexConfig{
+			{Level: int(index.L0), MaxSize: 452, Type: CompactionTypeParquet}, // NOTE: 452 is the current size of the 3 records that are inserted
+			{Level: int(index.L1), MaxSize: 100000},
 		},
 	))
 	defer c.Close()
@@ -1136,9 +1136,9 @@ func Test_Table_DynamicColumnNotDefined(t *testing.T) {
 }
 
 func TestTableUniquePrimaryIndex(t *testing.T) {
-	c, err := New(WithGranuleSizeBytes(1), WithIndexConfig([]*index.LevelConfig{
-		{Level: index.L0, MaxSize: 180},
-		{Level: index.L1, MaxSize: 1 * TiB},
+	c, err := New(WithGranuleSizeBytes(1), WithIndexConfig([]*IndexConfig{
+		{Level: int(index.L0), MaxSize: 180, Type: CompactionTypeParquet},
+		{Level: int(index.L1), MaxSize: 1 * TiB},
 	}))
 	require.NoError(t, err)
 	defer c.Close()
