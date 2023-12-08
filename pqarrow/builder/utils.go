@@ -70,6 +70,8 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 		b.Append(arr.(*array.Int32).Value(i))
 	case *array.Float64Builder:
 		b.Append(arr.(*array.Float64).Value(i))
+	case *array.Uint64Builder:
+		b.Append(arr.(*array.Uint64).Value(i))
 	case *array.StringBuilder:
 		b.Append(arr.(*array.String).Value(i))
 	case *array.BinaryBuilder:

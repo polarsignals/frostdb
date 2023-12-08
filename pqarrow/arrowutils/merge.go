@@ -104,6 +104,14 @@ func (h cursorHeap) Less(i, j int) bool {
 				continue
 			}
 			return v1 < v2
+		case *array.Uint64:
+			arr2 := c2.r.Column(i).(*array.Uint64)
+			v1 := arr1.Value(c1.curIdx)
+			v2 := arr2.Value(c2.curIdx)
+			if v1 == v2 {
+				continue
+			}
+			return v1 < v2
 		case *array.Dictionary:
 			switch dict := arr1.Dictionary().(type) {
 			case *array.Binary:
