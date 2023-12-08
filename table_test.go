@@ -1209,3 +1209,69 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 		}))
 	require.Equal(t, 1, rowsRead)
 }
+
+func TestTable_write_ptr_struct(t *testing.T) {
+	// This is taken from simple example and modified to use pointers
+	columnstore, err := New()
+	require.Nil(t, err)
+	defer columnstore.Close()
+
+	database, err := columnstore.DB(context.Background(), "simple_db")
+	require.Nil(t, err)
+
+	schema := &schemapb.Schema{
+		Name: "simple_schema",
+		Columns: []*schemapb.Column{{
+			Name: "names",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				Nullable: true,
+			},
+			Dynamic: true,
+		}, {
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_INT64,
+			},
+			Dynamic: false,
+		}},
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:      "names",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	}
+
+	table, err := database.Table(
+		"simple_table",
+		NewTableConfig(schema),
+	)
+	require.Nil(t, err)
+
+	type FirstLast struct {
+		FirstName string
+		Surname   string
+	}
+
+	type Simple struct {
+		Names *FirstLast
+		Value int64
+	}
+	frederic := &Simple{
+		Names: &FirstLast{
+			FirstName: "Frederic",
+			Surname:   "Brancz",
+		},
+		Value: 100,
+	}
+
+	thor := &Simple{
+		Names: &FirstLast{
+			FirstName: "Thor",
+			Surname:   "Hansen",
+		},
+		Value: 99,
+	}
+	_, err = table.Write(context.Background(), frederic, thor)
+	require.Nil(t, err)
+}
