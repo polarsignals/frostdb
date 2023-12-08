@@ -65,7 +65,7 @@ type ColumnStore struct {
 	// splitSize is the number of new granules that are created when granules are split (default =2)
 	splitSize int
 	// indexConfig is the configuration settings for the lsm index
-	indexConfig []*index.LevelConfig
+	indexConfig []*IndexConfig
 
 	sources []DataSource
 	sinks   []DataSink
@@ -227,7 +227,7 @@ func WithStoragePath(path string) Option {
 	}
 }
 
-func WithIndexConfig(indexConfig []*index.LevelConfig) Option {
+func WithIndexConfig(indexConfig []*IndexConfig) Option {
 	return func(s *ColumnStore) error {
 		s.indexConfig = indexConfig
 		return nil
