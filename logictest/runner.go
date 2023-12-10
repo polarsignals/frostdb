@@ -251,7 +251,6 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (stri
 	if _, err := buf.WriteRows(rows); err != nil {
 		return "", fmt.Errorf("insert: %w", err)
 	}
-
 	buf.Sort()
 
 	// TODO: https://github.com/polarsignals/frostdb/issues/548 Should just build the arrow record directly.
@@ -286,6 +285,12 @@ func stringToValue(t parquet.Type, stringValue string) (any, error) {
 			return nil, fmt.Errorf("unexpected error converting %s to int: %w", stringValue, err)
 		}
 		return intValue, nil
+	case parquet.Double:
+		floatValue, err := strconv.ParseFloat(stringValue, 64)
+		if err != nil {
+			return nil, fmt.Errorf("unexpected error converting %s to float: %w", stringValue, err)
+		}
+		return floatValue, nil
 	case parquet.Boolean:
 		switch stringValue {
 		case "true":
@@ -400,6 +405,14 @@ func arrayToStringVals(a arrow.Array) ([]string, error) {
 				continue
 			}
 			result[i] = strconv.Itoa(int(col.Value(i)))
+		}
+	case *array.Float64:
+		for i := range result {
+			if col.IsNull(i) {
+				result[i] = nullString
+				continue
+			}
+			result[i] = fmt.Sprintf("%f", float64(col.Value(i)))
 		}
 	case *array.Boolean:
 		for i := range result {

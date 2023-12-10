@@ -102,8 +102,8 @@ func chooseAggregationFunction(
 	switch aggFunc {
 	case logicalplan.AggFuncSum:
 		switch dataType.ID() {
-		case arrow.INT64:
-			return &Int64SumAggregation{}, nil
+		case arrow.INT64, arrow.FLOAT64:
+			return &SumAggregation{}, nil
 		default:
 			return nil, fmt.Errorf("unsupported sum of type: %s", dataType.Name())
 		}
@@ -116,10 +116,8 @@ func chooseAggregationFunction(
 		}
 	case logicalplan.AggFuncMax:
 		switch dataType.ID() {
-		case arrow.INT64:
-			return &Int64MaxAggregation{}, nil
-		case arrow.FLOAT64:
-			return &Float64MaxAggregation{}, nil
+		case arrow.INT64, arrow.FLOAT64:
+			return &MaxAggregation{}, nil
 		default:
 			return nil, fmt.Errorf("unsupported max of type: %s", dataType.Name())
 		}
@@ -674,11 +672,11 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 	return nil
 }
 
-type Int64SumAggregation struct{}
+type SumAggregation struct{}
 
 var ErrUnsupportedSumType = errors.New("unsupported type for sum aggregation, expected int64")
 
-func (a *Int64SumAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+func (a *SumAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	if len(arrs) == 0 {
 		return array.NewInt64Builder(pool).NewArray(), nil
 	}
@@ -687,6 +685,8 @@ func (a *Int64SumAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Arra
 	switch typ {
 	case arrow.INT64:
 		return sumInt64arrays(pool, arrs), nil
+	case arrow.FLOAT64:
+		return sumFloat64arrays(pool, arrs), nil
 	default:
 		return nil, fmt.Errorf("sum array of %s: %w", typ, ErrUnsupportedSumType)
 	}
@@ -704,6 +704,20 @@ func sumInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
 
 func sumInt64array(arr *array.Int64) int64 {
 	return math.Int64.Sum(arr)
+}
+
+func sumFloat64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
+	res := array.NewFloat64Builder(pool)
+	defer res.Release()
+	for _, arr := range arrs {
+		res.Append(sumFloat64array(arr.(*array.Float64)))
+	}
+
+	return res.NewArray()
+}
+
+func sumFloat64array(arr *array.Float64) float64 {
+	return math.Float64.Sum(arr)
 }
 
 var ErrUnsupportedMinType = errors.New("unsupported type for max aggregation, expected int64")
@@ -784,11 +798,11 @@ func minFloat64array(arr *array.Float64) float64 {
 	return min
 }
 
-type Int64MaxAggregation struct{}
+type MaxAggregation struct{}
 
 var ErrUnsupportedMaxType = errors.New("unsupported type for max aggregation, expected int64")
 
-func (a *Int64MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+func (a *MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	if len(arrs) == 0 {
 		return array.NewInt64Builder(pool).NewArray(), nil
 	}
@@ -797,6 +811,8 @@ func (a *Int64MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Arra
 	switch typ {
 	case arrow.INT64:
 		return maxInt64arrays(pool, arrs), nil
+	case arrow.FLOAT64:
+		return maxFloat64arrays(pool, arrs), nil
 	default:
 		return nil, fmt.Errorf("max array of %s: %w", typ, ErrUnsupportedMaxType)
 	}
@@ -840,7 +856,6 @@ func maxFloat64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
 			res.AppendNull()
 			continue
 		}
-		fmt.Println("ARRS", arr)
 		res.Append(maxFloat64array(arr.(*array.Float64)))
 	}
 
@@ -853,28 +868,11 @@ func maxFloat64array(arr *array.Float64) float64 {
 	vals := arr.Float64Values()
 	max := vals[0]
 	for _, v := range vals {
-		fmt.Printf("f %f", v)
 		if v > max {
 			max = v
 		}
 	}
 	return max
-}
-
-type Float64MaxAggregation struct{}
-
-func (a *Float64MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
-	if len(arrs) == 0 {
-		return array.NewInt64Builder(pool).NewArray(), nil
-	}
-
-	typ := arrs[0].DataType().ID()
-	switch typ {
-	case arrow.FLOAT64:
-		return maxFloat64arrays(pool, arrs), nil
-	default:
-		return nil, fmt.Errorf("max array of %s: %w", typ, ErrUnsupportedMaxType)
-	}
 }
 
 type CountAggregation struct{}
@@ -908,7 +906,7 @@ func runAggregation(finalStage bool, fn logicalplan.AggFunc, pool memory.Allocat
 	if _, ok := aggFunc.(*CountAggregation); ok && finalStage {
 		// The final stage of aggregation needs to sum up all the counts of the
 		// previous steps, instead of counting the previous counts.
-		return (&Int64SumAggregation{}).Aggregate(pool, arrs)
+		return (&SumAggregation{}).Aggregate(pool, arrs)
 	}
 	return aggFunc.Aggregate(pool, arrs)
 }

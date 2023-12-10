@@ -341,11 +341,20 @@ func (a *averageProjection) Project(mem memory.Allocator, r arrow.Record) ([]arr
 	}
 
 	// Add the field and column for the projected average aggregation.
-	fields = append(fields, arrow.Field{
-		Name: resultName,
-		Type: &arrow.Int64Type{},
-	})
-	columns = append(columns, avgInt64arrays(mem, sums, counts))
+	switch sums.DataType().ID() {
+	case arrow.INT64:
+		fields = append(fields, arrow.Field{
+			Name: resultName,
+			Type: &arrow.Int64Type{},
+		})
+		columns = append(columns, avgInt64arrays(mem, sums, counts))
+	case arrow.FLOAT64:
+		fields = append(fields, arrow.Field{
+			Name: resultName,
+			Type: &arrow.Float64Type{},
+		})
+		columns = append(columns, avgFloat64arrays(mem, sums, counts))
+	}
 
 	return fields, columns, nil
 }
@@ -358,6 +367,19 @@ func avgInt64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array
 	defer res.Release()
 	for i := 0; i < sumsInts.Len(); i++ {
 		res.Append(sumsInts.Value(i) / countsInts.Value(i))
+	}
+
+	return res.NewArray()
+}
+
+func avgFloat64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array {
+	sumsFloats := sums.(*array.Float64)
+	countsInts := counts.(*array.Int64)
+
+	res := array.NewFloat64Builder(pool)
+	defer res.Release()
+	for i := 0; i < sumsFloats.Len(); i++ {
+		res.Append(sumsFloats.Value(i) / float64(countsInts.Value(i)))
 	}
 
 	return res.NewArray()

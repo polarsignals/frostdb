@@ -287,6 +287,13 @@ func SampleDefinition() *schemapb.Schema {
 				Type: schemapb.StorageLayout_TYPE_INT64,
 			},
 			Dynamic: false,
+		}, {
+			Name: "floatvalue",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_DOUBLE,
+				Nullable: true,
+			},
+			Dynamic: false,
 		}},
 		SortingColumns: []*schemapb.SortingColumn{{
 			Name:      "example_type",
