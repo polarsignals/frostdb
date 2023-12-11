@@ -30,7 +30,8 @@ func TestBuild(t *testing.T) {
 		b := NewBuild[Sample](memory.DefaultAllocator)
 		defer b.Release()
 		samples := NewTestSamples()
-		b.Append(samples...)
+		err := b.Append(samples...)
+		require.Nil(t, err)
 		r := b.NewRecord()
 		require.Equal(t, int64(len(samples)), r.NumRows())
 		want := `[{"example_type":"cpu","labels.container":null,"labels.namespace":null,"labels.node":"test3","labels.pod":null,"stacktrace":"AAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAE=","timestamp":2,"value":5}
@@ -53,7 +54,7 @@ func BenchmarkBuild_Append_Then_NewRecord(b *testing.B) {
 	samples := NewTestSamples()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		build.Append(samples...)
+		_ = build.Append(samples...)
 		r := build.NewRecord()
 		r.Release()
 	}

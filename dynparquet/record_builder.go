@@ -221,16 +221,20 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 	return b
 }
 
-func (b *Build[T]) Append(values ...T) {
+func (b *Build[T]) Append(values ...T) error {
 	for _, value := range values {
 		v := reflect.ValueOf(value)
 		for v.Kind() == reflect.Ptr {
 			v = v.Elem()
 		}
 		for i := 0; i < v.NumField(); i++ {
-			b.fields[i].build.Append(v.Field(i))
+			err := b.fields[i].build.Append(v.Field(i))
+			if err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 func (b *Build[T]) NewRecord() arrow.Record {
@@ -296,7 +300,7 @@ type fieldBuilder interface {
 	Fields() []arrow.Field
 	Len() int
 	AppendNull()
-	Append(reflect.Value)
+	Append(reflect.Value) error
 	NewArray([]arrow.Array) []arrow.Array
 	Release()
 }
@@ -364,23 +368,27 @@ func (m *mapFieldBuilder) Release() {
 	m.keys = m.keys[:0]
 }
 
-func (m *mapFieldBuilder) Append(v reflect.Value) {
+func (m *mapFieldBuilder) Append(v reflect.Value) error {
 	switch v.Kind() {
 	case reflect.Map:
-		m.appendMap(v)
+		return m.appendMap(v)
 	case reflect.Slice:
-		m.appendSlice(v)
+		return m.appendSlice(v)
 	}
+	return nil
 }
 
-func (m *mapFieldBuilder) appendMap(v reflect.Value) {
+func (m *mapFieldBuilder) appendMap(v reflect.Value) error {
 	clear(m.seen)
 	keys := v.MapKeys()
 	size := m.Len()
 	for _, key := range keys {
 		name := key.Interface().(string)
 		m.seen[name] = struct{}{}
-		m.get(name, size).Append(v.MapIndex(key))
+		err := m.get(name, size).Append(v.MapIndex(key))
+		if err != nil {
+			return err
+		}
 	}
 	for k, v := range m.columns {
 		_, ok := m.seen[k]
@@ -390,16 +398,20 @@ func (m *mapFieldBuilder) appendMap(v reflect.Value) {
 			v.AppendNull()
 		}
 	}
+	return nil
 }
 
-func (m *mapFieldBuilder) appendSlice(v reflect.Value) {
+func (m *mapFieldBuilder) appendSlice(v reflect.Value) error {
 	clear(m.seen)
 	size := m.Len()
 	for n := 0; n < v.Len(); n++ {
 		e := v.Index(n)
 		name := ToSnakeCase(e.Field(0).Interface().(string))
 		m.seen[name] = struct{}{}
-		m.get(name, size).Append(e.Field(1))
+		err := m.get(name, size).Append(e.Field(1))
+		if err != nil {
+			return err
+		}
 	}
 	for k, v := range m.columns {
 		_, ok := m.seen[k]
@@ -409,6 +421,7 @@ func (m *mapFieldBuilder) appendSlice(v reflect.Value) {
 			v.AppendNull()
 		}
 	}
+	return nil
 }
 
 func (m *mapFieldBuilder) Len() int {
@@ -486,32 +499,36 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 	}
 	switch e := b.(type) {
 	case *array.Int64Builder:
-		f.buildFunc = func(v reflect.Value) {
+		f.buildFunc = func(v reflect.Value) error {
 			e.Append(v.Int())
+			return nil
 		}
 	case *array.Int64DictionaryBuilder:
-		f.buildFunc = func(v reflect.Value) {
-			e.Append(v.Int())
+		f.buildFunc = func(v reflect.Value) error {
+			return e.Append(v.Int())
 		}
 	case *array.Float64Builder:
-		f.buildFunc = func(v reflect.Value) {
+		f.buildFunc = func(v reflect.Value) error {
 			e.Append(v.Float())
+			return nil
 		}
 	case *array.Float64DictionaryBuilder:
-		f.buildFunc = func(v reflect.Value) {
-			e.Append(v.Float())
+		f.buildFunc = func(v reflect.Value) error {
+			return e.Append(v.Float())
 		}
 	case *array.BooleanBuilder:
-		f.buildFunc = func(v reflect.Value) {
+		f.buildFunc = func(v reflect.Value) error {
 			e.Append(v.Bool())
+			return nil
 		}
 	case *array.StringBuilder:
-		f.buildFunc = func(v reflect.Value) {
+		f.buildFunc = func(v reflect.Value) error {
 			e.Append(v.Interface().(string))
+			return nil
 		}
 	case *array.BinaryDictionaryBuilder:
-		f.buildFunc = func(v reflect.Value) {
-			e.AppendString(v.Interface().(string))
+		f.buildFunc = func(v reflect.Value) error {
+			return e.AppendString(v.Interface().(string))
 		}
 	default:
 		panic("frostdb:dynschema: unsupported array builder " + b.Type().String())
@@ -538,8 +555,8 @@ func newUUIDSliceField(mem memory.Allocator, name string) (f *fieldBuilderFunc) 
 		},
 	}
 	bd := b.(*array.BinaryDictionaryBuilder)
-	f.buildFunc = func(v reflect.Value) {
-		bd.Append(ExtractLocationIDs(v.Interface().([]uuid.UUID)))
+	f.buildFunc = func(v reflect.Value) error {
+		return bd.Append(ExtractLocationIDs(v.Interface().([]uuid.UUID)))
 	}
 	return
 }
@@ -548,7 +565,7 @@ type fieldBuilderFunc struct {
 	len           func() int
 	col           arrow.Field
 	nilFunc       func()
-	buildFunc     func(reflect.Value)
+	buildFunc     func(reflect.Value) error
 	newArraysFunc func([]arrow.Array) []arrow.Array
 	releaseFunc   func()
 }
@@ -558,7 +575,7 @@ var _ fieldBuilder = (*fieldBuilderFunc)(nil)
 func (f *fieldBuilderFunc) Fields() []arrow.Field                  { return []arrow.Field{f.col} }
 func (f *fieldBuilderFunc) Len() int                               { return f.len() }
 func (f *fieldBuilderFunc) AppendNull()                            { f.nilFunc() }
-func (f *fieldBuilderFunc) Append(v reflect.Value)                 { f.buildFunc(v) }
+func (f *fieldBuilderFunc) Append(v reflect.Value) error           { return f.buildFunc(v) }
 func (f *fieldBuilderFunc) NewArray(a []arrow.Array) []arrow.Array { return f.newArraysFunc(a) }
 func (f *fieldBuilderFunc) Release()                               { f.releaseFunc() }
 
