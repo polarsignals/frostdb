@@ -1003,7 +1003,7 @@ func ValuesToBuffer(schema *Schema, vals ...any) (*Buffer, error) {
 
 	// Collect dynamic columns
 	for _, v := range vals {
-		val := reflect.ValueOf(v)
+		val := deref(reflect.ValueOf(v))
 		for _, col := range schema.Columns() {
 			cv := findColumn(val, col.Name, v)
 			if cv == nil {
@@ -1011,16 +1011,16 @@ func ValuesToBuffer(schema *Schema, vals ...any) (*Buffer, error) {
 			}
 			switch col.Dynamic {
 			case true:
-				switch reflect.TypeOf(cv).Kind() {
+				switch derefType(reflect.TypeOf(cv)).Kind() {
 				case reflect.Struct:
-					dynVals := reflect.ValueOf(cv)
+					dynVals := deref(reflect.ValueOf(cv))
 					for j := 0; j < dynVals.NumField(); j++ {
 						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(dynVals.Type().Field(j).Name))
 					}
 				case reflect.Slice:
 					dynVals := reflect.ValueOf(cv)
 					for j := 0; j < dynVals.Len(); j++ {
-						pair := reflect.ValueOf(dynVals.Index(j).Interface())
+						pair := deref(reflect.ValueOf(dynVals.Index(j).Interface()))
 						dynamicColumns[col.Name] = append(dynamicColumns[col.Name], ToSnakeCase(fmt.Sprintf("%v", pair.Field(0))))
 					}
 				case reflect.Map:
@@ -1045,7 +1045,7 @@ func ValuesToBuffer(schema *Schema, vals ...any) (*Buffer, error) {
 	// Create all rows
 	for _, v := range vals {
 		row := []parquet.Value{}
-		val := reflect.ValueOf(v)
+		val := deref(reflect.ValueOf(v))
 
 		colIdx := 0
 		for _, col := range schema.Columns() {
@@ -1055,9 +1055,9 @@ func ValuesToBuffer(schema *Schema, vals ...any) (*Buffer, error) {
 			}
 			switch col.Dynamic {
 			case true:
-				switch reflect.TypeOf(cv).Kind() {
+				switch derefType(reflect.TypeOf(cv)).Kind() {
 				case reflect.Struct:
-					dynVals := reflect.ValueOf(cv)
+					dynVals := deref(reflect.ValueOf(cv))
 					for _, dyncol := range dynamicColumns[col.Name] {
 						found := false
 						for j := 0; j < dynVals.NumField(); j++ {
@@ -1144,6 +1144,20 @@ func ValuesToBuffer(schema *Schema, vals ...any) (*Buffer, error) {
 	}
 
 	return pb, nil
+}
+
+func deref(v reflect.Value) reflect.Value {
+	for v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return v
+}
+
+func derefType(v reflect.Type) reflect.Type {
+	for v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return v
 }
 
 // NewBuffer returns a new buffer with a concrete parquet schema generated
