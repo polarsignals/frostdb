@@ -9,7 +9,6 @@ import (
 )
 
 func TestBuild(t *testing.T) {
-
 	t.Run("NewBuild", func(t *testing.T) {
 		b := NewBuild[Sample](memory.DefaultAllocator)
 		defer b.Release()

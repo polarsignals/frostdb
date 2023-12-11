@@ -286,7 +286,6 @@ func (b Build[T]) Schema(name string) (s *schemapb.Schema) {
 		})
 	}
 	return
-
 }
 
 func (b *Build[T]) Release() {
