@@ -29,8 +29,6 @@ const (
 //
 //   - Dynamic columns are supported but only for  maps and struct slices
 //
-//   - Repeated Columns are not supported
-//
 //   - Nested Columns are not supported
 //
 // # Tags
@@ -87,6 +85,15 @@ const (
 //		// Use supported tags to customize the column value
 //		Labels []Label `frostdb:"labels,dyn"`
 //	}
+//
+// # Repeated columns
+//
+// Fields of type []int64, []float64, []bool, and []string are supported. These
+// are represented as arrow.LIST.
+//
+// Generated schema for the repeated columns applies all supported tags. By
+// default repeated fields are nullable. You can safely pass nil slices for
+// repeated columns.
 type Build[T any] struct {
 	fields []*fieldRecord
 	buffer []arrow.Array
@@ -208,7 +215,13 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 				fr.nullable = true
 				fr.build = newMapFieldBuilder(newFieldFunc(typ, mem, name))
 			default:
-				panic("frostdb/dynschema: repeated columns not supported ")
+				typ, styp = baseType(fty.Elem(), dictionary)
+				fr.typ = styp
+				fr.repeated = true
+				// Repeated columns are always nullable
+				fr.nullable = true
+				typ = arrow.ListOf(typ)
+				fr.build = newFieldBuild(typ, mem, name, true)
 			}
 		case reflect.Int64, reflect.Float64, reflect.Bool, reflect.String:
 			typ, styp = baseType(fty, dictionary)
@@ -270,6 +283,7 @@ func (b Build[T]) Schema(name string) (s *schemapb.Schema) {
 				Encoding:    f.encoding,
 				Compression: f.compression,
 				Nullable:    f.nullable,
+				Repeated:    f.repeated,
 			},
 		})
 		if f.sort {
@@ -530,10 +544,131 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 		f.buildFunc = func(v reflect.Value) error {
 			return e.AppendString(v.Interface().(string))
 		}
+	case *array.ListBuilder:
+		switch build := e.ValueBuilder().(type) {
+		case *array.Int64Builder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyInt(v, func(i int64) error {
+					build.Append(i)
+					return nil
+				})
+			}
+		case *array.Int64DictionaryBuilder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyInt(v, build.Append)
+			}
+
+		case *array.Float64Builder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyFloat64(v, func(i float64) error {
+					build.Append(i)
+					return nil
+				})
+			}
+		case *array.Float64DictionaryBuilder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyFloat64(v, build.Append)
+			}
+
+		case *array.StringBuilder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyString(v, func(i string) error {
+					build.Append(i)
+					return nil
+				})
+			}
+		case *array.BinaryDictionaryBuilder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.Len() == 0 {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyString(v, build.AppendString)
+			}
+		case *array.BooleanBuilder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyBool(v, func(i bool) error {
+					build.Append(i)
+					return nil
+				})
+			}
+		}
 	default:
 		panic("frostdb:dynschema: unsupported array builder " + b.Type().String())
 	}
 	return
+}
+
+func applyString(v reflect.Value, apply func(string) error) error {
+	return listApply[string](v, func(v reflect.Value) string {
+		return v.Interface().(string)
+	}, apply)
+}
+
+func applyFloat64(v reflect.Value, apply func(float64) error) error {
+	return listApply[float64](v, func(v reflect.Value) float64 {
+		return v.Float()
+	}, apply)
+}
+
+func applyBool(v reflect.Value, apply func(bool) error) error {
+	return listApply[bool](v, func(v reflect.Value) bool {
+		return v.Bool()
+	}, apply)
+}
+
+func applyInt(v reflect.Value, apply func(int64) error) error {
+	return listApply[int64](v, func(v reflect.Value) int64 {
+		return v.Int()
+	}, apply)
+}
+
+func listApply[T any](v reflect.Value, fn func(reflect.Value) T, apply func(T) error) error {
+	for i := 0; i < v.Len(); i++ {
+		err := apply(fn(v.Index(i)))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newUUIDSliceField(mem memory.Allocator, name string) (f *fieldBuilderFunc) {
@@ -584,6 +719,7 @@ type fieldRecord struct {
 	dynamic     bool
 	preHash     bool
 	nullable    bool
+	repeated    bool
 	sort        bool
 	nullFirst   bool
 	sortOrder   int

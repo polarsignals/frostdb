@@ -5,6 +5,7 @@ import (
 
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -40,6 +41,93 @@ func TestBuild(t *testing.T) {
 		got, err := r.MarshalJSON()
 		require.Nil(t, err)
 		require.JSONEq(t, want, string(got))
+	})
+
+	t.Run("Repeated", func(t *testing.T) {
+		type Repeated struct {
+			Int        []int64
+			Float      []float64
+			Bool       []bool
+			String     []string
+			StringDict []string `frostdb:",rle_dict"`
+		}
+		b := NewBuild[Repeated](memory.DefaultAllocator)
+		defer b.Release()
+
+		wantSchema := `{
+  "name": "repeated",
+  "columns": [
+    {
+      "name": "int",
+      "storageLayout": {
+        "type": "TYPE_INT64",
+        "nullable": true,
+        "repeated": true
+      }
+    },
+    {
+      "name": "float",
+      "storageLayout": {
+        "type": "TYPE_DOUBLE",
+        "nullable": true,
+        "repeated": true
+      }
+    },
+    {
+      "name": "bool",
+      "storageLayout": {
+        "type": "TYPE_BOOL",
+        "nullable": true,
+        "repeated": true
+      }
+    },
+    {
+      "name": "string",
+      "storageLayout": {
+        "type": "TYPE_STRING",
+        "nullable": true,
+        "repeated": true
+      }
+    },
+    {
+      "name": "string_dict",
+      "storageLayout": {
+        "type": "TYPE_STRING",
+        "encoding": "ENCODING_RLE_DICTIONARY",
+        "nullable": true,
+        "repeated": true
+      }
+    }
+  ]
+}`
+		m := protojson.MarshalOptions{Multiline: true}
+		d, _ := m.Marshal(b.Schema("repeated"))
+		require.JSONEq(t, wantSchema, string(d))
+
+		b.Append(
+			Repeated{}, //nulls
+			Repeated{
+				Int:        []int64{1, 2},
+				Float:      []float64{1, 2},
+				Bool:       []bool{true, true},
+				String:     []string{"a", "b"},
+				StringDict: []string{"a", "b"},
+			},
+			Repeated{
+				Int:        []int64{1, 2},
+				Float:      []float64{1, 2},
+				Bool:       []bool{true, true},
+				String:     []string{"a", "b"},
+				StringDict: []string{"c", "d"},
+			},
+		)
+		want := `[{"bool":null,"float":null,"int":null,"string":null,"string_dict":null}
+,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["a","b"]}
+,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["c","d"]}
+]`
+		r := b.NewRecord()
+		data, _ := r.MarshalJSON()
+		require.JSONEq(t, want, string(data))
 	})
 }
 
