@@ -224,7 +224,8 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 		// check that the column type can be aggregated by the function type
 		columnType := column.StorageLayout.Type()
 		aggFuncExpr := aggFuncFinder.result.(*AggregationFunction)
-		if columnType.LogicalType().UTF8 != nil {
+		logicalType := columnType.LogicalType()
+		if logicalType != nil && logicalType.UTF8 != nil {
 			switch aggFuncExpr.Func {
 			case AggFuncSum:
 				return &ExprValidationError{

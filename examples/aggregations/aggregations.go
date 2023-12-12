@@ -37,7 +37,7 @@ func main() {
 	type WeatherRecord struct {
 		City     interface{}
 		Day      string
-		Snowfall int64
+		Snowfall float64
 	}
 
 	type CityInProvince struct {
@@ -58,16 +58,16 @@ func main() {
 		WeatherRecord{Day: "Mon", Snowfall: 20, City: montreal},
 		WeatherRecord{Day: "Tue", Snowfall: 00, City: montreal},
 		WeatherRecord{Day: "Wed", Snowfall: 30, City: montreal},
-		WeatherRecord{Day: "Thu", Snowfall: 25, City: montreal},
+		WeatherRecord{Day: "Thu", Snowfall: 25.1, City: montreal},
 		WeatherRecord{Day: "Fri", Snowfall: 10, City: montreal},
 		WeatherRecord{Day: "Mon", Snowfall: 15, City: toronto},
 		WeatherRecord{Day: "Tue", Snowfall: 25, City: toronto},
 		WeatherRecord{Day: "Wed", Snowfall: 30, City: toronto},
 		WeatherRecord{Day: "Thu", Snowfall: 00, City: toronto},
 		WeatherRecord{Day: "Fri", Snowfall: 05, City: toronto},
-		WeatherRecord{Day: "Mon", Snowfall: 40, City: minneapolis},
+		WeatherRecord{Day: "Mon", Snowfall: 40.8, City: minneapolis},
 		WeatherRecord{Day: "Tue", Snowfall: 15, City: minneapolis},
-		WeatherRecord{Day: "Wed", Snowfall: 32, City: minneapolis},
+		WeatherRecord{Day: "Wed", Snowfall: 32.3, City: minneapolis},
 		WeatherRecord{Day: "Thu", Snowfall: 10, City: minneapolis},
 		WeatherRecord{Day: "Fri", Snowfall: 12, City: minneapolis},
 	)
@@ -130,7 +130,7 @@ func aggregationSchema() *schemapb.Schema {
 			{
 				Name: "snowfall",
 				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_INT64,
+					Type: schemapb.StorageLayout_TYPE_DOUBLE,
 				},
 				Dynamic: false,
 			},

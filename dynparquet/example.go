@@ -306,6 +306,21 @@ func SampleDefinition() *schemapb.Schema {
 	}
 }
 
+// Adds a float column to the SampleDefinition to be able to test
+// aggregations with float values.
+func SampleDefinitionWithFloat() *schemapb.Schema {
+	sample := SampleDefinition()
+	sample.Columns = append(sample.Columns, &schemapb.Column{
+		Name: "floatvalue",
+		StorageLayout: &schemapb.StorageLayout{
+			Type:     schemapb.StorageLayout_TYPE_DOUBLE,
+			Nullable: true,
+		},
+		Dynamic: false,
+	})
+	return sample
+}
+
 func NewSampleSchema() *Schema {
 	s, err := SchemaFromDefinition(SampleDefinition())
 	if err != nil {

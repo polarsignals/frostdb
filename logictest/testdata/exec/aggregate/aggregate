@@ -1,16 +1,16 @@
 createtable schema=default
 ----
 
-insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, stacktrace, timestamp, value)
-value1  value2  null    null    stack1  1   1
-value2  value2  value3  null    stack1  2   2
-value3  value2  null    value4  stack1  3   3
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, stacktrace, timestamp, value, floatvalue)
+value1  value2  null    null    stack1  1   1   1.1
+value2  value2  value3  null    stack1  2   2   2.2
+value3  value2  null    value4  stack1  3   3   3.3
 ----
 
-insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, stacktrace, timestamp, value)
-value4  value2  null    null    stack1  4   4
-value5  value2  value3  null    stack1  5   5
-value6  value2  null    value4  stack1  6   6
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, stacktrace, timestamp, value, floatvalue)
+value4  value2  null    null    stack1  4   4   4.4
+value5  value2  value3  null    stack1  5   5   5.5
+value6  value2  null    value4  stack1  6   6   6.6
 ----
 
 exec
@@ -19,9 +19,24 @@ select sum(value) as value_sum group by labels.label2
 value2  21
 
 exec
+select sum(floatvalue) as float_value_sum group by labels.label2
+----
+value2  23.100000
+
+exec
 select max(value) as value_max group by labels.label2
 ----
 value2  6
+
+exec
+select max(floatvalue) as value_max group by labels.label2
+----
+value2  6.600000
+
+exec
+select min(floatvalue) as value_min group by labels.label2
+----
+value2  1.100000
 
 exec
 select count(value) as value_count group by labels.label2
@@ -32,6 +47,11 @@ exec
 select avg(value) as value_avg group by labels.label2
 ----
 value2  3
+
+exec
+select avg(floatvalue) as value_avg group by labels.label2
+----
+value2  3.850000
 
 exec
 select avg(value) as value_avg group by labels.label4
@@ -45,6 +65,11 @@ select sum(value), count(value) group by stacktrace
 stack1  21      6
 
 exec
+select sum(floatvalue), count(floatvalue) group by stacktrace
+----
+stack1  23.100000  6
+
+exec
 select sum(value) as value_sum, count(value) as value_count group by stacktrace
 ----
 stack1  21      6
@@ -53,6 +78,11 @@ exec
 select sum(value), count(value), min(value), max(value) group by labels.label2
 ----
 value2  21      6       1       6
+
+exec
+select sum(floatvalue), count(floatvalue), min(floatvalue), max(floatvalue) group by labels.label2
+----
+value2  23.100000  6       1.100000  6.600000
 
 exec unordered
 select sum(value) as value_sum where timestamp >= 1 group by labels.label1
