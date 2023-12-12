@@ -104,8 +104,8 @@ func TestBuild(t *testing.T) {
 		d, _ := m.Marshal(b.Schema("repeated"))
 		require.JSONEq(t, wantSchema, string(d))
 
-		b.Append(
-			Repeated{}, //nulls
+		err := b.Append(
+			Repeated{}, // nulls
 			Repeated{
 				Int:        []int64{1, 2},
 				Float:      []float64{1, 2},
@@ -121,6 +121,7 @@ func TestBuild(t *testing.T) {
 				StringDict: []string{"c", "d"},
 			},
 		)
+		require.Nil(t, err)
 		want := `[{"bool":null,"float":null,"int":null,"string":null,"string_dict":null}
 ,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["a","b"]}
 ,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["c","d"]}
