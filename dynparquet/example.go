@@ -287,13 +287,6 @@ func SampleDefinition() *schemapb.Schema {
 				Type: schemapb.StorageLayout_TYPE_INT64,
 			},
 			Dynamic: false,
-		}, {
-			Name: "floatvalue",
-			StorageLayout: &schemapb.StorageLayout{
-				Type:     schemapb.StorageLayout_TYPE_DOUBLE,
-				Nullable: true,
-			},
-			Dynamic: false,
 		}},
 		SortingColumns: []*schemapb.SortingColumn{{
 			Name:      "example_type",
@@ -311,6 +304,21 @@ func SampleDefinition() *schemapb.Schema {
 			NullsFirst: true,
 		}},
 	}
+}
+
+// Adds a float column to the SampleDefinition to be able to test
+// aggregations with float values
+func SampleDefinitionWithFloat() *schemapb.Schema {
+	sample := SampleDefinition()
+	sample.Columns = append(sample.Columns, &schemapb.Column{
+		Name: "floatvalue",
+		StorageLayout: &schemapb.StorageLayout{
+			Type:     schemapb.StorageLayout_TYPE_DOUBLE,
+			Nullable: true,
+		},
+		Dynamic: false,
+	})
+	return sample
 }
 
 func NewSampleSchema() *Schema {

@@ -221,7 +221,15 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (stri
 				if err != nil {
 					return "", fmt.Errorf("insert: %w", err)
 				}
-				rows[i] = append(rows[i], parquet.ValueOf(v).Level(0, 0, colIdx))
+				if col.StorageLayout.Optional() {
+					if parquet.ValueOf(v).IsNull() {
+						rows[i] = append(rows[i], parquet.ValueOf(v).Level(0, 0, colIdx))
+					} else {
+						rows[i] = append(rows[i], parquet.ValueOf(v).Level(0, 1, colIdx))
+					}
+				} else {
+					rows[i] = append(rows[i], parquet.ValueOf(v).Level(0, 0, colIdx))
+				}
 				colIdx++
 				continue
 			}

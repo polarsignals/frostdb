@@ -39,7 +39,7 @@ func (db frostDB) ScanTable(name string) query.Builder {
 }
 
 var schemas = map[string]*schemapb.Schema{
-	"default": dynparquet.SampleDefinition(),
+	"default": dynparquet.SampleDefinitionWithFloat(),
 	"simple_bool": {
 		Name: "simple_bool",
 		Columns: []*schemapb.Column{{
