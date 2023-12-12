@@ -1120,16 +1120,6 @@ type IndexConfig struct {
 func (t *Table) configureLSMLevels(levels []*IndexConfig) []*index.LevelConfig {
 	config := make([]*index.LevelConfig, 0, len(levels))
 
-	// Check if file compaction is configured, and if so, create a file compaction struct.
-	var fileCompaction *fileCompaction
-	for _, level := range levels {
-		if level.Type == CompactionTypeParquetDisk {
-			fileCompaction = t.parquetFileCompaction(len(levels) - 1) // Create a file compaction for all but the last level.
-			t.closers = append(t.closers, fileCompaction)             // Append to closers so that thr underlying files are closed on table close.
-			break
-		}
-	}
-
 	for i, level := range levels {
 		cfg := &index.LevelConfig{
 			Level:   index.SentinelType(level.Level),
@@ -1139,6 +1129,8 @@ func (t *Table) configureLSMLevels(levels []*IndexConfig) []*index.LevelConfig {
 		case CompactionTypeParquet:
 			cfg.Compact = t.parquetCompaction
 		case CompactionTypeParquetDisk:
+			fileCompaction := t.parquetFileCompaction(i + 1)
+			t.closers = append(t.closers, fileCompaction) // Append to closers so that the underlying files are closed on table close.
 			cfg.Compact = fileCompaction.writeRecordsToParquetFile
 		default:
 			if i != len(levels)-1 { // Compaction type should not be set for last level
@@ -1420,37 +1412,27 @@ func (t *Table) distinctRecordsForCompaction(compact []parts.Part) ([]arrow.Reco
 }
 
 type fileCompaction struct {
-	t       *Table
-	files   []*os.File // Files for each level.
-	offsets []int64    // Writing offsets for each level.
-	ref     []int64    // Number of references to each level file.
+	t      *Table
+	file   *os.File
+	offset int64 // Writing offsets into the file
+	ref    int64 // Number of references to file.
 }
 
 func (f *fileCompaction) Close() error {
-	for _, file := range f.files {
-		if err := file.Close(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return f.file.Close()
 }
 
-func (t *Table) parquetFileCompaction(levels int) *fileCompaction {
+func (t *Table) parquetFileCompaction(lvl int) *fileCompaction {
 	f := &fileCompaction{
-		t:       t,
-		files:   make([]*os.File, 0, levels),
-		offsets: make([]int64, levels),
-		ref:     make([]int64, levels),
+		t: t,
 	}
 
-	for i := 0; i < levels; i++ {
-		file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", i+1))
-		if err != nil {
-			panic(err)
-		}
-		level.Info(t.logger).Log("msg", "created temp file for level", "level", i+1, "file", file.Name())
-		f.files = append(f.files, file)
+	file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", lvl))
+	if err != nil {
+		panic(err)
 	}
+	level.Info(t.logger).Log("msg", "created temp file for level", "level", lvl, "file", file.Name())
+	f.file = file
 
 	return f
 }
@@ -1469,34 +1451,33 @@ func (a *accountingWriter) Write(p []byte) (int, error) {
 
 // writeRecordsToParquetFile will compact the given parts into a Parquet file written to the next level file.
 func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
-	level := compact[0].CompactionLevel() // level that we're compacting from
-	accountant := &accountingWriter{w: f.files[level]}
+	accountant := &accountingWriter{w: f.file}
 	preCompactionSize, err := f.t.compactParts(accountant, compact) // compact into the next level
 	if err != nil {
 		return nil, 0, 0, err
 	}
 
 	// Record the writing offset into the file.
-	prevOffset := f.offsets[level]
-	f.offsets[level] += accountant.n
-	f.ref[level]++
+	prevOffset := f.offset
+	f.offset += accountant.n
+	f.ref++
 
-	return []parts.Part{parts.NewFileParquetPart(0, io.NewSectionReader(f.files[level], prevOffset, accountant.n), accountant.n, f.release(level), options...)}, preCompactionSize, accountant.n, nil
+	return []parts.Part{parts.NewFileParquetPart(0, io.NewSectionReader(f.file, prevOffset, accountant.n), accountant.n, f.release(), options...)}, preCompactionSize, accountant.n, nil
 }
 
 // release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.
 // release is not safe to call concurrently.
-func (f *fileCompaction) release(lvl int) func() {
+func (f *fileCompaction) release() func() {
 	return func() {
-		f.ref[lvl]--
-		if f.ref[lvl] == 0 {
-			level.Info(f.t.logger).Log("msg", "truncating file", "level", lvl, "file", f.files[lvl].Name())
-			if err := os.Truncate(f.files[lvl].Name(), 0); err != nil {
+		f.ref--
+		if f.ref == 0 {
+			level.Info(f.t.logger).Log("msg", "truncating file", "file", f.file.Name())
+			if err := os.Truncate(f.file.Name(), 0); err != nil {
 				panic(fmt.Errorf("failed to truncate the level file: %v", err))
 			}
 
-			f.offsets[lvl] = 0
-			if _, err := f.files[lvl].Seek(0, io.SeekStart); err != nil {
+			f.offset = 0
+			if _, err := f.file.Seek(0, io.SeekStart); err != nil {
 				panic(fmt.Errorf("failed to seek the level file: %v", err))
 			}
 		}
