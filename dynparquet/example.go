@@ -22,11 +22,11 @@ type Label struct {
 }
 
 type Sample struct {
-	ExampleType string
-	Labels      []Label
-	Stacktrace  []uuid.UUID
-	Timestamp   int64
-	Value       int64
+	ExampleType string      `frostdb:"example_type,rle_dict,asc(0)"`
+	Labels      []Label     `frostdb:"labels,rle_dict,null,dyn,asc(1),null_first"`
+	Stacktrace  []uuid.UUID `frostdb:"stacktrace,rle_dict,asc(3),null_first"`
+	Timestamp   int64       `frostdb:"timestamp,asc(2)"`
+	Value       int64       `frostdb:"value"`
 }
 
 type Samples []Sample
