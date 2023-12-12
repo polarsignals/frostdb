@@ -1462,7 +1462,17 @@ func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 	f.offset += accountant.n
 	f.ref++
 
-	return []parts.Part{parts.NewFileParquetPart(0, io.NewSectionReader(f.file, prevOffset, accountant.n), accountant.n, f.release(), options...)}, preCompactionSize, accountant.n, nil
+	pf, err := parquet.OpenFile(io.NewSectionReader(f.file, prevOffset, accountant.n), accountant.n)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	buf, err := dynparquet.NewSerializedBuffer(pf)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	return []parts.Part{parts.NewParquetPart(0, buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
 }
 
 // release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.

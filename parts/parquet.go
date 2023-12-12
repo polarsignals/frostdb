@@ -20,7 +20,11 @@ func (p *parquetPart) Record() arrow.Record {
 	return nil
 }
 
-func (p *parquetPart) Release() {} // noop
+func (p *parquetPart) Release() {
+	if p.release != nil {
+		p.release()
+	}
+}
 
 func (p *parquetPart) SerializeBuffer(_ *dynparquet.Schema, _ dynparquet.ParquetWriter) error {
 	return fmt.Errorf("not a record part")
