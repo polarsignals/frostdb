@@ -59,19 +59,12 @@ func (p *parquetPart) Least() (*dynparquet.DynamicRow, error) {
 		return p.minRow, nil
 	}
 
-	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	reader := p.buf.DynamicRowGroup(0).DynamicRows()
-	defer reader.Close()
-
-	if n, err := reader.ReadRows(rowBuf); err != nil {
-		return nil, fmt.Errorf("read first row of part: %w", err)
-	} else if n != 1 {
-		return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
+	minRow, err := min(p.buf)
+	if err != nil {
+		return nil, err
 	}
 
-	// Copy here so that this reference does not prevent the decompressed page
-	// from being GCed.
-	p.minRow = rowBuf.GetCopy(0)
+	p.minRow = minRow
 	return p.minRow, nil
 }
 
@@ -80,24 +73,11 @@ func (p *parquetPart) Most() (*dynparquet.DynamicRow, error) {
 		return p.maxRow, nil
 	}
 
-	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
-	rg := p.buf.DynamicRowGroup(p.buf.NumRowGroups() - 1)
-	reader := rg.DynamicRows()
-	defer reader.Close()
-
-	if err := reader.SeekToRow(rg.NumRows() - 1); err != nil {
-		return nil, fmt.Errorf("seek to last row of part: %w", err)
+	maxRow, err := max(p.buf)
+	if err != nil {
+		return nil, err
 	}
-
-	if n, err := reader.ReadRows(rowBuf); err != nil {
-		return nil, fmt.Errorf("read last row of part: %w", err)
-	} else if n != 1 {
-		return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
-	}
-
-	// Copy here so that this reference does not prevent the decompressed page
-	// from being GCed.
-	p.maxRow = rowBuf.GetCopy(0)
+	p.maxRow = maxRow
 	return p.maxRow, nil
 }
 
@@ -120,4 +100,41 @@ func (p *parquetPart) OverlapsWith(schema *dynparquet.Schema, otherPart Part) (b
 	}
 
 	return schema.Cmp(a, d) <= 0 && schema.Cmp(c, b) <= 0, nil
+}
+
+func max(buf *dynparquet.SerializedBuffer) (*dynparquet.DynamicRow, error) {
+	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
+	rg := buf.DynamicRowGroup(buf.NumRowGroups() - 1)
+	reader := rg.DynamicRows()
+	defer reader.Close()
+
+	if err := reader.SeekToRow(rg.NumRows() - 1); err != nil {
+		return nil, fmt.Errorf("seek to last row of part: %w", err)
+	}
+
+	if n, err := reader.ReadRows(rowBuf); err != nil {
+		return nil, fmt.Errorf("read last row of part: %w", err)
+	} else if n != 1 {
+		return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
+	}
+
+	// Copy here so that this reference does not prevent the decompressed page
+	// from being GCed.
+	return rowBuf.GetCopy(0), nil
+}
+
+func min(buf *dynparquet.SerializedBuffer) (*dynparquet.DynamicRow, error) {
+	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
+	reader := buf.DynamicRowGroup(0).DynamicRows()
+	defer reader.Close()
+
+	if n, err := reader.ReadRows(rowBuf); err != nil {
+		return nil, fmt.Errorf("read first row of part: %w", err)
+	} else if n != 1 {
+		return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
+	}
+
+	// Copy here so that this reference does not prevent the decompressed page
+	// from being GCed.
+	return rowBuf.GetCopy(0), nil
 }
