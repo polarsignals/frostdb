@@ -354,6 +354,8 @@ func (a *averageProjection) Project(mem memory.Allocator, r arrow.Record) ([]arr
 			Type: &arrow.Float64Type{},
 		})
 		columns = append(columns, avgFloat64arrays(mem, sums, counts))
+	default:
+		return nil, nil, fmt.Errorf("Datatype %s is not supported for average projection", sums.DataType().ID())
 	}
 
 	return fields, columns, nil

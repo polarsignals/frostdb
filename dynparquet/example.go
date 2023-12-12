@@ -307,7 +307,7 @@ func SampleDefinition() *schemapb.Schema {
 }
 
 // Adds a float column to the SampleDefinition to be able to test
-// aggregations with float values
+// aggregations with float values.
 func SampleDefinitionWithFloat() *schemapb.Schema {
 	sample := SampleDefinition()
 	sample.Columns = append(sample.Columns, &schemapb.Column{

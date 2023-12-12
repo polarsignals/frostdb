@@ -164,11 +164,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		}))
 	}
 
-	if err := errg.Wait(); err != nil {
-		return err
-	}
-
-	return nil
+	return errg.Wait()
 }
 
 type SchemaScan struct {

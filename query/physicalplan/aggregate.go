@@ -97,30 +97,15 @@ func Aggregate(
 
 func chooseAggregationFunction(
 	aggFunc logicalplan.AggFunc,
-	dataType arrow.DataType,
+	_ arrow.DataType,
 ) (AggregationFunction, error) {
 	switch aggFunc {
 	case logicalplan.AggFuncSum:
-		switch dataType.ID() {
-		case arrow.INT64, arrow.FLOAT64:
-			return &SumAggregation{}, nil
-		default:
-			return nil, fmt.Errorf("unsupported sum of type: %s", dataType.Name())
-		}
+		return &SumAggregation{}, nil
 	case logicalplan.AggFuncMin:
-		switch dataType.ID() {
-		case arrow.INT64, arrow.FLOAT64:
-			return &MinAggregation{}, nil
-		default:
-			return nil, fmt.Errorf("unsupported min of type: %s", dataType.Name())
-		}
+		return &MinAggregation{}, nil
 	case logicalplan.AggFuncMax:
-		switch dataType.ID() {
-		case arrow.INT64, arrow.FLOAT64:
-			return &MaxAggregation{}, nil
-		default:
-			return nil, fmt.Errorf("unsupported max of type: %s", dataType.Name())
-		}
+		return &MaxAggregation{}, nil
 	case logicalplan.AggFuncCount:
 		return &CountAggregation{}, nil
 	default:
@@ -674,7 +659,7 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 
 type SumAggregation struct{}
 
-var ErrUnsupportedSumType = errors.New("unsupported type for sum aggregation, expected int64")
+var ErrUnsupportedSumType = errors.New("unsupported type for sum aggregation, expected int64 or float64")
 
 func (a *SumAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	if len(arrs) == 0 {
@@ -720,7 +705,7 @@ func sumFloat64array(arr *array.Float64) float64 {
 	return math.Float64.Sum(arr)
 }
 
-var ErrUnsupportedMinType = errors.New("unsupported type for max aggregation, expected int64")
+var ErrUnsupportedMinType = errors.New("unsupported type for max aggregation, expected int64 or float64")
 
 type MinAggregation struct{}
 
@@ -784,7 +769,7 @@ func minFloat64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
 	return res.NewArray()
 }
 
-// Same as minInt64array but for Float64
+// Same as minInt64array but for Float64.
 func minFloat64array(arr *array.Float64) float64 {
 	// Note that the zero-length check must be performed before calling this
 	// function.
@@ -800,7 +785,7 @@ func minFloat64array(arr *array.Float64) float64 {
 
 type MaxAggregation struct{}
 
-var ErrUnsupportedMaxType = errors.New("unsupported type for max aggregation, expected int64")
+var ErrUnsupportedMaxType = errors.New("unsupported type for max aggregation, expected int64 or float64")
 
 func (a *MaxAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	if len(arrs) == 0 {
