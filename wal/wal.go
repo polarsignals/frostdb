@@ -487,7 +487,7 @@ func (w *FileWAL) LogRecord(tx uint64, table string, record arrow.Record) error 
 				Write: &walpb.Entry_Write{
 					Data:      buf.Bytes(),
 					TableName: table,
-					Arrow:     true,
+					Tx:        tx,
 				},
 			},
 		},
