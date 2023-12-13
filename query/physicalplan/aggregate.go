@@ -333,6 +333,10 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 					groupByFieldHashes = append(groupByFieldHashes,
 						&durationHashCombine{milliseconds: uint64(duration.Milliseconds())},
 					)
+				case *logicalplan.TimeBucketExpr:
+					groupByFieldHashes = append(groupByFieldHashes,
+						newTimeBucketHash(v.Value()),
+					)
 				default:
 					groupByFieldHashes = append(groupByFieldHashes,
 						&uint64HashCombine{value: scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name))},

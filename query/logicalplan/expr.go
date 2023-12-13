@@ -663,6 +663,91 @@ func (d *DurationExpr) Value() time.Duration {
 	return d.duration
 }
 
+type Period interface {
+	internal()
+}
+
+type Day int
+
+var _ Period = (*Day)(nil)
+
+func (Day) internal() {}
+
+type Week int
+
+var _ Period = (*Week)(nil)
+
+func (Week) internal() {}
+
+type Month int
+
+var _ Period = (*Month)(nil)
+
+func (Month) internal() {}
+
+type Year int
+
+var _ Period = (*Year)(nil)
+
+func (Year) internal() {}
+
+type TimeBucketExpr struct {
+	period Period
+}
+
+func TimeBucket(period Period) *TimeBucketExpr {
+	return &TimeBucketExpr{period: period}
+}
+
+var _ Expr = (*TimeBucketExpr)(nil)
+
+func (t *TimeBucketExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
+	return arrow.BinaryTypes.String, nil
+}
+
+func (*TimeBucketExpr) MatchPath(_ string) bool {
+	return false
+}
+
+func (t *TimeBucketExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(t)
+	if !continu {
+		return false
+	}
+	return visitor.PostVisit(t)
+}
+
+func (TimeBucketExpr) Name() string {
+	return "time_bucket"
+}
+
+func (t TimeBucketExpr) String() string {
+	return t.Name()
+}
+
+func (*TimeBucketExpr) ColumnsUsedExprs() []Expr {
+	// TimeBucketExpr expect to work on a timestamp column
+	return []Expr{Col("timestamp")}
+}
+
+func (*TimeBucketExpr) MatchColumn(columnName string) bool {
+	return columnName == "timestamp"
+}
+
+func (*TimeBucketExpr) Computed() bool {
+	return false
+}
+
+func (t *TimeBucketExpr) Clone() Expr {
+	return &TimeBucketExpr{
+		period: t.period,
+	}
+}
+
+func (t *TimeBucketExpr) Value() Period {
+	return t.period
+}
+
 type AverageExpr struct {
 	Expr Expr
 }
