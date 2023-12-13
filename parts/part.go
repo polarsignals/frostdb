@@ -12,6 +12,7 @@ type Part interface {
 	// Record returns the Arrow record for the part. If the part is not an Arrow
 	// record part, nil is returned.
 	Record() arrow.Record
+	Release()
 	SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error
 	AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error)
 	NumRows() int64
@@ -28,6 +29,7 @@ type basePart struct {
 	compactionLevel int
 	minRow          *dynparquet.DynamicRow
 	maxRow          *dynparquet.DynamicRow
+	release         func()
 }
 
 func (p *basePart) CompactionLevel() int {
@@ -41,6 +43,12 @@ type Option func(*basePart)
 func WithCompactionLevel(level int) Option {
 	return func(p *basePart) {
 		p.compactionLevel = level
+	}
+}
+
+func WithRelease(release func()) Option {
+	return func(p *basePart) {
+		p.release = release
 	}
 }
 

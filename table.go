@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -52,11 +53,11 @@ var (
 
 // DefaultIndexConfig returns the default level configs used. This is a function
 // So that any modifications to the result will not affect the default config.
-func DefaultIndexConfig() []*index.LevelConfig {
-	return []*index.LevelConfig{
-		{Level: index.L0, MaxSize: 1024 * 1024 * 15},  // Compact to Parquet after 15MiB of data
-		{Level: index.L1, MaxSize: 1024 * 1024 * 128}, // Compact to a single Parquet after 128MiB of Parquet files
-		{Level: index.L2, MaxSize: 1024 * 1024 * 512}, // Final level. Rotate after 512MiB of Parquet files
+func DefaultIndexConfig() []*IndexConfig {
+	return []*IndexConfig{
+		{Level: int(index.L0), MaxSize: 1024 * 1024 * 15, Type: CompactionTypeParquet},  // Compact to in-memory Parquet buffer after 15MiB of data
+		{Level: int(index.L1), MaxSize: 1024 * 1024 * 128, Type: CompactionTypeParquet}, // Compact to a single in-memory Parquet buffer after 128MiB of Parquet files
+		{Level: int(index.L2), MaxSize: 1024 * 1024 * 512},                              // Final level. Rotate after 512MiB of Parquet files
 	}
 }
 
@@ -169,6 +170,7 @@ type Table struct {
 
 	wal     WAL
 	closing bool
+	closers []io.Closer
 }
 
 type WAL interface {
@@ -1092,22 +1094,51 @@ func (t *Table) close() {
 	t.active.pendingWritersWg.Wait()
 	t.closing = true
 	t.active.index.WaitForPendingCompactions()
+
+	for _, closer := range t.closers {
+		if err := closer.Close(); err != nil {
+			level.Error(t.logger).Log("msg", "table closer", "err", err)
+		}
+	}
+}
+
+type CompactionType int
+
+const (
+	CompactionTypeUnknown CompactionType = iota
+	CompactionTypeParquet
+	CompactionTypeParquetDisk
+)
+
+type IndexConfig struct {
+	Level   int
+	MaxSize int64
+	Type    CompactionType
 }
 
 // configureLSMLevels configures the level configs for this table.
-func (t *Table) configureLSMLevels(levels []*index.LevelConfig) []*index.LevelConfig {
+func (t *Table) configureLSMLevels(levels []*IndexConfig) []*index.LevelConfig {
 	config := make([]*index.LevelConfig, 0, len(levels))
 
-	for _, level := range levels {
-		config = append(config, &index.LevelConfig{
-			Level:   level.Level,
+	for i, level := range levels {
+		cfg := &index.LevelConfig{
+			Level:   index.SentinelType(level.Level),
 			MaxSize: level.MaxSize,
-			Compact: t.parquetCompaction, // NOTE: right now we only support parquet compaction but in the future this could compact parts into larger arrow records.
-		})
+		}
+		switch level.Type {
+		case CompactionTypeParquet:
+			cfg.Compact = t.parquetCompaction
+		case CompactionTypeParquetDisk:
+			fileCompaction := t.parquetFileCompaction(i + 1)
+			t.closers = append(t.closers, fileCompaction) // Append to closers so that the underlying files are closed on table close.
+			cfg.Compact = fileCompaction.writeRecordsToParquetFile
+		default:
+			if i != len(levels)-1 { // Compaction type should not be set for last level
+				panic(fmt.Sprintf("unknown compaction type: %v", level.Type))
+			}
+		}
+		config = append(config, cfg)
 	}
-
-	// Don't set the compaction functino for the last level. As the LSM doesn't have a level after the last one.
-	config[len(levels)-1].Compact = nil
 
 	return config
 }
@@ -1378,4 +1409,87 @@ func (t *Table) distinctRecordsForCompaction(compact []parts.Part) ([]arrow.Reco
 		return nil, err
 	}
 	return newRecords, nil
+}
+
+type fileCompaction struct {
+	t      *Table
+	file   *os.File
+	offset int64 // Writing offsets into the file
+	ref    int64 // Number of references to file.
+}
+
+func (f *fileCompaction) Close() error {
+	return f.file.Close()
+}
+
+func (t *Table) parquetFileCompaction(lvl int) *fileCompaction {
+	f := &fileCompaction{
+		t: t,
+	}
+
+	file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", lvl))
+	if err != nil {
+		panic(err)
+	}
+	level.Info(t.logger).Log("msg", "created temp file for level", "level", lvl, "file", file.Name())
+	f.file = file
+
+	return f
+}
+
+// accountingWriter is a writer that accounts for the number of bytes written.
+type accountingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (a *accountingWriter) Write(p []byte) (int, error) {
+	n, err := a.w.Write(p)
+	a.n += int64(n)
+	return n, err
+}
+
+// writeRecordsToParquetFile will compact the given parts into a Parquet file written to the next level file.
+func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
+	accountant := &accountingWriter{w: f.file}
+	preCompactionSize, err := f.t.compactParts(accountant, compact) // compact into the next level
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	// Record the writing offset into the file.
+	prevOffset := f.offset
+	f.offset += accountant.n
+	f.ref++
+
+	pf, err := parquet.OpenFile(io.NewSectionReader(f.file, prevOffset, accountant.n), accountant.n)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	buf, err := dynparquet.NewSerializedBuffer(pf)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	return []parts.Part{parts.NewParquetPart(0, buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
+}
+
+// release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.
+// release is not safe to call concurrently.
+func (f *fileCompaction) release() func() {
+	return func() {
+		f.ref--
+		if f.ref == 0 {
+			level.Info(f.t.logger).Log("msg", "truncating file", "file", f.file.Name())
+			if err := os.Truncate(f.file.Name(), 0); err != nil {
+				panic(fmt.Errorf("failed to truncate the level file: %v", err))
+			}
+
+			f.offset = 0
+			if _, err := f.file.Seek(0, io.SeekStart); err != nil {
+				panic(fmt.Errorf("failed to seek the level file: %v", err))
+			}
+		}
+	}
 }
