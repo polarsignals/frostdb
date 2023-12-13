@@ -2361,6 +2361,7 @@ func Test_DB_DiskCompactionWALRecovery(t *testing.T) {
 		WithStoragePath(dir),
 		WithIndexConfig(cfg),
 	)
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, c.Close())
 	})

@@ -771,7 +771,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 
 			list, ok := compactList[compaction.TableName]
 			if !ok {
-				list = NewReplayList(len(db.columnStore.indexConfig))
+				list = newReplayList(len(db.columnStore.indexConfig))
 				compactList[compaction.TableName] = list
 			}
 			list.Add(int(compaction.Level), compaction.Offset, compaction.Size)

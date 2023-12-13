@@ -1520,7 +1520,7 @@ func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 	// Log the compaction into the WAL.
 	tx, _, commit := f.t.db.begin()
 	defer commit()
-	f.t.wal.Log(tx, &walpb.Record{
+	if err := f.t.wal.Log(tx, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_Compaction_{
 				Compaction: &walpb.Entry_Compaction{
@@ -1532,7 +1532,9 @@ func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 				},
 			},
 		},
-	})
+	}); err != nil {
+		return nil, 0, 0, err
+	}
 
 	return []parts.Part{parts.NewParquetPart(0, buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
 }
@@ -1565,7 +1567,7 @@ type replayList struct {
 	levels [][]*filePartReplay
 }
 
-func NewReplayList(levels int) *replayList {
+func newReplayList(levels int) *replayList {
 	return &replayList{
 		levels: make([][]*filePartReplay, levels),
 	}
