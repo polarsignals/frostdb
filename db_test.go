@@ -2303,3 +2303,109 @@ func Test_DB_WithParquetDiskCompaction(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(300), rows)
 }
+
+func Test_DB_DiskCompactionWALRecovery(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	logger := newTestLogger(t)
+	dir := t.TempDir()
+
+	cfg := DefaultIndexConfig()
+	cfg[0].Type = CompactionTypeParquetDisk // Create disk compaction
+	cfg[1].Type = CompactionTypeParquetDisk
+	c, err := New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithIndexConfig(cfg),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+	require.NoError(t, table.EnsureCompaction())
+
+	// Ensure that disk compacted data can be recovered
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	engine := query.NewEngine(pool, db.TableProvider())
+	rows := int64(0)
+	err = engine.ScanTable("test").
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, int64(300), rows)
+
+	// Close the old database
+	require.NoError(t, c.Close())
+
+	// Open a new database to ensure that the WAL is replayed correctly
+	c, err = New(
+		WithLogger(logger),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithIndexConfig(cfg),
+	)
+	t.Cleanup(func() {
+		require.NoError(t, c.Close())
+	})
+
+	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err = db.GetTable("test")
+	require.NoError(t, err)
+
+	engine = query.NewEngine(pool, db.TableProvider())
+	rows = int64(0)
+	err = engine.ScanTable("test").
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, int64(300), rows)
+
+	// Write more data to the table
+	for i := 0; i < 10; i++ {
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+
+	rows = int64(0)
+	err = engine.ScanTable("test").
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, int64(330), rows)
+}
+
+func Test_DB_InvalidDiskCompaction(t *testing.T) {
+	cfg := DefaultIndexConfig()
+	cfg[0].Type = CompactionTypeParquetDisk // Create disk compaction
+	cfg[1].Type = CompactionTypeParquetDisk
+	c, err := New(
+		WithIndexConfig(cfg),
+		WithSnapshotTriggerSize(1), // Expect this to error, snapshots are not supported with disk compaction
+	)
+	require.Error(t, err)
+	require.Nil(t, c)
+}
