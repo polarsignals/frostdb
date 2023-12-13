@@ -17,12 +17,27 @@ message Record {
 message Entry {
   // The write-type entry.
   message Write {
+    reserved 3; // Previously used for Arrow indication, but all writes are now Arrow.
     // Table name of the write.
     string table_name = 1;
     // Data is the data of the write.
     bytes data = 2;
-    // Arrow indicates that data is stored in arrow record format.
-    bool arrow = 3;
+    // Tx is the transaction ID of the write.
+    uint64 tx = 4;
+  }
+
+  // The compaction entry.
+  message Compaction {
+    // Table name of the compaction.
+    string table_name = 1;
+    // Set of transactions that are compacted.
+    map<uint64, bool> transactions = 2;
+    // Level of the compaction.
+    uint32 level = 3;
+    // Offset into the file that the compacted data is located.
+    int64 offset = 4;
+    // Size of the compacted data.
+    int64 size = 5;
   }
 
   // The new-table-block entry.
@@ -59,5 +74,7 @@ message Entry {
     TableBlockPersisted table_block_persisted = 3;
     // Snapshot is set if the entry describes a snapshot.
     Snapshot snapshot = 4;
+    // Compaction is set if the entry describes a compaction.
+    Compaction compaction = 5;
   }
 }
