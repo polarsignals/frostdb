@@ -343,6 +343,9 @@ func newMapFieldBuilder(newField func(string) fieldBuilder) *mapFieldBuilder {
 var _ fieldBuilder = (*mapFieldBuilder)(nil)
 
 func (m *mapFieldBuilder) Fields() (o []arrow.Field) {
+	if len(m.columns) == 0 {
+		return []arrow.Field{}
+	}
 	o = make([]arrow.Field, 0, len(m.columns))
 	m.keys = slices.Grow(m.keys, len(m.columns))
 	for k := range m.columns {
@@ -356,6 +359,9 @@ func (m *mapFieldBuilder) Fields() (o []arrow.Field) {
 }
 
 func (m *mapFieldBuilder) NewArray(a []arrow.Array) []arrow.Array {
+	if len(m.columns) == 0 {
+		return a
+	}
 	m.keys = m.keys[:0]
 	for k := range m.columns {
 		m.keys = append(m.keys, k)
@@ -393,6 +399,12 @@ func (m *mapFieldBuilder) Append(v reflect.Value) error {
 }
 
 func (m *mapFieldBuilder) appendMap(v reflect.Value) error {
+	if v.IsNil() || v.Len() == 0 {
+		for _, v := range m.columns {
+			v.AppendNull()
+		}
+		return nil
+	}
 	clear(m.seen)
 	keys := v.MapKeys()
 	size := m.Len()
@@ -416,6 +428,12 @@ func (m *mapFieldBuilder) appendMap(v reflect.Value) error {
 }
 
 func (m *mapFieldBuilder) appendSlice(v reflect.Value) error {
+	if v.IsNil() || v.Len() == 0 {
+		for _, v := range m.columns {
+			v.AppendNull()
+		}
+		return nil
+	}
 	clear(m.seen)
 	size := m.Len()
 	for n := 0; n < v.Len(); n++ {

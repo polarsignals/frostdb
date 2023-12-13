@@ -1062,37 +1062,12 @@ func Test_DB_Block_Optimization(t *testing.T) {
 
 func Test_DB_TableWrite_FlatSchema(t *testing.T) {
 	ctx := context.Background()
-	flatDefinition := &schemapb.Schema{
-		Name: "test",
-		Columns: []*schemapb.Column{{
-			Name: "example_type",
-			StorageLayout: &schemapb.StorageLayout{
-				Type:     schemapb.StorageLayout_TYPE_STRING,
-				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-			},
-			Dynamic: false,
-		}, {
-			Name: "timestamp",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-			Dynamic: false,
-		}, {
-			Name: "value",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-			Dynamic: false,
-		}},
-		SortingColumns: []*schemapb.SortingColumn{{
-			Name:      "example_type",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}, {
-			Name:      "timestamp",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}},
+
+	type Flat struct {
+		ExampleType string `frostdb:",rle_dict,asc(0)"`
+		Timestamp   int64  `frostdb:",asc(1)"`
+		Value       int64
 	}
-	config := NewTableConfig(flatDefinition)
 
 	c, err := New(WithLogger(newTestLogger(t)))
 	require.NoError(t, err)
@@ -1101,20 +1076,15 @@ func Test_DB_TableWrite_FlatSchema(t *testing.T) {
 	db, err := c.DB(ctx, "flatschema")
 	require.NoError(t, err)
 
-	table, err := db.Table("test", config)
+	table, err := NewGenericTable[Flat](db, "test", memory.NewGoAllocator())
 	require.NoError(t, err)
+	defer table.Release()
 
-	s := struct {
-		ExampleType string
-		Timestamp   int64
-		Value       int64
-	}{
+	err = table.Write(ctx, Flat{
 		ExampleType: "hello-world",
 		Timestamp:   7,
 		Value:       8,
-	}
-
-	_, err = table.Write(ctx, s)
+	})
 	require.NoError(t, err)
 
 	engine := query.NewEngine(
@@ -1132,9 +1102,6 @@ func Test_DB_TableWrite_FlatSchema(t *testing.T) {
 
 func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 	ctx := context.Background()
-	config := NewTableConfig(
-		dynparquet.SampleDefinition(),
-	)
 
 	c, err := New(WithLogger(newTestLogger(t)))
 	require.NoError(t, err)
@@ -1143,8 +1110,9 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 	db, err := c.DB(ctx, "sampleschema")
 	require.NoError(t, err)
 
-	table, err := db.Table("test", config)
+	table, err := NewGenericTable[dynparquet.Sample](db, "test", memory.NewGoAllocator())
 	require.NoError(t, err)
+	defer table.Release()
 
 	now := time.Now()
 	ts := now.UnixMilli()
@@ -1191,7 +1159,7 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 		},
 	}
 
-	_, err = table.Write(ctx, samples[0], samples[1], samples[2])
+	err = table.Write(ctx, samples[0], samples[1], samples[2])
 	require.NoError(t, err)
 
 	engine := query.NewEngine(
