@@ -128,6 +128,14 @@ func New(
 		return nil, fmt.Errorf("storage path must be configured if WAL is enabled")
 	}
 
+	if s.snapshotTriggerSize != 0 {
+		for _, index := range s.indexConfig {
+			if index.Type == CompactionTypeParquetDisk {
+				return nil, fmt.Errorf("parquet disk indexes are not supported with snapshots")
+			}
+		}
+	}
+
 	if err := s.recoverDBsFromStorage(context.Background()); err != nil {
 		return nil, err
 	}
@@ -655,6 +663,7 @@ func (db *DB) openWAL(ctx context.Context) (WAL, error) {
 const (
 	walPath       = "wal"
 	snapshotsPath = "snapshots"
+	indexPath     = "index"
 )
 
 func (db *DB) walDir() string {
@@ -667,6 +676,10 @@ func (db *DB) snapshotsDir() string {
 
 func (db *DB) trashDir() string {
 	return filepath.Join(db.storagePath, "trash")
+}
+
+func (db *DB) indexDir() string {
+	return filepath.Join(db.storagePath, "index")
 }
 
 // recover attempts to recover database state from a combination of snapshots
@@ -712,6 +725,8 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	// persisted.
 	persistedTables := map[string]uint64{}
 	var lastTx uint64
+	compactedTx := map[string]map[uint64]struct{}{}
+	compactList := map[string]*replayList{}
 
 	start := time.Now()
 	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
@@ -720,6 +735,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		}
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
+			delete(compactList, e.TableBlockPersisted.TableName)
 			persistedTables[e.TableBlockPersisted.TableName] = tx
 			if tx > snapshotTx {
 				// The loaded snapshot has data in a table that has been
@@ -739,6 +755,27 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				}
 				db.mtx.Unlock()
 			}
+			return nil
+		case *walpb.Entry_Compaction_:
+			compaction := e.Compaction
+			switch compaction.Level {
+			case uint32(index.L1): // Record the tx that are compacted from L0 so we can skip them during replay.
+				if _, ok := compactedTx[compaction.TableName]; !ok {
+					compactedTx[compaction.TableName] = map[uint64]struct{}{}
+				}
+				compacted := compactedTx[compaction.TableName]
+				for tx := range compaction.Transactions {
+					compacted[tx] = struct{}{}
+				}
+			}
+
+			list, ok := compactList[compaction.TableName]
+			if !ok {
+				list = NewReplayList(len(db.columnStore.indexConfig))
+				compactList[compaction.TableName] = list
+			}
+			list.Add(int(compaction.Level), compaction.Offset, compaction.Size)
+
 			return nil
 		default:
 			return nil
@@ -762,100 +799,26 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		lastTx = tx
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
-			entry := e.NewTableBlock
-			var schema proto.Message
-			switch v := entry.Config.Schema.(type) {
-			case *tablepb.TableConfig_DeprecatedSchema:
-				schema = v.DeprecatedSchema
-			case *tablepb.TableConfig_SchemaV2:
-				schema = v.SchemaV2
-			default:
-				return fmt.Errorf("unhandled schema type: %T", v)
-			}
-
-			var id ulid.ULID
-			if err := id.UnmarshalBinary(entry.BlockId); err != nil {
+			if err := db.recoverNewTableBlock(tx, wal, e.NewTableBlock, persistedTables); err != nil {
 				return err
 			}
 
-			if lastPersistedTx, ok := persistedTables[entry.TableName]; ok && tx < lastPersistedTx {
-				// This block has already been successfully persisted, so we can
-				// skip it.
+			// Recover any compacted writes into the table
+			replayList, ok := compactList[e.NewTableBlock.TableName]
+			if !ok {
 				return nil
 			}
 
-			tableName := entry.TableName
-			table, err := db.GetTable(tableName)
-			var tableErr ErrTableNotFound
-			if errors.As(err, &tableErr) {
-				return func() error {
-					db.mtx.Lock()
-					defer db.mtx.Unlock()
-					config := NewTableConfig(schema, FromConfig(entry.Config))
-					if _, ok := db.roTables[tableName]; ok {
-						table, err = db.promoteReadOnlyTableLocked(tableName, config)
-						if err != nil {
-							return fmt.Errorf("promoting read only table: %w", err)
-						}
-					} else {
-						table, err = newTable(
-							db,
-							tableName,
-							config,
-							db.reg,
-							db.logger,
-							db.tracer,
-							wal,
-						)
-						if err != nil {
-							return fmt.Errorf("instantiate table: %w", err)
-						}
-					}
-
-					table.active, err = newTableBlock(table, 0, tx, id)
+			for _, level := range replayList.levels {
+				for _, compaction := range level {
+					part, err := db.tables[e.NewTableBlock.TableName].fileLevels[int(compaction.Level)].recoverPart(compaction.Offset, compaction.Size)
 					if err != nil {
-						return err
+						return fmt.Errorf("recover part: %w", err)
 					}
-					db.tables[tableName] = table
-					return nil
-				}()
-			}
-			if err != nil {
-				return fmt.Errorf("get table: %w", err)
-			}
 
-			// If we get to this point it means a block was finished but did
-			// not get persisted.
-			level.Info(db.logger).Log(
-				"msg", "writing unfinished block in recovery",
-				"table", tableName,
-				"tx", tx,
-			)
-			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(table.active, db.columnStore.manualBlockRotation, false)
-
-			protoEqual := false
-			switch schema.(type) {
-			case *schemav2pb.Schema:
-				protoEqual = proto.Equal(schema, table.config.Load().GetSchemaV2())
-			case *schemapb.Schema:
-				protoEqual = proto.Equal(schema, table.config.Load().GetDeprecatedSchema())
-			}
-			if !protoEqual {
-				// If schemas are identical from block to block we should we
-				// reuse the previous schema in order to retain pooled memory
-				// for it.
-				schema, err := dynparquet.SchemaFromDefinition(schema)
-				if err != nil {
-					return fmt.Errorf("initialize schema: %w", err)
+					// insert the recovered part into the index.
+					db.tables[e.NewTableBlock.TableName].active.index.InsertPart(index.SentinelType(compaction.Level), part)
 				}
-
-				table.schema = schema
-			}
-
-			table.active, err = newTableBlock(table, table.active.minTx, tx, id)
-			if err != nil {
-				return err
 			}
 		case *walpb.Entry_Write_:
 			entry := e.Write
@@ -864,6 +827,15 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// This write has already been successfully persisted, so we can
 				// skip it.
 				return nil
+			}
+
+			compacted, ok := compactedTx[tableName]
+			if ok {
+				if _, ok := compacted[tx]; ok {
+					// This write has been compacted; skip it
+					level.Debug(db.logger).Log("msg", "skipping compacted write", "tx", tx)
+					return nil
+				}
 			}
 
 			table, err := db.GetTable(tableName)
@@ -879,22 +851,17 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			}
 
 			writeWg.Go(func() error {
-				switch e.Write.Arrow {
-				case true:
-					reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
-					if err != nil {
-						return fmt.Errorf("create ipc reader: %w", err)
-					}
-					record, err := reader.Read()
-					if err != nil {
-						return fmt.Errorf("read record: %w", err)
-					}
+				reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
+				if err != nil {
+					return fmt.Errorf("create ipc reader: %w", err)
+				}
+				record, err := reader.Read()
+				if err != nil {
+					return fmt.Errorf("read record: %w", err)
+				}
 
-					if err := table.active.InsertRecord(ctx, tx, record); err != nil {
-						return fmt.Errorf("insert record into block: %w", err)
-					}
-				default:
-					panic("parquet writes are deprecated")
+				if err := table.active.InsertRecord(ctx, tx, record); err != nil {
+					return fmt.Errorf("insert record into block: %w", err)
 				}
 				return nil
 			})
@@ -906,6 +873,8 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			performSnapshot = true
 			return nil
 		case *walpb.Entry_Snapshot_:
+			return nil
+		case *walpb.Entry_Compaction_:
 			return nil
 		default:
 			return fmt.Errorf("unexpected WAL entry type: %t", e)
@@ -955,6 +924,105 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			snapshotLogArgs...,
 		)...,
 	)
+	return nil
+}
+
+func (db *DB) recoverNewTableBlock(tx uint64, wal WAL, entry *walpb.Entry_NewTableBlock, persistedTables map[string]uint64) error {
+	var schema proto.Message
+	switch v := entry.Config.Schema.(type) {
+	case *tablepb.TableConfig_DeprecatedSchema:
+		schema = v.DeprecatedSchema
+	case *tablepb.TableConfig_SchemaV2:
+		schema = v.SchemaV2
+	default:
+		return fmt.Errorf("unhandled schema type: %T", v)
+	}
+
+	var id ulid.ULID
+	if err := id.UnmarshalBinary(entry.BlockId); err != nil {
+		return err
+	}
+
+	if lastPersistedTx, ok := persistedTables[entry.TableName]; ok && tx < lastPersistedTx {
+		// This block has already been successfully persisted, so we can
+		// skip it.
+		return nil
+	}
+
+	tableName := entry.TableName
+	table, err := db.GetTable(tableName)
+	var tableErr ErrTableNotFound
+	if errors.As(err, &tableErr) {
+		return func() error {
+			db.mtx.Lock()
+			defer db.mtx.Unlock()
+			config := NewTableConfig(schema, FromConfig(entry.Config))
+			if _, ok := db.roTables[tableName]; ok {
+				table, err = db.promoteReadOnlyTableLocked(tableName, config)
+				if err != nil {
+					return fmt.Errorf("promoting read only table: %w", err)
+				}
+			} else {
+				table, err = newTable(
+					db,
+					tableName,
+					config,
+					db.reg,
+					db.logger,
+					db.tracer,
+					wal,
+				)
+				if err != nil {
+					return fmt.Errorf("instantiate table: %w", err)
+				}
+			}
+
+			table.active, err = newTableBlock(table, 0, tx, id)
+			if err != nil {
+				return err
+			}
+			db.tables[tableName] = table
+			return nil
+		}()
+	}
+	if err != nil {
+		return fmt.Errorf("get table: %w", err)
+	}
+
+	// If we get to this point it means a block was finished but did
+	// not get persisted.
+	level.Info(db.logger).Log(
+		"msg", "writing unfinished block in recovery",
+		"table", tableName,
+		"tx", tx,
+	)
+	table.pendingBlocks[table.active] = struct{}{}
+	go table.writeBlock(table.active, db.columnStore.manualBlockRotation, false)
+
+	protoEqual := false
+	switch schema.(type) {
+	case *schemav2pb.Schema:
+		protoEqual = proto.Equal(schema, table.config.Load().GetSchemaV2())
+	case *schemapb.Schema:
+		protoEqual = proto.Equal(schema, table.config.Load().GetDeprecatedSchema())
+	}
+	if !protoEqual {
+		// If schemas are identical from block to block we should we
+		// reuse the previous schema in order to retain pooled memory
+		// for it.
+		schema, err := dynparquet.SchemaFromDefinition(schema)
+		if err != nil {
+			return fmt.Errorf("initialize schema: %w", err)
+		}
+
+		table.schema = schema
+	}
+
+	table.active, err = newTableBlock(table, table.active.minTx, tx, id)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

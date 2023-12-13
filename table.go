@@ -171,6 +171,9 @@ type Table struct {
 	wal     WAL
 	closing bool
 	closers []io.Closer
+
+	// fileLevels are the on disk files for the LSM if configured.
+	fileLevels map[int]*fileCompaction
 }
 
 type WAL interface {
@@ -274,13 +277,14 @@ func newTable(
 	}
 
 	t := &Table{
-		db:     db,
-		name:   name,
-		logger: logger,
-		tracer: tracer,
-		mtx:    &sync.RWMutex{},
-		wal:    wal,
-		schema: s,
+		db:         db,
+		name:       name,
+		logger:     logger,
+		tracer:     tracer,
+		mtx:        &sync.RWMutex{},
+		wal:        wal,
+		schema:     s,
+		fileLevels: map[int]*fileCompaction{},
 		metrics: &tableMetrics{
 			numParts: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
 				Name: "frostdb_table_num_parts",
@@ -1130,6 +1134,7 @@ func (t *Table) configureLSMLevels(levels []*IndexConfig) []*index.LevelConfig {
 			cfg.Compact = t.parquetCompaction
 		case CompactionTypeParquetDisk:
 			fileCompaction := t.parquetFileCompaction(i + 1)
+			t.fileLevels[i+1] = fileCompaction
 			t.closers = append(t.closers, fileCompaction) // Append to closers so that the underlying files are closed on table close.
 			cfg.Compact = fileCompaction.writeRecordsToParquetFile
 		default:
@@ -1427,14 +1432,49 @@ func (t *Table) parquetFileCompaction(lvl int) *fileCompaction {
 		t: t,
 	}
 
-	file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", lvl))
-	if err != nil {
-		panic(err)
+	if t.db.storagePath == "" { // No storage path provided, use temp files.
+		file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", lvl))
+		if err != nil {
+			panic(err)
+		}
+		level.Info(t.logger).Log("msg", "created temp file for level", "level", lvl, "file", file.Name())
+		f.file = file
+	} else {
+		indexDir := t.db.indexDir()
+		if err := os.MkdirAll(indexDir, dirPerms); err != nil {
+			panic(err)
+		}
+
+		file, err := os.OpenFile(filepath.Join(indexDir, fmt.Sprintf("L%v.parquet", lvl)), os.O_CREATE|os.O_RDWR, filePerms)
+		if err != nil {
+			panic(err)
+		}
+		f.file = file
 	}
-	level.Info(t.logger).Log("msg", "created temp file for level", "level", lvl, "file", file.Name())
-	f.file = file
 
 	return f
+}
+
+// recoverPart will recover a part from the given offset and size advancing the file writer to the end of the part.
+func (f *fileCompaction) recoverPart(offset, size int64, options ...parts.Option) (parts.Part, error) {
+	pf, err := parquet.OpenFile(io.NewSectionReader(f.file, offset, size), size)
+	if err != nil {
+		return nil, err
+	}
+
+	buf, err := dynparquet.NewSerializedBuffer(pf)
+	if err != nil {
+		return nil, err
+	}
+
+	// seek the file to the end of the part
+	if _, err := f.file.Seek(size, io.SeekCurrent); err != nil {
+		return nil, err
+	}
+
+	f.offset += size
+	f.ref++
+	return parts.NewParquetPart(0, buf, options...), nil
 }
 
 // accountingWriter is a writer that accounts for the number of bytes written.
@@ -1472,6 +1512,28 @@ func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 		return nil, 0, 0, err
 	}
 
+	transactionsSet := make(map[uint64]bool, len(compact))
+	for _, p := range compact {
+		transactionsSet[p.TX()] = true
+	}
+
+	// Log the compaction into the WAL.
+	tx, _, commit := f.t.db.begin()
+	defer commit()
+	f.t.wal.Log(tx, &walpb.Record{
+		Entry: &walpb.Entry{
+			EntryType: &walpb.Entry_Compaction_{
+				Compaction: &walpb.Entry_Compaction{
+					TableName:    f.t.name,
+					Transactions: transactionsSet,
+					Level:        uint32(compact[0].CompactionLevel() + 1), // TODO: could have the fileCompaction struct hold the level
+					Offset:       prevOffset,
+					Size:         accountant.n,
+				},
+			},
+		},
+	})
+
 	return []parts.Part{parts.NewParquetPart(0, buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
 }
 
@@ -1492,4 +1554,28 @@ func (f *fileCompaction) release() func() {
 			}
 		}
 	}
+}
+
+type filePartReplay struct {
+	Level        int
+	Offset, Size int64
+}
+
+type replayList struct {
+	levels [][]*filePartReplay
+}
+
+func NewReplayList(levels int) *replayList {
+	return &replayList{
+		levels: make([][]*filePartReplay, levels),
+	}
+}
+
+func (r replayList) Add(level int, offset, size int64) {
+	// if there's a level below this level, drop it
+	if level != 0 {
+		r.levels[level-1] = []*filePartReplay{}
+	}
+
+	r.levels[level] = append(r.levels[level], &filePartReplay{Level: level, Offset: offset, Size: size})
 }
