@@ -6,6 +6,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
 )
 
 type Part interface {
@@ -22,6 +23,8 @@ type Part interface {
 	Least() (*dynparquet.DynamicRow, error)
 	Most() (*dynparquet.DynamicRow, error)
 	OverlapsWith(schema *dynparquet.Schema, otherPart Part) (bool, error)
+
+	Meta() *snapshotpb.Part
 }
 
 type basePart struct {

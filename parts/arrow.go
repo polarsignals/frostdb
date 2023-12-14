@@ -7,6 +7,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
 	"github.com/polarsignals/frostdb/pqarrow"
 )
 
@@ -35,6 +36,14 @@ func NewArrowPart(tx uint64, record arrow.Record, size uint64, schema *dynparque
 	}
 
 	return p
+}
+
+func (p *arrowPart) Meta() *snapshotpb.Part {
+	return &snapshotpb.Part{
+		Tx:              p.tx,
+		CompactionLevel: uint64(p.compactionLevel),
+		Encoding:        snapshotpb.Part_ENCODING_ARROW,
+	}
 }
 
 func (p *arrowPart) Record() arrow.Record {

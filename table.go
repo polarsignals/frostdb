@@ -1448,12 +1448,7 @@ func (f *fileCompaction) Close() error {
 
 // recoverPart will recover a part from the given offset and size advancing the file writer to the end of the part.
 func (f *fileCompaction) recoverPart(offset, size int64, compactionLevel int) (parts.Part, error) {
-	pf, err := parquet.OpenFile(io.NewSectionReader(f.file, offset, size), size)
-	if err != nil {
-		return nil, err
-	}
-
-	buf, err := dynparquet.NewSerializedBuffer(pf)
+	part, err := parts.NewParquetFilePart(0, f.file, offset, size, parts.WithCompactionLevel(compactionLevel), parts.WithRelease(f.release()))
 	if err != nil {
 		return nil, err
 	}
@@ -1465,7 +1460,7 @@ func (f *fileCompaction) recoverPart(offset, size int64, compactionLevel int) (p
 
 	f.offset += size
 	f.ref++
-	return parts.NewParquetPart(0, buf, parts.WithCompactionLevel(compactionLevel), parts.WithRelease(f.release())), nil
+	return part, nil
 }
 
 func (t *Table) parquetFileCompaction(lvl int) *fileCompaction {
@@ -1520,18 +1515,11 @@ func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 	prevOffset := f.offset
 	f.offset += accountant.n
 	f.ref++
-
-	pf, err := parquet.OpenFile(io.NewSectionReader(f.file, prevOffset, accountant.n), accountant.n)
+	part, err := parts.NewParquetFilePart(0, f.file, prevOffset, accountant.n, options...)
 	if err != nil {
 		return nil, 0, 0, err
 	}
-
-	buf, err := dynparquet.NewSerializedBuffer(pf)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	return []parts.Part{parts.NewParquetPart(0, buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
+	return []parts.Part{part}, preCompactionSize, accountant.n, nil
 }
 
 // release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.

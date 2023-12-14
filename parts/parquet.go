@@ -7,6 +7,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
 )
 
 // This file contains the implementation of the Part interface backed by a Parquet Buffer.
@@ -47,6 +48,14 @@ func NewParquetPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Opti
 	}
 
 	return p
+}
+
+func (p *parquetPart) Meta() *snapshotpb.Part {
+	return &snapshotpb.Part{
+		Tx:              p.tx,
+		CompactionLevel: uint64(p.compactionLevel),
+		Encoding:        snapshotpb.Part_ENCODING_PARQUET,
+	}
 }
 
 func (p *parquetPart) NumRows() int64 {
