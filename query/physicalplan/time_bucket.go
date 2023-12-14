@@ -18,11 +18,6 @@ const (
 	maxTs = math.MinInt64
 )
 
-type Period interface {
-	Milliseconds() int64
-	internal()
-}
-
 func newTimeBucketHash(period logicalplan.Period) *bucketHashCombine {
 	switch e := period.(type) {
 	case logicalplan.Day:
