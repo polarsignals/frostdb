@@ -666,7 +666,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 						}
 					case snapshotpb.Part_ENCODING_PARQUET_FILE:
 						// recover part from the compaction file
-						part, err := table.indexFiles[partMeta.CompactionLevel].recoverPart(
+						part, err := table.indexFiles[partMeta.CompactionLevel-1].recoverPart(
 							partMeta.StartOffset,
 							partMeta.EndOffset-partMeta.StartOffset,
 							int(partMeta.CompactionLevel),

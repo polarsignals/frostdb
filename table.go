@@ -1143,6 +1143,7 @@ type IndexConfig struct {
 // configureLSMLevels configures the level configs for this table.
 func (t *Table) configureLSMLevels(levels []*IndexConfig) []*index.LevelConfig {
 	config := make([]*index.LevelConfig, 0, len(levels))
+	t.indexFiles = make([]*fileCompaction, len(levels))
 
 	for i, level := range levels {
 		cfg := &index.LevelConfig{
@@ -1156,6 +1157,7 @@ func (t *Table) configureLSMLevels(levels []*IndexConfig) []*index.LevelConfig {
 			fileCompaction := t.parquetFileCompaction(i + 1)
 			t.closers = append(t.closers, fileCompaction) // Append to closers so that the underlying files are closed on table close.
 			cfg.Compact = fileCompaction.writeRecordsToParquetFile
+			t.indexFiles[i] = fileCompaction
 		default:
 			if i != len(levels)-1 { // Compaction type should not be set for last level
 				panic(fmt.Sprintf("unknown compaction type: %v", level.Type))

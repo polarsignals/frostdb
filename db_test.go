@@ -2271,3 +2271,96 @@ func Test_DB_WithParquetDiskCompaction(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(300), rows)
 }
+
+func Test_DB_RecoverParquetFileParts(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	logger := newTestLogger(t)
+	dir := t.TempDir()
+
+	cfg := DefaultIndexConfig()
+	cfg[0].Type = CompactionTypeParquetDisk // Create disk compaction
+	cfg[1].Type = CompactionTypeParquetDisk
+	c, err := New(
+		WithLogger(logger),
+		WithIndexConfig(cfg),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithSnapshotTriggerSize(51142), // NOTE: currently the size that causes a snapshot to trigger after the last write
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	samples := dynparquet.NewTestSamples()
+	for i := 0; i < 100; i++ {
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+
+	// Compact the table
+	require.NoError(t, table.EnsureCompaction())
+
+	// Write more values into the table to trigger a snapshot
+	for i := 0; i < 100; i++ {
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+
+	// Wait for the snapshot to be taken
+	require.Eventually(t, func() bool {
+		return table.ActiveBlock().lastSnapshotSize.Load() > 0
+	},
+		1*time.Second,
+		10*time.Millisecond,
+		"expected snapshot to be taken.",
+	)
+
+	// Validate the data in the table.
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	engine := query.NewEngine(pool, db.TableProvider())
+	rows := int64(0)
+	err = engine.ScanTable("test").
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, int64(600), rows)
+	require.NoError(t, c.Close())
+
+	// Reload from snapshot
+	c, err = New(
+		WithLogger(logger),
+		WithIndexConfig(cfg),
+		WithWAL(),
+		WithStoragePath(dir),
+		WithSnapshotTriggerSize(51142),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, c.Close())
+	})
+	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	engine = query.NewEngine(pool, db.TableProvider())
+	rows = int64(0)
+	err = engine.ScanTable("test").
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, int64(600), rows)
+}
