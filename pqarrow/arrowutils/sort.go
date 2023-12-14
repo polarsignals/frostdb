@@ -14,7 +14,10 @@ import (
 )
 
 // SortRecord sorts the given record's rows by the given column. Currently only supports int64, string and binary columns.
-func SortRecord(r arrow.Record, col int) ([]int, error) {
+func SortRecord(r arrow.Record, cols []int) ([]int, error) {
+	if len(cols) > 1 {
+		return nil, fmt.Errorf("sorting by multiple columns isn't implemented yet")
+	}
 	if r.NumRows() == 0 {
 		return nil, nil
 	}
@@ -28,7 +31,7 @@ func SortRecord(r arrow.Record, col int) ([]int, error) {
 		indices[i] = i
 	}
 
-	switch c := r.Column(col).(type) {
+	switch c := r.Column(cols[0]).(type) {
 	case *array.Int64:
 		sort.Sort(orderedSorter[int64]{array: c, indices: indices})
 	case *array.String:
