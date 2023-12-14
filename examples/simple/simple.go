@@ -6,10 +6,8 @@ import (
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/memory"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -23,63 +21,41 @@ func main() {
 	// Open up a database in the column store
 	database, _ := columnstore.DB(context.Background(), "simple_db")
 
-	// Define our simple schema of labels and values
-	schema := simpleSchema()
-
-	// Create a table named simple in our database
-	table, _ := database.Table(
-		"simple_table",
-		frostdb.NewTableConfig(schema),
-	)
-
-	type FirstLast struct {
-		FirstName string
-		Surname   string
-	}
-
 	type Simple struct {
-		Names FirstLast
+		Names map[string]string `frostdb:",asc"`
 		Value int64
 	}
+	table, _ := frostdb.NewGenericTable[Simple](
+		database, "simple_table", memory.DefaultAllocator,
+	)
 	// Create values to insert into the database these first rows havel dynamic label names of 'firstname' and 'surname'
 	frederic := Simple{
-		Names: FirstLast{
-			FirstName: "Frederic",
-			Surname:   "Brancz",
+		Names: map[string]string{
+			"first_name": "Frederic",
+			"surname":    "Brancz",
 		},
 		Value: 100,
 	}
 
 	thor := Simple{
-		Names: FirstLast{
-			FirstName: "Thor",
-			Surname:   "Hansen",
+		Names: map[string]string{
+			"first_name": "Thor",
+			"surname":    "Hansen",
 		},
 		Value: 99,
 	}
-	_, _ = table.Write(context.Background(), frederic, thor)
+	_ = table.Write(context.Background(), frederic, thor)
 
 	// Now we can insert rows that have middle names into our dynamic column
-	matthias := struct {
-		Names struct {
-			FirstName  string
-			MiddleName string
-			Surname    string
-		}
-		Value int64
-	}{
-		Names: struct {
-			FirstName  string
-			MiddleName string
-			Surname    string
-		}{
-			FirstName:  "Matthias",
-			MiddleName: "Oliver Rainer",
-			Surname:    "Loibl",
+	matthias := Simple{
+		Names: map[string]string{
+			"first_name":  "Matthias",
+			"middle_name": "Oliver Rainer",
+			"surname":     "Loibl",
 		},
 		Value: 101,
 	}
-	_, _ = table.Write(context.Background(), matthias)
+	_ = table.Write(context.Background(), matthias)
 
 	// Create a new query engine to retrieve data and print the results
 	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
@@ -91,29 +67,4 @@ func main() {
 		fmt.Println(r)
 		return nil
 	})
-}
-
-func simpleSchema() proto.Message {
-	return &schemapb.Schema{
-		Name: "simple_schema",
-		Columns: []*schemapb.Column{{
-			Name: "names",
-			StorageLayout: &schemapb.StorageLayout{
-				Type:     schemapb.StorageLayout_TYPE_STRING,
-				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				Nullable: true,
-			},
-			Dynamic: true,
-		}, {
-			Name: "value",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-			Dynamic: false,
-		}},
-		SortingColumns: []*schemapb.SortingColumn{{
-			Name:      "names",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}},
-	}
 }

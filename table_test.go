@@ -1054,40 +1054,22 @@ func Test_Table_DynamicColumnMap(t *testing.T) {
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 
-	schema := &schemapb.Schema{
-		Name: "dynamic_col_map",
-		Columns: []*schemapb.Column{
-			{
-				Name: "name",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_STRING,
-				},
-			},
-			{
-				Name: "attributes",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_STRING,
-				},
-				Dynamic: true,
-			},
-		},
-	}
-
-	config := NewTableConfig(schema)
-	table, err := db.Table("test", config)
-	require.NoError(t, err)
-
-	record := struct {
+	type ColMap struct {
 		Name       string
 		Attributes map[string]string
-	}{
+	}
+	table, err := NewGenericTable[ColMap](
+		db, "test", memory.NewGoAllocator(),
+	)
+	require.NoError(t, err)
+	defer table.Release()
+
+	err = table.Write(context.Background(), ColMap{
 		Name: "albert",
 		Attributes: map[string]string{
 			"age": "9999",
 		},
-	}
-
-	_, err = table.Write(context.Background(), record)
+	})
 	require.NoError(t, err)
 }
 
@@ -1101,37 +1083,20 @@ func Test_Table_DynamicColumnNotDefined(t *testing.T) {
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 
-	schema := &schemapb.Schema{
-		Name: "dynamic_col_not_defined",
-		Columns: []*schemapb.Column{
-			{
-				Name: "name",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_STRING,
-				},
-			},
-			{
-				Name: "attributes",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_STRING,
-				},
-				Dynamic: true,
-			},
-		},
+	type ColMap struct {
+		Name       string
+		Attributes map[string]string
 	}
 
-	config := NewTableConfig(schema)
-	table, err := db.Table("test", config)
+	table, err := NewGenericTable[ColMap](
+		db, "test", memory.NewGoAllocator(),
+	)
 	require.NoError(t, err)
+	defer table.Release()
 
-	// write a record where the dynamic column is not defined
-	record := struct {
-		Name string
-	}{
+	err = table.Write(context.Background(), ColMap{
 		Name: "albert",
-	}
-
-	_, err = table.Write(context.Background(), record)
+	})
 	require.NoError(t, err)
 }
 
@@ -1146,34 +1111,19 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 
-	schema := &schemapb.Schema{
-		Name: "unique_primary_index",
-		Columns: []*schemapb.Column{
-			{
-				Name: "name",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_STRING,
-				},
-			},
-		},
-		SortingColumns: []*schemapb.SortingColumn{
-			{
-				Name:      "name",
-				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-			},
-		},
-		UniquePrimaryIndex: true,
+	type Record struct {
+		Name string `frostdb:",asc"`
 	}
-
 	const tableName = "test"
-	table, err := db.Table(tableName, NewTableConfig(schema))
+	table, err := NewGenericTable[Record](
+		db, tableName, memory.NewGoAllocator(), WithUniquePrimaryIndex(true),
+	)
 	require.NoError(t, err)
+	defer table.Release()
 
 	const numRecords = 9
 	for i := 0; i < numRecords; i++ {
-		_, err = table.Write(context.Background(), struct {
-			Name string
-		}{
+		err = table.Write(context.Background(), Record{
 			Name: "duplicate",
 		})
 		require.NoError(t, err)
@@ -1191,11 +1141,11 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 	require.Equal(t, numRecords, rowsRead)
 
 	// Trigger compaction with a new record.
-	_, err = table.Write(context.Background(), struct {
-		Name string
-	}{
+	err = table.Write(context.Background(), Record{
 		Name: "duplicate",
 	})
+	require.NoError(t, err)
+
 	require.NoError(t, err)
 	require.NoError(t, table.ActiveBlock().EnsureCompaction())
 
@@ -1211,7 +1161,6 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 }
 
 func TestTable_write_ptr_struct(t *testing.T) {
-	// This is taken from simple example and modified to use pointers
 	columnstore, err := New()
 	require.Nil(t, err)
 	defer columnstore.Close()
@@ -1219,59 +1168,14 @@ func TestTable_write_ptr_struct(t *testing.T) {
 	database, err := columnstore.DB(context.Background(), "simple_db")
 	require.Nil(t, err)
 
-	schema := &schemapb.Schema{
-		Name: "simple_schema",
-		Columns: []*schemapb.Column{{
-			Name: "names",
-			StorageLayout: &schemapb.StorageLayout{
-				Type:     schemapb.StorageLayout_TYPE_STRING,
-				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				Nullable: true,
-			},
-			Dynamic: true,
-		}, {
-			Name: "value",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-			Dynamic: false,
-		}},
-		SortingColumns: []*schemapb.SortingColumn{{
-			Name:      "names",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}},
-	}
-
-	table, err := database.Table(
-		"simple_table",
-		NewTableConfig(schema),
+	table, err := NewGenericTable[*dynparquet.Sample](
+		database, "simple_table", memory.NewGoAllocator(),
 	)
 	require.Nil(t, err)
+	defer table.Release()
 
-	type FirstLast struct {
-		FirstName string
-		Surname   string
-	}
-
-	type Simple struct {
-		Names *FirstLast
-		Value int64
-	}
-	frederic := &Simple{
-		Names: &FirstLast{
-			FirstName: "Frederic",
-			Surname:   "Brancz",
-		},
-		Value: 100,
-	}
-
-	thor := &Simple{
-		Names: &FirstLast{
-			FirstName: "Thor",
-			Surname:   "Hansen",
-		},
-		Value: 99,
-	}
-	_, err = table.Write(context.Background(), frederic, thor)
+	err = table.Write(context.Background(), &dynparquet.Sample{
+		ExampleType: "ptr",
+	})
 	require.Nil(t, err)
 }

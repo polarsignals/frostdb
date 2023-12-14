@@ -256,48 +256,17 @@ func TestDurationAggregation(t *testing.T) {
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 
-	schema := &schemapb.Schema{
-		Name: "test",
-		Columns: []*schemapb.Column{
-			{
-				Name: "timestamp",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_INT64,
-				},
-				Dynamic: false,
-			},
-			{
-				Name: "stacktrace",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_STRING,
-				},
-				Dynamic: false,
-			},
-			{
-				Name: "value",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_INT64,
-				},
-				Dynamic: false,
-			},
-		},
-		SortingColumns: []*schemapb.SortingColumn{
-			{
-				Name:      "timestamp",
-				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-			},
-		},
-	}
-
-	config := NewTableConfig(schema)
-	table, err := db.Table("test", config)
-	require.NoError(t, err)
-
-	records := []struct {
-		Timestamp  int64
+	type Record struct {
+		Timestamp  int64 `frostdb:",asc"`
 		Stacktrace string
 		Value      int64
-	}{
+	}
+
+	table, err := NewGenericTable[Record](db, "test", memory.NewGoAllocator())
+	require.NoError(t, err)
+	defer table.Release()
+
+	records := []Record{
 		{
 			Timestamp:  1 * int64(time.Second),
 			Stacktrace: "stack1",
@@ -324,11 +293,8 @@ func TestDurationAggregation(t *testing.T) {
 			Value:      3,
 		},
 	}
-
-	for _, record := range records {
-		_, err := table.Write(context.Background(), record)
-		require.NoError(t, err)
-	}
+	err = table.Write(context.Background(), records...)
+	require.NoError(t, err)
 
 	engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
 

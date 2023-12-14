@@ -8,7 +8,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/memory"
 
 	"github.com/polarsignals/frostdb"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -23,38 +22,34 @@ func main() {
 	// Open up a database in the column store
 	database, _ := columnstore.DB(context.Background(), "weather_db")
 
-	// Define our aggregation schema of labels and values
-	schema := aggregationSchema()
-
-	// Create a table named snowfall_table in our database
-	table, _ := database.Table(
-		"snowfall_table",
-		frostdb.NewTableConfig(schema),
-	)
-
 	// Create values to insert into the database. We support a dynamic structure for city to
 	// accommodate cities in different regions
 	type WeatherRecord struct {
-		City     interface{}
-		Day      string
+		City     map[string]string `frostdb:",rle_dict,asc(0)"`
+		Day      string            `frostdb:",rle_dict,asc(1)"`
 		Snowfall float64
 	}
 
-	type CityInProvince struct {
-		Name     string
-		Province string
+	// Create a table named snowfall_table in our database
+	table, _ := frostdb.NewGenericTable[WeatherRecord](
+		database, "snowfall_table", memory.DefaultAllocator,
+	)
+	defer table.Release()
+
+	montreal := map[string]string{
+		"name":     "Montreal",
+		"province": "Quebec",
+	}
+	toronto := map[string]string{
+		"name":     "Toronto",
+		"province": "Ontario",
+	}
+	minneapolis := map[string]string{
+		"name":  "Minneapolis",
+		"state": "Minnesota",
 	}
 
-	type CityInState struct {
-		Name  string
-		State string
-	}
-
-	montreal := CityInProvince{Name: "Montreal", Province: "Quebec"}
-	toronto := CityInProvince{Name: "Toronto", Province: "Ontario"}
-	minneapolis := CityInState{Name: "Minneapolis", State: "Minnesota"}
-
-	_, _ = table.Write(context.Background(),
+	_ = table.Write(context.Background(),
 		WeatherRecord{Day: "Mon", Snowfall: 20, City: montreal},
 		WeatherRecord{Day: "Tue", Snowfall: 00, City: montreal},
 		WeatherRecord{Day: "Wed", Snowfall: 30, City: montreal},
@@ -104,46 +99,4 @@ func main() {
 			fmt.Println(r)
 			return nil
 		})
-}
-
-func aggregationSchema() *schemapb.Schema {
-	return &schemapb.Schema{
-		Name: "snowfall_table",
-		Columns: []*schemapb.Column{
-			{
-				Name: "city",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-					Nullable: false,
-				},
-				Dynamic: true,
-			},
-			{
-				Name: "day",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-					Nullable: false,
-				},
-			},
-			{
-				Name: "snowfall",
-				StorageLayout: &schemapb.StorageLayout{
-					Type: schemapb.StorageLayout_TYPE_DOUBLE,
-				},
-				Dynamic: false,
-			},
-		},
-		SortingColumns: []*schemapb.SortingColumn{
-			{
-				Name:      "city",
-				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-			},
-			{
-				Name:      "day",
-				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-			},
-		},
-	}
 }

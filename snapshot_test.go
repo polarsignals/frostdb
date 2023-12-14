@@ -16,7 +16,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -365,28 +364,17 @@ func TestSnapshotIsTakenOnUncompressedInserts(t *testing.T) {
 	db, err := c.DB(ctx, dbAndTableName)
 	require.NoError(t, err)
 
-	// Create a schema that is highly compressible.
-	schema := &schemapb.Schema{
-		Name: dbAndTableName,
-		Columns: []*schemapb.Column{
-			{
-				Name: "bytes",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				},
-			},
-		},
-	}
-
-	table, err := db.Table(dbAndTableName, NewTableConfig(schema))
-	require.NoError(t, err)
-
 	type model struct {
-		Bytes string
+		Bytes string `frostdb:",rle_dict"`
 	}
+	table, err := NewGenericTable[model](
+		db, dbAndTableName, memory.NewGoAllocator(),
+	)
+	require.NoError(t, err)
+	defer table.Release()
+
 	for i := 0; i < numInserts; i++ {
-		_, err = table.Write(ctx, model{Bytes: "test"})
+		err = table.Write(ctx, model{Bytes: "test"})
 		require.NoError(t, err)
 	}
 	activeBlock := table.ActiveBlock()
@@ -403,7 +391,7 @@ func TestSnapshotIsTakenOnUncompressedInserts(t *testing.T) {
 	// These writes should now trigger a snapshot even though the active block
 	// size is much lower than the uncompressed insert size.
 	for i := 0; i < 2; i++ {
-		_, err = table.Write(ctx, model{Bytes: "test"})
+		err = table.Write(ctx, model{Bytes: "test"})
 		require.NoError(t, err)
 	}
 
