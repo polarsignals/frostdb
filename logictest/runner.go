@@ -283,8 +283,7 @@ func newBuild(b array.Builder, f arrow.Field) buildFunc {
 		// dictionary is enough. More can be added when needed.
 	case *array.BinaryDictionaryBuilder:
 		return func(s string) error {
-			e.AppendString(s)
-			return nil
+			return e.AppendString(s)
 		}
 	default:
 		panic(fmt.Sprintf("unexpected  array builder type %T", e))
