@@ -111,9 +111,8 @@ func timeBucket(period, timestamp, offset int64) (result int64) {
 	if timestamp < 0 && (timestamp%period) != 0 {
 		if result < minTs+period {
 			panic("time_bucket: timestamp out of range")
-		} else {
-			result -= period
 		}
+		result -= period
 	}
 	result += offset
 	return
