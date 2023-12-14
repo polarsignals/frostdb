@@ -213,6 +213,8 @@ type Table struct {
 	wal     WAL
 	closing bool
 	closers []io.Closer
+
+	indexFiles []*fileCompaction
 }
 
 type WAL interface {
@@ -1442,6 +1444,28 @@ type fileCompaction struct {
 
 func (f *fileCompaction) Close() error {
 	return f.file.Close()
+}
+
+// recoverPart will recover a part from the given offset and size advancing the file writer to the end of the part.
+func (f *fileCompaction) recoverPart(offset, size int64, compactionLevel int) (parts.Part, error) {
+	pf, err := parquet.OpenFile(io.NewSectionReader(f.file, offset, size), size)
+	if err != nil {
+		return nil, err
+	}
+
+	buf, err := dynparquet.NewSerializedBuffer(pf)
+	if err != nil {
+		return nil, err
+	}
+
+	// seek the file to the end of the part
+	if _, err := f.file.Seek(size, io.SeekCurrent); err != nil {
+		return nil, err
+	}
+
+	f.offset += size
+	f.ref++
+	return parts.NewParquetPart(0, buf, parts.WithCompactionLevel(compactionLevel), parts.WithRelease(f.release())), nil
 }
 
 func (t *Table) parquetFileCompaction(lvl int) *fileCompaction {

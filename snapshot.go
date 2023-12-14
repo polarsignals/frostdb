@@ -619,19 +619,23 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 					}
 					startOffset := partMeta.StartOffset
 					endOffset := partMeta.EndOffset
-					partBytes := make([]byte, endOffset-startOffset)
-					if _, err := r.ReadAt(partBytes, startOffset); err != nil {
-						return err
-					}
 					partOptions := parts.WithCompactionLevel(int(partMeta.CompactionLevel))
 					switch partMeta.Encoding {
 					case snapshotpb.Part_ENCODING_PARQUET:
+						partBytes := make([]byte, endOffset-startOffset)
+						if _, err := r.ReadAt(partBytes, startOffset); err != nil {
+							return err
+						}
 						serBuf, err := dynparquet.ReaderFromBytes(partBytes)
 						if err != nil {
 							return err
 						}
 						resultParts = append(resultParts, parts.NewParquetPart(partMeta.Tx, serBuf, partOptions))
 					case snapshotpb.Part_ENCODING_ARROW:
+						partBytes := make([]byte, endOffset-startOffset)
+						if _, err := r.ReadAt(partBytes, startOffset); err != nil {
+							return err
+						}
 						if err := func() error {
 							arrowReader, err := ipc.NewReader(bytes.NewReader(partBytes))
 							if err != nil {
@@ -653,6 +657,17 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 						}(); err != nil {
 							return err
 						}
+					case snapshotpb.Part_ENCODING_PARQUET_FILE:
+						// recover part from the compaction file
+						part, err := table.indexFiles[partMeta.CompactionLevel].recoverPart(
+							partMeta.StartOffset,
+							partMeta.EndOffset-partMeta.StartOffset,
+							int(partMeta.CompactionLevel),
+						)
+						if err != nil {
+							return err
+						}
+						resultParts = append(resultParts, part)
 					default:
 						return fmt.Errorf("unknown part encoding: %s", partMeta.Encoding)
 					}
