@@ -433,45 +433,52 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 					return true
 				}
 				p := node.Part()
-				partMeta := &snapshotpb.Part{
-					StartOffset:     int64(offW.offset),
-					Tx:              p.TX(),
-					CompactionLevel: uint64(p.CompactionLevel()),
-				}
+				partMeta := p.Meta()
 				if err := func() error {
 					if err := ctx.Err(); err != nil {
 						return err
 					}
 					schema := t.schema
-
-					if record := p.Record(); record != nil {
-						partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
+					switch partMeta.Encoding {
+					case snapshotpb.Part_ENCODING_ARROW:
+						partMeta.StartOffset = int64(offW.offset)
+						record := p.Record()
+						if record == nil {
+							return fmt.Errorf("arrow part %s has no record", p)
+						}
 						recordWriter := ipc.NewWriter(
 							w,
 							ipc.WithSchema(record.Schema()),
 						)
 						defer recordWriter.Close()
 						return recordWriter.Write(record)
-					}
-					partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
+					case snapshotpb.Part_ENCODING_PARQUET:
+						partMeta.StartOffset = int64(offW.offset)
+						buf, err := p.AsSerializedBuffer(schema)
+						if err != nil {
+							return err
+						}
 
-					buf, err := p.AsSerializedBuffer(schema)
-					if err != nil {
-						return err
+						f := buf.ParquetFile()
+						if _, err := io.Copy(
+							w, io.NewSectionReader(f, 0, f.Size()),
+						); err != nil {
+							return err
+						}
+						return nil
+					case snapshotpb.Part_ENCODING_PARQUET_FILE:
+						// The offsets for the parquet file encoded parts reference the compaction file.
+						return nil
+					default:
+						return fmt.Errorf("unknown part encoding: %s", partMeta.Encoding)
 					}
-
-					f := buf.ParquetFile()
-					if _, err := io.Copy(
-						w, io.NewSectionReader(f, 0, f.Size()),
-					); err != nil {
-						return err
-					}
-					return nil
 				}(); err != nil {
 					ascendErr = err
 					return false
 				}
-				partMeta.EndOffset = int64(offW.offset)
+				if partMeta.Encoding != snapshotpb.Part_ENCODING_PARQUET_FILE {
+					partMeta.EndOffset = int64(offW.offset)
+				}
 				granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
 				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
 				return true
