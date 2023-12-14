@@ -2,33 +2,36 @@ package arrowutils
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/compute"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"golang.org/x/exp/constraints"
-
-	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
 
 // SortRecord sorts the given record's rows by the given column. Currently only supports int64, string and binary columns.
-func SortRecord(r arrow.Record, cols []int) ([]int, error) {
+func SortRecord(mem memory.Allocator, r arrow.Record, cols []int) (*array.Int64, error) {
 	if len(cols) > 1 {
 		return nil, fmt.Errorf("sorting by multiple columns isn't implemented yet")
 	}
+	indicesBuilder := array.NewInt64Builder(mem)
+
 	if r.NumRows() == 0 {
-		return nil, nil
+		return indicesBuilder.NewInt64Array(), nil
 	}
 	if r.NumRows() == 1 {
-		return []int{0}, nil
+		indicesBuilder.Append(0)
+		return indicesBuilder.NewInt64Array(), nil
 	}
 
-	indices := make([]int, r.NumRows())
+	indices := make([]int64, r.NumRows())
 	// populate indices
 	for i := range indices {
-		indices[i] = i
+		indices[i] = int64(i)
 	}
 
 	switch c := r.Column(cols[0]).(type) {
@@ -42,29 +45,23 @@ func SortRecord(r arrow.Record, cols []int) ([]int, error) {
 		return nil, fmt.Errorf("unsupported column type for sorting %T", c)
 	}
 
-	return indices, nil
+	indicesBuilder.AppendValues(indices, nil)
+	return indicesBuilder.NewInt64Array(), nil
 }
 
 // ReorderRecord reorders the given record's rows by the given indices.
-func ReorderRecord(mem memory.Allocator, r arrow.Record, indices []int) (arrow.Record, error) {
-	// if the indices are already sorted, we can return the original record to save memory allocations
-	if sort.SliceIsSorted(indices, func(i, j int) bool { return indices[i] < indices[j] }) {
-		return r, nil
+// This is a wrapper around compute.Take which handles the type castings.
+func ReorderRecord(r arrow.Record, indices arrow.Array) (arrow.Record, error) {
+	res, err := compute.Take(
+		context.Background(),
+		*compute.DefaultTakeOptions(),
+		compute.NewDatum(r),
+		compute.NewDatum(indices),
+	)
+	if err != nil {
+		return nil, err
 	}
-
-	recordBuilder := builder.NewRecordBuilder(mem, r.Schema())
-	recordBuilder.Reserve(int(r.NumRows()))
-	for i := 0; i < int(r.NumRows()); i++ {
-		for colIdx, b := range recordBuilder.Fields() {
-			// here we read the value from the original record,
-			// but we the correct index and then write it to the new record
-			if err := builder.AppendValue(b, r.Column(colIdx), indices[i]); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	return recordBuilder.NewRecord(), nil
+	return res.(*compute.RecordDatum).Value, nil
 }
 
 type orderedArray[T constraints.Ordered] interface {
@@ -74,7 +71,7 @@ type orderedArray[T constraints.Ordered] interface {
 
 type orderedSorter[T constraints.Ordered] struct {
 	array   orderedArray[T]
-	indices []int
+	indices []int64
 }
 
 func (s orderedSorter[T]) Len() int {
@@ -82,7 +79,7 @@ func (s orderedSorter[T]) Len() int {
 }
 
 func (s orderedSorter[T]) Less(i, j int) bool {
-	return s.array.Value(s.indices[i]) < s.array.Value(s.indices[j])
+	return s.array.Value(int(s.indices[i])) < s.array.Value(int(s.indices[j]))
 }
 
 func (s orderedSorter[T]) Swap(i, j int) {
@@ -91,7 +88,7 @@ func (s orderedSorter[T]) Swap(i, j int) {
 
 type binarySort struct {
 	array   *array.Binary
-	indices []int
+	indices []int64
 }
 
 func (s binarySort) Len() int {
@@ -100,7 +97,7 @@ func (s binarySort) Len() int {
 
 func (s binarySort) Less(i, j int) bool {
 	// we need to read the indices from the indices slice, as they might have already been swapped.
-	return bytes.Compare(s.array.Value(s.indices[i]), s.array.Value(s.indices[j])) == -1
+	return bytes.Compare(s.array.Value(int(s.indices[i])), s.array.Value(int(s.indices[j]))) == -1
 }
 
 func (s binarySort) Swap(i, j int) {

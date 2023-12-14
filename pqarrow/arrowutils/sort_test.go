@@ -35,11 +35,11 @@ func TestSortRecord(t *testing.T) {
 
 	// Sort the record by the first column - int64
 	{
-		sortedIndices, err := SortRecord(record, []int{0})
+		sortedIndices, err := SortRecord(mem, record, []int{0})
 		require.NoError(t, err)
-		require.Equal(t, []int{0, 3, 1, 2}, sortedIndices)
+		require.Equal(t, []int64{0, 3, 1, 2}, sortedIndices.Int64Values())
 
-		sortedByInts, err := ReorderRecord(mem, record, sortedIndices)
+		sortedByInts, err := ReorderRecord(record, sortedIndices)
 		require.NoError(t, err)
 
 		// check that the column got sortedIndices
@@ -56,11 +56,11 @@ func TestSortRecord(t *testing.T) {
 
 	// Sort the record by the second column - string
 	{
-		sortedIndices, err := SortRecord(record, []int{1})
+		sortedIndices, err := SortRecord(mem, record, []int{1})
 		require.NoError(t, err)
-		require.Equal(t, []int{3, 2, 1, 0}, sortedIndices)
+		require.Equal(t, []int64{3, 2, 1, 0}, sortedIndices.Int64Values())
 
-		sortedByStrings, err := ReorderRecord(mem, record, sortedIndices)
+		sortedByStrings, err := ReorderRecord(record, sortedIndices)
 		require.NoError(t, err)
 
 		// check that the column got sortedByInts
