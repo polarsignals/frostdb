@@ -655,6 +655,7 @@ func (db *DB) openWAL(ctx context.Context) (WAL, error) {
 const (
 	walPath       = "wal"
 	snapshotsPath = "snapshots"
+	indexPath     = "index"
 )
 
 func (db *DB) walDir() string {
@@ -667,6 +668,10 @@ func (db *DB) snapshotsDir() string {
 
 func (db *DB) trashDir() string {
 	return filepath.Join(db.storagePath, "trash")
+}
+
+func (db *DB) indexDir() string {
+	return filepath.Join(db.storagePath, indexPath)
 }
 
 // recover attempts to recover database state from a combination of snapshots

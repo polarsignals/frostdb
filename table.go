@@ -1449,12 +1449,25 @@ func (t *Table) parquetFileCompaction(lvl int) *fileCompaction {
 		t: t,
 	}
 
-	file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", lvl))
-	if err != nil {
-		panic(err)
+	if t.db.storagePath == "" { // No storage path provided, use temp files.
+		file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", lvl))
+		if err != nil {
+			panic(err)
+		}
+		level.Info(t.logger).Log("msg", "created temp file for level", "level", lvl, "file", file.Name())
+		f.file = file
+	} else {
+		indexDir := t.db.indexDir()
+		if err := os.MkdirAll(indexDir, dirPerms); err != nil {
+			panic(err)
+		}
+
+		file, err := os.OpenFile(filepath.Join(indexDir, fmt.Sprintf("L%v.parquet", lvl)), os.O_CREATE|os.O_RDWR, filePerms)
+		if err != nil {
+			panic(err)
+		}
+		f.file = file
 	}
-	level.Info(t.logger).Log("msg", "created temp file for level", "level", lvl, "file", file.Name())
-	f.file = file
 
 	return f
 }
