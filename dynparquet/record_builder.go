@@ -27,8 +27,6 @@ const (
 //
 // This api is opinionated.
 //
-//   - Dynamic columns are supported but only for  maps and struct slices
-//
 //   - Nested Columns are not supported
 //
 // # Tags
@@ -52,7 +50,6 @@ const (
 //	                   desc | Sorts in descending order.Use desc(n) where n is an integer for sorting order
 //	                lz4_raw | LZ4_RAW compression.
 //	               pre_hash | Prehash the column before storing it.
-//	                    dyn | Whether the column can dynamically expand.
 //	                   null | Nullable column.
 //	             null_first | When used wit asc nulls are smallest and with des nulls are largest.
 //	                   zstd | ZSTD compression.
@@ -71,19 +68,11 @@ const (
 //
 // # Dynamic columns
 //
-// Any field of type map<string, T> is a dynamic column by default. You can  also use
-// a list of structs with two fields , the first field of string type will be
-// used as column nave and the second field will be used as column value.
+// Field of type map<string, T> is a dynamic column by default.
 //
 //	type Example struct {
-//		// Adding dyn tag is optional for map fields. Map keys must be string any other
-//		// type will result in a panic.
 //		// Use supported tags to customize the column value
-//		Dyn00 map[string]string `frostdb:"dyn_00"`
-//
-//		// It is required to set dyn tag. Omitting the dyn tag will result in a panic.
-//		// Use supported tags to customize the column value
-//		Labels []Label `frostdb:"labels,dyn"`
+//		Labels map[string]string `frostdb:"labels"`
 //	}
 //
 // # Repeated columns
@@ -112,7 +101,6 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 	for i := 0; i < r.NumField(); i++ {
 		f := r.Field(i)
 		var (
-			dynamic    bool
 			typ        arrow.DataType
 			dictionary bool
 			preHash    bool
@@ -130,8 +118,6 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 		if tag != "" {
 			walkTag(tag, func(key, value string) {
 				switch key {
-				case "dyn":
-					dynamic = true
 				case "null":
 					null = true
 				case "null_first":
@@ -172,7 +158,6 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 		}
 		fr := &fieldRecord{
 			name:        name,
-			dynamic:     dynamic,
 			preHash:     preHash,
 			nullable:    null,
 			sort:        sortColumn,
@@ -198,22 +183,6 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 			case isUUIDSlice(fty):
 				fr.typ = schemapb.StorageLayout_TYPE_STRING
 				fr.build = newUUIDSliceField(mem, name)
-			case dynamic:
-				elem := fty.Elem()
-				for elem.Kind() == reflect.Ptr {
-					elem = elem.Elem()
-				}
-				if elem.Kind() != reflect.Struct {
-					panic("frostdb/dynschema: only structs are supported for struct list ")
-				}
-				if elem.NumField() != 2 {
-					panic("frostdb/dynschema: mismatch number of fields for slices columns ")
-				}
-				typ, fr.typ = baseType(elem.Field(1).Type, dictionary)
-				fr.dynamic = true
-				// Dynamic columns are nullable
-				fr.nullable = true
-				fr.build = newMapFieldBuilder(newFieldFunc(typ, mem, name))
 			default:
 				typ, styp = baseType(fty.Elem(), dictionary)
 				fr.typ = styp

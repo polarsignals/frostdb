@@ -92,9 +92,9 @@ func Test_Table_Concurrency(t *testing.T) {
 				rows := make(dynparquet.Samples, 0, n)
 				for i := 0; i < n; i++ {
 					rows = append(rows, dynparquet.Sample{
-						Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
-							{Name: "label1", Value: "value1"},
-							{Name: "label2", Value: "value2"},
+						Labels: map[string]string{ // TODO would be nice to not have all the same column
+							"label1": "value1",
+							"label2": "value2",
 						},
 						Stacktrace: []uuid.UUID{
 							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -199,9 +199,9 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 		rows := make(dynparquet.Samples, 0, n)
 		for i := 0; i < n; i++ {
 			rows = append(rows, dynparquet.Sample{
-				Labels: []dynparquet.Label{ // TODO would be nice to not have all the same column
-					{Name: "label1", Value: id},
-					{Name: "label2", Value: "value2"},
+				Labels: map[string]string{ // TODO would be nice to not have all the same column
+					"label1": id,
+					"label2": "value2",
 				},
 				Stacktrace: []uuid.UUID{
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -286,9 +286,9 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	defer c.Close()
 
 	samples := dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -297,10 +297,10 @@ func Test_Table_ReadIsolation(t *testing.T) {
 		Timestamp: 1,
 		Value:     1,
 	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -309,10 +309,10 @@ func Test_Table_ReadIsolation(t *testing.T) {
 		Timestamp: 2,
 		Value:     2,
 	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -332,9 +332,9 @@ func Test_Table_ReadIsolation(t *testing.T) {
 
 	// Perform a new insert that will have a higher tx id
 	samples = dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "blarg", Value: "blarg"},
-			{Name: "blah", Value: "blah"},
+		Labels: map[string]string{
+			"blarg": "blarg",
+			"blah":  "blah",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -460,9 +460,9 @@ func Test_Table_Bloomfilter(t *testing.T) {
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -472,10 +472,10 @@ func Test_Table_Bloomfilter(t *testing.T) {
 		Value:     1,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -485,10 +485,10 @@ func Test_Table_Bloomfilter(t *testing.T) {
 		Value:     2,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -580,9 +580,9 @@ func Test_L0Query(t *testing.T) {
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -592,10 +592,10 @@ func Test_L0Query(t *testing.T) {
 		Value:     1,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -605,10 +605,10 @@ func Test_L0Query(t *testing.T) {
 		Value:     2,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -653,9 +653,9 @@ func Test_Serialize_DisparateDynamicColumns(t *testing.T) {
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -665,10 +665,10 @@ func Test_Serialize_DisparateDynamicColumns(t *testing.T) {
 		Value:     1,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -678,10 +678,10 @@ func Test_Serialize_DisparateDynamicColumns(t *testing.T) {
 		Value:     2,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -700,8 +700,8 @@ func Test_Serialize_DisparateDynamicColumns(t *testing.T) {
 
 	samples = dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label100", Value: "a"},
+		Labels: map[string]string{
+			"label100": "a",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},

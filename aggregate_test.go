@@ -38,8 +38,8 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 	require.NoError(t, err)
 
 	samples := dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
+		Labels: map[string]string{
+			"label1": "value1",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -48,8 +48,8 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		Timestamp: 1,
 		Value:     1,
 	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -58,8 +58,8 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 		Timestamp: 2,
 		Value:     2,
 	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -161,9 +161,9 @@ func TestAggregationProjection(t *testing.T) {
 	require.NoError(t, err)
 
 	samples := dynparquet.Samples{{
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -172,10 +172,10 @@ func TestAggregationProjection(t *testing.T) {
 		Timestamp: 1,
 		Value:     1,
 	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -184,10 +184,10 @@ func TestAggregationProjection(t *testing.T) {
 		Timestamp: 2,
 		Value:     2,
 	}, {
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -354,9 +354,9 @@ func BenchmarkAggregation(b *testing.B) {
 		samples := make(dynparquet.Samples, 0, 10_000)
 		for i := 0; i < cap(samples); i++ {
 			samples = append(samples, dynparquet.Sample{
-				Labels: []dynparquet.Label{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value" + strconv.Itoa(i%3)},
+				Labels: map[string]string{
+					"label1": "value1",
+					"label2": "value" + strconv.Itoa(i%3),
 				},
 				Stacktrace: []uuid.UUID{
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},

@@ -125,9 +125,9 @@ func TestDBWithWAL(t *testing.T) {
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -137,10 +137,10 @@ func TestDBWithWAL(t *testing.T) {
 		Value:     1,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -150,10 +150,10 @@ func TestDBWithWAL(t *testing.T) {
 		Value:     2,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -171,9 +171,9 @@ func TestDBWithWAL(t *testing.T) {
 
 	samples = dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -191,10 +191,10 @@ func TestDBWithWAL(t *testing.T) {
 
 	samples = dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -285,9 +285,9 @@ func Test_DB_WithStorage(t *testing.T) {
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -297,10 +297,10 @@ func Test_DB_WithStorage(t *testing.T) {
 		Value:     1,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -310,10 +310,10 @@ func Test_DB_WithStorage(t *testing.T) {
 		Value:     2,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -424,9 +424,9 @@ func Test_DB_ColdStart(t *testing.T) {
 			samples := dynparquet.Samples{
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -437,9 +437,9 @@ func Test_DB_ColdStart(t *testing.T) {
 				},
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -450,9 +450,9 @@ func Test_DB_ColdStart(t *testing.T) {
 				},
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -685,9 +685,9 @@ func Test_DB_Filter_Block(t *testing.T) {
 			samples := dynparquet.Samples{
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -698,9 +698,9 @@ func Test_DB_Filter_Block(t *testing.T) {
 				},
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -711,9 +711,9 @@ func Test_DB_Filter_Block(t *testing.T) {
 				},
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -970,9 +970,9 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			samples := dynparquet.Samples{
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -983,9 +983,9 @@ func Test_DB_Block_Optimization(t *testing.T) {
 				},
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -996,9 +996,9 @@ func Test_DB_Block_Optimization(t *testing.T) {
 				},
 				{
 					ExampleType: "test",
-					Labels: []dynparquet.Label{
-						{Name: "label1", Value: "value1"},
-						{Name: "label2", Value: "value2"},
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value2",
 					},
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -1119,9 +1119,9 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 	samples := dynparquet.Samples{
 		{
 			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
+			Labels: map[string]string{
+				"label1": "value1",
+				"label2": "value2",
 			},
 			Stacktrace: []uuid.UUID{
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -1132,10 +1132,10 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 		},
 		{
 			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
-				{Name: "label3", Value: "value3"},
+			Labels: map[string]string{
+				"label1": "value1",
+				"label2": "value2",
+				"label3": "value3",
 			},
 			Stacktrace: []uuid.UUID{
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -1146,9 +1146,9 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 		},
 		{
 			ExampleType: "test",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
-				{Name: "label2", Value: "value2"},
+			Labels: map[string]string{
+				"label1": "value1",
+				"label2": "value2",
 			},
 			Stacktrace: []uuid.UUID{
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -1219,9 +1219,9 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 		samples := dynparquet.Samples{
 			{
 				ExampleType: "test",
-				Labels: []dynparquet.Label{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
+				Labels: map[string]string{
+					"label1": "value1",
+					"label2": "value2",
 				},
 				Stacktrace: []uuid.UUID{
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -1232,10 +1232,10 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 			},
 			{
 				ExampleType: "test",
-				Labels: []dynparquet.Label{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
-					{Name: "label3", Value: "value3"},
+				Labels: map[string]string{
+					"label1": "value1",
+					"label2": "value2",
+					"label3": "value3",
 				},
 				Stacktrace: []uuid.UUID{
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -1246,9 +1246,9 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 			},
 			{
 				ExampleType: "test",
-				Labels: []dynparquet.Label{
-					{Name: "label1", Value: "value1"},
-					{Name: "label2", Value: "value2"},
+				Labels: map[string]string{
+					"label1": "value1",
+					"label2": "value2",
 				},
 				Stacktrace: []uuid.UUID{
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -2026,9 +2026,9 @@ func Test_DB_All(t *testing.T) {
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -2038,10 +2038,10 @@ func Test_DB_All(t *testing.T) {
 		Value:     1,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -2051,10 +2051,10 @@ func Test_DB_All(t *testing.T) {
 		Value:     2,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -2107,9 +2107,9 @@ func Test_DB_PrehashedStorage(t *testing.T) {
 
 	samples := dynparquet.Samples{{
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value1"},
-			{Name: "label2", Value: "value2"},
+		Labels: map[string]string{
+			"label1": "value1",
+			"label2": "value2",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -2119,10 +2119,10 @@ func Test_DB_PrehashedStorage(t *testing.T) {
 		Value:     1,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value2"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label3", Value: "value3"},
+		Labels: map[string]string{
+			"label1": "value2",
+			"label2": "value2",
+			"label3": "value3",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -2132,10 +2132,10 @@ func Test_DB_PrehashedStorage(t *testing.T) {
 		Value:     2,
 	}, {
 		ExampleType: "test",
-		Labels: []dynparquet.Label{
-			{Name: "label1", Value: "value3"},
-			{Name: "label2", Value: "value2"},
-			{Name: "label4", Value: "value4"},
+		Labels: map[string]string{
+			"label1": "value3",
+			"label2": "value2",
+			"label4": "value4",
 		},
 		Stacktrace: []uuid.UUID{
 			{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
