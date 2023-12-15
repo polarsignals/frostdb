@@ -80,14 +80,11 @@ func (s orderedSorter[T]) Len() int {
 }
 
 func (s orderedSorter[T]) Less(i, j int) bool {
-	if s.array.IsNull(int(s.indices[i])) && !s.array.IsNull(int(s.indices[j])) {
+	if s.array.IsNull(int(s.indices[i])) {
 		return false
 	}
-	if !s.array.IsNull(int(s.indices[i])) && s.array.IsNull(int(s.indices[j])) {
+	if s.array.IsNull(int(s.indices[j])) {
 		return true
-	}
-	if s.array.IsNull(int(s.indices[i])) && s.array.IsNull(int(s.indices[j])) {
-		return false
 	}
 	return s.array.Value(int(s.indices[i])) < s.array.Value(int(s.indices[j]))
 }
