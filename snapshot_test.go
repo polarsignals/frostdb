@@ -28,8 +28,8 @@ func insertSampleRecords(ctx context.Context, t *testing.T, table *Table, timest
 	for _, ts := range timestamps {
 		samples = append(samples, dynparquet.Sample{
 			ExampleType: "ex",
-			Labels: []dynparquet.Label{
-				{Name: "label1", Value: "value1"},
+			Labels: map[string]string{
+				"label1": "value1",
 			},
 			Stacktrace: []uuid.UUID{
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},

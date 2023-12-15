@@ -16,17 +16,12 @@ import (
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 )
 
-type Label struct {
-	Name  string
-	Value string
-}
-
 type Sample struct {
-	ExampleType string      `frostdb:"example_type,rle_dict,asc(0)"`
-	Labels      []Label     `frostdb:"labels,rle_dict,null,dyn,asc(1),null_first"`
-	Stacktrace  []uuid.UUID `frostdb:"stacktrace,rle_dict,asc(3),null_first"`
-	Timestamp   int64       `frostdb:"timestamp,asc(2)"`
-	Value       int64       `frostdb:"value"`
+	ExampleType string            `frostdb:"example_type,rle_dict,asc(0)"`
+	Labels      map[string]string `frostdb:"labels,rle_dict,asc(1),null_first"`
+	Stacktrace  []uuid.UUID       `frostdb:"stacktrace,rle_dict,asc(3),null_first"`
+	Timestamp   int64             `frostdb:"timestamp,asc(2)"`
+	Value       int64             `frostdb:"value"`
 }
 
 type Samples []Sample
@@ -66,14 +61,14 @@ func (s Samples) ToRecord() (arrow.Record, error) {
 	}
 	seen := map[string]struct{}{}
 	for _, smpl := range s {
-		for _, lbl := range smpl.Labels {
-			if _, ok := seen[lbl.Name]; ok {
+		for lbl := range smpl.Labels {
+			if _, ok := seen[lbl]; ok {
 				continue
 			}
-			seen[lbl.Name] = struct{}{}
+			seen[lbl] = struct{}{}
 			fields = append(fields,
 				arrow.Field{
-					Name:     "labels." + lbl.Name,
+					Name:     "labels." + lbl,
 					Nullable: true,
 					Type: &arrow.DictionaryType{
 						IndexType: &arrow.Int32Type{},
@@ -106,9 +101,9 @@ func (s Samples) ToRecord() (arrow.Record, error) {
 		}
 		for i := 0; i < numLabels; i++ {
 			found := false
-			for _, lbl := range sample.Labels {
-				if "labels."+lbl.Name == schema.Field(i+1).Name {
-					if err := bld.Field(i + 1).(*array.BinaryDictionaryBuilder).Append([]byte(lbl.Value)); err != nil {
+			for lbl, value := range sample.Labels {
+				if "labels."+lbl == schema.Field(i+1).Name {
+					if err := bld.Field(i + 1).(*array.BinaryDictionaryBuilder).Append([]byte(value)); err != nil {
 						return nil, fmt.Errorf("failed to append value: %v", err)
 					}
 					found = true
@@ -135,10 +130,10 @@ func (s Samples) SampleLabelNames() []string {
 	seen := map[string]struct{}{}
 
 	for _, sample := range s {
-		for _, label := range sample.Labels {
-			if _, ok := seen[label.Name]; !ok {
-				names = append(names, label.Name)
-				seen[label.Name] = struct{}{}
+		for label := range sample.Labels {
+			if _, ok := seen[label]; !ok {
+				names = append(names, label)
+				seen[label] = struct{}{}
 			}
 		}
 	}
@@ -159,11 +154,10 @@ func (s Sample) ToParquetRow(labelNames []string) parquet.Row {
 
 	i, j := 0, 0
 	for i < nameNumber {
-		if labelNames[i] == s.Labels[j].Name {
-			row = append(row, parquet.ValueOf(s.Labels[j].Value).Level(0, 1, i+1))
+		if value, ok := s.Labels[labelNames[i]]; ok {
+			row = append(row, parquet.ValueOf(value).Level(0, 1, i+1))
 			i++
 			j++
-
 			if j >= labelLen {
 				for ; i < nameNumber; i++ {
 					row = append(row, parquet.ValueOf(nil).Level(0, 0, i+1))
@@ -333,10 +327,9 @@ func NewTestSamples() Samples {
 	return Samples{
 		{
 			ExampleType: "cpu",
-			Labels: []Label{{
-				Name:  "node",
-				Value: "test3",
-			}},
+			Labels: map[string]string{
+				"node": "test3",
+			},
 			Stacktrace: []uuid.UUID{
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
@@ -345,13 +338,10 @@ func NewTestSamples() Samples {
 			Value:     5,
 		}, {
 			ExampleType: "cpu",
-			Labels: []Label{{
-				Name:  "namespace",
-				Value: "default",
-			}, {
-				Name:  "pod",
-				Value: "test1",
-			}},
+			Labels: map[string]string{
+				"namespace": "default",
+				"pod":       "test1",
+			},
 			Stacktrace: []uuid.UUID{
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
@@ -360,13 +350,10 @@ func NewTestSamples() Samples {
 			Value:     3,
 		}, {
 			ExampleType: "cpu",
-			Labels: []Label{{
-				Name:  "container",
-				Value: "test2",
-			}, {
-				Name:  "namespace",
-				Value: "default",
-			}},
+			Labels: map[string]string{
+				"container": "test2",
+				"namespace": "default",
+			},
 			Stacktrace: []uuid.UUID{
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
@@ -383,10 +370,9 @@ func GenerateTestSamples(n int) Samples {
 		s = append(s,
 			Sample{
 				ExampleType: "cpu",
-				Labels: []Label{{
-					Name:  "node",
-					Value: "test3",
-				}},
+				Labels: map[string]string{
+					"node": "test3",
+				},
 				Stacktrace: []uuid.UUID{
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
