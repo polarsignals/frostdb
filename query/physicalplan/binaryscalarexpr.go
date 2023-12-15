@@ -90,6 +90,8 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 			return DictionaryArrayScalarEqual(arr, right)
 		case logicalplan.OpNotEq:
 			return DictionaryArrayScalarNotEqual(arr, right)
+		case logicalplan.OpContains:
+			return DictionaryArrayScalarContains(arr, right)
 		default:
 			return nil, fmt.Errorf("unsupported operator: %v", operator)
 		}
@@ -210,6 +212,47 @@ func DictionaryArrayScalarEqual(left *array.Dictionary, right scalar.Scalar) (*B
 			}
 		case *array.String:
 			if dict.Value(left.GetValueIndex(i)) == string(data) {
+				res.Add(uint32(i))
+			}
+		}
+	}
+
+	return res, nil
+}
+
+func DictionaryArrayScalarContains(left *array.Dictionary, right scalar.Scalar) (*Bitmap, error) {
+	res := NewBitmap()
+	var data []byte
+	switch r := right.(type) {
+	case *scalar.Binary:
+		data = r.Data()
+	case *scalar.String:
+		data = r.Data()
+	}
+
+	// This is a special case for where the left side should not equal NULL
+	if right == scalar.ScalarNull {
+		for i := 0; i < left.Len(); i++ {
+			if !left.IsNull(i) {
+				res.Add(uint32(i))
+			}
+		}
+		return res, nil
+	}
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+
+		switch dict := left.Dictionary().(type) {
+		case *array.Binary:
+			if bytes.Contains(dict.Value(left.GetValueIndex(i)), data) {
+				res.Add(uint32(i))
+			}
+		case *array.String:
+			// TODO: Add unsafe type cast if necessary.
+			if bytes.Contains([]byte(dict.Value(left.GetValueIndex(i))), data) {
 				res.Add(uint32(i))
 			}
 		}

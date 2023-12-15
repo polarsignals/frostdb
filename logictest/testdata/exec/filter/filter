@@ -156,3 +156,14 @@ select labels, timestamp, value where doesntexist >= 4
 exec
 select labels, timestamp, value where doesntexist <= 4
 ----
+
+exec
+select stacktrace, value where stacktrace LIKE 'ack'
+----
+stack1  1
+stack1  2
+stack1  3
+
+exec
+select stacktrace, value where stacktrace LIKE 'ack2'
+----

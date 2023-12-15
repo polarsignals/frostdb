@@ -286,6 +286,18 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			e.Op = logicalplan.OpRegexNotMatch
 		}
 		v.exprStack = append(v.exprStack, e)
+	case *ast.PatternLikeOrIlikeExpr:
+		// Note that we're resolving exprs as a stack, so the last two
+		// expressions are the leaf expressions.
+		rightExpr, newExprs := pop(v.exprStack)
+		leftExpr, newExprs := pop(newExprs)
+		v.exprStack = newExprs
+
+		v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
+			Left:  logicalplan.Col(leftExpr.Name()),
+			Op:    logicalplan.OpContains,
+			Right: rightExpr,
+		})
 	case *ast.GroupByClause:
 	case *ast.FieldList, *ast.ColumnNameExpr, *ast.ByItem, *ast.RowExpr,
 		*ast.ParenthesesExpr:
