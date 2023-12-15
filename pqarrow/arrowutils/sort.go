@@ -41,15 +41,19 @@ func SortRecord(mem memory.Allocator, r arrow.Record, cols []int) (*array.Int64,
 		return nil, fmt.Errorf("unsupported column type for sorting %T", c)
 	}
 
-	indicesBuilder.AppendValues(indices, nil)
+	indicesBuilder.Reserve(len(indices))
+	for _, i := range indices {
+		indicesBuilder.Append(i)
+	}
+
 	return indicesBuilder.NewInt64Array(), nil
 }
 
 // ReorderRecord reorders the given record's rows by the given indices.
 // This is a wrapper around compute.Take which handles the type castings.
-func ReorderRecord(r arrow.Record, indices arrow.Array) (arrow.Record, error) {
+func ReorderRecord(ctx context.Context, r arrow.Record, indices arrow.Array) (arrow.Record, error) {
 	res, err := compute.Take(
-		context.Background(),
+		ctx,
 		*compute.DefaultTakeOptions(),
 		compute.NewDatum(r),
 		compute.NewDatum(indices),

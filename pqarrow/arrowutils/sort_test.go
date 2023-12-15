@@ -1,6 +1,7 @@
 package arrowutils
 
 import (
+	"context"
 	"testing"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -10,6 +11,7 @@ import (
 )
 
 func TestSortRecord(t *testing.T) {
+	ctx := context.Background()
 	schema := arrow.NewSchema(
 		[]arrow.Field{
 			{Name: "int", Type: arrow.PrimitiveTypes.Int64},
@@ -41,7 +43,7 @@ func TestSortRecord(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []int64{0, 4, 2, 3, 1}, sortedIndices.Int64Values())
 
-		sortedByInts, err := ReorderRecord(record, sortedIndices)
+		sortedByInts, err := ReorderRecord(ctx, record, sortedIndices)
 		require.NoError(t, err)
 
 		// check that the column got sortedIndices
@@ -63,7 +65,7 @@ func TestSortRecord(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []int64{4, 2, 1, 0, 3}, sortedIndices.Int64Values())
 
-		sortedByStrings, err := ReorderRecord(record, sortedIndices)
+		sortedByStrings, err := ReorderRecord(ctx, record, sortedIndices)
 		require.NoError(t, err)
 
 		// check that the column got sortedByInts
