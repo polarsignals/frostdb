@@ -101,6 +101,18 @@ func WithoutWAL() TableOption {
 	}
 }
 
+func WithUniquePrimaryIndex(unique bool) TableOption {
+	return func(config *tablepb.TableConfig) error {
+		switch e := config.Schema.(type) {
+		case *tablepb.TableConfig_DeprecatedSchema:
+			e.DeprecatedSchema.UniquePrimaryIndex = unique
+		case *tablepb.TableConfig_SchemaV2:
+			e.SchemaV2.UniquePrimaryIndex = unique
+		}
+		return nil
+	}
+}
+
 // FromConfig sets the table configuration from the given config.
 // NOTE: that this does not override the schema even though that is included in the passed in config.
 func FromConfig(config *tablepb.TableConfig) TableOption {
@@ -149,6 +161,36 @@ func NewTableConfig(
 type completedBlock struct {
 	prevTx uint64
 	tx     uint64
+}
+
+type GenericTable[T any] struct {
+	*Table
+	mu    sync.Mutex
+	build *dynparquet.Build[T]
+}
+
+func (t *GenericTable[T]) Release() {
+	t.build.Release()
+}
+
+func (t *GenericTable[T]) Write(ctx context.Context, values ...T) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	err := t.build.Append(values...)
+	if err != nil {
+		return err
+	}
+	_, err = t.InsertRecord(ctx, t.build.NewRecord())
+	return err
+}
+
+func NewGenericTable[T any](db *DB, name string, mem memory.Allocator, options ...TableOption) (*GenericTable[T], error) {
+	build := dynparquet.NewBuild[T](mem)
+	table, err := db.Table(name, NewTableConfig(build.Schema(name), options...))
+	if err != nil {
+		return nil, err
+	}
+	return &GenericTable[T]{build: build, Table: table}, nil
 }
 
 type Table struct {
@@ -545,26 +587,6 @@ func (t *Table) Schema() *dynparquet.Schema {
 
 func (t *Table) EnsureCompaction() error {
 	return t.ActiveBlock().EnsureCompaction()
-}
-
-// Write objects into the table.
-func (t *Table) Write(ctx context.Context, vals ...any) (uint64, error) {
-	b, err := dynparquet.ValuesToBuffer(t.Schema(), vals...)
-	if err != nil {
-		return 0, err
-	}
-
-	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
-	defer converter.Close()
-
-	if err := converter.Convert(ctx, b); err != nil {
-		return 0, err
-	}
-
-	r := converter.NewRecord()
-	defer r.Release()
-
-	return t.InsertRecord(ctx, r)
 }
 
 func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, error) {
