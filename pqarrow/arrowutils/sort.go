@@ -10,7 +10,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/compute"
 	"github.com/apache/arrow/go/v14/arrow/memory"
-	"golang.org/x/exp/constraints"
 )
 
 // SortRecord sorts the given record's rows by the given column. Currently only supports int64, string and binary columns.
