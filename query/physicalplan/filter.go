@@ -63,7 +63,7 @@ func (f PreExprVisitorFunc) PostVisit(_ logicalplan.Expr) bool {
 
 func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) {
 	switch expr.Op {
-	case logicalplan.OpEq, logicalplan.OpNotEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpRegexMatch, logicalplan.OpRegexNotMatch:
+	case logicalplan.OpEq, logicalplan.OpNotEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpRegexMatch, logicalplan.OpRegexNotMatch, logicalplan.OpContains:
 		var leftColumnRef *ArrayRef
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
