@@ -64,7 +64,7 @@ func ReorderRecord(r arrow.Record, indices arrow.Array) (arrow.Record, error) {
 	return res.(*compute.RecordDatum).Value, nil
 }
 
-type orderedArray[T constraints.Ordered] interface {
+type orderedArray[T int64 | float64 | string] interface {
 	Value(int) T
 	IsNull(int) bool
 	Len() int
