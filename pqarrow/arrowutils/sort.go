@@ -70,7 +70,7 @@ type orderedArray[T int64 | float64 | string] interface {
 	Len() int
 }
 
-type orderedSorter[T constraints.Ordered] struct {
+type orderedSorter[T int64 | float64 | string] struct {
 	array   orderedArray[T]
 	indices []int64
 }
