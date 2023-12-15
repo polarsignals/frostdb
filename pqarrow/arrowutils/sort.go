@@ -1,7 +1,6 @@
 package arrowutils
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -38,8 +37,6 @@ func SortRecord(mem memory.Allocator, r arrow.Record, cols []int) (*array.Int64,
 		sort.Sort(orderedSorter[int64]{array: c, indices: indices})
 	case *array.String:
 		sort.Sort(orderedSorter[string]{array: c, indices: indices})
-	case *array.Binary:
-		sort.Sort(binarySort{array: c, indices: indices})
 	default:
 		return nil, fmt.Errorf("unsupported column type for sorting %T", c)
 	}
@@ -89,29 +86,5 @@ func (s orderedSorter[T]) Less(i, j int) bool {
 }
 
 func (s orderedSorter[T]) Swap(i, j int) {
-	s.indices[i], s.indices[j] = s.indices[j], s.indices[i]
-}
-
-type binarySort struct {
-	array   *array.Binary
-	indices []int64
-}
-
-func (s binarySort) Len() int {
-	return s.array.Len()
-}
-
-func (s binarySort) Less(i, j int) bool {
-	if s.array.IsNull(int(s.indices[i])) {
-		return false
-	}
-	if s.array.IsNull(int(s.indices[j])) {
-		return true
-	}
-	// we need to read the indices from the indices slice, as they might have already been swapped.
-	return bytes.Compare(s.array.Value(int(s.indices[i])), s.array.Value(int(s.indices[j]))) == -1
-}
-
-func (s binarySort) Swap(i, j int) {
 	s.indices[i], s.indices[j] = s.indices[j], s.indices[i]
 }
