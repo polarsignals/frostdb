@@ -103,14 +103,11 @@ func (s binarySort) Len() int {
 }
 
 func (s binarySort) Less(i, j int) bool {
-	if s.array.IsNull(int(s.indices[i])) && !s.array.IsNull(int(s.indices[j])) {
+	if s.array.IsNull(int(s.indices[i])) {
 		return false
 	}
-	if !s.array.IsNull(int(s.indices[i])) && s.array.IsNull(int(s.indices[j])) {
+	if s.array.IsNull(int(s.indices[j])) {
 		return true
-	}
-	if s.array.IsNull(int(s.indices[i])) && s.array.IsNull(int(s.indices[j])) {
-		return false
 	}
 	// we need to read the indices from the indices slice, as they might have already been swapped.
 	return bytes.Compare(s.array.Value(int(s.indices[i])), s.array.Value(int(s.indices[j]))) == -1
