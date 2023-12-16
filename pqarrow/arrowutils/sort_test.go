@@ -212,7 +212,6 @@ func TestSortRecord(t *testing.T) {
 			sortAndCompare(t, kase)
 		})
 	}
-
 }
 
 func TestReorderRecord(t *testing.T) {
@@ -278,7 +277,6 @@ func TestReorderRecord(t *testing.T) {
 			require.Equal(t, want[i], str.Value(got.GetValueIndex(i)))
 		}
 	})
-
 }
 
 // Use all supported sort field

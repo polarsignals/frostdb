@@ -219,12 +219,12 @@ func (m *multiColSorter) Less(i, j int) bool {
 			// principle applies for descending.
 			return cmp == m.directions[idx]
 		}
-		//Try comparing the next column
+		// Try comparing the next column
 	}
 	return false
 }
 
-func (m *multiColSorter) compare(idx int, i, j int) int {
+func (m *multiColSorter) compare(idx, i, j int) int {
 	x := m.comparisons[idx]
 	if x.IsNull(i) {
 		if x.IsNull(j) {
