@@ -256,9 +256,9 @@ func TestReorderRecord(t *testing.T) {
 		defer b.Release()
 		d := b.Field(0).(*array.BinaryDictionaryBuilder)
 		d.Reserve(3)
-		d.AppendString("3")
-		d.AppendString("2")
-		d.AppendString("1")
+		require.Nil(t, d.AppendString("3"))
+		require.Nil(t, d.AppendString("2"))
+		require.Nil(t, d.AppendString("1"))
 		r := b.NewRecord()
 		defer r.Release()
 
@@ -279,7 +279,7 @@ func TestReorderRecord(t *testing.T) {
 	})
 }
 
-// Use all supported sort field
+// Use all supported sort field.
 type Sample struct {
 	Int      int64
 	Double   float64
@@ -330,7 +330,7 @@ func (s Samples) Record() arrow.Record {
 		fInt.Append(v.Int)
 		fDouble.Append(v.Double)
 		fString.Append(v.String)
-		fDict.AppendString(v.Dict)
+		_ = fDict.AppendString(v.Dict)
 		if v.Nullable != nil {
 			fNullable.Append(*v.Nullable)
 		} else {
