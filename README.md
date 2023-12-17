@@ -73,46 +73,10 @@ This model does not map well into a static schema, as label-names cannot be know
 A FrostDB schema for Prometheus could look like this:
 
 ```go
-package frostprometheus
-
-import (
-	"github.com/polarsignals/frostdb/dynparquet"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-)
-
-func Schema() (*dynparquet.Schema, error) {
-	return dynparquet.SchemaFromDefinition(&schemapb.Schema{
-		Name: "prometheus",
-		Columns: []*schemapb.Column{{
-			Name: "labels",
-			StorageLayout: &schemapb.StorageLayout{
-				Type:     schemapb.StorageLayout_TYPE_STRING,
-				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				Nullable: true,
-			},
-			Dynamic: true,
-		}, {
-			Name: "timestamp",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-			Dynamic: false,
-		}, {
-			Name: "value",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_DOUBLE,
-			},
-			Dynamic: false,
-		}},
-		SortingColumns: []*schemapb.SortingColumn{{
-			Name:      "timestamp",
-			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}, {
-			Name:       "labels",
-			NullsFirst: true,
-			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
-		}},
-	})
+type Prometheus struct {
+	Labels    map[string]string `frostdb:",rle_dict,asc(1),null_first"`
+	Timestamp int64             `frostdb:",asc(0)"`
+	Value     float64
 }
 ```
 
