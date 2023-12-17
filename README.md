@@ -41,7 +41,8 @@ FrostDB is likely not suitable for your needs if:
 
 You can explore the [examples](https://github.com/polarsignals/frostdb/tree/main/examples) directory for sample code using FrostDB. Below is a snippet from the simple database example. It creates a database with a dynamic column schema, inserts some data, and queries it back out.
 
-https://github.com/polarsignals/frostdb/blob/d0eea82a3fcbd3e7275c9ed6c89546370516448c/examples/simple.go#L20-L94
+https://github.com/polarsignals/frostdb/blob/ee6970eff139c58a45998a87c02b661f32be5cbe/examples/simple/simple.go#L17-L69
+
 
 ## Design choices
 
