@@ -81,8 +81,8 @@ func ReorderRecord(ctx context.Context, mem memory.Allocator, r arrow.Record, in
 	// dictionary column.
 	var hasDictionary bool
 	for i := 0; i < int(r.NumCols()); i++ {
-		_, hasDictionary = r.Column(i).(*array.Dictionary)
-		if hasDictionary {
+		if r.Column(i).DataType().ID() == arrow.DICTIONARY {
+			hasDictionary = true
 			break
 		}
 	}
