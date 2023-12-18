@@ -13,24 +13,33 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// SortRecord sorts given arrow.Record by columns.
-//
-// direction defines  the sorting  order of the columns
-//
-//	-1 ascending order
-//	 0 no order
-//	 1 descending order
-//
-// By default sorting is in ascending order.
-//
-// nullFirst defines how to handle nulls for sorting columns.WHen
-// nullFirst[sorting_column_index] == true nulls will take precedent for the
-// column.
-// By default nullFirst is false for all sorting columns
-//
-// Both direction and nullsFirst are optional, nil is allowed as value. For non
-// nil values they must be the same length as columns where each index maps to
-// the column index.
+type Direction uint
+
+const (
+	Ascending Direction = iota
+	Descending
+)
+
+func (d Direction) comparison() int {
+	switch d {
+	case Ascending:
+		return -1
+	case Descending:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// SortingColumn describes a sorting column on a arrow.Record
+type SortingColumn struct {
+	Index      int
+	Direction  Direction
+	NullsFirst bool
+}
+
+// SortRecord sorts given arrow.Record by columns.Returns  *array.Int32 of
+// indices to sorted rows or record r.
 //
 // Comparison is made sequentially by each column. When rows are equal in the
 // first column we compare the rows om the second column and so on and so forth
@@ -38,28 +47,10 @@ import (
 func SortRecord(
 	mem memory.Allocator,
 	r arrow.Record,
-	columns []int,
-	direction []int,
-	nullsFirst []bool,
+	columns []SortingColumn,
 ) (*array.Int32, error) {
 	if len(columns) == 0 {
 		return nil, errors.New("pqarrow/arrowutils: at least one column is needed for sorting")
-	}
-	if direction == nil {
-		direction = make([]int, len(columns))
-		for i := range direction {
-			// By default we sort in ascending order.
-			direction[i] = -1
-		}
-	}
-	if nullsFirst == nil {
-		nullsFirst = make([]bool, len(columns))
-	}
-	if len(direction) != len(columns) {
-		return nil, fmt.Errorf("pqarrow/arrowutils: expected %d directions got %d", len(columns), len(direction))
-	}
-	if len(nullsFirst) != len(columns) {
-		return nil, fmt.Errorf("pqarrow/arrowutils: expected %d nullsFirst got %d", len(columns), len(nullsFirst))
 	}
 
 	build := array.NewInt32Builder(mem)
@@ -75,16 +66,20 @@ func SortRecord(
 
 	ms := &multiColSorter{
 		indices:     make([]int32, r.NumRows()),
-		directions:  direction,
-		nullsFirst:  nullsFirst,
+		directions:  make([]int, len(columns)),
+		nullsFirst:  make([]bool, len(columns)),
 		comparisons: make([]comparator, len(columns)),
 	}
 	for i := range ms.indices {
 		ms.indices[i] = int32(i)
 	}
+	for i := range columns {
+		ms.directions[i] = int(columns[i].Direction.comparison())
+		ms.nullsFirst[i] = columns[i].NullsFirst
+	}
 
-	for i, colIdx := range columns {
-		switch e := r.Column(colIdx).(type) {
+	for i, col := range columns {
+		switch e := r.Column(col.Index).(type) {
 		case *array.Int64:
 			ms.comparisons[i] = &orderedSorter[int64]{array: e}
 		case *array.Float64:

@@ -23,35 +23,22 @@ func TestSortRecord(t *testing.T) {
 			},
 			Error: "expected missing column error",
 		},
-		{
-			Name: "direction length must equal column length",
-			Samples: Samples{
-				{},
-			},
-			Columns:   []int{0, 1},
-			Direction: []int{0},
-			Error:     "expected direction length not equal column length",
-		},
-		{
-			Name: "nullFirst length must equal column length",
-			Samples: Samples{
-				{},
-			},
-			Columns:   []int{0, 1},
-			NullFirst: []bool{false},
-			Error:     "expected nullFirst length not equal column length",
-		},
+
 		{
 			Name:    "No Nows",
 			Samples: Samples{},
-			Columns: []int{0},
+			Columns: []SortingColumn{{Index: 0}},
 		},
 		{
 			Name: "One Row",
 			Samples: Samples{
 				{},
 			},
-			Columns: []int{0},
+			Columns: []SortingColumn{
+				{
+					Index: 0,
+				},
+			},
 			Indices: []int32{0},
 		},
 		{
@@ -61,7 +48,9 @@ func TestSortRecord(t *testing.T) {
 				{Int: 2},
 				{Int: 1},
 			},
-			Columns: []int{0},
+			Columns: []SortingColumn{
+				{Index: 0},
+			},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -71,9 +60,11 @@ func TestSortRecord(t *testing.T) {
 				{Int: 2},
 				{Int: 3},
 			},
-			Columns:   []int{0},
-			Direction: []int{1},
-			Indices:   []int32{2, 1, 0},
+
+			Columns: []SortingColumn{
+				{Index: 0, Direction: Descending},
+			},
+			Indices: []int32{2, 1, 0},
 		},
 		{
 			Name: "By Double column ascending",
@@ -82,7 +73,7 @@ func TestSortRecord(t *testing.T) {
 				{Double: 2},
 				{Double: 1},
 			},
-			Columns: []int{1},
+			Columns: []SortingColumn{{Index: 1}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -92,9 +83,8 @@ func TestSortRecord(t *testing.T) {
 				{Double: 2},
 				{Double: 3},
 			},
-			Columns:   []int{1},
-			Direction: []int{1},
-			Indices:   []int32{2, 1, 0},
+			Columns: []SortingColumn{{Index: 1, Direction: Descending}},
+			Indices: []int32{2, 1, 0},
 		},
 		{
 			Name: "By String column ascending",
@@ -103,7 +93,7 @@ func TestSortRecord(t *testing.T) {
 				{String: "2"},
 				{String: "1"},
 			},
-			Columns: []int{2},
+			Columns: []SortingColumn{{Index: 2}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -113,9 +103,8 @@ func TestSortRecord(t *testing.T) {
 				{String: "2"},
 				{String: "3"},
 			},
-			Columns:   []int{2},
-			Direction: []int{1},
-			Indices:   []int32{2, 1, 0},
+			Columns: []SortingColumn{{Index: 2, Direction: Descending}},
+			Indices: []int32{2, 1, 0},
 		},
 		{
 			Name: "By Dict column ascending",
@@ -124,7 +113,7 @@ func TestSortRecord(t *testing.T) {
 				{Dict: "2"},
 				{Dict: "1"},
 			},
-			Columns: []int{3},
+			Columns: []SortingColumn{{Index: 3}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -134,9 +123,8 @@ func TestSortRecord(t *testing.T) {
 				{Dict: "2"},
 				{Dict: "3"},
 			},
-			Columns:   []int{3},
-			Direction: []int{1},
-			Indices:   []int32{2, 1, 0},
+			Columns: []SortingColumn{{Index: 3, Direction: Descending}},
+			Indices: []int32{2, 1, 0},
 		},
 		{
 			Name: "By Null column ascending",
@@ -145,7 +133,7 @@ func TestSortRecord(t *testing.T) {
 				{},
 				{Nullable: null(1)},
 			},
-			Columns: []int{4},
+			Columns: []SortingColumn{{Index: 4}},
 			Indices: []int32{2, 0, 1},
 		},
 		{
@@ -155,9 +143,8 @@ func TestSortRecord(t *testing.T) {
 				{},
 				{Nullable: null(1)},
 			},
-			Columns:   []int{4},
-			NullFirst: []bool{true},
-			Indices:   []int32{0, 1, 2},
+			Columns: []SortingColumn{{Index: 4, NullsFirst: true}},
+			Indices: []int32{0, 1, 2},
 		},
 		{
 			Name: "By Null column descending",
@@ -166,9 +153,8 @@ func TestSortRecord(t *testing.T) {
 				{},
 				{Nullable: null(1)},
 			},
-			Columns:   []int{4},
-			Direction: []int{1},
-			Indices:   []int32{2, 0, 1},
+			Columns: []SortingColumn{{Index: 4, Direction: Descending}},
+			Indices: []int32{2, 0, 1},
 		},
 		{
 			Name: "By Null column descending nullsFirst",
@@ -177,10 +163,8 @@ func TestSortRecord(t *testing.T) {
 				{},
 				{Nullable: null(1)},
 			},
-			Columns:   []int{4},
-			Direction: []int{1},
-			NullFirst: []bool{true},
-			Indices:   []int32{0, 1, 2},
+			Columns: []SortingColumn{{Index: 4, Direction: Descending, NullsFirst: true}},
+			Indices: []int32{0, 1, 2},
 		},
 		{
 			Name: "Multiple columns same direction",
@@ -190,7 +174,10 @@ func TestSortRecord(t *testing.T) {
 				{String: "3", Int: 2},
 				{String: "4", Int: 1},
 			},
-			Columns: []int{0, 2},
+			Columns: []SortingColumn{
+				{Index: 0},
+				{Index: 2},
+			},
 			Indices: []int32{3, 1, 2, 0},
 		},
 		{
@@ -201,9 +188,11 @@ func TestSortRecord(t *testing.T) {
 				{String: "3", Int: 2},
 				{String: "4", Int: 1},
 			},
-			Columns:   []int{0, 2},
-			Direction: []int{-1, 1},
-			Indices:   []int32{3, 2, 1, 0},
+			Columns: []SortingColumn{
+				{Index: 0, Direction: Ascending},
+				{Index: 2, Direction: Descending},
+			},
+			Indices: []int32{3, 2, 1, 0},
 		},
 	}
 
@@ -341,13 +330,11 @@ func (s Samples) Record() arrow.Record {
 }
 
 type SortCase struct {
-	Name      string
-	Samples   Samples
-	Columns   []int
-	Direction []int
-	NullFirst []bool
-	Indices   []int32
-	Error     string
+	Name    string
+	Samples Samples
+	Columns []SortingColumn
+	Indices []int32
+	Error   string
 }
 
 func sortAndCompare(t *testing.T, kase SortCase) {
@@ -355,8 +342,6 @@ func sortAndCompare(t *testing.T, kase SortCase) {
 	got, err := SortRecord(memory.NewGoAllocator(),
 		kase.Samples.Record(),
 		kase.Columns,
-		kase.Direction,
-		kase.NullFirst,
 	)
 	if kase.Error != "" {
 		require.NotNil(t, err, kase.Error)
