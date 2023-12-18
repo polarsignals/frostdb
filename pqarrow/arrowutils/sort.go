@@ -33,7 +33,7 @@ func (d Direction) comparison() int {
 	}
 }
 
-// SortingColumn describes a sorting column on a arrow.Record
+// SortingColumn describes a sorting column on a arrow.Record.
 type SortingColumn struct {
 	Index      int
 	Direction  Direction
