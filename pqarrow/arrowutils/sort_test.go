@@ -344,7 +344,7 @@ func sortAndCompare(t *testing.T, kase SortCase) {
 	b := builder.NewOptInt32Builder(arrow.PrimitiveTypes.Int32)
 	defer b.Release()
 
-	got, err := SortRecord(memory.NewGoAllocator(),
+	got, err := SortRecord(
 		b,
 		kase.Samples.Record(),
 		kase.Columns,

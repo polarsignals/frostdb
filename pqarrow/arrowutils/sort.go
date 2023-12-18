@@ -47,7 +47,6 @@ type SortingColumn struct {
 // first column we compare the rows om the second column and so on and so forth
 // until rows that are not equal are found.
 func SortRecord(
-	mem memory.Allocator,
 	indicesBuilder *builder.OptInt32Builder,
 	r arrow.Record,
 	columns []SortingColumn,
