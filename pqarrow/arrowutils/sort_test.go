@@ -7,6 +7,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/stretchr/testify/require"
 )
 
@@ -339,7 +340,11 @@ type SortCase struct {
 
 func sortAndCompare(t *testing.T, kase SortCase) {
 	t.Helper()
+	b := builder.NewOptInt32Builder(arrow.PrimitiveTypes.Int32)
+	defer b.Release()
+
 	got, err := SortRecord(memory.NewGoAllocator(),
+		b,
 		kase.Samples.Record(),
 		kase.Columns,
 	)
@@ -347,5 +352,7 @@ func sortAndCompare(t *testing.T, kase SortCase) {
 		require.NotNil(t, err, kase.Error)
 		return
 	}
+	defer got.Release()
+
 	require.Equal(t, kase.Indices, got.Int32Values())
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/compute"
 	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -46,38 +47,34 @@ type SortingColumn struct {
 // until rows that are not equal are found.
 func SortRecord(
 	mem memory.Allocator,
+	build *builder.OptInt32Builder,
 	r arrow.Record,
 	columns []SortingColumn,
 ) (*array.Int32, error) {
 	if len(columns) == 0 {
 		return nil, errors.New("pqarrow/arrowutils: at least one column is needed for sorting")
 	}
-
-	build := array.NewInt32Builder(mem)
-	defer build.Release()
-
 	if r.NumRows() == 0 {
-		return build.NewInt32Array(), nil
+		return build.NewArray().(*array.Int32), nil
 	}
 	if r.NumRows() == 1 {
 		build.Append(0)
-		return build.NewInt32Array(), nil
+		return build.NewArray().(*array.Int32), nil
 	}
-
+	build.ReserveToLength(int(r.NumRows()))
+	for i := 0; i < int(r.NumRows()); i++ {
+		build.UnsafeSet(i, int32(i))
+	}
 	ms := &multiColSorter{
-		indices:     make([]int32, r.NumRows()),
+		indices:     build,
 		directions:  make([]int, len(columns)),
 		nullsFirst:  make([]bool, len(columns)),
 		comparisons: make([]comparator, len(columns)),
-	}
-	for i := range ms.indices {
-		ms.indices[i] = int32(i)
 	}
 	for i := range columns {
 		ms.directions[i] = int(columns[i].Direction.comparison())
 		ms.nullsFirst[i] = columns[i].NullsFirst
 	}
-
 	for i, col := range columns {
 		switch e := r.Column(col.Index).(type) {
 		case *array.Int64:
@@ -103,8 +100,7 @@ func SortRecord(
 		}
 	}
 	sort.Sort(ms)
-	build.AppendValues(ms.indices, nil)
-	return build.NewInt32Array(), nil
+	return build.NewArray().(*array.Int32), nil
 }
 
 // ReorderRecord uses indices to create a new record that is sorted according to
@@ -192,7 +188,7 @@ func takeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arr
 }
 
 type multiColSorter struct {
-	indices     []int32
+	indices     *builder.OptInt32Builder
 	comparisons []comparator
 	directions  []int
 	nullsFirst  []bool
@@ -200,11 +196,11 @@ type multiColSorter struct {
 
 var _ sort.Interface = (*multiColSorter)(nil)
 
-func (m *multiColSorter) Len() int { return len(m.indices) }
+func (m *multiColSorter) Len() int { return m.indices.Len() }
 
 func (m *multiColSorter) Less(i, j int) bool {
 	for idx := range m.comparisons {
-		cmp := m.compare(idx, int(m.indices[i]), int(m.indices[j]))
+		cmp := m.compare(idx, int(m.indices.UnsafeValue(i)), int(m.indices.UnsafeValue(j)))
 		if cmp != 0 {
 			// Use direction to reorder the comparison. Direction determines if the list
 			// is in ascending or descending.
@@ -252,7 +248,7 @@ func (m *multiColSorter) compare(idx, i, j int) int {
 }
 
 func (m *multiColSorter) Swap(i, j int) {
-	m.indices[i], m.indices[j] = m.indices[j], m.indices[i]
+	m.indices.UnsafeSwap(i, j)
 }
 
 type comparator interface {

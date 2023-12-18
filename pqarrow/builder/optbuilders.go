@@ -3,6 +3,7 @@ package builder
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sync/atomic"
 	"unsafe"
 
@@ -637,6 +638,22 @@ func (b *OptInt32Builder) Set(i int, v int32) {
 	b.data[i] = v
 }
 
+// UnsafeSwap swaps without bounds check
+func (b *OptInt32Builder) UnsafeSwap(i, j int) {
+	b.data[i], b.data[j] = b.data[j], b.data[i]
+}
+
+// UnsafeSet sets v at index i without bounds check
+func (b *OptInt32Builder) UnsafeSet(i int, v int32) {
+	b.data[i] = v
+	bitutil.SetBit(b.validityBitmap, i)
+}
+
+// UnsafeValue returns value at index i without bounds check
+func (b *OptInt32Builder) UnsafeValue(i int) int32 {
+	return b.data[i]
+}
+
 func (b *OptInt32Builder) Add(i int, v int32) {
 	if i < 0 || i >= len(b.data) {
 		panic("arrow/array: index out of range")
@@ -686,5 +703,11 @@ func (b *OptInt32Builder) ResetToLength(n int) {
 
 	b.length = n
 	b.data = b.data[:n]
+	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
+}
+
+func (b *OptInt32Builder) ReserveToLength(n int) {
+	b.length = n
+	b.data = slices.Grow(b.data, n)[:n]
 	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
 }
