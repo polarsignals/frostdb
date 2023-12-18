@@ -168,7 +168,6 @@ func newMultiColSorter(
 	r arrow.Record,
 	indices *builder.OptInt32Builder,
 	columns []SortingColumn,
-
 ) (*multiColSorter, error) {
 	ms := &multiColSorter{
 		indices:     indices,
