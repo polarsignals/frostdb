@@ -47,7 +47,7 @@ type SortingColumn struct {
 // until rows that are not equal are found.
 func SortRecord(
 	mem memory.Allocator,
-	build *builder.OptInt32Builder,
+	indicesBuilder *builder.OptInt32Builder,
 	r arrow.Record,
 	columns []SortingColumn,
 ) (*array.Int32, error) {
@@ -55,52 +55,22 @@ func SortRecord(
 		return nil, errors.New("pqarrow/arrowutils: at least one column is needed for sorting")
 	}
 	if r.NumRows() == 0 {
-		return build.NewArray().(*array.Int32), nil
+		return indicesBuilder.NewArray().(*array.Int32), nil
 	}
 	if r.NumRows() == 1 {
-		build.Append(0)
-		return build.NewArray().(*array.Int32), nil
+		indicesBuilder.Append(0)
+		return indicesBuilder.NewArray().(*array.Int32), nil
 	}
-	build.ReserveToLength(int(r.NumRows()))
+	indicesBuilder.ReserveToLength(int(r.NumRows()))
 	for i := 0; i < int(r.NumRows()); i++ {
-		build.UnsafeSet(i, int32(i))
+		indicesBuilder.UnsafeSet(i, int32(i))
 	}
-	ms := &multiColSorter{
-		indices:     build,
-		directions:  make([]int, len(columns)),
-		nullsFirst:  make([]bool, len(columns)),
-		comparisons: make([]comparator, len(columns)),
-	}
-	for i := range columns {
-		ms.directions[i] = int(columns[i].Direction.comparison())
-		ms.nullsFirst[i] = columns[i].NullsFirst
-	}
-	for i, col := range columns {
-		switch e := r.Column(col.Index).(type) {
-		case *array.Int64:
-			ms.comparisons[i] = &orderedSorter[int64]{array: e}
-		case *array.Float64:
-			ms.comparisons[i] = &orderedSorter[float64]{array: e}
-		case *array.String:
-			ms.comparisons[i] = &orderedSorter[string]{array: e}
-		case *array.Dictionary:
-			switch elem := e.Dictionary().(type) {
-			case *array.String:
-				ms.comparisons[i] = &orderedSorter[string]{
-					array: &stringDictionary{
-						dict: e,
-						elem: elem,
-					},
-				}
-			default:
-				return nil, fmt.Errorf("unsupported dictionary column type for sorting %T", e)
-			}
-		default:
-			return nil, fmt.Errorf("unsupported column type for sorting %T", e)
-		}
+	ms, err := newMultiColSorter(r, indicesBuilder, columns)
+	if err != nil {
+		return nil, err
 	}
 	sort.Sort(ms)
-	return build.NewArray().(*array.Int32), nil
+	return indicesBuilder.NewArray().(*array.Int32), nil
 }
 
 // ReorderRecord uses indices to create a new record that is sorted according to
@@ -192,6 +162,49 @@ type multiColSorter struct {
 	comparisons []comparator
 	directions  []int
 	nullsFirst  []bool
+}
+
+func newMultiColSorter(
+	r arrow.Record,
+	indices *builder.OptInt32Builder,
+	columns []SortingColumn,
+
+) (*multiColSorter, error) {
+	ms := &multiColSorter{
+		indices:     indices,
+		directions:  make([]int, len(columns)),
+		nullsFirst:  make([]bool, len(columns)),
+		comparisons: make([]comparator, len(columns)),
+	}
+	for i := range columns {
+		ms.directions[i] = int(columns[i].Direction.comparison())
+		ms.nullsFirst[i] = columns[i].NullsFirst
+	}
+	for i, col := range columns {
+		switch e := r.Column(col.Index).(type) {
+		case *array.Int64:
+			ms.comparisons[i] = &orderedSorter[int64]{array: e}
+		case *array.Float64:
+			ms.comparisons[i] = &orderedSorter[float64]{array: e}
+		case *array.String:
+			ms.comparisons[i] = &orderedSorter[string]{array: e}
+		case *array.Dictionary:
+			switch elem := e.Dictionary().(type) {
+			case *array.String:
+				ms.comparisons[i] = &orderedSorter[string]{
+					array: &stringDictionary{
+						dict: e,
+						elem: elem,
+					},
+				}
+			default:
+				return nil, fmt.Errorf("unsupported dictionary column type for sorting %T", e)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported column type for sorting %T", e)
+		}
+	}
+	return ms, nil
 }
 
 var _ sort.Interface = (*multiColSorter)(nil)
