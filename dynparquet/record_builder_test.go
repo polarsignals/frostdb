@@ -132,6 +132,45 @@ func TestBuild(t *testing.T) {
 	})
 }
 
+func TestBuild_pointer_base_types(t *testing.T) {
+	type PointerBase struct {
+		Int     *int64
+		Double  *float64
+		String  *string
+		Dynamic map[string]*string
+	}
+
+	b := NewBuild[PointerBase](memory.NewGoAllocator())
+	defer b.Release()
+
+	err := b.Append(
+		PointerBase{},
+		PointerBase{
+			Int:    point[int64](1),
+			Double: point[float64](1),
+			String: point[string]("1"),
+			Dynamic: map[string]*string{
+				"one": point[string]("1"),
+			},
+		},
+	)
+	require.Nil(t, err)
+	r := b.NewRecord()
+	defer r.Release()
+
+	want := `[{"double":null,"dynamic.one":null,"int":null,"string":null}
+,{"double":1,"dynamic.one":"1","int":1,"string":"1"}
+]`
+
+	got, err := r.MarshalJSON()
+	require.Nil(t, err)
+	require.JSONEq(t, want, string(got))
+}
+
+func point[T any](t T) *T {
+	return &t
+}
+
 func BenchmarkBuild_Append_Then_NewRecord(b *testing.B) {
 	// The way the record builder is used consist of calling Append followed by
 	// NewRecord
