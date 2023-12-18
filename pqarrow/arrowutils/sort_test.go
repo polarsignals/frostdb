@@ -7,8 +7,9 @@ import (
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
-	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"github.com/stretchr/testify/require"
+
+	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
 
 func TestSortRecord(t *testing.T) {

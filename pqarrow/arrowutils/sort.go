@@ -10,8 +10,9 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/compute"
 	"github.com/apache/arrow/go/v14/arrow/memory"
-	"github.com/polarsignals/frostdb/pqarrow/builder"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
 
 type Direction uint
