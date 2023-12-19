@@ -140,12 +140,3 @@ func TestLogic(t *testing.T) {
 		}
 	})
 }
-
-func SchemaMust(def *schemapb.Schema) *dynparquet.Schema {
-	schema, err := dynparquet.SchemaFromDefinition(def)
-	if err != nil {
-		panic(err.Error())
-	}
-
-	return schema
-}
