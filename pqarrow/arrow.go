@@ -359,11 +359,16 @@ func (c *ParquetConverter) NumRows() int {
 
 func (c *ParquetConverter) NewRecord() arrow.Record {
 	if c.builder != nil {
-		defer c.builder.Reset()
 		return c.builder.NewRecord()
 	}
 
 	return nil
+}
+
+func (c *ParquetConverter) Reset() {
+	if c.builder != nil {
+		c.builder.Reset()
+	}
 }
 
 func (c *ParquetConverter) Close() {
