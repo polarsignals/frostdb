@@ -117,3 +117,14 @@ func (b *RecordBuilder) ExpandSchema(schema *arrow.Schema) {
 
 	b.schema = schema
 }
+
+// Reset will call ResetFull on any dictionary builders to prevent memo tables from growing unbounded.
+func (b *RecordBuilder) Reset() {
+	for _, f := range b.fields {
+		if lb, ok := f.(*ListBuilder); ok {
+			if vb, ok := lb.ValueBuilder().(array.DictionaryBuilder); ok {
+				vb.ResetFull()
+			}
+		}
+	}
+}
