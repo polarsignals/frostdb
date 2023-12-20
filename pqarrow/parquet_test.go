@@ -86,3 +86,56 @@ func BenchmarkRecordsToFile(b *testing.B) {
 		}
 	}
 }
+
+func TestRecordDynamicCols(t *testing.T) {
+	build := array.NewRecordBuilder(memory.NewGoAllocator(),
+		arrow.NewSchema([]arrow.Field{
+			{
+				Name: "labels.label1",
+				Type: arrow.BinaryTypes.String,
+			},
+			{
+				Name: "labels.label2",
+				Type: arrow.BinaryTypes.String,
+			},
+			{
+				Name: "labels.label3",
+				Type: arrow.BinaryTypes.String,
+			},
+		}, nil),
+	)
+	defer build.Release()
+	r := build.NewRecord()
+
+	res := RecordDynamicCols(r)
+	require.Equal(t, map[string][]string{
+		"labels": {"label1", "label2", "label3"},
+	}, res)
+}
+
+func BenchmarkRecordDynamicCols(b *testing.B) {
+	build := array.NewRecordBuilder(memory.NewGoAllocator(),
+		arrow.NewSchema([]arrow.Field{
+			{
+				Name: "labels.label1",
+				Type: arrow.BinaryTypes.String,
+			},
+			{
+				Name: "labels.label2",
+				Type: arrow.BinaryTypes.String,
+			},
+			{
+				Name: "labels.label3",
+				Type: arrow.BinaryTypes.String,
+			},
+		}, nil),
+	)
+	defer build.Release()
+	r := build.NewRecord()
+	defer r.Release()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = RecordDynamicCols(r)
+	}
+}

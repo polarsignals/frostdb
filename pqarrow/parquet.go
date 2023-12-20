@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -11,7 +12,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/scalar"
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/polarsignals/frostdb/bufutils"
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
@@ -155,17 +155,23 @@ func recordToRows(w dynparquet.ParquetWriter, dcv dynamicColumnVerifier, record 
 	return nil
 }
 
-func RecordDynamicCols(record arrow.Record) map[string][]string {
-	dyncols := map[string][]string{}
+func RecordDynamicCols(record arrow.Record) (columns map[string][]string) {
+	dyncols := make(map[string]struct{})
 	for i := 0; i < record.Schema().NumFields(); i++ {
 		af := record.Schema().Field(i)
-		parts := strings.SplitN(af.Name, ".", 2)
-		if len(parts) == 2 { // dynamic column
-			dyncols[parts[0]] = append(dyncols[parts[0]], parts[1])
+		if strings.Contains(af.Name, ".") {
+			dyncols[af.Name] = struct{}{}
 		}
 	}
-
-	return bufutils.Dedupe(dyncols)
+	columns = make(map[string][]string)
+	for s := range dyncols {
+		name, part, _ := strings.Cut(s, ".")
+		columns[name] = append(columns[name], part)
+	}
+	for k := range columns {
+		sort.Strings(columns[k])
+	}
+	return
 }
 
 func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, record arrow.Record, dyncols map[string][]string, index int) (*dynparquet.DynamicRow, error) {
