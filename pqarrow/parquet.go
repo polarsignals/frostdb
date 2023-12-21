@@ -1,6 +1,7 @@
 package pqarrow
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -178,6 +179,27 @@ func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, 
 	}
 
 	return dynparquet.NewDynamicRow(row, pqSchema, dyncols, pqSchema.Fields()), nil
+}
+
+func SerializeRecord(r arrow.Record, schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error) {
+	b := &bytes.Buffer{}
+	w, err := schema.GetWriter(b, RecordDynamicCols(r), false)
+	if err != nil {
+		return nil, err
+	}
+	defer schema.PutWriter(w)
+	if err := RecordToFile(schema, w.ParquetWriter, r); err != nil {
+		return nil, err
+	}
+	f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
+	if err != nil {
+		return nil, err
+	}
+	buf, err := dynparquet.NewSerializedBuffer(f)
+	if err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 func RecordToFile(schema *dynparquet.Schema, w dynparquet.ParquetWriter, r arrow.Record) error {
