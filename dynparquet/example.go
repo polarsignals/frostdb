@@ -78,6 +78,10 @@ func (s Samples) ToRecord() (arrow.Record, error) {
 			)
 		}
 	}
+	// Sort the labels fields since they're a map
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].Name < fields[j].Name
+	})
 	fields = append(fields, arrow.Field{
 		Name: "stacktrace",
 		Type: &arrow.DictionaryType{
