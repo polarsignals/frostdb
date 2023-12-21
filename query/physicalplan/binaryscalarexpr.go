@@ -148,6 +148,23 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 		default:
 			panic("something terrible has happened, this should have errored previously during validation")
 		}
+	case arrow.PrimitiveTypes.Int32:
+		switch operator {
+		case logicalplan.OpEq:
+			return Int32ArrayScalarEqual(left.(*array.Int32), right.(*scalar.Int32))
+		case logicalplan.OpNotEq:
+			return Int32ArrayScalarNotEqual(left.(*array.Int32), right.(*scalar.Int32))
+		case logicalplan.OpLt:
+			return Int32ArrayScalarLessThan(left.(*array.Int32), right.(*scalar.Int32))
+		case logicalplan.OpLtEq:
+			return Int32ArrayScalarLessThanOrEqual(left.(*array.Int32), right.(*scalar.Int32))
+		case logicalplan.OpGt:
+			return Int32ArrayScalarGreaterThan(left.(*array.Int32), right.(*scalar.Int32))
+		case logicalplan.OpGtEq:
+			return Int32ArrayScalarGreaterThanOrEqual(left.(*array.Int32), right.(*scalar.Int32))
+		default:
+			panic("something terrible has happened, this should have errored previously during validation")
+		}
 	}
 
 	switch arr := left.(type) {
@@ -451,6 +468,97 @@ func BooleanArrayScalarNotEqual(left *array.Boolean, right *scalar.Boolean) (*Bi
 			continue
 		}
 		if left.Value(i) != right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func Int32ArrayScalarEqual(left *array.Int32, right *scalar.Int32) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if left.Value(i) == right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func Int32ArrayScalarNotEqual(left *array.Int32, right *scalar.Int32) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			res.Add(uint32(i))
+			continue
+		}
+		if left.Value(i) != right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func Int32ArrayScalarLessThan(left *array.Int32, right *scalar.Int32) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if left.Value(i) < right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func Int32ArrayScalarLessThanOrEqual(left *array.Int32, right *scalar.Int32) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if left.Value(i) <= right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func Int32ArrayScalarGreaterThan(left *array.Int32, right *scalar.Int32) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if left.Value(i) > right.Value {
+			res.Add(uint32(i))
+		}
+	}
+
+	return res, nil
+}
+
+func Int32ArrayScalarGreaterThanOrEqual(left *array.Int32, right *scalar.Int32) (*Bitmap, error) {
+	res := NewBitmap()
+
+	for i := 0; i < left.Len(); i++ {
+		if left.IsNull(i) {
+			continue
+		}
+		if left.Value(i) >= right.Value {
 			res.Add(uint32(i))
 		}
 	}

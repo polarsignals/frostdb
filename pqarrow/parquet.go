@@ -21,6 +21,8 @@ func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 		return parquet.ValueOf(string(s.Data())), nil
 	case *scalar.Int64:
 		return parquet.ValueOf(s.Value), nil
+	case *scalar.Int32:
+		return parquet.ValueOf(s.Value), nil
 	case *scalar.FixedSizeBinary:
 		width := s.Type.(*arrow.FixedSizeBinaryType).ByteWidth
 		v := [16]byte{}
