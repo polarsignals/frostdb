@@ -26,25 +26,33 @@ func serializeDynamicColumns(dynamicColumns map[string][]string) string {
 	return str
 }
 
-func deserializeDynamicColumns(dynColString string) (map[string][]string, error) {
+func deserializeDynamicColumns(columns string) (map[string][]string, error) {
 	dynCols := map[string][]string{}
 
 	// handle case where the schema has no dynamic columnns
-	if len(dynColString) == 0 {
+	if len(columns) == 0 {
 		return dynCols, nil
 	}
-
-	for _, dynString := range strings.Split(dynColString, ";") {
-		split := strings.Split(dynString, ":")
-		if len(split) != 2 {
+	var column string
+	for {
+		if columns == "" {
+			return dynCols, nil
+		}
+		column, columns, _ = strings.Cut(columns, ";")
+		name, labels, ok := strings.Cut(column, ":")
+		if !ok {
 			return nil, ErrMalformedDynamicColumns
 		}
-		labelValues := strings.Split(split[1], ",")
-		if len(labelValues) == 1 && labelValues[0] == "" {
-			labelValues = []string{}
-		}
-		dynCols[split[0]] = labelValues
-	}
+		values := make([]string, 0, strings.Count(labels, ","))
 
-	return dynCols, nil
+		var label string
+		for {
+			if labels == "" {
+				break
+			}
+			label, labels, _ = strings.Cut(labels, ",")
+			values = append(values, label)
+		}
+		dynCols[name] = values
+	}
 }
