@@ -59,3 +59,21 @@ func BenchmarkDeserialization(b *testing.B) {
 		_, _ = deserializeDynamicColumns(input)
 	}
 }
+
+func BenchmarkSerialize(b *testing.B) {
+	input := map[string][]string{
+		"labels": {
+			"container",
+			"namespace",
+			"node",
+			"pod",
+		},
+		"pprof_labels": {
+			"profile_id",
+		},
+	}
+
+	for i := 0; i < b.N; i++ {
+		_ = serializeDynamicColumns(input)
+	}
+}

@@ -10,20 +10,32 @@ var ErrMalformedDynamicColumns = errors.New("malformed dynamic columns string")
 
 func serializeDynamicColumns(dynamicColumns map[string][]string) string {
 	names := make([]string, 0, len(dynamicColumns))
-	for name := range dynamicColumns {
+	var size int
+	for name, cols := range dynamicColumns {
 		names = append(names, name)
+		size += len(name) +
+			2 // separators
+		for i := range cols {
+			size += len(cols[i]) + 1
+		}
 	}
 	sort.Strings(names)
-
-	str := ""
+	var str strings.Builder
+	str.Grow(size)
 	for i, name := range names {
 		if i != 0 {
-			str += ";"
+			str.WriteByte(';')
 		}
-		str += name + ":" + strings.Join(dynamicColumns[name], ",")
+		str.WriteString(name)
+		str.WriteByte(':')
+		for j := range dynamicColumns[name] {
+			if j != 0 {
+				str.WriteByte(',')
+			}
+			str.WriteString(dynamicColumns[name][j])
+		}
 	}
-
-	return str
+	return str.String()
 }
 
 func deserializeDynamicColumns(columns string) (map[string][]string, error) {
