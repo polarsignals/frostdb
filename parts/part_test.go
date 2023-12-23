@@ -1,13 +1,14 @@
 package parts
 
 import (
-	"bytes"
 	"testing"
 
+	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	"github.com/polarsignals/frostdb/pqarrow"
 )
 
 func TestFindMaximumNonOverlappingSet(t *testing.T) {
@@ -29,7 +30,7 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 		end   int64
 	}
 	type dataModel struct {
-		Ints int64
+		Ints int64 `frostdb:",asc,plain"`
 	}
 	for _, tc := range []struct {
 		name                   string
@@ -83,14 +84,18 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parts := make([]Part, len(tc.ranges))
+			b := dynparquet.NewBuild[dataModel](memory.NewGoAllocator())
+			schema, err := dynparquet.SchemaFromDefinition(b.Schema("test_schema"))
+			require.NoError(t, err)
+			defer b.Release()
 			for i := range parts {
 				start := dataModel{Ints: tc.ranges[i].start}
 				end := dataModel{Ints: tc.ranges[i].end}
-				buf, err := dynparquet.ValuesToBuffer(testSchema, start, end)
+				require.Nil(t, b.Append(start, end))
+				r := b.NewRecord()
+				serBuf, err := pqarrow.SerializeRecord(r, schema)
 				require.NoError(t, err)
-				var b bytes.Buffer
-				require.NoError(t, testSchema.SerializeBuffer(&b, buf))
-				serBuf, err := dynparquet.ReaderFromBytes(b.Bytes())
+				r.Release()
 				require.NoError(t, err)
 				parts[i] = NewParquetPart(0, serBuf)
 			}

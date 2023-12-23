@@ -1,10 +1,7 @@
 package parts
 
 import (
-	"bytes"
-
 	"github.com/apache/arrow/go/v14/arrow"
-	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow"
@@ -48,29 +45,7 @@ func (p *arrowPart) SerializeBuffer(schema *dynparquet.Schema, w dynparquet.Parq
 }
 
 func (p *arrowPart) AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error) {
-	// If this is a Arrow record part, convert the record into a serialized buffer
-	b := &bytes.Buffer{}
-
-	w, err := schema.GetWriter(b, pqarrow.RecordDynamicCols(p.record), false)
-	if err != nil {
-		return nil, err
-	}
-	defer schema.PutWriter(w)
-	if err := p.SerializeBuffer(schema, w.ParquetWriter); err != nil {
-		return nil, err
-	}
-
-	f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
-	if err != nil {
-		return nil, err
-	}
-
-	buf, err := dynparquet.NewSerializedBuffer(f)
-	if err != nil {
-		return nil, err
-	}
-
-	return buf, nil
+	return pqarrow.SerializeRecord(p.record, schema)
 }
 
 func (p *arrowPart) NumRows() int64 {

@@ -365,6 +365,12 @@ func (c *ParquetConverter) NewRecord() arrow.Record {
 	return nil
 }
 
+func (c *ParquetConverter) Reset() {
+	if c.builder != nil {
+		c.builder.Reset()
+	}
+}
+
 func (c *ParquetConverter) Close() {
 	if c.builder != nil {
 		c.builder.Release()

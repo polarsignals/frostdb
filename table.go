@@ -747,6 +747,7 @@ func (t *Table) Iterator(
 							err := func() error {
 								r := converter.NewRecord()
 								defer r.Release()
+								converter.Reset() // Reset the converter to drop any dictionaries that were built.
 								return callback(ctx, r)
 							}()
 							if err != nil {
