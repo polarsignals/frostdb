@@ -145,9 +145,7 @@ func (a *AndExpr) Eval(p Particulate) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
-	// This stores the result in place to avoid allocations.
-	return left && right, nil
+	return right, nil
 }
 
 type OrExpr struct {
