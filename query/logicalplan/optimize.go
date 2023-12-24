@@ -1,8 +1,6 @@
 package logicalplan
 
-import (
-	"golang.org/x/exp/slices"
-)
+import "slices"
 
 var hashedMatch = "hashed"
 
