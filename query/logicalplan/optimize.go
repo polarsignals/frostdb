@@ -84,7 +84,7 @@ func (p *AverageAggregationPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 	return plan
 }
 
-// The PhysicalProjectionPushDown optimizer tries to push down the actual
+// PhysicalProjectionPushDown optimizer tries to push down the actual
 // physical columns used by the query to the table scan, so the table provider
 // can decide to only read the columns that are actually going to be used by
 // the query.
@@ -132,7 +132,7 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsedExpr
 	}
 }
 
-// The ProjectionPushDown finds the projection expressions that can be pushed
+// ProjectionPushDown finds the projection expressions that can be pushed
 // down. If there is no projection expression, but there is an implicit
 // projection such as a `Distinct` query plan, then it will insert a new
 // projection plan and push it down. It functions in three steps, first it will
@@ -280,7 +280,7 @@ func insertProjection(cur *LogicalPlan, projection *Projection) *LogicalPlan {
 	return cur
 }
 
-// The FilterPushDown optimizer tries to push down the filters of a query down
+// FilterPushDown optimizer tries to push down the filters of a query down
 // to the actual physical table scan. This allows the table provider to make
 // smarter decisions about which pieces of data to load in the first place or
 // which are definitely not useful to the query at all. It does not guarantee
@@ -312,7 +312,7 @@ func (p *FilterPushDown) optimize(plan *LogicalPlan, exprs []Expr) {
 	}
 }
 
-// The DistinctPushDown optimizer tries to push down the distinct operator to
+// DistinctPushDown optimizer tries to push down the distinct operator to
 // the table provider. There are certain cases of distinct queries where the
 // storage engine can make smarter decisions than just returning all the data,
 // such as with dictionary encoded columns that are not filtered they can
