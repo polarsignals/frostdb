@@ -17,8 +17,7 @@ import (
 	"github.com/polarsignals/frostdb/recovery"
 )
 
-// TODO: Make this smarter.
-var concurrencyHardcoded = runtime.GOMAXPROCS(0)
+var defaultConcurrency = runtime.GOMAXPROCS(0)
 
 type PhysicalPlan interface {
 	Callback(ctx context.Context, r arrow.Record) error
@@ -258,6 +257,7 @@ func (p *noopOperator) Draw() *Diagram {
 }
 
 type execOptions struct {
+	concurrency         int
 	orderedAggregations bool
 	overrideInput       []PhysicalPlan
 	skipSources         bool
@@ -274,6 +274,12 @@ func WithInMemoryOnly() Option {
 func WithOrderedAggregations() Option {
 	return func(o *execOptions) {
 		o.orderedAggregations = true
+	}
+}
+
+func WithConcurrency(concurrency int) Option {
+	return func(o *execOptions) {
+		o.concurrency = concurrency
 	}
 }
 
@@ -296,7 +302,9 @@ func Build(
 	_, span := tracer.Start(ctx, "PhysicalPlan/Build")
 	defer span.End()
 
-	execOpts := execOptions{}
+	execOpts := execOptions{
+		concurrency: defaultConcurrency,
+	}
 	for _, o := range options {
 		o(&execOpts)
 	}
@@ -320,7 +328,7 @@ func Build(
 			// Create noop operators since we don't know what to push the scan
 			// results to. In a following node visit, these noops will have
 			// SetNext called on them and push to the correct operator.
-			plans := make([]PhysicalPlan, concurrencyHardcoded)
+			plans := make([]PhysicalPlan, execOpts.concurrency)
 			for i := range plans {
 				plans[i] = &noopOperator{}
 			}
@@ -335,7 +343,7 @@ func Build(
 			// Create noop operators since we don't know what to push the scan
 			// results to. In a following node visit, these noops will have
 			// SetNext called on them and push to the correct operator.
-			plans := make([]PhysicalPlan, concurrencyHardcoded)
+			plans := make([]PhysicalPlan, execOpts.concurrency)
 			for i := range plans {
 				plans[i] = &noopOperator{}
 			}
