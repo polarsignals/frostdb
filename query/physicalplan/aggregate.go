@@ -343,31 +343,21 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 
 		if _, ok := aggregate.dynamicAggregationsConverted[field.Name]; !ok {
 			for _, col := range aggregate.dynamicAggregations {
-				if a.finalStage {
-					if col.expr.MatchColumn(field.Name) {
-						// expand the aggregate.aggregations with a final concrete column aggregation.
-						columnToAggregate = append(columnToAggregate, nil)
-						aggregate.aggregations = append(aggregate.aggregations, Aggregation{
-							expr:       logicalplan.Col(field.Name),
-							dynamic:    true,
-							resultName: resultNameWithConcreteColumn(col.function, field.Name),
-							function:   col.function,
-						})
-						aggregate.dynamicAggregationsConverted[field.Name] = struct{}{}
+				if col.expr.MatchColumn(field.Name) {
+					resultName := field.Name // Don't rename the column yet, we'll do that in the final stage. Dynamic aggregations can't match agains't the pre-computed name.
+					if a.finalStage {
+						resultName = resultNameWithConcreteColumn(col.function, field.Name)
 					}
-				} else {
-					// If we're aggregating the raw data we need to find the columns by their actual names for now.
-					if col.expr.MatchColumn(field.Name) {
-						// expand the aggregate.aggregations with a concrete column aggregation.
-						columnToAggregate = append(columnToAggregate, nil)
-						aggregate.aggregations = append(aggregate.aggregations, Aggregation{
-							expr:       logicalplan.Col(field.Name),
-							dynamic:    true,
-							resultName: field.Name, // Don't rename the column yet, we'll do that in the final stage. Dynamic aggregations can't match agains't the pre-computed name.
-							function:   col.function,
-						})
-						aggregate.dynamicAggregationsConverted[field.Name] = struct{}{}
-					}
+
+					// expand the aggregate.aggregations with a final concrete column aggregation.
+					columnToAggregate = append(columnToAggregate, nil)
+					aggregate.aggregations = append(aggregate.aggregations, Aggregation{
+						expr:       logicalplan.Col(field.Name),
+						dynamic:    true,
+						resultName: resultName,
+						function:   col.function,
+					})
+					aggregate.dynamicAggregationsConverted[field.Name] = struct{}{}
 				}
 			}
 		}
