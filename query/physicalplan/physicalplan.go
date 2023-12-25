@@ -409,10 +409,14 @@ func Build(
 			oInfo.applyFilter(plan.Filter.Expr)
 			oInfo.nodeMaintainsOrdering()
 		case plan.Aggregation != nil:
-			ordered, err := shouldPlanOrderedAggregate(execOpts, oInfo, plan.Aggregation)
-			if err != nil {
-				// TODO(asubiotto): Log the error.
-				ordered = false
+			ordered := false
+			if len(prev) > 1 { // Don't plan ordered aggregations if there's only one input.
+				var err error
+				ordered, err = shouldPlanOrderedAggregate(execOpts, oInfo, plan.Aggregation)
+				if err != nil {
+					// TODO(asubiotto): Log the error.
+					ordered = false
+				}
 			}
 			var sync PhysicalPlan
 			if len(prev) > 1 {
@@ -425,7 +429,7 @@ func Build(
 			}
 			seed := maphash.MakeSeed()
 			for i := 0; i < len(prev); i++ {
-				a, err := Aggregate(pool, tracer, plan.Aggregation, sync == nil, ordered, seed)
+				a, err := Aggregate(pool, tracer, plan.Aggregation, sync == nil, len(prev) == 1, ordered, seed)
 				if err != nil {
 					visitErr = err
 					return false
@@ -439,7 +443,7 @@ func Build(
 			if sync != nil {
 				// Plan an aggregate operator to run an aggregation on all the
 				// aggregations.
-				a, err := Aggregate(pool, tracer, plan.Aggregation, true, ordered, seed)
+				a, err := Aggregate(pool, tracer, plan.Aggregation, true, len(prev) == 1, ordered, seed)
 				if err != nil {
 					visitErr = err
 					return false

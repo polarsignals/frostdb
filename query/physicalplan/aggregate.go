@@ -25,6 +25,7 @@ func Aggregate(
 	tracer trace.Tracer,
 	agg *logicalplan.Aggregation,
 	final bool,
+	only bool,
 	ordered bool,
 	seed maphash.Seed,
 ) (PhysicalPlan, error) {
@@ -92,6 +93,7 @@ func Aggregate(
 		agg.GroupExprs,
 		seed,
 		final,
+		only,
 	), nil
 }
 
@@ -135,6 +137,7 @@ type HashAggregate struct {
 	// Indicate is this is the last aggregation or
 	// if this is a aggregation with another aggregation to follow after synchronizing.
 	finalStage bool
+	onlyStage  bool
 
 	// Buffers that are reused across callback calls.
 	groupByFields      []arrow.Field
@@ -177,6 +180,7 @@ func NewHashAggregate(
 	groupByColumnMatchers []logicalplan.Expr,
 	seed maphash.Seed,
 	finalStage bool,
+	onlyStage bool,
 ) *HashAggregate {
 	dynamic := []Aggregation{}
 	static := []Aggregation{}
@@ -195,6 +199,7 @@ func NewHashAggregate(
 		groupByColumnMatchers: groupByColumnMatchers,
 		hashSeed:              seed,
 		finalStage:            finalStage,
+		onlyStage:             onlyStage,
 
 		groupByFields:      make([]arrow.Field, 0, 10),
 		groupByFieldHashes: make([]hashCombiner, 0, 10),
@@ -320,7 +325,7 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 				groupByFields = append(groupByFields, field)
 				groupByArrays = append(groupByArrays, r.Column(i))
 
-				if a.finalStage { // in the final stage expect the hashes to already exist, so only need to combine them as normal hashes
+				if a.finalStage && !a.onlyStage { // in the final stage expect the hashes to already exist, so only need to combine them as normal hashes
 					groupByFieldHashes = append(groupByFieldHashes,
 						&uint64HashCombine{value: scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name))},
 					)
@@ -365,7 +370,7 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 		for j, col := range aggregate.aggregations {
 			// If we're aggregating at the final stage we have previously
 			// renamed the pre-aggregated columns to their result names.
-			if a.finalStage {
+			if a.finalStage && !a.onlyStage {
 				if col.resultName == field.Name || (col.dynamic && col.expr.MatchColumn(field.Name)) {
 					columnToAggregate[j] = r.Column(i)
 					if col.dynamic {
@@ -619,7 +624,7 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 			arr = append(arr, a.NewArray())
 		}
 
-		aggregateArray, err := runAggregation(a.finalStage, aggregation.function, a.pool, arr)
+		aggregateArray, err := runAggregation(a.finalStage && !a.onlyStage, aggregation.function, a.pool, arr)
 		for _, a := range arr {
 			a.Release()
 		}

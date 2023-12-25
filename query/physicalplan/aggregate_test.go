@@ -47,6 +47,7 @@ func Test_Aggregate_ArrayOverflow(t *testing.T) {
 		},
 		maphash.MakeSeed(),
 		false,
+		false,
 	)
 
 	totalRows := int64(0)
