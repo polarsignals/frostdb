@@ -277,6 +277,8 @@ func WithOrderedAggregations() Option {
 	}
 }
 
+// WithConcurrency can be used to set the concurrency of the physical plan which decides how many callbacks from the scan layer can be processed concurrently.
+// The default concurrency is the number of logical CPUs.
 func WithConcurrency(concurrency int) Option {
 	return func(o *execOptions) {
 		o.concurrency = concurrency
