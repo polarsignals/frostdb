@@ -83,77 +83,154 @@ type dynamicColumnVerifier func(string) bool
 // rows by specifying a range of [recordStart, recordEnd).
 func recordToRows(w dynparquet.ParquetWriter, dcv dynamicColumnVerifier, record arrow.Record, recordStart, recordEnd int, finalFields []parquet.Field) error {
 	numRows := recordEnd - recordStart
-	row := make([]parquet.Value, 0, len(finalFields))
+	schema := record.Schema()
+	row := make(parquet.Row, len(finalFields))
+	writers := make([]arrowToParquet, len(finalFields))
+	for i := range writers {
+		f := finalFields[i]
+		name := f.Name()
+		def := 0
+		if dcv(name) {
+			def = 1
+		}
+		idx := schema.FieldIndices(name)
+		if len(idx) == 0 {
+			writers[i] = writeNull(i)
+			continue
+		}
+		column := record.Column(idx[0])
+		switch a := column.(type) {
+		case *array.List:
+			ls, err := writeList(def, i, recordStart, a)
+			if err != nil {
+				return err
+			}
+			writers[i] = ls
+		case *array.Dictionary:
+			writers[i] = writeDictionary(def, i, recordStart, a)
+		case *array.Int32:
+			writers[i] = writeInt32(def, i, recordStart, a)
+		case *array.Int64:
+			writers[i] = writeInt64(def, i, recordStart, a)
+		default:
+			writers[i] = writeGeneral(def, i, recordStart, a)
+		}
+	}
+	rows := make([]parquet.Row, 1)
 	for i := 0; i < numRows; i++ {
 		row = row[:0]
-		for j, f := range finalFields {
-			columnIndexes := record.Schema().FieldIndices(f.Name())
-			if len(columnIndexes) == 0 {
-				// Column not found in record, append null to row.
-				row = append(row, parquet.ValueOf(nil).Level(0, 0, j))
-				continue
-			}
-
-			def := 0
-			if dcv(f.Name()) {
-				def = 1
-			}
-
-			col := record.Column(columnIndexes[0])
-			indexIntoRecord := recordStart + i
-			if col.IsNull(indexIntoRecord) {
-				row = append(
-					row, parquet.ValueOf(nil).Level(0, 0, j),
-				)
-				continue
-			}
-
-			switch arr := col.(type) {
-			case *array.List:
-				dictionaryList, binaryDictionaryList, err := arrowutils.ToConcreteList(arr)
-				if err != nil {
-					return err
-				}
-
-				start, end := arr.ValueOffsets(indexIntoRecord)
-				for k := start; k < end; k++ {
-					v := binaryDictionaryList.Value(dictionaryList.GetValueIndex(int(k)))
-					rep := 0
-					if k != start {
-						rep = 1
-					}
-					row = append(row, parquet.ByteArrayValue(v).Level(rep, def+1, j))
-				}
-			case *array.Dictionary:
-				vidx := arr.GetValueIndex(indexIntoRecord)
-				switch dict := arr.Dictionary().(type) {
-				case *array.Binary:
-					row = append(row, parquet.ByteArrayValue(dict.Value(vidx)).Level(0, def, j))
-				default:
-					row = append(row, parquet.ValueOf(dict.GetOneForMarshal(vidx)).Level(0, def, j))
-				}
-			case *array.Int32:
-				row = append(
-					row, parquet.Int32Value(arr.Value(indexIntoRecord)).Level(0, def, j),
-				)
-			case *array.Int64:
-				row = append(
-					row, parquet.Int64Value(arr.Value(indexIntoRecord)).Level(0, def, j),
-				)
-			default:
-				row = append(
-					row, parquet.ValueOf(col.GetOneForMarshal(indexIntoRecord)).Level(0, def, j),
-				)
-			}
+		for j := range writers {
+			row = writers[j](row, i)
 		}
-
-		if _, err := w.WriteRows([]parquet.Row{row}); err != nil {
+		rows[0] = row
+		_, err := w.WriteRows(rows)
+		if err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
+
+func writeGeneral(def, column, startIdx int, a arrow.Array) arrowToParquet {
+	return func(w parquet.Row, row int) parquet.Row {
+		if a.IsNull(row + startIdx) {
+			return append(w,
+				parquet.Value{}.Level(0, 0, column),
+			)
+		}
+		return append(w,
+			parquet.ValueOf(a.GetOneForMarshal(row+startIdx)).Level(0, def, column),
+		)
+	}
+}
+
+func writeInt64(def, column, startIdx int, a *array.Int64) arrowToParquet {
+	return func(w parquet.Row, row int) parquet.Row {
+		if a.IsNull(row + startIdx) {
+			return append(w,
+				parquet.Value{}.Level(0, 0, column),
+			)
+		}
+		return append(w,
+			parquet.Int64Value(a.Value(row+startIdx)).Level(0, def, column),
+		)
+	}
+}
+
+func writeInt32(def, column, startIdx int, a *array.Int32) arrowToParquet {
+	return func(w parquet.Row, row int) parquet.Row {
+		if a.IsNull(row + startIdx) {
+			return append(w,
+				parquet.Value{}.Level(0, 0, column),
+			)
+		}
+		return append(w,
+			parquet.Int32Value(a.Value(row+startIdx)).Level(0, def, column),
+		)
+	}
+}
+
+func writeDictionary(def, column, startIdx int, a *array.Dictionary) arrowToParquet {
+	value := func(row int) parquet.Value {
+		return parquet.ValueOf(a.GetOneForMarshal(row))
+	}
+	if x, ok := a.Dictionary().(*array.Binary); ok {
+		value = func(row int) parquet.Value {
+			return parquet.ByteArrayValue(
+				x.Value(a.GetValueIndex(row)),
+			)
+		}
+	}
+	return func(w parquet.Row, row int) parquet.Row {
+		if a.IsNull(row + startIdx) {
+			return append(w,
+				parquet.Value{}.Level(0, 0, column),
+			)
+		}
+		return append(w,
+			value(row+startIdx).Level(0, def, column),
+		)
+	}
+}
+
+func writeList(def, column, startIdx int, a *array.List) (arrowToParquet, error) {
+	// We are just replicating current behavior so that this change is not a
+	// breaking change, however the assumption here is wrong.
+	//
+	// We support lists of all base types, and there is no requirement for the list
+	// to be a dictionary
+	//
+	// TODO:(gernest) properly cast to base types + their dictionary counterparts ?
+	dictionaryList, binaryDictionaryList, err := arrowutils.ToConcreteList(a)
+	if err != nil {
+		return nil, err
+	}
+	return func(w parquet.Row, row int) parquet.Row {
+		if a.IsNull(row + startIdx) {
+			return append(w,
+				parquet.Value{}.Level(0, 0, column),
+			)
+		}
+		start, end := a.ValueOffsets(row + startIdx)
+		for k := start; k < end; k++ {
+			v := binaryDictionaryList.Value(dictionaryList.GetValueIndex(int(k)))
+			rep := 0
+			if k != start {
+				rep = 1
+			}
+			w = append(w, parquet.ByteArrayValue(v).Level(rep, def+1, column))
+		}
+		return w
+	}, nil
+}
+
+func writeNull(column int) arrowToParquet {
+	return func(w parquet.Row, row int) parquet.Row {
+		return append(w, parquet.Value{}.Level(0, 0, column))
+	}
+}
+
+type arrowToParquet func(w parquet.Row, row int) parquet.Row
 
 func RecordDynamicCols(record arrow.Record) (columns map[string][]string) {
 	dyncols := make(map[string]struct{})
