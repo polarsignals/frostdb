@@ -60,7 +60,6 @@ func BenchmarkRecordsToFile(b *testing.B) {
 	defer builder.Release()
 
 	const numRows = 1024
-	b.ResetTimer()
 	for i := 0; i < numRows; i++ {
 		builder.Field(0).(*array.Int64Builder).Append(int64(i))
 
@@ -78,6 +77,7 @@ func BenchmarkRecordsToFile(b *testing.B) {
 	}
 
 	record := builder.NewRecord()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := recordToRows(
 			noopWriter{}, func(string) bool { return false }, record, 0, numRows, parquetFields.Fields(),
