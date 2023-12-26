@@ -8,6 +8,7 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	"github.com/polarsignals/frostdb/internal/records"
 	"github.com/polarsignals/frostdb/pqarrow"
 )
 
@@ -84,7 +85,7 @@ func TestFindMaximumNonOverlappingSet(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parts := make([]Part, len(tc.ranges))
-			b := dynparquet.NewBuild[dataModel](memory.NewGoAllocator())
+			b := records.NewBuild[dataModel](memory.NewGoAllocator())
 			schema, err := dynparquet.SchemaFromDefinition(b.Schema("test_schema"))
 			require.NoError(t, err)
 			defer b.Release()
