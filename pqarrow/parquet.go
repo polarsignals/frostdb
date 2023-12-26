@@ -13,7 +13,6 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
@@ -112,6 +111,10 @@ func recordToRows(w dynparquet.ParquetWriter, dcv dynamicColumnVerifier, record 
 			writers[i] = writeInt32(def, i, recordStart, a)
 		case *array.Int64:
 			writers[i] = writeInt64(def, i, recordStart, a)
+		case *array.String:
+			writers[i] = writeString(def, i, recordStart, a)
+		case *array.Binary:
+			writers[i] = writeBinary(def, i, recordStart, a)
 		default:
 			writers[i] = writeGeneral(def, i, recordStart, a)
 		}
@@ -170,6 +173,32 @@ func writeInt32(def, column, startIdx int, a *array.Int32) arrowToParquet {
 	}
 }
 
+func writeBinary(def, column, startIdx int, a *array.Binary) arrowToParquet {
+	return func(w parquet.Row, row int) parquet.Row {
+		if a.IsNull(row + startIdx) {
+			return append(w,
+				parquet.Value{}.Level(0, 0, column),
+			)
+		}
+		return append(w,
+			parquet.ByteArrayValue(a.Value(row+startIdx)).Level(0, def, column),
+		)
+	}
+}
+
+func writeString(def, column, startIdx int, a *array.String) arrowToParquet {
+	return func(w parquet.Row, row int) parquet.Row {
+		if a.IsNull(row + startIdx) {
+			return append(w,
+				parquet.Value{}.Level(0, 0, column),
+			)
+		}
+		return append(w,
+			parquet.ByteArrayValue([]byte(a.Value(row+startIdx))).Level(0, def, column),
+		)
+	}
+}
+
 func writeDictionary(def, column, startIdx int, a *array.Dictionary) arrowToParquet {
 	value := func(row int) parquet.Value {
 		return parquet.ValueOf(a.GetOneForMarshal(row))
@@ -194,16 +223,52 @@ func writeDictionary(def, column, startIdx int, a *array.Dictionary) arrowToParq
 }
 
 func writeList(def, column, startIdx int, a *array.List) (arrowToParquet, error) {
-	// We are just replicating current behavior so that this change is not a
-	// breaking change, however the assumption here is wrong.
-	//
-	// We support lists of all base types, and there is no requirement for the list
-	// to be a dictionary
-	//
-	// TODO:(gernest) properly cast to base types + their dictionary counterparts ?
-	dictionaryList, binaryDictionaryList, err := arrowutils.ToConcreteList(a)
-	if err != nil {
-		return nil, err
+	var lw arrowToParquet
+	switch e := a.ListValues().(type) {
+	case *array.Int32:
+		// WHile this is not base type. To avoid breaking things I have left it here.
+		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+			return parquet.Int32Value(e.Value(idx))
+		})
+	case *array.Int64:
+		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+			return parquet.Int64Value(e.Value(idx))
+		})
+	case *array.Boolean:
+		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+			return parquet.BooleanValue(e.Value(idx))
+		})
+	case *array.Float64:
+		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+			return parquet.DoubleValue(e.Value(idx))
+		})
+	case *array.String:
+		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+			return parquet.ByteArrayValue([]byte(e.Value(idx)))
+		})
+	case *array.Binary:
+		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+			return parquet.ByteArrayValue([]byte(e.Value(idx)))
+		})
+	case *array.Dictionary:
+		switch d := e.Dictionary().(type) {
+		case *array.Binary:
+			lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+				return parquet.ByteArrayValue(
+					d.Value(e.GetValueIndex(idx)),
+				)
+			})
+		case *array.String:
+			lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+				return parquet.ByteArrayValue(
+					[]byte(d.Value(e.GetValueIndex(idx))),
+				)
+			})
+		default:
+			return nil, fmt.Errorf("list dictionary not of expected type: %T", d)
+		}
+	default:
+		return nil, fmt.Errorf("list not of expected type: %T", e)
 	}
 	return func(w parquet.Row, row int) parquet.Row {
 		if a.IsNull(row + startIdx) {
@@ -211,17 +276,22 @@ func writeList(def, column, startIdx int, a *array.List) (arrowToParquet, error)
 				parquet.Value{}.Level(0, 0, column),
 			)
 		}
+		return lw(w, row)
+	}, nil
+}
+
+func writeListOf(def, column, startIdx int, a *array.List, value func(idx int) parquet.Value) arrowToParquet {
+	return func(w parquet.Row, row int) parquet.Row {
 		start, end := a.ValueOffsets(row + startIdx)
 		for k := start; k < end; k++ {
-			v := binaryDictionaryList.Value(dictionaryList.GetValueIndex(int(k)))
 			rep := 0
 			if k != start {
 				rep = 1
 			}
-			w = append(w, parquet.ByteArrayValue(v).Level(rep, def+1, column))
+			w = append(w, value(int(k)).Level(rep, def+1, column))
 		}
 		return w
-	}, nil
+	}
 }
 
 func writeNull(column int) arrowToParquet {
