@@ -21,7 +21,7 @@ func TestMergeRowBatches(t *testing.T) {
 	rowGroups := []DynamicRowGroup{}
 	for _, sample := range samples {
 		s := Samples{sample}
-		rg, err := s.ToBuffer(schema)
+		rg, err := ToBuffer(s, schema)
 		require.NoError(t, err)
 		rowGroups = append(rowGroups, rg)
 	}
@@ -198,7 +198,7 @@ func TestMultipleIterations(t *testing.T) {
 		Value:     3,
 	}}
 
-	dbuf, err := samples.ToBuffer(schema)
+	dbuf, err := ToBuffer(samples, schema)
 	require.NoError(t, err)
 
 	buf := dbuf.buffer
@@ -271,7 +271,7 @@ func Test_SchemaFromParquetFile(t *testing.T) {
 		Value:     3,
 	}}
 
-	dbuf, err := samples.ToBuffer(schema)
+	dbuf, err := ToBuffer(samples, schema)
 	require.NoError(t, err)
 
 	b := bytes.NewBuffer(nil)

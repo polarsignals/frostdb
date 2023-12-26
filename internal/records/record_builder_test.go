@@ -1,4 +1,4 @@
-package dynparquet
+package records
 
 import (
 	"testing"
@@ -7,29 +7,31 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/polarsignals/frostdb/samples"
 )
 
 func TestBuild(t *testing.T) {
 	t.Run("NewBuild", func(t *testing.T) {
-		b := NewBuild[Sample](memory.DefaultAllocator)
+		b := NewBuild[samples.Sample](memory.DefaultAllocator)
 		defer b.Release()
 
-		ptr := NewBuild[*Sample](memory.DefaultAllocator)
+		ptr := NewBuild[*samples.Sample](memory.DefaultAllocator)
 		defer ptr.Release()
 	})
 
 	t.Run("Schema", func(t *testing.T) {
-		b := NewBuild[Sample](memory.DefaultAllocator)
+		b := NewBuild[samples.Sample](memory.DefaultAllocator)
 		defer b.Release()
 		got := b.Schema("test")
-		want := SampleDefinition()
+		want := samples.SampleDefinition()
 		require.True(t, proto.Equal(want, got))
 	})
 
 	t.Run("NewRecord", func(t *testing.T) {
-		b := NewBuild[Sample](memory.DefaultAllocator)
+		b := NewBuild[samples.Sample](memory.DefaultAllocator)
 		defer b.Release()
-		samples := NewTestSamples()
+		samples := samples.NewTestSamples()
 		err := b.Append(samples...)
 		require.Nil(t, err)
 		r := b.NewRecord()
@@ -176,9 +178,9 @@ func BenchmarkBuild_Append_Then_NewRecord(b *testing.B) {
 	// NewRecord
 	//
 	// They are separate methods because we can't ignore benefits of buffering.
-	build := NewBuild[Sample](memory.DefaultAllocator)
+	build := NewBuild[samples.Sample](memory.DefaultAllocator)
 	defer build.Release()
-	samples := NewTestSamples()
+	samples := samples.NewTestSamples()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = build.Append(samples...)

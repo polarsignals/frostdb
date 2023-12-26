@@ -32,7 +32,7 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 		Value:     1,
 	}}
 
-	buf0, err := samples.ToBuffer(dynSchema)
+	buf0, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -49,7 +49,7 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 		Value:     2,
 	}}
 
-	buf1, err := samples.ToBuffer(dynSchema)
+	buf1, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -66,7 +66,7 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf2, err := samples.ToBuffer(dynSchema)
+	buf2, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -82,7 +82,7 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 		Value:     2,
 	}}
 
-	buf3, err := samples.ToBuffer(dynSchema)
+	buf3, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -99,7 +99,7 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf4, err := samples.ToBuffer(dynSchema)
+	buf4, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -184,7 +184,7 @@ func TestMergeToArrow(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf1, err := samples.ToBuffer(dynSchema)
+	buf1, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -200,7 +200,7 @@ func TestMergeToArrow(t *testing.T) {
 		Value:     2,
 	}}
 
-	buf2, err := samples.ToBuffer(dynSchema)
+	buf2, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	samples = dynparquet.Samples{{
@@ -217,7 +217,7 @@ func TestMergeToArrow(t *testing.T) {
 		Value:     3,
 	}}
 
-	buf3, err := samples.ToBuffer(dynSchema)
+	buf3, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	merge, err := dynSchema.MergeDynamicRowGroups([]dynparquet.DynamicRowGroup{buf1, buf2, buf3})
@@ -317,7 +317,7 @@ func BenchmarkParquetToArrow(b *testing.B) {
 		})
 	}
 
-	buf, err := samples.ToBuffer(dynSchema)
+	buf, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(b, err)
 
 	ctx := context.Background()
@@ -434,7 +434,7 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 		Value:     2,
 	}}
 
-	buf, err := samples.ToBuffer(dynSchema)
+	buf, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -530,7 +530,7 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 		Value:     0,
 	}}
 
-	buf, err := samples.ToBuffer(dynSchema)
+	buf, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -830,7 +830,7 @@ func Test_ParquetToArrow(t *testing.T) {
 		})
 	}
 
-	buf, err := samples.ToBuffer(dynSchema)
+	buf, err := dynparquet.ToBuffer(samples, dynSchema)
 	require.NoError(t, err)
 
 	ctx := context.Background()

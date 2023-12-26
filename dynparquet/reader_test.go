@@ -11,7 +11,7 @@ import (
 func TestReader(t *testing.T) {
 	schema := NewSampleSchema()
 	samples := NewTestSamples()
-	buf, err := samples.ToBuffer(schema)
+	buf, err := ToBuffer(samples, schema)
 	require.NoError(t, err)
 
 	b := bytes.NewBuffer(nil)
@@ -33,7 +33,7 @@ func TestReader(t *testing.T) {
 func TestSerializedReader(t *testing.T) {
 	schema := NewSampleSchema()
 	samples := NewTestSamples()
-	buf, err := samples.ToBuffer(schema)
+	buf, err := ToBuffer(samples, schema)
 	require.NoError(t, err)
 
 	b := bytes.NewBuffer(nil)
