@@ -993,6 +993,17 @@ func copyArrToBuilder(builder builder.ColumnBuilder, arr arrow.Array, toCopy int
 				b.Append(arr.Value(i))
 			}
 		}
+	case *array.String:
+		b := builder.(*array.BinaryBuilder)
+		for i := 0; i < toCopy; i++ {
+			if arr.IsNull(i) {
+				// We cannot use unsafe appends with the binary builder
+				// because offsets won't be appended.
+				b.AppendNull()
+			} else {
+				b.AppendString(arr.Value(i))
+			}
+		}
 	case *array.Int64:
 		b := builder.(*array.Int64Builder)
 		for i := 0; i < toCopy; i++ {
@@ -1029,6 +1040,16 @@ func copyArrToBuilder(builder builder.ColumnBuilder, arr arrow.Array, toCopy int
 					b.AppendNull()
 				} else {
 					if err := b.Append(dict.Value(arr.GetValueIndex(i))); err != nil {
+						panic("failed to append to dictionary")
+					}
+				}
+			}
+		case *array.String:
+			for i := 0; i < toCopy; i++ {
+				if arr.IsNull(i) {
+					b.AppendNull()
+				} else {
+					if err := b.AppendString(dict.Value(arr.GetValueIndex(i))); err != nil {
 						panic("failed to append to dictionary")
 					}
 				}
