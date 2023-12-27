@@ -1,7 +1,9 @@
 package dynparquet
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -9,8 +11,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/cespare/xxhash/v2"
 	"github.com/dgryski/go-metro"
-
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 const prehashedPrefix = "hashed"
@@ -105,19 +105,59 @@ func HashArray(arr arrow.Array) []uint64 {
 func hashListArray(arr *array.List) []uint64 {
 	res := make([]uint64, arr.Len())
 	digest := xxhash.New()
-
-	dictionaryList, binaryDictionaryList, err := arrowutils.ToConcreteList(arr)
-	if err != nil {
-		panic(err)
+	var hv func(int, *xxhash.Digest)
+	switch e := arr.ListValues().(type) {
+	case *array.Int64:
+		var buf [8]byte
+		hv = func(i int, d *xxhash.Digest) {
+			binary.BigEndian.PutUint64(buf[:], uint64(e.Value(i)))
+			_, _ = d.Write(buf[:])
+		}
+	case *array.Float64:
+		var buf [8]byte
+		hv = func(i int, d *xxhash.Digest) {
+			binary.BigEndian.PutUint64(buf[:], math.Float64bits(e.Value(i)))
+			_, _ = d.Write(buf[:])
+		}
+	case *array.Boolean:
+		var buf [1]byte
+		hv = func(i int, d *xxhash.Digest) {
+			if e.Value(i) {
+				buf[0] = 2
+			} else {
+				buf[0] = 1
+			}
+			_, _ = d.Write(buf[:])
+		}
+	case *array.Binary:
+		hv = func(i int, d *xxhash.Digest) {
+			_, _ = d.Write(e.Value(i))
+		}
+	case *array.String:
+		hv = func(i int, d *xxhash.Digest) {
+			_, _ = d.WriteString(e.Value(i))
+		}
+	case *array.Dictionary:
+		switch dict := e.Dictionary().(type) {
+		case *array.Binary:
+			hv = func(i int, d *xxhash.Digest) {
+				_, _ = d.Write(dict.Value(e.GetValueIndex(i)))
+			}
+		case *array.String:
+			hv = func(i int, d *xxhash.Digest) {
+				_, _ = d.WriteString(dict.Value(e.GetValueIndex(i)))
+			}
+		default:
+			panic(fmt.Sprintf("list dictionary not of expected type: %T", dict))
+		}
+	default:
+		panic(fmt.Sprintf("list not of expected type: %T", e))
 	}
 	for i := 0; i < arr.Len(); i++ {
 		start, end := arr.ValueOffsets(i)
 		for j := start; j < end; j++ {
-			// NOTE: We can ignore the return here because the xxhash Write
-			// function says it always returns len(b), nil.
-			_, _ = digest.Write(binaryDictionaryList.Value(dictionaryList.GetValueIndex(int(j))))
+			hv(int(j), digest)
 		}
-
 		res[i] = digest.Sum64()
 		digest.Reset()
 	}
