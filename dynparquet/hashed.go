@@ -102,66 +102,98 @@ func HashArray(arr arrow.Array) []uint64 {
 	}
 }
 
-func hashListArray(arr *array.List) []uint64 {
-	res := make([]uint64, arr.Len())
+func hashListArray(arr *array.List) (res []uint64) {
+	res = make([]uint64, arr.Len())
 	digest := xxhash.New()
-	var hv func(int, *xxhash.Digest)
 	switch e := arr.ListValues().(type) {
 	case *array.Int64:
 		var buf [8]byte
-		hv = func(i int, d *xxhash.Digest) {
-			binary.BigEndian.PutUint64(buf[:], uint64(e.Value(i)))
-			_, _ = d.Write(buf[:])
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				_, _ = digest.Write(binary.BigEndian.AppendUint64(buf[:0],
+					uint64(e.Value(int(j)))))
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
 		}
+		return
 	case *array.Float64:
 		var buf [8]byte
-		hv = func(i int, d *xxhash.Digest) {
-			binary.BigEndian.PutUint64(buf[:], math.Float64bits(e.Value(i)))
-			_, _ = d.Write(buf[:])
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				_, _ = digest.Write(binary.BigEndian.AppendUint64(buf[:0],
+					math.Float64bits(e.Value(int(j)))))
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
 		}
+		return
 	case *array.Boolean:
 		var buf [1]byte
-		hv = func(i int, d *xxhash.Digest) {
-			if e.Value(i) {
-				buf[0] = 2
-			} else {
-				buf[0] = 1
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				if e.Value(int(j)) {
+					buf[0] = 2
+				} else {
+					buf[0] = 1
+				}
+				_, _ = digest.Write(buf[:])
 			}
-			_, _ = d.Write(buf[:])
+			res[i] = digest.Sum64()
+			digest.Reset()
 		}
+		return
 	case *array.Binary:
-		hv = func(i int, d *xxhash.Digest) {
-			_, _ = d.Write(e.Value(i))
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				_, _ = digest.Write(e.Value(int(j)))
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
 		}
+		return
 	case *array.String:
-		hv = func(i int, d *xxhash.Digest) {
-			_, _ = d.WriteString(e.Value(i))
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				_, _ = digest.WriteString(e.Value(int(j)))
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
 		}
+		return
 	case *array.Dictionary:
 		switch dict := e.Dictionary().(type) {
 		case *array.Binary:
-			hv = func(i int, d *xxhash.Digest) {
-				_, _ = d.Write(dict.Value(e.GetValueIndex(i)))
+			for i := 0; i < arr.Len(); i++ {
+				start, end := arr.ValueOffsets(i)
+				for j := start; j < end; j++ {
+					_, _ = digest.Write(dict.Value(e.GetValueIndex(int(j))))
+				}
+				res[i] = digest.Sum64()
+				digest.Reset()
 			}
+			return
 		case *array.String:
-			hv = func(i int, d *xxhash.Digest) {
-				_, _ = d.WriteString(dict.Value(e.GetValueIndex(i)))
+			for i := 0; i < arr.Len(); i++ {
+				start, end := arr.ValueOffsets(i)
+				for j := start; j < end; j++ {
+					_, _ = digest.WriteString(dict.Value(e.GetValueIndex(int(j))))
+				}
+				res[i] = digest.Sum64()
+				digest.Reset()
 			}
+			return
 		default:
 			panic(fmt.Sprintf("list dictionary not of expected type: %T", dict))
 		}
 	default:
 		panic(fmt.Sprintf("list not of expected type: %T", e))
 	}
-	for i := 0; i < arr.Len(); i++ {
-		start, end := arr.ValueOffsets(i)
-		for j := start; j < end; j++ {
-			hv(int(j), digest)
-		}
-		res[i] = digest.Sum64()
-		digest.Reset()
-	}
-	return res
 }
 
 func hashDictionaryArray(arr *array.Dictionary) []uint64 {
