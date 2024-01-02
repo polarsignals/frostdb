@@ -68,6 +68,10 @@ const (
 	minReadVersion = snapshotVersion
 )
 
+var (
+	ErrSkipPart = fmt.Errorf("skip part")
+)
+
 type snapshotMetrics struct {
 	snapshotsTotal            *prometheus.CounterVec
 	snapshotFileSizeBytes     prometheus.Gauge
@@ -438,7 +442,7 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 					Tx:              p.TX(),
 					CompactionLevel: uint64(p.CompactionLevel()),
 				}
-				if err := func() error {
+				err := func() error {
 					if err := ctx.Err(); err != nil {
 						return err
 					}
@@ -453,6 +457,14 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 						defer recordWriter.Close()
 						return recordWriter.Write(record)
 					}
+
+					// If file compaction is enabled we do not need to snapshot the parquet parts.
+					for _, cfg := range db.columnStore.indexConfig {
+						if cfg.Type == CompactionTypeParquetDisk {
+							return ErrSkipPart
+						}
+					}
+
 					partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
 
 					buf, err := p.AsSerializedBuffer(schema)
@@ -467,13 +479,17 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 						return err
 					}
 					return nil
-				}(); err != nil {
+				}()
+				if err != nil && err != ErrSkipPart {
 					ascendErr = err
 					return false
 				}
-				partMeta.EndOffset = int64(offW.offset)
-				granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
-				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
+
+				if err != ErrSkipPart {
+					partMeta.EndOffset = int64(offW.offset)
+					granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
+					tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
+				}
 				return true
 			})
 			metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
@@ -659,7 +675,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				}
 
 				for _, part := range resultParts {
-					newIdx.InsertPart(index.SentinelType(part.CompactionLevel()), part)
+					newIdx.InsertPart(part)
 				}
 			}
 
