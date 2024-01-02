@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow/go/v14/arrow/ipc"
+	"github.com/apache/arrow/go/v14/arrow/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
@@ -32,6 +33,7 @@ import (
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
+	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/wal"
 )
@@ -126,6 +128,14 @@ func New(
 
 	if s.enableWAL && s.storagePath == "" {
 		return nil, fmt.Errorf("storage path must be configured if WAL is enabled")
+	}
+
+	for _, cfg := range s.indexConfig {
+		if cfg.Type == CompactionTypeParquetDisk {
+			if !s.enableWAL && s.storagePath != "" {
+				return nil, fmt.Errorf("persistent disk compaction requires WAL to be enabled")
+			}
+		}
 	}
 
 	if err := s.recoverDBsFromStorage(context.Background()); err != nil {
@@ -481,10 +491,13 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		reg:         reg,
 		logger:      logger,
 		tracer:      s.tracer,
-		storagePath: filepath.Join(s.DatabasesDir(), name),
 		wal:         &wal.NopWAL{},
 		sources:     s.sources,
 		sinks:       s.sinks,
+	}
+
+	if s.storagePath != "" {
+		db.storagePath = filepath.Join(s.DatabasesDir(), name)
 	}
 
 	if err := applyOptsToDB(db); err != nil {
@@ -669,6 +682,10 @@ func (db *DB) trashDir() string {
 	return filepath.Join(db.storagePath, "trash")
 }
 
+func (db *DB) indexDir() string {
+	return filepath.Join(db.storagePath, "index")
+}
+
 // recover attempts to recover database state from a combination of snapshots
 // and the WAL.
 func (db *DB) recover(ctx context.Context, wal WAL) error {
@@ -727,14 +744,25 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
+
+					cfg, recovered, err := table.configureLSMLevels(db.columnStore.indexConfig)
+					if err != nil {
+						return fmt.Errorf("configure lsm levels: %w", err)
+					}
+
 					table.ActiveBlock().index, err = index.NewLSM(
 						table.name,
 						table.schema,
-						table.configureLSMLevels(db.columnStore.indexConfig),
+						cfg,
+						db.Wait,
 						index.LSMWithMetrics(table.metrics.indexMetrics),
 					)
 					if err != nil {
-						return err
+						return fmt.Errorf("create new lsm index: %w", err)
+					}
+
+					for _, p := range recovered {
+						table.ActiveBlock().index.InsertPart(p)
 					}
 				}
 				db.mtx.Unlock()
@@ -890,9 +918,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 						return fmt.Errorf("read record: %w", err)
 					}
 
-					if err := table.active.InsertRecord(ctx, tx, record); err != nil {
-						return fmt.Errorf("insert record into block: %w", err)
-					}
+					// TODO: the issue with this is we aren't prehashing the columns by not doing InsertRecord.
+					// If we prehash before WAL write we don't have to do that here.
+					size := util.TotalRecordSize(record)
+					table.active.index.InsertPart(parts.NewArrowPart(tx, record, uint64(size), table.schema, parts.WithCompactionLevel(int(index.L0))))
 				default:
 					panic("parquet writes are deprecated")
 				}
@@ -1008,7 +1037,7 @@ func (db *DB) Close(options ...CloseOption) error {
 		return err
 	}
 
-	if shouldPersist || opts.clearStorage {
+	if (shouldPersist || opts.clearStorage) && db.storagePath != "" {
 		if err := db.dropStorage(); err != nil {
 			return err
 		}

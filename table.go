@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -950,15 +949,25 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		prevTx: prevTx,
 	}
 
-	var err error
+	cfg, recovered, err := table.configureLSMLevels(table.db.columnStore.indexConfig)
+	if err != nil {
+		return nil, fmt.Errorf("configure LSM levels: %w", err)
+	}
+
 	tb.index, err = index.NewLSM(
 		table.name,
 		table.schema,
-		table.configureLSMLevels(table.db.columnStore.indexConfig),
+		cfg,
+		table.db.Wait,
 		index.LSMWithMetrics(table.metrics.indexMetrics),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("new LSM: %w", err)
+	}
+
+	// Inserts parts into the index that were recovered.
+	for _, p := range recovered {
+		tb.index.InsertPart(p)
 	}
 
 	return tb, nil
@@ -1204,30 +1213,48 @@ type IndexConfig struct {
 }
 
 // configureLSMLevels configures the level configs for this table.
-func (t *Table) configureLSMLevels(levels []*IndexConfig) []*index.LevelConfig {
-	config := make([]*index.LevelConfig, 0, len(levels))
+func (t *Table) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelConfig, []parts.Part, error) {
+	config := make([]*index.LevelConfig, len(levels))
+	recovered := []parts.Part{}
+	abortRecovery := false
 
-	for i, level := range levels {
+	// Recover in reverse order so that the highest level is recovered first.
+	// This allows us to throw away parts that were compacted into a higher level but for some reason weren't successfully removed.
+	for i := len(levels) - 1; i >= 0; i-- {
+		lvl := levels[i]
 		cfg := &index.LevelConfig{
-			Level:   index.SentinelType(level.Level),
-			MaxSize: level.MaxSize,
+			Level:   index.SentinelType(lvl.Level),
+			MaxSize: lvl.MaxSize,
 		}
-		switch level.Type {
+		switch lvl.Type {
 		case CompactionTypeParquet:
 			cfg.Compact = t.parquetCompaction
 		case CompactionTypeParquetDisk:
-			fileCompaction := t.parquetFileCompaction(i + 1)
+			fileCompaction := NewFileCompaction(t, i+1)
+			if abortRecovery { // If we failed to recover an LSM file, we need to abort recovery of all lower levels as well, and let the WAL recover.
+				fileCompaction.Truncate()
+			} else {
+				parts, err := fileCompaction.recover(parts.WithCompactionLevel(i + 1))
+				if err != nil {
+					if errors.Is(ErrCompactionRecoveryFailed, err) {
+						abortRecovery = true
+					} else {
+						return nil, nil, err
+					}
+				}
+				recovered = append(recovered, parts...)
+			}
 			t.closers = append(t.closers, fileCompaction) // Append to closers so that the underlying files are closed on table close.
 			cfg.Compact = fileCompaction.writeRecordsToParquetFile
 		default:
 			if i != len(levels)-1 { // Compaction type should not be set for last level
-				panic(fmt.Sprintf("unknown compaction type: %v", level.Type))
+				panic(fmt.Sprintf("unknown compaction type: %v", lvl.Type))
 			}
 		}
-		config = append(config, cfg)
+		config[i] = cfg
 	}
 
-	return config
+	return config, recovered, nil
 }
 
 func (t *Table) parquetCompaction(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
@@ -1276,7 +1303,7 @@ func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []parts
 
 // compactParts will compact the given parts into a Parquet file written to w.
 // It returns the size in bytes of the compacted parts.
-func (t *Table) compactParts(w io.Writer, compact []parts.Part) (int64, error) {
+func (t *Table) compactParts(w io.Writer, compact []parts.Part, options ...parquet.WriterOption) (int64, error) {
 	preCompactionSize := int64(0)
 	for _, p := range compact {
 		preCompactionSize += p.Size()
@@ -1314,12 +1341,21 @@ func (t *Table) compactParts(w io.Writer, compact []parts.Part) (int64, error) {
 		return 0, err
 	}
 	err = func() error {
-		pw, err := t.schema.GetWriter(w, merged.DynamicColumns(), false)
-		if err != nil {
-			return err
+		var writer dynparquet.ParquetWriter
+		if len(options) > 0 {
+			writer, err = t.schema.NewWriter(w, merged.DynamicColumns(), false, options...)
+			if err != nil {
+				return err
+			}
+		} else {
+			pw, err := t.schema.GetWriter(w, merged.DynamicColumns(), false)
+			if err != nil {
+				return err
+			}
+			defer t.schema.PutWriter(pw)
+			writer = pw.ParquetWriter
 		}
-		defer t.schema.PutWriter(pw)
-		p, err := t.active.rowWriter(pw)
+		p, err := t.active.rowWriter(writer)
 		if err != nil {
 			return err
 		}
@@ -1496,87 +1532,4 @@ func (t *Table) distinctRecordsForCompaction(compact []parts.Part) ([]arrow.Reco
 		return nil, err
 	}
 	return newRecords, nil
-}
-
-type fileCompaction struct {
-	t      *Table
-	file   *os.File
-	offset int64 // Writing offsets into the file
-	ref    int64 // Number of references to file.
-}
-
-func (f *fileCompaction) Close() error {
-	return f.file.Close()
-}
-
-func (t *Table) parquetFileCompaction(lvl int) *fileCompaction {
-	f := &fileCompaction{
-		t: t,
-	}
-
-	file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", lvl))
-	if err != nil {
-		panic(err)
-	}
-	level.Info(t.logger).Log("msg", "created temp file for level", "level", lvl, "file", file.Name())
-	f.file = file
-
-	return f
-}
-
-// accountingWriter is a writer that accounts for the number of bytes written.
-type accountingWriter struct {
-	w io.Writer
-	n int64
-}
-
-func (a *accountingWriter) Write(p []byte) (int, error) {
-	n, err := a.w.Write(p)
-	a.n += int64(n)
-	return n, err
-}
-
-// writeRecordsToParquetFile will compact the given parts into a Parquet file written to the next level file.
-func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
-	accountant := &accountingWriter{w: f.file}
-	preCompactionSize, err := f.t.compactParts(accountant, compact) // compact into the next level
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	// Record the writing offset into the file.
-	prevOffset := f.offset
-	f.offset += accountant.n
-	f.ref++
-
-	pf, err := parquet.OpenFile(io.NewSectionReader(f.file, prevOffset, accountant.n), accountant.n)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	buf, err := dynparquet.NewSerializedBuffer(pf)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	return []parts.Part{parts.NewParquetPart(0, buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
-}
-
-// release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.
-// release is not safe to call concurrently.
-func (f *fileCompaction) release() func() {
-	return func() {
-		f.ref--
-		if f.ref == 0 {
-			level.Info(f.t.logger).Log("msg", "truncating file", "file", f.file.Name())
-			if err := os.Truncate(f.file.Name(), 0); err != nil {
-				panic(fmt.Errorf("failed to truncate the level file: %v", err))
-			}
-
-			f.offset = 0
-			if _, err := f.file.Seek(0, io.SeekStart); err != nil {
-				panic(fmt.Errorf("failed to seek the level file: %v", err))
-			}
-		}
-	}
 }
