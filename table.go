@@ -1232,7 +1232,9 @@ func (t *Table) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelConfig,
 		case CompactionTypeParquetDisk:
 			fileCompaction := NewFileCompaction(t, i+1)
 			if abortRecovery { // If we failed to recover an LSM file, we need to abort recovery of all lower levels as well, and let the WAL recover.
-				fileCompaction.Truncate()
+				if err := fileCompaction.Truncate(); err != nil {
+					return nil, nil, err
+				}
 			} else {
 				parts, err := fileCompaction.recover(parts.WithCompactionLevel(i + 1))
 				if err != nil {

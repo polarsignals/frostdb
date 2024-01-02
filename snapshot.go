@@ -68,9 +68,7 @@ const (
 	minReadVersion = snapshotVersion
 )
 
-var (
-	ErrSkipPart = fmt.Errorf("skip part")
-)
+var ErrSkipPart = fmt.Errorf("skip part")
 
 type snapshotMetrics struct {
 	snapshotsTotal            *prometheus.CounterVec

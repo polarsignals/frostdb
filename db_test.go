@@ -2300,7 +2300,6 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			lvl1Parts:   1,
 			finalRows:   1200,
 			beforeReplay: func(dir string) {
-
 				// Corrupt the LSM file; this should trigger a recovery from the WAL
 				levelFile := filepath.Join(dir, "databases", "test", "index", "L1.parquet")
 				info, err := os.Stat(levelFile)
@@ -2314,7 +2313,6 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			lvl1Parts:   1,
 			finalRows:   1200,
 			beforeReplay: func(dir string) {
-
 				// Corrupt the LSM file; this should trigger a recovery from the WAL
 				levelFile := filepath.Join(dir, "databases", "test", "index", "L2.parquet")
 				info, err := os.Stat(levelFile)
@@ -2344,8 +2342,6 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 
 				// This truncates the L1 file
 				require.NoError(t, table.EnsureCompaction())
-
-				fmt.Println(table.active.index)
 
 				// Move the L1 file back
 				require.NoError(t, os.Rename(saveFile, levelFile))
@@ -2378,9 +2374,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-
 			dir := t.TempDir()
-
 			cfg := []*IndexConfig{
 				{Level: int(index.L0), MaxSize: 25700, Type: CompactionTypeParquetDisk},
 				{Level: int(index.L1), MaxSize: 1024 * 1024 * 128, Type: CompactionTypeParquetDisk},
@@ -2483,6 +2477,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 				require.NoError(t, c.Close())
 			})
 			db, err = c.DB(context.Background(), "test")
+			require.NoError(t, err)
 
 			rows = int64(0)
 			engine = query.NewEngine(pool, db.TableProvider())

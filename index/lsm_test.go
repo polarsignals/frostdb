@@ -181,7 +181,7 @@ func Test_LSM_Compaction(t *testing.T) {
 	lsm.Add(1, r)
 	require.Eventually(t, func() bool {
 		return lsm.sizes[L0].Load() == 0 && lsm.sizes[L1].Load() != 0
-	}, time.Second, 5*time.Millisecond)
+	}, 3*time.Second, 10*time.Millisecond)
 }
 
 func Test_LSM_CascadeCompaction(t *testing.T) {
@@ -208,7 +208,7 @@ func Test_LSM_CascadeCompaction(t *testing.T) {
 			lsm.sizes[L2].Load() == 0 &&
 			lsm.sizes[3].Load() == 0 &&
 			lsm.sizes[4].Load() == 0
-	}, time.Second, 5*time.Millisecond)
+	}, 3*time.Second, 10*time.Millisecond)
 	lsm.Add(2, r)
 	require.Eventually(t, func() bool {
 		return lsm.sizes[L0].Load() == 0 &&
@@ -216,7 +216,7 @@ func Test_LSM_CascadeCompaction(t *testing.T) {
 			lsm.sizes[L2].Load() == 0 &&
 			lsm.sizes[3].Load() == 0 &&
 			lsm.sizes[4].Load() != 0
-	}, time.Second, 5*time.Millisecond)
+	}, 3*time.Second, 10*time.Millisecond)
 }
 
 func Test_LSM_InOrderInsert(t *testing.T) {

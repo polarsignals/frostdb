@@ -10,27 +10,26 @@ import (
 
 	"github.com/go-kit/log/level"
 	"github.com/parquet-go/parquet-go"
+
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
 )
 
-var (
-	ErrCompactionRecoveryFailed = fmt.Errorf("failed to recover compacted level")
-)
+var ErrCompactionRecoveryFailed = fmt.Errorf("failed to recover compacted level")
 
-type fileCompaction struct {
+type FileCompaction struct {
 	t      *Table
 	file   *os.File
 	offset int64 // Writing offsets into the file
 	ref    int64 // Number of references to file.
 }
 
-func (f *fileCompaction) Close() error {
+func (f *FileCompaction) Close() error {
 	return f.file.Close()
 }
 
-func NewFileCompaction(t *Table, lvl int) *fileCompaction {
-	f := &fileCompaction{
+func NewFileCompaction(t *Table, lvl int) *FileCompaction {
+	f := &FileCompaction{
 		t: t,
 	}
 
@@ -70,7 +69,7 @@ func (a *accountingWriter) Write(p []byte) (int, error) {
 }
 
 // writeRecordsToParquetFile will compact the given parts into a Parquet file written to the next level file.
-func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
+func (f *FileCompaction) writeRecordsToParquetFile(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
 	if len(compact) == 0 {
 		return nil, 0, 0, fmt.Errorf("no parts to compact")
 	}
@@ -112,13 +111,13 @@ func (f *fileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 }
 
 // Truncate will truncate the file to 0 bytes. This is used when a compaction recovery fails.
-func (f *fileCompaction) Truncate() error {
+func (f *FileCompaction) Truncate() error {
 	return f.file.Truncate(0)
 }
 
 // release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.
 // release is not safe to call concurrently.
-func (f *fileCompaction) release() func() {
+func (f *FileCompaction) release() func() {
 	return func() {
 		f.ref--
 		if f.ref == 0 {
@@ -135,7 +134,7 @@ func (f *fileCompaction) release() func() {
 	}
 }
 
-func (f *fileCompaction) recover(options ...parts.Option) ([]parts.Part, error) {
+func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) {
 	recovered, err := func() ([]parts.Part, error) {
 		info, err := os.Stat(f.file.Name())
 		if err != nil {
@@ -183,8 +182,6 @@ func (f *fileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 
 		return recovered, nil
 	}()
-
-	// If we failed to recover the file, truncate it.
 	if err != nil {
 		level.Error(f.t.logger).Log("msg", "truncating file after failed recovery", "err", err, "file", f.file.Name())
 		if err := os.Truncate(f.file.Name(), 0); err != nil {

@@ -744,7 +744,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-
 					cfg, recovered, err := table.configureLSMLevels(db.columnStore.indexConfig)
 					if err != nil {
 						return fmt.Errorf("configure lsm levels: %w", err)
@@ -780,9 +779,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	// WAL (i.e. entries that occupy space on disk but are useless).
 	performSnapshot := false
 
-	// Writes are performed concurrently to speed up replay.
-	var writeWg errgroup.Group
-	writeWg.SetLimit(runtime.GOMAXPROCS(0))
 	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -906,28 +902,25 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				return fmt.Errorf("get table: %w", err)
 			}
 
-			writeWg.Go(func() error {
-				switch e.Write.Arrow {
-				case true:
-					reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
-					if err != nil {
-						return fmt.Errorf("create ipc reader: %w", err)
-					}
-					record, err := reader.Read()
-					if err != nil {
-						return fmt.Errorf("read record: %w", err)
-					}
-
-					// TODO: the issue with this is we aren't prehashing the columns by not doing InsertRecord.
-					// If we prehash before WAL write we don't have to do that here.
-					size := util.TotalRecordSize(record)
-					table.active.index.InsertPart(parts.NewArrowPart(tx, record, uint64(size), table.schema, parts.WithCompactionLevel(int(index.L0))))
-				default:
-					panic("parquet writes are deprecated")
+			switch e.Write.Arrow {
+			case true:
+				reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
+				if err != nil {
+					return fmt.Errorf("create ipc reader: %w", err)
 				}
-				return nil
-			})
+				record, err := reader.Read()
+				if err != nil {
+					return fmt.Errorf("read record: %w", err)
+				}
 
+				// TODO: the issue with this is we aren't prehashing the columns by not doing InsertRecord.
+				// If we prehash before WAL write we don't have to do that here.
+				size := util.TotalRecordSize(record)
+				table.active.index.InsertPart(parts.NewArrowPart(tx, record, uint64(size), table.schema, parts.WithCompactionLevel(int(index.L0))))
+			default:
+				panic("parquet writes are deprecated")
+			}
+			return nil
 		case *walpb.Entry_TableBlockPersisted_:
 			// If a block was persisted but the entry still exists in the WAL,
 			// a snapshot was not performed after persisting the block. Perform
@@ -942,10 +935,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return nil
 	}); err != nil {
 		return err
-	}
-
-	if err := writeWg.Wait(); err != nil {
-		return fmt.Errorf("write error during replay: %w", err)
 	}
 
 	resetTxn := snapshotTx
