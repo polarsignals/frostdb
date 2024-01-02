@@ -482,6 +482,8 @@ func storageLayoutToParquetNode(l StorageLayout) (parquet.Node, error) {
 		node = parquet.Leaf(parquet.DoubleType)
 	case int32(schemapb.StorageLayout_TYPE_BOOL):
 		node = parquet.Leaf(parquet.BooleanType)
+	case int32(schemapb.StorageLayout_TYPE_INT32):
+		node = parquet.Int(32)
 	default:
 		return nil, fmt.Errorf("unknown storage layout type: %v", l.GetTypeInt32())
 	}
