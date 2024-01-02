@@ -5,6 +5,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
+	"math/rand"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,7 +91,7 @@ func check(t *testing.T, lsm *LSM, records, buffers int) {
 	})
 	rec := 0
 	buf := 0
-	require.NoError(t, lsm.Scan(context.Background(), "", nil, nil, 2, func(ctx context.Context, v any) error {
+	require.NoError(t, lsm.Scan(context.Background(), "", nil, nil, math.MaxUint64, func(ctx context.Context, v any) error {
 		switch v.(type) {
 		case arrow.Record:
 			rec++
@@ -106,7 +110,9 @@ func Test_LSM_Basic(t *testing.T) {
 		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
-	})
+	},
+		func(uint64) {},
+	)
 	require.NoError(t, err)
 
 	samples := dynparquet.NewTestSamples()
@@ -114,18 +120,18 @@ func Test_LSM_Basic(t *testing.T) {
 	require.NoError(t, err)
 
 	lsm.Add(1, r)
-	lsm.Add(1, r)
-	lsm.Add(1, r)
+	lsm.Add(2, r)
+	lsm.Add(3, r)
 	check(t, lsm, 3, 0)
 	require.NoError(t, lsm.merge(L0, nil))
 	check(t, lsm, 0, 1)
-	lsm.Add(1, r)
+	lsm.Add(4, r)
 	check(t, lsm, 1, 1)
-	lsm.Add(1, r)
+	lsm.Add(5, r)
 	check(t, lsm, 2, 1)
 	require.NoError(t, lsm.merge(L0, nil))
 	check(t, lsm, 0, 2)
-	lsm.Add(1, r)
+	lsm.Add(6, r)
 	check(t, lsm, 1, 2)
 	require.NoError(t, lsm.merge(L1, nil))
 	check(t, lsm, 1, 1)
@@ -139,7 +145,9 @@ func Test_LSM_DuplicateSentinel(t *testing.T) {
 		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
-	})
+	},
+		func(uint64) {},
+	)
 	require.NoError(t, err)
 
 	samples := dynparquet.NewTestSamples()
@@ -147,8 +155,8 @@ func Test_LSM_DuplicateSentinel(t *testing.T) {
 	require.NoError(t, err)
 
 	lsm.Add(1, r)
-	lsm.Add(1, r)
-	lsm.Add(1, r)
+	lsm.Add(2, r)
+	lsm.Add(3, r)
 	check(t, lsm, 3, 0)
 	require.NoError(t, lsm.merge(L0, nil))
 	check(t, lsm, 0, 1)
@@ -161,7 +169,9 @@ func Test_LSM_Compaction(t *testing.T) {
 	lsm, err := NewLSM("test", nil, []*LevelConfig{
 		{Level: L0, MaxSize: 1, Compact: parquetCompaction},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024},
-	})
+	},
+		func(uint64) {},
+	)
 	require.NoError(t, err)
 
 	samples := dynparquet.NewTestSamples()
@@ -182,7 +192,9 @@ func Test_LSM_CascadeCompaction(t *testing.T) {
 		{Level: L2, MaxSize: 2281, Compact: parquetCompaction},
 		{Level: 3, MaxSize: 2281, Compact: parquetCompaction},
 		{Level: 4, MaxSize: 2281},
-	})
+	},
+		func(uint64) {},
+	)
 	require.NoError(t, err)
 
 	samples := dynparquet.NewTestSamples()
@@ -197,7 +209,7 @@ func Test_LSM_CascadeCompaction(t *testing.T) {
 			lsm.sizes[3].Load() == 0 &&
 			lsm.sizes[4].Load() == 0
 	}, time.Second, 5*time.Millisecond)
-	lsm.Add(1, r)
+	lsm.Add(2, r)
 	require.Eventually(t, func() bool {
 		return lsm.sizes[L0].Load() == 0 &&
 			lsm.sizes[L1].Load() == 0 &&
@@ -205,4 +217,53 @@ func Test_LSM_CascadeCompaction(t *testing.T) {
 			lsm.sizes[3].Load() == 0 &&
 			lsm.sizes[4].Load() != 0
 	}, time.Second, 5*time.Millisecond)
+}
+
+func Test_LSM_InOrderInsert(t *testing.T) {
+	t.Parallel()
+	lsm, err := NewLSM("test", nil, []*LevelConfig{
+		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
+		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
+		{Level: L2, MaxSize: 1024 * 1024 * 1024},
+	},
+		func(uint64) {},
+	)
+	require.NoError(t, err)
+
+	samples := dynparquet.NewTestSamples()
+	r, err := samples.ToRecord()
+	require.NoError(t, err)
+
+	wg := &sync.WaitGroup{}
+	workers := 100
+	inserts := 100
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < inserts; j++ {
+				lsm.Add(rand.Uint64(), r)
+			}
+		}()
+	}
+	wg.Wait()
+
+	tx := make([]uint64, 0, workers*inserts)
+	lsm.Iterate(func(node *Node) bool {
+		if node.part != nil {
+			tx = append(tx, node.part.TX())
+		}
+		return true
+	})
+
+	// check that the transactions are sorted in descending order
+	require.True(t, slices.IsSortedFunc[[]uint64, uint64](tx, func(i, j uint64) int {
+		if i < j {
+			return 1
+		} else if i > j {
+			return -1
+		}
+
+		return 0
+	}))
 }

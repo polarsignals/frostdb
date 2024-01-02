@@ -75,6 +75,32 @@ func (n *Node) Prepend(part parts.Part) *Node {
 	})
 }
 
+// Insert a Node into the list, in order by Tx.
+func (n *Node) Insert(part parts.Part) {
+	node := &Node{
+		part: part,
+	}
+	tx := node.part.TX()
+	tryInsert := func() bool {
+		prev := n
+		next := n.next.Load()
+		for {
+			if next == nil {
+				return prev.next.CompareAndSwap(next, node)
+			}
+			if next.part == nil || next.part.TX() < tx {
+				node.next.Store(next)
+				return prev.next.CompareAndSwap(next, node)
+			}
+			prev = next
+			next = next.next.Load()
+		}
+	}
+	for !tryInsert() {
+		continue // make the linter happy
+	}
+}
+
 func (n *Node) prepend(node *Node) *Node {
 	for { // continue until a successful compare and swap occurs
 		next := n.next.Load()
