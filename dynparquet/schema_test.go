@@ -354,3 +354,42 @@ func BenchmarkIsDynamicColumn(b *testing.B) {
 		_ = schema.IsDynamicColumn("labels.label1")
 	}
 }
+
+func TestMergeDynamicColumnSets(t *testing.T) {
+	sets := []map[string][]string{
+		{"labels": {"label1", "label2"}},
+		{"labels": {"label1", "label2"}},
+		{"labels": {"label1", "label2", "label3"}},
+		{
+			"labels": {"label1", "label2"},
+			"foo":    {"label1", "label2"},
+		},
+		{
+			"labels": {"label1", "label2", "label3"},
+			"foo":    {"label1", "label2", "label3"},
+		},
+	}
+	require.Equal(t, map[string][]string{
+		"foo":    {"label1", "label2", "label3"},
+		"labels": {"label1", "label2", "label3"},
+	}, MergeDynamicColumnSets(sets))
+}
+
+func BenchmarkMergeDynamicColumnSets(b *testing.B) {
+	sets := []map[string][]string{
+		{"labels": {"label1", "label2"}},
+		{"labels": {"label1", "label2"}},
+		{"labels": {"label1", "label2", "label3"}},
+		{
+			"labels": {"label1", "label2"},
+			"foo":    {"label1", "label2"},
+		},
+		{
+			"labels": {"label1", "label2", "label3"},
+			"foo":    {"label1", "label2", "label3"},
+		},
+	}
+	for i := 0; i < b.N; i++ {
+		MergeDynamicColumnSets(sets)
+	}
+}
