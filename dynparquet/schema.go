@@ -1383,7 +1383,7 @@ func (c *dynColSet) Release() {
 }
 
 func (c *dynColSet) Merge(sets []map[string][]string) (o map[string][]string) {
-	//TODO:(gernest) use k-way merge
+	// TODO:(gernest) use k-way merge
 	o = make(map[string][]string)
 	for i := range sets {
 		for k := range sets[i] {
