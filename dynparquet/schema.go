@@ -1351,11 +1351,10 @@ func mergeDynamicRowGroupDynamicColumns(rowGroups []DynamicRowGroup) map[string]
 	return MergeDynamicColumnSets(sets)
 }
 
-func MergeDynamicColumnSets(sets []map[string][]string) (o map[string][]string) {
+func MergeDynamicColumnSets(sets []map[string][]string) map[string][]string {
 	m := newDynamicColumnSetMerger()
-	o = m.Merge(sets)
-	m.Release() // avoid defer penalty by releasing manually
-	return
+	defer m.Release()
+	return m.Merge(sets)
 }
 
 type dynColSet struct {
