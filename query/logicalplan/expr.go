@@ -2,6 +2,7 @@ package logicalplan
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -27,6 +28,10 @@ const (
 	OpRegexNotMatch
 	OpAnd
 	OpOr
+	OpAdd
+	OpSub
+	OpMul
+	OpDiv
 )
 
 func (o Op) String() string {
@@ -51,6 +56,14 @@ func (o Op) String() string {
 		return "&&"
 	case OpOr:
 		return "||"
+	case OpAdd:
+		return "+"
+	case OpSub:
+		return "-"
+	case OpMul:
+		return "*"
+	case OpDiv:
+		return "/"
 	default:
 		panic("unknown operator")
 	}
@@ -94,8 +107,29 @@ func (e *BinaryExpr) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(e)
 }
 
-func (e *BinaryExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
-	return &arrow.BooleanType{}, nil
+func (e *BinaryExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
+	switch e.Op {
+	case OpEq, OpNotEq, OpLt, OpLtEq, OpGt, OpGtEq, OpAnd, OpOr:
+		return arrow.FixedWidthTypes.Boolean, nil
+	case OpAdd, OpSub, OpMul, OpDiv:
+		leftType, err := e.Left.DataType(s)
+		if err != nil {
+			return nil, fmt.Errorf("left operand: %w", err)
+		}
+
+		rightType, err := e.Right.DataType(s)
+		if err != nil {
+			return nil, fmt.Errorf("right operand: %w", err)
+		}
+
+		if arrow.TypeEqual(leftType, rightType, arrow.CheckMetadata()) {
+			return leftType, nil
+		}
+
+		return nil, fmt.Errorf("left and right operands must be of the same type, got %s and %s", leftType, rightType)
+	default:
+		return nil, errors.New("unknown operator")
+	}
 }
 
 func (e *BinaryExpr) Name() string {
@@ -285,6 +319,38 @@ func Col(name string) *Column {
 
 func And(exprs ...Expr) Expr {
 	return and(exprs)
+}
+
+func Add(left, right Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  left,
+		Op:    OpAdd,
+		Right: right,
+	}
+}
+
+func Sub(left, right Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  left,
+		Op:    OpSub,
+		Right: right,
+	}
+}
+
+func Mul(left, right Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  left,
+		Op:    OpMul,
+		Right: right,
+	}
+}
+
+func Div(left, right Expr) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  left,
+		Op:    OpDiv,
+		Right: right,
+	}
 }
 
 func and(exprs []Expr) Expr {
