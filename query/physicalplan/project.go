@@ -14,7 +14,9 @@ import (
 )
 
 type columnProjection interface {
+	// Name returns the name of the column that this projection will return.
 	Name() string
+	// Projects one or more columns. Each element in the field list corresponds to an element in the list of arrays.
 	Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error)
 }
 
@@ -34,7 +36,7 @@ func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow
 		if err != nil {
 			return nil, nil, err
 		}
-		fields, array, err := binaryExprProjection{boolExpr: boolExpr}.Project(mem, ar)
+		fields, array, err := boolExprProjection{boolExpr: boolExpr}.Project(mem, ar)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -53,20 +55,252 @@ func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow
 				return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
 			}
 		}
+	default:
+		return nil, nil, fmt.Errorf("unsupported alias expression type: %T", e)
 	}
 
 	return nil, nil, nil
 }
 
 type binaryExprProjection struct {
-	boolExpr BooleanExpression
+	expr *logicalplan.BinaryExpr
+
+	left  columnProjection
+	right columnProjection
 }
 
 func (b binaryExprProjection) Name() string {
-	return b.boolExpr.String()
+	return b.expr.String()
 }
 
 func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	leftFields, leftArrays, err := b.left.Project(mem, ar)
+	if err != nil {
+		return nil, nil, fmt.Errorf("project left side of binary expression: %w", err)
+	}
+
+	rightFields, rightArrays, err := b.right.Project(mem, ar)
+	if err != nil {
+		return nil, nil, fmt.Errorf("project right side of binary expression: %w", err)
+	}
+
+	if len(leftFields) != 1 || len(rightFields) != 1 || len(leftArrays) != 1 || len(rightArrays) != 1 {
+		return nil, nil, fmt.Errorf("binary expression projection expected one field and one array for each side")
+	}
+
+	leftArray := leftArrays[0]
+	rightArray := rightArrays[0]
+
+	switch leftArray := leftArray.(type) {
+	case *array.Int64:
+		switch b.expr.Op {
+		case logicalplan.OpAdd:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{AddInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
+		case logicalplan.OpSub:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{SubInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
+		case logicalplan.OpMul:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{MulInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
+		case logicalplan.OpDiv:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{DivInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
+		default:
+			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
+		}
+	case *array.Float64:
+		switch b.expr.Op {
+		case logicalplan.OpAdd:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{AddFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+		case logicalplan.OpSub:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{SubFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+		case logicalplan.OpMul:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{MulFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+		case logicalplan.OpDiv:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{DivFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+		default:
+			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
+		}
+	case *array.Int32:
+		switch b.expr.Op {
+		case logicalplan.OpAdd:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{AddInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+		case logicalplan.OpSub:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{SubInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+		case logicalplan.OpMul:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{MulInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+		case logicalplan.OpDiv:
+			return []arrow.Field{leftFields[0]}, []arrow.Array{DivInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+		default:
+			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
+		}
+	default:
+		return nil, nil, fmt.Errorf("unsupported type: %T", leftArray)
+	}
+}
+
+func AddInt64s(mem memory.Allocator, left, right *array.Int64) *array.Int64 {
+	res := array.NewInt64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) + right.Value(i))
+	}
+
+	return res.NewInt64Array()
+}
+
+func SubInt64s(mem memory.Allocator, left, right *array.Int64) *array.Int64 {
+	res := array.NewInt64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) - right.Value(i))
+	}
+
+	return res.NewInt64Array()
+}
+
+func MulInt64s(mem memory.Allocator, left, right *array.Int64) *array.Int64 {
+	res := array.NewInt64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) * right.Value(i))
+	}
+
+	return res.NewInt64Array()
+}
+
+func DivInt64s(mem memory.Allocator, left, right *array.Int64) *array.Int64 {
+	res := array.NewInt64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) / right.Value(i))
+	}
+
+	return res.NewInt64Array()
+}
+
+func AddFloat64s(mem memory.Allocator, left, right *array.Float64) *array.Float64 {
+	res := array.NewFloat64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) + right.Value(i))
+	}
+
+	return res.NewFloat64Array()
+}
+
+func SubFloat64s(mem memory.Allocator, left, right *array.Float64) *array.Float64 {
+	res := array.NewFloat64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) - right.Value(i))
+	}
+
+	return res.NewFloat64Array()
+}
+
+func MulFloat64s(mem memory.Allocator, left, right *array.Float64) *array.Float64 {
+	res := array.NewFloat64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) * right.Value(i))
+	}
+
+	return res.NewFloat64Array()
+}
+
+func DivFloat64s(mem memory.Allocator, left, right *array.Float64) *array.Float64 {
+	res := array.NewFloat64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) / right.Value(i))
+	}
+
+	return res.NewFloat64Array()
+}
+
+func AddInt32s(mem memory.Allocator, left, right *array.Int32) *array.Int32 {
+	res := array.NewInt32Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) + right.Value(i))
+	}
+
+	return res.NewInt32Array()
+}
+
+func SubInt32s(mem memory.Allocator, left, right *array.Int32) *array.Int32 {
+	res := array.NewInt32Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) - right.Value(i))
+	}
+
+	return res.NewInt32Array()
+}
+
+func MulInt32s(mem memory.Allocator, left, right *array.Int32) *array.Int32 {
+	res := array.NewInt32Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) * right.Value(i))
+	}
+
+	return res.NewInt32Array()
+}
+
+func DivInt32s(mem memory.Allocator, left, right *array.Int32) *array.Int32 {
+	res := array.NewInt32Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) / right.Value(i))
+	}
+
+	return res.NewInt32Array()
+}
+
+type boolExprProjection struct {
+	boolExpr BooleanExpression
+}
+
+func (b boolExprProjection) Name() string {
+	return b.boolExpr.String()
+}
+
+func (b boolExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	var partiallyComputedExprRes arrow.Array
 	if ar.Schema().HasField(b.boolExpr.String()) {
 		arr := ar.Column(ar.Schema().FieldIndices(b.boolExpr.String())[0])
@@ -187,13 +421,35 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 			name: e.Name(),
 		}, nil
 	case *logicalplan.BinaryExpr:
-		boolExpr, err := binaryBooleanExpr(e)
-		if err != nil {
-			return nil, err
+		switch e.Op {
+		case logicalplan.OpEq, logicalplan.OpNotEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpRegexMatch, logicalplan.OpRegexNotMatch, logicalplan.OpAnd, logicalplan.OpOr:
+			boolExpr, err := binaryBooleanExpr(e)
+			if err != nil {
+				return nil, err
+			}
+			return boolExprProjection{
+				boolExpr: boolExpr,
+			}, nil
+		case logicalplan.OpAdd, logicalplan.OpSub, logicalplan.OpMul, logicalplan.OpDiv:
+			left, err := projectionFromExpr(e.Left)
+			if err != nil {
+				return nil, err
+			}
+
+			right, err := projectionFromExpr(e.Right)
+			if err != nil {
+				return nil, err
+			}
+
+			return binaryExprProjection{
+				expr: e,
+
+				left:  left,
+				right: right,
+			}, nil
+		default:
+			return nil, fmt.Errorf("unknown binary expression: %s", e.String())
 		}
-		return binaryExprProjection{
-			boolExpr: boolExpr,
-		}, nil
 	case *logicalplan.AverageExpr:
 		return &averageProjection{expr: e}, nil
 	default:
