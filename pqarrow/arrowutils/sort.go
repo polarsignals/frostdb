@@ -41,8 +41,8 @@ type SortingColumn struct {
 	NullsFirst bool
 }
 
-// SortRecord sorts given arrow.Record by columns.
-// Returns  *array.Int32 of  indices to sorted rows or record r.
+// SortRecord sorts given arrow.Record by columns. Returns *array.Int32 of
+// indices to sorted rows or record r.
 //
 // Comparison is made sequentially by each column. When rows are equal in the
 // first column we compare the rows om the second column and so on and so forth
