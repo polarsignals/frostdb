@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
@@ -29,7 +30,7 @@ func (d Direction) comparison() int {
 	case Descending:
 		return 1
 	default:
-		return 0
+		panic("unexpected direction value " + strconv.Itoa(int(d)) + " only -1 and 1 are allowed")
 	}
 }
 
