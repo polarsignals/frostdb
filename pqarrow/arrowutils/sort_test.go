@@ -8,8 +8,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/stretchr/testify/require"
-
-	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
 
 func TestSortRecord(t *testing.T) {
@@ -341,14 +339,8 @@ type SortCase struct {
 
 func sortAndCompare(t *testing.T, kase SortCase) {
 	t.Helper()
-	b := builder.NewOptInt32Builder(arrow.PrimitiveTypes.Int32)
-	defer b.Release()
 
-	got, err := SortRecord(
-		b,
-		kase.Samples.Record(),
-		kase.Columns,
-	)
+	got, err := SortRecord(kase.Samples.Record(), kase.Columns)
 	if kase.Error != "" {
 		require.NotNil(t, err, kase.Error)
 		return

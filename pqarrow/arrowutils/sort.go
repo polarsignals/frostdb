@@ -47,14 +47,13 @@ type SortingColumn struct {
 // Comparison is made sequentially by each column. When rows are equal in the
 // first column we compare the rows om the second column and so on and so forth
 // until rows that are not equal are found.
-func SortRecord(
-	indicesBuilder *builder.OptInt32Builder,
-	r arrow.Record,
-	columns []SortingColumn,
-) (*array.Int32, error) {
+func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
 	if len(columns) == 0 {
 		return nil, errors.New("pqarrow/arrowutils: at least one column is needed for sorting")
 	}
+	indicesBuilder := builder.NewOptInt32Builder(arrow.PrimitiveTypes.Int32)
+	defer indicesBuilder.Release()
+
 	if r.NumRows() == 0 {
 		return indicesBuilder.NewArray().(*array.Int32), nil
 	}
