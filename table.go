@@ -37,6 +37,7 @@ import (
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
+	"github.com/polarsignals/frostdb/internal/records"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -163,10 +164,73 @@ type completedBlock struct {
 	tx     uint64
 }
 
+// GenericTable is a wrapper around *Table that writes structs of type T. It
+// consist of  a generic arrow.Record builder that ingests structs of type T.
+// The generated record is then  passed to (*Table).InsertRecord.
+//
+// Struct tag `frostdb` is used to pass options for the schema for T.
+//
+// This api is opinionated.
+//
+//   - Nested Columns are not supported
+//
+// # Tags
+//
+// Use `frostdb` to define tags that customizes field values. You can express
+// everything needed to construct schema v1alpha1.
+//
+// Tags are defined as a comma separated list. The first item is the column
+// name. Column name is optional, when omitted it is derived from the field name
+// (snake_cased)
+//
+// Supported Tags
+//
+//	    delta_binary_packed | Delta binary packed encoding.
+//	                 brotli | Brotli compression.
+//	                    asc | Sorts in ascending order.Use asc(n) where n is an integer for sorting order.
+//	                   gzip | GZIP compression.
+//	                 snappy | Snappy compression.
+//	delta_length_byte_array | Delta Length Byte Array encoding.
+//	       delta_byte_array | Delta Byte Array encoding.
+//	                   desc | Sorts in descending order.Use desc(n) where n is an integer for sorting order
+//	                lz4_raw | LZ4_RAW compression.
+//	               pre_hash | Prehash the column before storing it.
+//	             null_first | When used wit asc nulls are smallest and with des nulls are largest.
+//	                   zstd | ZSTD compression.
+//	               rle_dict | Dictionary run-length encoding.
+//	                  plain | Plain encoding.
+//
+// Example tagged Sample struct
+//
+//	type Sample struct {
+//		ExampleType string      `frostdb:"example_type,rle_dict,asc(0)"`
+//		Labels      []Label     `frostdb:"labels,rle_dict,null,dyn,asc(1),null_first"`
+//		Stacktrace  []uuid.UUID `frostdb:"stacktrace,rle_dict,asc(3),null_first"`
+//		Timestamp   int64       `frostdb:"timestamp,asc(2)"`
+//		Value       int64       `frostdb:"value"`
+//	}
+//
+// # Dynamic columns
+//
+// Field of type map<string, T> is a dynamic column by default.
+//
+//	type Example struct {
+//		// Use supported tags to customize the column value
+//		Labels map[string]string `frostdb:"labels"`
+//	}
+//
+// # Repeated columns
+//
+// Fields of type []int64, []float64, []bool, and []string are supported. These
+// are represented as arrow.LIST.
+//
+// Generated schema for the repeated columns applies all supported tags. By
+// default repeated fields are nullable. You can safely pass nil slices for
+// repeated columns.
 type GenericTable[T any] struct {
 	*Table
 	mu    sync.Mutex
-	build *dynparquet.Build[T]
+	build *records.Build[T]
 }
 
 func (t *GenericTable[T]) Release() {
@@ -185,7 +249,7 @@ func (t *GenericTable[T]) Write(ctx context.Context, values ...T) error {
 }
 
 func NewGenericTable[T any](db *DB, name string, mem memory.Allocator, options ...TableOption) (*GenericTable[T], error) {
-	build := dynparquet.NewBuild[T](mem)
+	build := records.NewBuild[T](mem)
 	table, err := db.Table(name, NewTableConfig(build.Schema(name), options...))
 	if err != nil {
 		return nil, err

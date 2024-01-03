@@ -34,6 +34,7 @@ func RollbackPrevious(cb ColumnBuilder) error {
 		b.ResetToLength(b.Len() - 1)
 	case *array.Int64Builder:
 		b.Resize(b.Len() - 1)
+
 	case *array.StringBuilder:
 		b.Resize(b.Len() - 1)
 	case *array.BinaryBuilder:
@@ -65,6 +66,8 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 		b.AppendSingle(arr.(*array.Boolean).Value(i))
 	case *array.Int64Builder:
 		b.Append(arr.(*array.Int64).Value(i))
+	case *array.Int32Builder:
+		b.Append(arr.(*array.Int32).Value(i))
 	case *array.Float64Builder:
 		b.Append(arr.(*array.Float64).Value(i))
 	case *array.StringBuilder:
@@ -163,6 +166,8 @@ func AppendGoValue(cb ColumnBuilder, v any) error {
 		b.AppendSingle(v.(bool))
 	case *array.Int64Builder:
 		b.Append(v.(int64))
+	case *array.Int32Builder:
+		b.Append(v.(int32))
 	case *array.StringBuilder:
 		b.Append(v.(string))
 	case *array.BinaryBuilder:

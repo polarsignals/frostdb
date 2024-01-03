@@ -1,0 +1,15 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, timestamp, value)
+value1 1 2
+value1 3 4
+value1 5 6
+----
+
+exec
+select value * timestamp
+----
+2
+12
+30

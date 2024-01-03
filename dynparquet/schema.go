@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -481,6 +482,8 @@ func storageLayoutToParquetNode(l StorageLayout) (parquet.Node, error) {
 		node = parquet.Leaf(parquet.DoubleType)
 	case int32(schemapb.StorageLayout_TYPE_BOOL):
 		node = parquet.Leaf(parquet.BooleanType)
+	case int32(schemapb.StorageLayout_TYPE_INT32):
+		node = parquet.Int(32)
 	default:
 		return nil, fmt.Errorf("unknown storage layout type: %v", l.GetTypeInt32())
 	}
@@ -1351,46 +1354,66 @@ func mergeDynamicRowGroupDynamicColumns(rowGroups []DynamicRowGroup) map[string]
 }
 
 func MergeDynamicColumnSets(sets []map[string][]string) map[string][]string {
-	dynamicColumns := map[string][][]string{}
-	for _, set := range sets {
-		for k, v := range set {
-			_, seen := dynamicColumns[k]
-			if !seen {
-				dynamicColumns[k] = [][]string{}
-			}
-			dynamicColumns[k] = append(dynamicColumns[k], v)
-		}
-	}
-
-	resultDynamicColumns := map[string][]string{}
-	for name, dynCols := range dynamicColumns {
-		resultDynamicColumns[name] = mergeDynamicColumns(dynCols)
-	}
-
-	return resultDynamicColumns
+	m := newDynamicColumnSetMerger()
+	defer m.Release()
+	return m.Merge(sets)
 }
 
-// mergeDynamicColumns merges the given concrete dynamic column names into a
-// single superset. It assumes that the given DynamicColumns are all for the
-// same dynamic column name.
-func mergeDynamicColumns(dyn [][]string) []string {
-	return mergeStrings(dyn)
+type dynColSet struct {
+	keys   []string
+	seen   map[string]struct{}
+	values []string
 }
 
-// mergeStrings merges the given sorted string slices into a single sorted and
-// deduplicated slice of strings.
-func mergeStrings(str [][]string) []string {
-	result := []string{}
-	seen := map[string]struct{}{}
-	for _, s := range str {
-		for _, n := range s {
-			if _, ok := seen[n]; !ok {
-				result = append(result, n)
-				seen[n] = struct{}{}
+func newDynamicColumnSetMerger() *dynColSet {
+	return mergeSetPool.Get().(*dynColSet)
+}
+
+var mergeSetPool = &sync.Pool{New: func() any {
+	return &dynColSet{
+		seen:   make(map[string]struct{}),
+		keys:   make([]string, 0, 16), // This is arbitrary we anticipate to be lower than values size
+		values: make([]string, 0, 64), // This is arbitrary
+	}
+}}
+
+func (c *dynColSet) Release() {
+	c.keys = c.keys[:0]
+	clear(c.seen)
+	c.values = c.values[:0]
+	mergeSetPool.Put(c)
+}
+
+func (c *dynColSet) Merge(sets []map[string][]string) (o map[string][]string) {
+	// TODO:(gernest) use k-way merge
+	o = make(map[string][]string)
+	for i := range sets {
+		for k := range sets[i] {
+			if _, ok := c.seen[k]; !ok {
+				c.keys = append(c.keys, k)
+				c.seen[k] = struct{}{}
 			}
 		}
 	}
-	return MergeDeduplicatedDynCols(result)
+	for i := range c.keys {
+		clear(c.seen)
+		for j := range sets {
+			ls, ok := sets[j][c.keys[i]]
+			if !ok {
+				continue
+			}
+			for k := range ls {
+				if _, ok := c.seen[ls[k]]; !ok {
+					c.values = append(c.values, ls[k])
+					c.seen[ls[k]] = struct{}{}
+				}
+			}
+		}
+		sort.Strings(c.values)
+		o[c.keys[i]] = slices.Clone(c.values)
+		c.values = c.values[:0]
+	}
+	return
 }
 
 // MergeDeduplicatedDynCols is a light wrapper over sorting the deduplicated

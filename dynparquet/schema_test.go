@@ -21,7 +21,7 @@ func TestMergeRowBatches(t *testing.T) {
 	rowGroups := []DynamicRowGroup{}
 	for _, sample := range samples {
 		s := Samples{sample}
-		rg, err := s.ToBuffer(schema)
+		rg, err := ToBuffer(s, schema)
 		require.NoError(t, err)
 		rowGroups = append(rowGroups, rg)
 	}
@@ -198,7 +198,7 @@ func TestMultipleIterations(t *testing.T) {
 		Value:     3,
 	}}
 
-	dbuf, err := samples.ToBuffer(schema)
+	dbuf, err := ToBuffer(samples, schema)
 	require.NoError(t, err)
 
 	buf := dbuf.buffer
@@ -271,7 +271,7 @@ func Test_SchemaFromParquetFile(t *testing.T) {
 		Value:     3,
 	}}
 
-	dbuf, err := samples.ToBuffer(schema)
+	dbuf, err := ToBuffer(samples, schema)
 	require.NoError(t, err)
 
 	b := bytes.NewBuffer(nil)
@@ -352,5 +352,44 @@ func BenchmarkIsDynamicColumn(b *testing.B) {
 	require.NoError(b, err)
 	for i := 0; i < b.N; i++ {
 		_ = schema.IsDynamicColumn("labels.label1")
+	}
+}
+
+func TestMergeDynamicColumnSets(t *testing.T) {
+	sets := []map[string][]string{
+		{"labels": {"label1", "label2"}},
+		{"labels": {"label1", "label2"}},
+		{"labels": {"label1", "label2", "label3"}},
+		{
+			"labels": {"label1", "label2"},
+			"foo":    {"label1", "label2"},
+		},
+		{
+			"labels": {"label1", "label2", "label3"},
+			"foo":    {"label1", "label2", "label3"},
+		},
+	}
+	require.Equal(t, map[string][]string{
+		"foo":    {"label1", "label2", "label3"},
+		"labels": {"label1", "label2", "label3"},
+	}, MergeDynamicColumnSets(sets))
+}
+
+func BenchmarkMergeDynamicColumnSets(b *testing.B) {
+	sets := []map[string][]string{
+		{"labels": {"label1", "label2"}},
+		{"labels": {"label1", "label2"}},
+		{"labels": {"label1", "label2", "label3"}},
+		{
+			"labels": {"label1", "label2"},
+			"foo":    {"label1", "label2"},
+		},
+		{
+			"labels": {"label1", "label2", "label3"},
+			"foo":    {"label1", "label2", "label3"},
+		},
+	}
+	for i := 0; i < b.N; i++ {
+		MergeDynamicColumnSets(sets)
 	}
 }

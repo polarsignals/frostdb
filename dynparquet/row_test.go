@@ -101,7 +101,7 @@ func TestLess(t *testing.T) {
 	rowGroups := []DynamicRowGroup{}
 	for _, sample := range samples {
 		s := Samples{sample}
-		rg, err := s.ToBuffer(schema)
+		rg, err := ToBuffer(s, schema)
 		require.NoError(t, err)
 		rowGroups = append(rowGroups, rg)
 	}
@@ -161,7 +161,7 @@ func TestLess(t *testing.T) {
 		modifiedSample := samples[0]
 		modifiedSample.Timestamp++
 
-		rg, err := (Samples{modifiedSample}).ToBuffer(schema)
+		rg, err := ToBuffer(Samples{modifiedSample}, schema)
 		require.NoError(t, err)
 		row4 := &DynamicRows{
 			Schema:         rg.Schema(),
@@ -195,7 +195,7 @@ func TestLess(t *testing.T) {
 			Timestamp: 2,
 			Value:     5,
 		}
-		rg, err := Samples{sample}.ToBuffer(schema)
+		rg, err := ToBuffer(Samples{sample}, schema)
 		require.NoError(t, err)
 		row1 := &DynamicRows{
 			Schema:         rg.Schema(),
@@ -209,7 +209,7 @@ func TestLess(t *testing.T) {
 
 		// Add 1 to the last stacktrace byte.
 		sample.Stacktrace[1][15] = 0x3
-		rg, err = Samples{sample}.ToBuffer(schema)
+		rg, err = ToBuffer(Samples{sample}, schema)
 		require.NoError(t, err)
 		row2 := &DynamicRows{
 			Schema:         rg.Schema(),
@@ -252,7 +252,7 @@ func TestLessWithDynamicSchemas(t *testing.T) {
 	rowGroups := []DynamicRowGroup{}
 	for _, sample := range samples {
 		s := Samples{sample}
-		rg, err := s.ToBuffer(schema)
+		rg, err := ToBuffer(s, schema)
 		require.NoError(t, err)
 		rowGroups = append(rowGroups, rg)
 	}

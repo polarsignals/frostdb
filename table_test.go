@@ -749,7 +749,7 @@ func Test_RowWriter(t *testing.T) {
 
 	// Write 17(8,9) rows, expect 3 row groups of 5 rows and 1 row group of 2 rows
 	samples := dynparquet.GenerateTestSamples(8)
-	buf, err := samples.ToBuffer(table.Schema())
+	buf, err := dynparquet.ToBuffer(samples, table.Schema())
 	require.NoError(t, err)
 	rows := buf.Rows()
 	_, err = rowWriter.writeRows(rows)
@@ -757,7 +757,7 @@ func Test_RowWriter(t *testing.T) {
 	require.NoError(t, rows.Close())
 
 	samples = dynparquet.GenerateTestSamples(9)
-	buf, err = samples.ToBuffer(table.Schema())
+	buf, err = dynparquet.ToBuffer(samples, table.Schema())
 	require.NoError(t, err)
 	rows = buf.Rows()
 	_, err = rowWriter.writeRows(rows)

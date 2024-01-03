@@ -60,7 +60,6 @@ func BenchmarkRecordsToFile(b *testing.B) {
 	defer builder.Release()
 
 	const numRows = 1024
-	b.ResetTimer()
 	for i := 0; i < numRows; i++ {
 		builder.Field(0).(*array.Int64Builder).Append(int64(i))
 
@@ -78,12 +77,156 @@ func BenchmarkRecordsToFile(b *testing.B) {
 	}
 
 	record := builder.NewRecord()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := recordToRows(
 			noopWriter{}, func(string) bool { return false }, record, 0, numRows, parquetFields.Fields(),
 		); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestRecordToRows_list(t *testing.T) {
+	b := array.NewRecordBuilder(memory.NewGoAllocator(),
+		arrow.NewSchema(
+			[]arrow.Field{
+				{
+					Name:     "int",
+					Type:     arrow.ListOf(arrow.PrimitiveTypes.Int64),
+					Nullable: true,
+				},
+				{
+					Name:     "double",
+					Type:     arrow.ListOf(arrow.PrimitiveTypes.Float64),
+					Nullable: true,
+				},
+				{
+					Name:     "string",
+					Type:     arrow.ListOf(arrow.BinaryTypes.String),
+					Nullable: true,
+				},
+				{
+					Name:     "binary",
+					Type:     arrow.ListOf(arrow.BinaryTypes.Binary),
+					Nullable: true,
+				},
+				{
+					Name:     "bool",
+					Type:     arrow.ListOf(arrow.FixedWidthTypes.Boolean),
+					Nullable: true,
+				},
+			}, nil,
+		),
+	)
+	defer b.Release()
+
+	type Sample struct {
+		Int    []int64
+		Double []float64
+		String []string
+		Binary [][]byte
+		Bool   []bool
+	}
+	samples := []Sample{
+		{}, // handle nulls
+		{
+			Int:    []int64{1},
+			Double: []float64{1},
+			String: []string{"1"},
+			Binary: [][]byte{
+				[]byte("1"),
+			},
+			Bool: []bool{true},
+		},
+	}
+	ints := b.Field(0).(*array.ListBuilder)
+	intsBuild := ints.ValueBuilder().(*array.Int64Builder)
+	double := b.Field(1).(*array.ListBuilder)
+	doubleBuild := double.ValueBuilder().(*array.Float64Builder)
+	str := b.Field(2).(*array.ListBuilder)
+	strBuild := str.ValueBuilder().(*array.StringBuilder)
+	bin := b.Field(3).(*array.ListBuilder)
+	binBuild := bin.ValueBuilder().(*array.BinaryBuilder)
+	boolean := b.Field(4).(*array.ListBuilder)
+	booleanBuild := boolean.ValueBuilder().(*array.BooleanBuilder)
+
+	for _, s := range samples {
+		appendList[int64](ints, s.Int, intsBuild.Append)
+		appendList[float64](double, s.Double, doubleBuild.Append)
+		appendList[string](str, s.String, strBuild.Append)
+		appendList[[]byte](bin, s.Binary, binBuild.Append)
+		appendList[bool](boolean, s.Bool, booleanBuild.Append)
+	}
+	r := b.NewRecord()
+	defer r.Release()
+
+	parquetFields := parquet.Group{}
+	for _, f := range r.Schema().Fields() {
+		parquetFields[f.Name] = parquet.Node(nil)
+	}
+	clone := &cloneWriter{}
+	if err := recordToRows(
+		clone, func(string) bool { return false }, r, 0, int(r.NumRows()), parquetFields.Fields(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	// parquetFields.Fields() changes the order of the rows
+	// From
+	//  int, double, string, binary, bool
+	// To
+	//  binary, bool, double, int, string
+	want := []parquet.Row{
+		{
+			parquet.Value{}.Level(0, 0, 0),
+			parquet.Value{}.Level(0, 0, 1),
+			parquet.Value{}.Level(0, 0, 2),
+			parquet.Value{}.Level(0, 0, 3),
+			parquet.Value{}.Level(0, 0, 4),
+		},
+		{
+			parquet.ByteArrayValue([]byte("1")).Level(0, 1, 0),
+			parquet.BooleanValue(true).Level(0, 1, 1),
+			parquet.DoubleValue(1).Level(0, 1, 2),
+			parquet.Int64Value(1).Level(0, 1, 3),
+			parquet.ByteArrayValue([]byte("1")).Level(0, 1, 4),
+		},
+	}
+	require.Equal(t, len(want), len(clone.rows))
+	for i := range want {
+		require.True(t, want[i].Equal(clone.rows[i]))
+	}
+}
+
+type cloneWriter struct {
+	rows []parquet.Row
+}
+
+func (w cloneWriter) Schema() *parquet.Schema { return nil }
+
+func (w cloneWriter) Write(r []any) (int, error) { return len(r), nil }
+
+func (w *cloneWriter) WriteRows(r []parquet.Row) (int, error) {
+	for i := range r {
+		w.rows = append(w.rows, r[i].Clone())
+	}
+	return len(r), nil
+}
+
+func (w cloneWriter) Flush() error { return nil }
+
+func (w cloneWriter) Close() error { return nil }
+
+func (w cloneWriter) Reset(_ io.Writer) {}
+
+func appendList[T any](ls *array.ListBuilder, values []T, add func(T)) {
+	if values == nil {
+		ls.AppendNull()
+		return
+	}
+	ls.Append(true)
+	for i := range values {
+		add(values[i])
 	}
 }
 

@@ -175,6 +175,26 @@ func GetGroupsAndOrderedSetRanges(
 						return nil, nil, nil, err
 					}
 				}
+
+			case *array.String:
+				for j := 0; j < arr.Len(); j++ {
+					var curGroupValue *string
+					if curGroup[i] != nil {
+						g := curGroup[i].(string)
+						curGroupValue = &g
+					}
+					vIsNull := t.IsNull(j)
+					cmp, ok := nullComparison(curGroupValue == nil, vIsNull)
+					if !ok {
+						cmp = strings.Compare(*curGroupValue,
+							dict.Value(t.GetValueIndex(j)),
+						)
+					}
+					if err := handleCmpResult(cmp, i, t, j); err != nil {
+						return nil, nil, nil, err
+					}
+				}
+
 			default:
 				panic(fmt.Sprintf("unsupported dictionary type: %T", dict))
 			}

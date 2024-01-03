@@ -1,7 +1,8 @@
-package dynparquet
+package records
 
 import (
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	"github.com/polarsignals/frostdb/samples"
 )
 
 const (
@@ -737,7 +739,7 @@ func newUUIDSliceField(mem memory.Allocator, name string) (f *fieldBuilderFunc) 
 	}
 	bd := b.(*array.BinaryDictionaryBuilder)
 	f.buildFunc = func(v reflect.Value) error {
-		return bd.Append(ExtractLocationIDs(v.Interface().([]uuid.UUID)))
+		return bd.Append(samples.ExtractLocationIDs(v.Interface().([]uuid.UUID)))
 	}
 	return
 }
@@ -793,4 +795,15 @@ var uuidSliceType = reflect.TypeOf([]uuid.UUID{})
 
 func isUUIDSlice(typ reflect.Type) bool {
 	return typ.AssignableTo(uuidSliceType)
+}
+
+var (
+	matchFirstCap = regexp.MustCompile("(.)([A-Z][a-z]+)")
+	matchAllCap   = regexp.MustCompile("([a-z0-9])([A-Z])")
+)
+
+func ToSnakeCase(str string) string {
+	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
+	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
+	return strings.ToLower(snake)
 }
