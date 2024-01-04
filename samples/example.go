@@ -1,12 +1,10 @@
 package samples
 
 import (
-	"fmt"
 	"sort"
 	"testing"
 
 	"github.com/apache/arrow/go/v14/arrow"
-	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
@@ -14,6 +12,7 @@ import (
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
+	"github.com/polarsignals/frostdb/internal/records"
 )
 
 type Sample struct {
@@ -27,83 +26,13 @@ type Sample struct {
 type Samples []Sample
 
 func (s Samples) ToRecord() (arrow.Record, error) {
-	fields := []arrow.Field{
-		{
-			Name: "example_type",
-			Type: &arrow.DictionaryType{
-				IndexType: &arrow.Int32Type{},
-				ValueType: &arrow.BinaryType{},
-			},
-		},
+	b := records.NewBuild[Sample](memory.NewGoAllocator())
+	defer b.Release()
+	err := b.Append(s...)
+	if err != nil {
+		return nil, err
 	}
-	seen := map[string]struct{}{}
-	for _, smpl := range s {
-		for lbl := range smpl.Labels {
-			if _, ok := seen[lbl]; ok {
-				continue
-			}
-			seen[lbl] = struct{}{}
-			fields = append(fields,
-				arrow.Field{
-					Name:     "labels." + lbl,
-					Nullable: true,
-					Type: &arrow.DictionaryType{
-						IndexType: &arrow.Int32Type{},
-						ValueType: &arrow.BinaryType{},
-					},
-				},
-			)
-		}
-	}
-	// Sort the labels fields since they're a map
-	sort.Slice(fields, func(i, j int) bool {
-		return fields[i].Name < fields[j].Name
-	})
-	fields = append(fields, arrow.Field{
-		Name: "stacktrace",
-		Type: &arrow.DictionaryType{
-			IndexType: &arrow.Int32Type{},
-			ValueType: &arrow.BinaryType{},
-		},
-	},
-	)
-	fields = append(fields, arrow.Field{Name: "timestamp", Type: arrow.PrimitiveTypes.Int64})
-	fields = append(fields, arrow.Field{Name: "value", Type: arrow.PrimitiveTypes.Int64})
-	schema := arrow.NewSchema(fields, nil)
-
-	bld := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
-	defer bld.Release()
-
-	numLabels := schema.NumFields() - 4
-
-	for _, sample := range s {
-		if err := bld.Field(0).(*array.BinaryDictionaryBuilder).Append([]byte(sample.ExampleType)); err != nil {
-			return nil, fmt.Errorf("failed to append example type: %v", err)
-		}
-		for i := 0; i < numLabels; i++ {
-			found := false
-			for lbl, value := range sample.Labels {
-				if "labels."+lbl == schema.Field(i+1).Name {
-					if err := bld.Field(i + 1).(*array.BinaryDictionaryBuilder).Append([]byte(value)); err != nil {
-						return nil, fmt.Errorf("failed to append value: %v", err)
-					}
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				bld.Field(i + 1).AppendNull()
-			}
-		}
-		if err := bld.Field(1 + numLabels).(*array.BinaryDictionaryBuilder).Append(ExtractLocationIDs(sample.Stacktrace)); err != nil {
-			return nil, fmt.Errorf("failed to append stacktrace: %v", err)
-		}
-		bld.Field(2 + numLabels).(*array.Int64Builder).Append(sample.Timestamp)
-		bld.Field(3 + numLabels).(*array.Int64Builder).Append(sample.Value)
-	}
-
-	return bld.NewRecord(), nil
+	return b.NewRecord(), nil
 }
 
 func (s Samples) SampleLabelNames() []string {
