@@ -706,7 +706,7 @@ func (b *OptInt32Builder) ResetToLength(n int) {
 	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
 }
 
-func (b *OptInt32Builder) ReserveToLength(n int) {
+func (b *OptInt32Builder) Reserve(n int) {
 	b.length = n
 	b.data = slices.Grow(b.data, n)[:n]
 	b.validityBitmap = resizeBitmap(b.validityBitmap, n)

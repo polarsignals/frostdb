@@ -61,7 +61,7 @@ func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
 		indicesBuilder.Append(0)
 		return indicesBuilder.NewArray().(*array.Int32), nil
 	}
-	indicesBuilder.ReserveToLength(int(r.NumRows()))
+	indicesBuilder.Reserve(int(r.NumRows()))
 	for i := 0; i < int(r.NumRows()); i++ {
 		indicesBuilder.UnsafeSet(i, int32(i))
 	}
