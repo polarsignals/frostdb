@@ -112,9 +112,13 @@ func ReorderRecord(ctx context.Context, mem memory.Allocator, r arrow.Record, in
 		i := i
 		col := r.Column(i)
 		if d, ok := col.(*array.Dictionary); ok {
-			g.Go(takeDictColumn(ctx, d, i, resArr, indices))
+			g.Go(func() error {
+				return takeDictColumn(ctx, d, i, resArr, indices)
+			})
 		} else {
-			g.Go(takeColumn(ctx, col, i, resArr, indices))
+			g.Go(func() error {
+				return takeColumn(ctx, col, i, resArr, indices)
+			})
 		}
 	}
 	err := g.Wait()
@@ -124,37 +128,33 @@ func ReorderRecord(ctx context.Context, mem memory.Allocator, r arrow.Record, in
 	return array.NewRecord(r.Schema(), resArr, r.NumRows()), nil
 }
 
-func takeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, indices *array.Int32) func() error {
-	return func() error {
-		r, err := compute.TakeArray(ctx, a, indices)
+func takeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, indices *array.Int32) error {
+	r, err := compute.TakeArray(ctx, a, indices)
+	if err != nil {
+		return err
+	}
+	arr[idx] = r
+	return nil
+}
+
+func takeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arrow.Array, indices *array.Int32) error {
+	base := a.Dictionary().(*array.String)
+	// Only string dictionaries are supported.
+	r := array.NewBuilder(compute.GetAllocator(ctx), a.DataType()).(*array.BinaryDictionaryBuilder)
+	defer r.Release()
+	r.Reserve(indices.Len())
+	for _, i := range indices.Int32Values() {
+		if a.IsNull(int(i)) {
+			r.AppendNull()
+			continue
+		}
+		err := r.AppendString(base.Value(a.GetValueIndex(int(i))))
 		if err != nil {
 			return err
 		}
-		arr[idx] = r
-		return nil
 	}
-}
-
-func takeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arrow.Array, indices *array.Int32) func() error {
-	return func() error {
-		base := a.Dictionary().(*array.String)
-		// Only string dictionaries are supported.
-		r := array.NewBuilder(compute.GetAllocator(ctx), a.DataType()).(*array.BinaryDictionaryBuilder)
-		defer r.Release()
-		r.Reserve(indices.Len())
-		for _, i := range indices.Int32Values() {
-			if a.IsNull(int(i)) {
-				r.AppendNull()
-				continue
-			}
-			err := r.AppendString(base.Value(a.GetValueIndex(int(i))))
-			if err != nil {
-				return err
-			}
-		}
-		arr[idx] = r.NewArray()
-		return nil
-	}
+	arr[idx] = r.NewArray()
+	return nil
 }
 
 type multiColSorter struct {
