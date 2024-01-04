@@ -2301,7 +2301,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			finalRows:   1200,
 			beforeReplay: func(dir string) {
 				// Corrupt the LSM file; this should trigger a recovery from the WAL
-				levelFile := filepath.Join(dir, "databases", "test", "index", "L1.parquet")
+				levelFile := filepath.Join(dir, "databases", "test", "index", "test", "L1.parquet")
 				info, err := os.Stat(levelFile)
 				require.NoError(t, err)
 				require.NoError(t, os.Truncate(levelFile, info.Size()-1)) // truncate the last byte to pretend the write didn't finish
@@ -2314,7 +2314,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			finalRows:   1200,
 			beforeReplay: func(dir string) {
 				// Corrupt the LSM file; this should trigger a recovery from the WAL
-				levelFile := filepath.Join(dir, "databases", "test", "index", "L2.parquet")
+				levelFile := filepath.Join(dir, "databases", "test", "index", "test", "L2.parquet")
 				info, err := os.Stat(levelFile)
 				require.NoError(t, err)
 				require.NoError(t, os.Truncate(levelFile, info.Size()-1)) // truncate the last byte to pretend the write didn't finish
@@ -2327,11 +2327,11 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			beforeReplay: func(dir string) {},
 			beforeClose: func(table *Table, dir string) { // trigger a compaction, but save off the L1 file and move it back. This mimics a failure to truncate the L1 file
 				// Save the L1 file
-				levelFile := filepath.Join(dir, "databases", "test", "index", "L1.parquet")
+				levelFile := filepath.Join(dir, "databases", "test", "index", "test", "L1.parquet")
 				src, err := os.Open(levelFile)
 				require.NoError(t, err)
 
-				saveFile := filepath.Join(dir, "databases", "test", "index", "L1.parquet.sav")
+				saveFile := filepath.Join(dir, "databases", "test", "index", "test", "L1.parquet.sav")
 				dst, err := os.Create(saveFile)
 				require.NoError(t, err)
 

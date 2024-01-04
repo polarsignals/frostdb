@@ -43,7 +43,7 @@ func NewFileCompaction(t *Table, lvl int) *FileCompaction {
 		return f
 	}
 
-	indexDir := t.db.indexDir()
+	indexDir := filepath.Join(t.db.indexDir(), t.name)
 	if err := os.MkdirAll(indexDir, dirPerms); err != nil {
 		panic(err)
 	}
