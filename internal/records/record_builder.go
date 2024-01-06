@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	"github.com/polarsignals/frostdb/samples"
 )
 
 const (
@@ -739,9 +738,19 @@ func newUUIDSliceField(mem memory.Allocator, name string) (f *fieldBuilderFunc) 
 	}
 	bd := b.(*array.BinaryDictionaryBuilder)
 	f.buildFunc = func(v reflect.Value) error {
-		return bd.Append(samples.ExtractLocationIDs(v.Interface().([]uuid.UUID)))
+		return bd.Append(ExtractLocationIDs(v.Interface().([]uuid.UUID)))
 	}
 	return
+}
+
+func ExtractLocationIDs(locs []uuid.UUID) []byte {
+	b := make([]byte, len(locs)*16) // UUID are 16 bytes thus multiply by 16
+	index := 0
+	for i := len(locs) - 1; i >= 0; i-- {
+		copy(b[index:index+16], locs[i][:])
+		index += 16
+	}
+	return b
 }
 
 type fieldBuilderFunc struct {

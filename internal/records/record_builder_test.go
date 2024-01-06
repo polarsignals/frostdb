@@ -1,4 +1,4 @@
-package records
+package records_test
 
 import (
 	"testing"
@@ -8,20 +8,21 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/polarsignals/frostdb/internal/records"
 	"github.com/polarsignals/frostdb/samples"
 )
 
 func TestBuild(t *testing.T) {
 	t.Run("NewBuild", func(t *testing.T) {
-		b := NewBuild[samples.Sample](memory.DefaultAllocator)
+		b := records.NewBuild[samples.Sample](memory.DefaultAllocator)
 		defer b.Release()
 
-		ptr := NewBuild[*samples.Sample](memory.DefaultAllocator)
+		ptr := records.NewBuild[*samples.Sample](memory.DefaultAllocator)
 		defer ptr.Release()
 	})
 
 	t.Run("Schema", func(t *testing.T) {
-		b := NewBuild[samples.Sample](memory.DefaultAllocator)
+		b := records.NewBuild[samples.Sample](memory.DefaultAllocator)
 		defer b.Release()
 		got := b.Schema("test")
 		want := samples.SampleDefinition()
@@ -29,7 +30,7 @@ func TestBuild(t *testing.T) {
 	})
 
 	t.Run("NewRecord", func(t *testing.T) {
-		b := NewBuild[samples.Sample](memory.DefaultAllocator)
+		b := records.NewBuild[samples.Sample](memory.DefaultAllocator)
 		defer b.Release()
 		samples := samples.NewTestSamples()
 		err := b.Append(samples...)
@@ -53,7 +54,7 @@ func TestBuild(t *testing.T) {
 			String     []string
 			StringDict []string `frostdb:",rle_dict"`
 		}
-		b := NewBuild[Repeated](memory.DefaultAllocator)
+		b := records.NewBuild[Repeated](memory.DefaultAllocator)
 		defer b.Release()
 
 		wantSchema := `{
@@ -142,7 +143,7 @@ func TestBuild_pointer_base_types(t *testing.T) {
 		Dynamic map[string]*string
 	}
 
-	b := NewBuild[PointerBase](memory.NewGoAllocator())
+	b := records.NewBuild[PointerBase](memory.NewGoAllocator())
 	defer b.Release()
 
 	err := b.Append(
@@ -178,7 +179,7 @@ func BenchmarkBuild_Append_Then_NewRecord(b *testing.B) {
 	// NewRecord
 	//
 	// They are separate methods because we can't ignore benefits of buffering.
-	build := NewBuild[samples.Sample](memory.DefaultAllocator)
+	build := records.NewBuild[samples.Sample](memory.DefaultAllocator)
 	defer build.Release()
 	samples := samples.NewTestSamples()
 	b.ReportAllocs()
