@@ -1,0 +1,19 @@
+name: Buf
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "proto/**/*.proto"
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: bufbuild/buf-setup-action@v1
+
+      - name: Format
+        run: buf format --exit-code
