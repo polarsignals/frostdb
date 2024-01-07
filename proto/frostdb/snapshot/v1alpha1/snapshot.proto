@@ -37,6 +37,6 @@ message Part {
     ENCODING_UNKNOWN = 0;
     ENCODING_PARQUET = 1;
     ENCODING_ARROW = 2;
-  };
+  }
   Encoding encoding = 5;
 }
