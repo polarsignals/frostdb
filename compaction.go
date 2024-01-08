@@ -197,3 +197,6 @@ func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 
 	return recovered, err
 }
+
+// Sync calls Sync on the underlying file.
+func (f *FileCompaction) Sync() error { return f.file.Sync() }
