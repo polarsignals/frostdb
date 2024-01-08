@@ -15,6 +15,10 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 )
 
+const (
+	ParquetCompactionTXKey = "compaction_tx"
+)
+
 var ErrCompactionRecoveryFailed = fmt.Errorf("failed to recover compacted level")
 
 type FileCompaction struct {
@@ -77,7 +81,7 @@ func (f *FileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 	accountant := &accountingWriter{w: f.file}
 	preCompactionSize, err := f.t.compactParts(accountant, compact,
 		parquet.KeyValueMetadata(
-			"compaction_tx", // Compacting up through this transaction.
+			ParquetCompactionTXKey, // Compacting up through this transaction.
 			fmt.Sprintf("%v", compact[0].TX()),
 		),
 	) // compact into the next level
@@ -167,7 +171,7 @@ func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 				return nil, err
 			}
 
-			txstr, ok := buf.ParquetFile().Lookup("compaction_tx")
+			txstr, ok := buf.ParquetFile().Lookup(ParquetCompactionTXKey)
 			if !ok {
 				return nil, fmt.Errorf("failed to find compaction_tx metadata")
 			}
