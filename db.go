@@ -912,6 +912,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				if err != nil {
 					return fmt.Errorf("read record: %w", err)
 				}
+				defer reader.Release()
 
 				// TODO: the issue with this is we aren't prehashing the columns by not doing InsertRecord.
 				// If we prehash before WAL write we don't have to do that here.

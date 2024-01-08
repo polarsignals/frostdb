@@ -204,6 +204,10 @@ func (l *LSM) InsertPart(part parts.Part) {
 		}
 	}
 
+	if r := part.Record(); r != nil {
+		r.Retain()
+	}
+
 	if tx := part.TX(); tx > l.maxTXRecoverd[level] {
 		l.maxTXRecoverd[level] = tx
 	}
