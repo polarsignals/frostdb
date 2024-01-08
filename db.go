@@ -686,8 +686,13 @@ func (db *DB) indexDir() string {
 	return filepath.Join(db.storagePath, "index")
 }
 
-// recover attempts to recover database state from a combination of snapshots
-// and the WAL.
+// recover attempts to recover database state from a combination of snapshots and the WAL.
+//
+// The recovery process is as follows:
+// 1. Load the latest snapshot (if one should exist).
+// 1.a. If on-disk LSM index files exist: Upon table creation during snapshot loading, the index files shall be recovered from, inserting parts into the index.
+// 2. Replay the WAL starting from the latest snapshot transaction.
+// 2.a. If on-disk LSM index files were loaded: Insertion into the index may drop the insertion if a part with a higher transaction already exists in the WAL.
 func (db *DB) recover(ctx context.Context, wal WAL) error {
 	level.Info(db.logger).Log(
 		"msg", "recovering db",
