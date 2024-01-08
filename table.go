@@ -276,6 +276,11 @@ type Table struct {
 	wal     WAL
 	closing bool
 	closers []io.Closer
+	syncers []Sync
+}
+
+type Sync interface {
+	Sync() error
 }
 
 type WAL interface {
@@ -1247,6 +1252,7 @@ func (t *Table) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelConfig,
 				recovered = append(recovered, parts...)
 			}
 			t.closers = append(t.closers, fileCompaction) // Append to closers so that the underlying files are closed on table close.
+			t.syncers = append(t.syncers, fileCompaction) // Append to syncers so that the underlying files are synced on wal truncation.
 			cfg.Compact = fileCompaction.writeRecordsToParquetFile
 		default:
 			if i != len(levels)-1 { // Compaction type should not be set for last level

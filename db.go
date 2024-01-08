@@ -1305,6 +1305,19 @@ func (db *DB) resetToTxn(txn uint64, wal WAL) {
 	db.tx.Store(txn)
 	db.highWatermark.Store(txn)
 	if wal != nil {
+
+		// Before resetting the wal make sure any pending writes to the index are flushed.
+		errg := errgroup.Group{}
+		for _, table := range db.tables {
+			for _, syncer := range table.syncers {
+				errg.Go(syncer.Sync)
+			}
+		}
+
+		if err := errg.Wait(); err != nil {
+			level.Error(db.logger).Log("msg", "failed to sync index before resetting WAL; dataloss may occur", "err", err)
+		}
+
 		// This call resets the WAL to a zero state so that new records can be
 		// logged.
 		if err := wal.Reset(txn + 1); err != nil {
