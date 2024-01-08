@@ -20,6 +20,18 @@ const (
 	TagName = "frostdb"
 )
 
+type Record struct {
+	arrow.Record
+	SortingColumns []SortingColumn
+}
+
+type SortingColumn struct {
+	ColumnIndex int
+	Direction   schemapb.SortingColumn_Direction
+	NullFirst   bool
+	Order       int
+}
+
 // Build is a generic arrow.Record builder that ingests structs of type T. The
 // generated record can be passed to (*Table).InsertRecord.
 //
@@ -86,6 +98,7 @@ const (
 type Build[T any] struct {
 	fields []*fieldRecord
 	buffer []arrow.Array
+	sort   []SortingColumn
 }
 
 func NewBuild[T any](mem memory.Allocator) *Build[T] {
@@ -257,10 +270,34 @@ func (b *Build[T]) Append(values ...T) error {
 	return nil
 }
 
-func (b *Build[T]) NewRecord() arrow.Record {
+func (b *Build[T]) NewRecord() *Record {
 	fields := make([]arrow.Field, 0, len(b.fields))
-	for _, f := range b.fields {
-		fields = append(fields, f.build.Fields()...)
+	for i, f := range b.fields {
+		fs := f.build.Fields()
+		if f.sort {
+			if f.dynamic {
+				for j := 0; j < len(fs); j++ {
+					b.sort = append(b.sort,
+						SortingColumn{
+							ColumnIndex: i + j,
+							Direction:   f.direction,
+							NullFirst:   f.nullFirst,
+							Order:       f.sortOrder,
+						},
+					)
+				}
+			} else {
+				b.sort = append(b.sort,
+					SortingColumn{
+						ColumnIndex: i,
+						Direction:   f.direction,
+						NullFirst:   f.nullFirst,
+						Order:       f.sortOrder,
+					},
+				)
+			}
+		}
+		fields = append(fields, fs...)
 		b.buffer = f.build.NewArray(b.buffer)
 	}
 	defer func() {
@@ -268,12 +305,19 @@ func (b *Build[T]) NewRecord() arrow.Record {
 			b.buffer[i].Release()
 		}
 		b.buffer = b.buffer[:0]
+		b.sort = b.sort[:0]
 	}()
-	return array.NewRecord(
-		arrow.NewSchema(fields, nil),
-		b.buffer,
-		int64(b.buffer[0].Len()),
-	)
+	sort.Slice(b.sort, func(i, j int) bool {
+		return b.sort[i].Order < b.sort[j].Order
+	})
+	return &Record{
+		Record: array.NewRecord(
+			arrow.NewSchema(fields, nil),
+			b.buffer,
+			int64(b.buffer[0].Len()),
+		),
+		SortingColumns: slices.Clone(b.sort),
+	}
 }
 
 func (b Build[T]) Schema(name string) (s *schemapb.Schema) {
