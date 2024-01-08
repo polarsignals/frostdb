@@ -2,6 +2,7 @@ package index
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 
 	"github.com/polarsignals/frostdb/parts"
@@ -97,7 +98,7 @@ func (n *Node) Insert(part parts.Part) {
 		}
 	}
 	for !tryInsert() {
-		continue // make the linter happy
+		runtime.Gosched()
 	}
 }
 
