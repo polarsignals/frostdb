@@ -97,6 +97,8 @@ func NewLSMMetrics(reg prometheus.Registerer) *LSMMetrics {
 }
 
 // NewLSM returns an LSM-like index of len(levels) levels.
+// wait is a function that will block until the given transaction has been committed; this is used only during compaction to ensure
+// that all the tx in the level up to the compaction tx have been committed before compacting.
 func NewLSM(prefix string, schema *dynparquet.Schema, levels []*LevelConfig, wait func(uint64), options ...LSMOption) (*LSM, error) {
 	if err := validateLevels(levels); err != nil {
 		return nil, err
