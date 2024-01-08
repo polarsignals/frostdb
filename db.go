@@ -1305,7 +1305,6 @@ func (db *DB) resetToTxn(txn uint64, wal WAL) {
 	db.tx.Store(txn)
 	db.highWatermark.Store(txn)
 	if wal != nil {
-
 		// Before resetting the wal make sure any pending writes to the index are flushed.
 		errg := errgroup.Group{}
 		for _, table := range db.tables {
