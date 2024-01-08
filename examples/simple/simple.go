@@ -44,7 +44,7 @@ func main() {
 		},
 		Value: 99,
 	}
-	_ = table.Write(context.Background(), frederic, thor)
+	_, _ = table.Write(context.Background(), frederic, thor)
 
 	// Now we can insert rows that have middle names into our dynamic column
 	matthias := Simple{
@@ -55,7 +55,7 @@ func main() {
 		},
 		Value: 101,
 	}
-	_ = table.Write(context.Background(), matthias)
+	_, _ = table.Write(context.Background(), matthias)
 
 	// Create a new query engine to retrieve data and print the results
 	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())

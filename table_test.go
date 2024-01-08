@@ -1064,7 +1064,7 @@ func Test_Table_DynamicColumnMap(t *testing.T) {
 	require.NoError(t, err)
 	defer table.Release()
 
-	err = table.Write(context.Background(), ColMap{
+	_, err = table.Write(context.Background(), ColMap{
 		Name: "albert",
 		Attributes: map[string]string{
 			"age": "9999",
@@ -1094,7 +1094,7 @@ func Test_Table_DynamicColumnNotDefined(t *testing.T) {
 	require.NoError(t, err)
 	defer table.Release()
 
-	err = table.Write(context.Background(), ColMap{
+	_, err = table.Write(context.Background(), ColMap{
 		Name: "albert",
 	})
 	require.NoError(t, err)
@@ -1123,7 +1123,7 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 
 	const numRecords = 9
 	for i := 0; i < numRecords; i++ {
-		err = table.Write(context.Background(), Record{
+		_, err = table.Write(context.Background(), Record{
 			Name: "duplicate",
 		})
 		require.NoError(t, err)
@@ -1141,7 +1141,7 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 	require.Equal(t, numRecords, rowsRead)
 
 	// Trigger compaction with a new record.
-	err = table.Write(context.Background(), Record{
+	_, err = table.Write(context.Background(), Record{
 		Name: "duplicate",
 	})
 	require.NoError(t, err)
@@ -1174,7 +1174,7 @@ func TestTable_write_ptr_struct(t *testing.T) {
 	require.Nil(t, err)
 	defer table.Release()
 
-	err = table.Write(context.Background(), &dynparquet.Sample{
+	_, err = table.Write(context.Background(), &dynparquet.Sample{
 		ExampleType: "ptr",
 	})
 	require.Nil(t, err)

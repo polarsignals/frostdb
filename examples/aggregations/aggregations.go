@@ -49,7 +49,7 @@ func main() {
 		"state": "Minnesota",
 	}
 
-	_ = table.Write(context.Background(),
+	_, _ = table.Write(context.Background(),
 		WeatherRecord{Day: "Mon", Snowfall: 20, City: montreal},
 		WeatherRecord{Day: "Tue", Snowfall: 00, City: montreal},
 		WeatherRecord{Day: "Wed", Snowfall: 30, City: montreal},

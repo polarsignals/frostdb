@@ -237,15 +237,15 @@ func (t *GenericTable[T]) Release() {
 	t.build.Release()
 }
 
-func (t *GenericTable[T]) Write(ctx context.Context, values ...T) error {
+// Write builds arrow.Record directly from values and calls (*Table).InsertRecord.
+func (t *GenericTable[T]) Write(ctx context.Context, values ...T) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	err := t.build.Append(values...)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = t.InsertRecord(ctx, t.build.NewRecord())
-	return err
+	return t.InsertRecord(ctx, t.build.NewRecord())
 }
 
 func NewGenericTable[T any](db *DB, name string, mem memory.Allocator, options ...TableOption) (*GenericTable[T], error) {

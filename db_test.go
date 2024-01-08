@@ -1080,7 +1080,7 @@ func Test_DB_TableWrite_FlatSchema(t *testing.T) {
 	require.NoError(t, err)
 	defer table.Release()
 
-	err = table.Write(ctx, Flat{
+	_, err = table.Write(ctx, Flat{
 		ExampleType: "hello-world",
 		Timestamp:   7,
 		Value:       8,
@@ -1159,7 +1159,7 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 		},
 	}
 
-	err = table.Write(ctx, samples[0], samples[1], samples[2])
+	_, err = table.Write(ctx, samples[0], samples[1], samples[2])
 	require.NoError(t, err)
 
 	engine := query.NewEngine(
