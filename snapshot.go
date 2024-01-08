@@ -478,16 +478,17 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 					}
 					return nil
 				}()
-				if err != nil && err != ErrSkipPart {
+				if err != nil {
+					if err == ErrSkipPart {
+						return true
+					}
 					ascendErr = err
 					return false
 				}
 
-				if err != ErrSkipPart {
-					partMeta.EndOffset = int64(offW.offset)
-					granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
-					tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
-				}
+				partMeta.EndOffset = int64(offW.offset)
+				granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
+				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
 				return true
 			})
 			metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
