@@ -2493,7 +2493,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 	}
 }
 
-// Ensure data integrity when a block is rotated
+// Ensure data integrity when a block is rotated.
 func Test_DB_PersistentDiskCompaction_BlockRotation(t *testing.T) {
 	t.Parallel()
 	config := NewTableConfig(
@@ -2568,7 +2568,7 @@ func Test_DB_PersistentDiskCompaction_BlockRotation(t *testing.T) {
 	validateRows(1200)
 
 	// Rotate block
-	require.NoError(t, table.RotateBlock(nil, table.ActiveBlock(), false))
+	require.NoError(t, table.RotateBlock(context.Background(), table.ActiveBlock(), false))
 
 	validateRows(1200)
 
