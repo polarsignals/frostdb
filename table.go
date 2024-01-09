@@ -1032,7 +1032,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 // Close the block and release all resources.
 func (t *TableBlock) Close(cleanup bool) error {
 	for _, closer := range t.closers {
-		if err := closer.Close(false); err != nil {
+		if err := closer.Close(cleanup); err != nil {
 			return fmt.Errorf("closer: %w", err)
 		}
 	}
