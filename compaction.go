@@ -29,8 +29,14 @@ type FileCompaction struct {
 	ref    int64 // Number of references to file.
 }
 
-func (f *FileCompaction) Close() error {
-	return f.file.Close()
+func (f *FileCompaction) Close(cleanup bool) error {
+	err := f.file.Close()
+	if cleanup {
+		if err := os.Remove(f.file.Name()); err != nil {
+			return fmt.Errorf("failed to remove file: %v", err)
+		}
+	}
+	return err
 }
 
 func NewFileCompaction(t *Table, block ulid.ULID, lvl int) *FileCompaction {

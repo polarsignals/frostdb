@@ -319,13 +319,17 @@ type TableBlock struct {
 	lastSnapshotSize atomic.Int64
 
 	index   *index.LSM
-	closers []io.Closer
+	closers []Closer
 	syncers []Sync
 
 	pendingWritersWg sync.WaitGroup
 	pendingReadersWg sync.WaitGroup
 
 	mtx *sync.RWMutex
+}
+
+type Closer interface {
+	Close(cleanup bool) error
 }
 
 type tableMetrics struct {
@@ -601,9 +605,6 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 
 	level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size(), "skipPersist", skipPersist)
 	defer func() {
-		if err := block.Close(true); err != nil {
-			level.Error(t.logger).Log("msg", "closing block", "err", err)
-		}
 		level.Debug(t.logger).Log("msg", "done rotating block")
 	}()
 
@@ -625,7 +626,12 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 	// We don't check t.db.columnStore.manualBlockRotation here because this is
 	// the entry point for users to trigger a manual block rotation and they
 	// will specify through skipPersist if they want the block to be persisted.
-	go t.writeBlock(block, skipPersist, true)
+	go func() {
+		t.writeBlock(block, skipPersist, true)
+		if err := block.Close(true); err != nil {
+			level.Error(t.logger).Log("msg", "closing block", "err", err)
+		}
+	}()
 
 	return nil
 }
@@ -957,7 +963,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		prevTx: prevTx,
 	}
 
-	cfg, recovered, err := table.configureLSMLevels(table.db.columnStore.indexConfig, id)
+	cfg, recovered, err := tb.configureLSMLevels(table.db.columnStore.indexConfig)
 	if err != nil {
 		return nil, fmt.Errorf("configure LSM levels: %w", err)
 	}
@@ -1026,7 +1032,7 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 // Close the block and release all resources.
 func (t *TableBlock) Close(cleanup bool) error {
 	for _, closer := range t.closers {
-		if err := closer.Close(); err != nil {
+		if err := closer.Close(false); err != nil {
 			return fmt.Errorf("closer: %w", err)
 		}
 	}
@@ -1229,7 +1235,7 @@ type IndexConfig struct {
 }
 
 // configureLSMLevels configures the level configs for this table block.
-func (t *TableBlock) configureLSMLevels(levels []*IndexConfig, id ulid.ULID) ([]*index.LevelConfig, []parts.Part, error) {
+func (t *TableBlock) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelConfig, []parts.Part, error) {
 	config := make([]*index.LevelConfig, len(levels))
 	recovered := []parts.Part{}
 	abortRecovery := false
@@ -1246,7 +1252,7 @@ func (t *TableBlock) configureLSMLevels(levels []*IndexConfig, id ulid.ULID) ([]
 		case CompactionTypeParquet:
 			cfg.Compact = t.table.parquetCompaction
 		case CompactionTypeParquetDisk:
-			fileCompaction := NewFileCompaction(t.table, id, i+1)
+			fileCompaction := NewFileCompaction(t.table, t.ulid, i+1)
 			if abortRecovery { // If we failed to recover an LSM file, we need to abort recovery of all lower levels as well, and let the WAL recover.
 				if err := fileCompaction.Truncate(); err != nil {
 					return nil, nil, err
