@@ -1145,6 +1145,10 @@ func (db *DB) promoteReadOnlyTableLocked(name string, config *tablepb.TableConfi
 
 // Table will get or create a new table with the given name and config. If a table already exists with the given name, it will have it's configuration updated.
 func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
+	return db.table(name, config, generateULID())
+}
+
+func (db *DB) table(name string, config *tablepb.TableConfig, id ulid.ULID) (*Table, error) {
 	if config == nil {
 		return nil, fmt.Errorf("table config cannot be nil")
 	}
@@ -1195,7 +1199,6 @@ func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	tx, _, commit := db.begin()
 	defer commit()
 
-	id := generateULID()
 	if err := table.newTableBlock(0, tx, id); err != nil {
 		return nil, err
 	}

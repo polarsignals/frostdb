@@ -604,30 +604,13 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				options...,
 			)
 
-			table, err := newTable(
-				db,
-				tableMeta.Name,
-				tableConfig,
-				db.reg,
-				db.logger,
-				db.tracer,
-				db.wal,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to create table: %w", err)
-			}
-			db.mtx.Lock()
-			db.tables[tableMeta.Name] = table
-			db.mtx.Unlock()
-
 			var blockUlid ulid.ULID
 			if err := blockUlid.UnmarshalBinary(tableMeta.ActiveBlock.Ulid); err != nil {
 				return err
 			}
 
-			tx, _, commit := db.begin()
-			defer commit()
-			if err := table.newTableBlock(0, tx, blockUlid); err != nil {
+			table, err := db.table(tableMeta.Name, tableConfig, blockUlid)
+			if err != nil {
 				return err
 			}
 
