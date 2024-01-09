@@ -603,20 +603,37 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				schemaMsg,
 				options...,
 			)
-			table, err := db.Table(tableMeta.Name, tableConfig)
+
+			table, err := newTable(
+				db,
+				tableMeta.Name,
+				tableConfig,
+				db.reg,
+				db.logger,
+				db.tracer,
+				db.wal,
+			)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to create table: %w", err)
 			}
+			db.mtx.Lock()
+			db.tables[tableMeta.Name] = table
+			db.mtx.Unlock()
 
 			var blockUlid ulid.ULID
 			if err := blockUlid.UnmarshalBinary(tableMeta.ActiveBlock.Ulid); err != nil {
 				return err
 			}
 
+			tx, _, commit := db.begin()
+			defer commit()
+			if err := table.newTableBlock(0, tx, blockUlid); err != nil {
+				return err
+			}
+
 			table.mtx.Lock()
 			block := table.active
 			block.mtx.Lock()
-			block.ulid = blockUlid
 			// Store the last snapshot size so a snapshot is not triggered right
 			// after loading this snapshot.
 			block.lastSnapshotSize.Store(tableMeta.ActiveBlock.Size)
