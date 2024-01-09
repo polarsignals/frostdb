@@ -10,7 +10,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/compute"
-	"github.com/apache/arrow/go/v14/arrow/memory"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
@@ -75,8 +74,7 @@ func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
 
 // ReorderRecord uses indices to create a new record that is sorted according to
 // the indices array.
-func ReorderRecord(ctx context.Context, mem memory.Allocator, r arrow.Record, indices *array.Int32) (arrow.Record, error) {
-	ctx = compute.WithAllocator(ctx, mem)
+func ReorderRecord(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Record, error) {
 	// compute.Take doesn't support dictionaries. Use take on r when r does not have
 	// dictionary column.
 	var hasDictionary bool
