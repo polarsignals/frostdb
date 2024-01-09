@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 const (
@@ -22,14 +23,7 @@ const (
 
 type Record struct {
 	arrow.Record
-	SortingColumns []SortingColumn
-}
-
-type SortingColumn struct {
-	ColumnIndex int
-	Direction   schemapb.SortingColumn_Direction
-	NullFirst   bool
-	Order       int
+	SortingColumns []arrowutils.SortingColumn
 }
 
 // Build is a generic arrow.Record builder that ingests structs of type T. The
@@ -98,7 +92,7 @@ type SortingColumn struct {
 type Build[T any] struct {
 	fields []*fieldRecord
 	buffer []arrow.Array
-	sort   []SortingColumn
+	sort   []*fieldRecord
 }
 
 func NewBuild[T any](mem memory.Allocator) *Build[T] {
@@ -272,29 +266,15 @@ func (b *Build[T]) Append(values ...T) error {
 
 func (b *Build[T]) NewRecord() *Record {
 	fields := make([]arrow.Field, 0, len(b.fields))
-	for i, f := range b.fields {
+	for _, f := range b.fields {
 		fs := f.build.Fields()
 		if f.sort {
 			if f.dynamic {
 				for j := 0; j < len(fs); j++ {
-					b.sort = append(b.sort,
-						SortingColumn{
-							ColumnIndex: i + j,
-							Direction:   f.direction,
-							NullFirst:   f.nullFirst,
-							Order:       f.sortOrder,
-						},
-					)
+					b.sort = append(b.sort, f)
 				}
 			} else {
-				b.sort = append(b.sort,
-					SortingColumn{
-						ColumnIndex: i,
-						Direction:   f.direction,
-						NullFirst:   f.nullFirst,
-						Order:       f.sortOrder,
-					},
-				)
+				b.sort = append(b.sort, f)
 			}
 		}
 		fields = append(fields, fs...)
@@ -308,15 +288,27 @@ func (b *Build[T]) NewRecord() *Record {
 		b.sort = b.sort[:0]
 	}()
 	sort.Slice(b.sort, func(i, j int) bool {
-		return b.sort[i].Order < b.sort[j].Order
+		return b.sort[i].sortOrder < b.sort[j].sortOrder
 	})
+	sortingCols := make([]arrowutils.SortingColumn, 0, len(b.sort))
+	for idx, f := range b.sort {
+		direction := arrowutils.Ascending
+		if f.direction == schemapb.SortingColumn_DIRECTION_DESCENDING {
+			direction = arrowutils.Descending
+		}
+		sortingCols = append(sortingCols, arrowutils.SortingColumn{
+			Index:      idx,
+			Direction:  direction,
+			NullsFirst: f.nullFirst,
+		})
+	}
 	return &Record{
 		Record: array.NewRecord(
 			arrow.NewSchema(fields, nil),
 			b.buffer,
 			int64(b.buffer[0].Len()),
 		),
-		SortingColumns: slices.Clone(b.sort),
+		SortingColumns: sortingCols,
 	}
 }
 
