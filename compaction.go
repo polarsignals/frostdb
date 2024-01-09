@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/go-kit/log/level"
+	"github.com/oklog/ulid"
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
@@ -32,7 +33,7 @@ func (f *FileCompaction) Close() error {
 	return f.file.Close()
 }
 
-func NewFileCompaction(t *Table, lvl int) *FileCompaction {
+func NewFileCompaction(t *Table, block ulid.ULID, lvl int) *FileCompaction {
 	f := &FileCompaction{
 		t: t,
 	}
@@ -52,7 +53,7 @@ func NewFileCompaction(t *Table, lvl int) *FileCompaction {
 		panic(err)
 	}
 
-	file, err := os.OpenFile(filepath.Join(indexDir, fmt.Sprintf("L%v.parquet", lvl)), os.O_CREATE|os.O_RDWR, filePerms)
+	file, err := os.OpenFile(filepath.Join(indexDir, fmt.Sprintf("L%v-%s.parquet", lvl, block.String())), os.O_CREATE|os.O_RDWR, filePerms)
 	if err != nil {
 		panic(err)
 	}

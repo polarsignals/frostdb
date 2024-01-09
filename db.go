@@ -749,7 +749,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-					cfg, recovered, err := table.configureLSMLevels(db.columnStore.indexConfig)
+					cfg, recovered, err := table.configureLSMLevels(db.columnStore.indexConfig, table.ActiveBlock().ulid)
 					if err != nil {
 						return fmt.Errorf("configure lsm levels: %w", err)
 					}

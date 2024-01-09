@@ -954,7 +954,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		prevTx: prevTx,
 	}
 
-	cfg, recovered, err := table.configureLSMLevels(table.db.columnStore.indexConfig)
+	cfg, recovered, err := table.configureLSMLevels(table.db.columnStore.indexConfig, id)
 	if err != nil {
 		return nil, fmt.Errorf("configure LSM levels: %w", err)
 	}
@@ -1218,7 +1218,7 @@ type IndexConfig struct {
 }
 
 // configureLSMLevels configures the level configs for this table.
-func (t *Table) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelConfig, []parts.Part, error) {
+func (t *Table) configureLSMLevels(levels []*IndexConfig, id ulid.ULID) ([]*index.LevelConfig, []parts.Part, error) {
 	config := make([]*index.LevelConfig, len(levels))
 	recovered := []parts.Part{}
 	abortRecovery := false
@@ -1235,7 +1235,7 @@ func (t *Table) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelConfig,
 		case CompactionTypeParquet:
 			cfg.Compact = t.parquetCompaction
 		case CompactionTypeParquetDisk:
-			fileCompaction := NewFileCompaction(t, i+1)
+			fileCompaction := NewFileCompaction(t, id, i+1)
 			if abortRecovery { // If we failed to recover an LSM file, we need to abort recovery of all lower levels as well, and let the WAL recover.
 				if err := fileCompaction.Truncate(); err != nil {
 					return nil, nil, err
