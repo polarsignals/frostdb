@@ -1,7 +1,9 @@
 package dynparquet
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -9,8 +11,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/cespare/xxhash/v2"
 	"github.com/dgryski/go-metro"
-
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 const prehashedPrefix = "hashed"
@@ -102,26 +102,98 @@ func HashArray(arr arrow.Array) []uint64 {
 	}
 }
 
-func hashListArray(arr *array.List) []uint64 {
-	res := make([]uint64, arr.Len())
+func hashListArray(arr *array.List) (res []uint64) {
+	res = make([]uint64, arr.Len())
 	digest := xxhash.New()
-
-	dictionaryList, binaryDictionaryList, err := arrowutils.ToConcreteList(arr)
-	if err != nil {
-		panic(err)
-	}
-	for i := 0; i < arr.Len(); i++ {
-		start, end := arr.ValueOffsets(i)
-		for j := start; j < end; j++ {
-			// NOTE: We can ignore the return here because the xxhash Write
-			// function says it always returns len(b), nil.
-			_, _ = digest.Write(binaryDictionaryList.Value(dictionaryList.GetValueIndex(int(j))))
+	switch e := arr.ListValues().(type) {
+	case *array.Int64:
+		var buf [8]byte
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				_, _ = digest.Write(binary.BigEndian.AppendUint64(buf[:0],
+					uint64(e.Value(int(j)))))
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
 		}
-
-		res[i] = digest.Sum64()
-		digest.Reset()
+		return
+	case *array.Float64:
+		var buf [8]byte
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				_, _ = digest.Write(binary.BigEndian.AppendUint64(buf[:0],
+					math.Float64bits(e.Value(int(j)))))
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
+		}
+		return
+	case *array.Boolean:
+		var buf [1]byte
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				if e.Value(int(j)) {
+					buf[0] = 2
+				} else {
+					buf[0] = 1
+				}
+				_, _ = digest.Write(buf[:])
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
+		}
+		return
+	case *array.Binary:
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				_, _ = digest.Write(e.Value(int(j)))
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
+		}
+		return
+	case *array.String:
+		for i := 0; i < arr.Len(); i++ {
+			start, end := arr.ValueOffsets(i)
+			for j := start; j < end; j++ {
+				_, _ = digest.WriteString(e.Value(int(j)))
+			}
+			res[i] = digest.Sum64()
+			digest.Reset()
+		}
+		return
+	case *array.Dictionary:
+		switch dict := e.Dictionary().(type) {
+		case *array.Binary:
+			for i := 0; i < arr.Len(); i++ {
+				start, end := arr.ValueOffsets(i)
+				for j := start; j < end; j++ {
+					_, _ = digest.Write(dict.Value(e.GetValueIndex(int(j))))
+				}
+				res[i] = digest.Sum64()
+				digest.Reset()
+			}
+			return
+		case *array.String:
+			for i := 0; i < arr.Len(); i++ {
+				start, end := arr.ValueOffsets(i)
+				for j := start; j < end; j++ {
+					_, _ = digest.WriteString(dict.Value(e.GetValueIndex(int(j))))
+				}
+				res[i] = digest.Sum64()
+				digest.Reset()
+			}
+			return
+		default:
+			panic(fmt.Sprintf("list dictionary not of expected type: %T", dict))
+		}
+	default:
+		panic(fmt.Sprintf("list not of expected type: %T", e))
 	}
-	return res
 }
 
 func hashDictionaryArray(arr *array.Dictionary) []uint64 {
