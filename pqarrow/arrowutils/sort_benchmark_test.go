@@ -88,7 +88,7 @@ func makeRandomInts(n int) []int64 {
 
 func makeRandomStrings(n int) []string {
 	r := rand.New(rand.NewSource(42))
-	var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	letters := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	ss := make([]string, n)
 	for i := 0; i < n; i++ {
 		var sb strings.Builder
