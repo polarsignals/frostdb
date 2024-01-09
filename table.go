@@ -275,8 +275,6 @@ type Table struct {
 
 	wal     WAL
 	closing bool
-	closers []io.Closer
-	syncers []Sync
 }
 
 type Sync interface {
@@ -320,7 +318,9 @@ type TableBlock struct {
 	// snapshot was last triggered.
 	lastSnapshotSize atomic.Int64
 
-	index *index.LSM
+	index   *index.LSM
+	closers []io.Closer
+	syncers []Sync
 
 	pendingWritersWg sync.WaitGroup
 	pendingReadersWg sync.WaitGroup
@@ -601,6 +601,9 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 
 	level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size(), "skipPersist", skipPersist)
 	defer func() {
+		if err := block.Close(true); err != nil {
+			level.Error(t.logger).Log("msg", "closing block", "err", err)
+		}
 		level.Debug(t.logger).Log("msg", "done rotating block")
 	}()
 
@@ -1020,6 +1023,16 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 	return t.index.Rotate(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
 }
 
+// Close the block and release all resources.
+func (t *TableBlock) Close(cleanup bool) error {
+	for _, closer := range t.closers {
+		if err := closer.Close(); err != nil {
+			return fmt.Errorf("closer: %w", err)
+		}
+	}
+	return nil
+}
+
 type ParquetWriter interface {
 	Flush() error
 	WriteRows([]parquet.Row) (int, error)
@@ -1196,10 +1209,8 @@ func (t *Table) close() {
 	t.closing = true
 	t.active.index.WaitForPendingCompactions()
 
-	for _, closer := range t.closers {
-		if err := closer.Close(); err != nil {
-			level.Error(t.logger).Log("msg", "table closer", "err", err)
-		}
+	if err := t.active.Close(false); err != nil {
+		level.Error(t.logger).Log("msg", "closing table block", "err", err)
 	}
 }
 
@@ -1217,8 +1228,8 @@ type IndexConfig struct {
 	Type    CompactionType
 }
 
-// configureLSMLevels configures the level configs for this table.
-func (t *Table) configureLSMLevels(levels []*IndexConfig, id ulid.ULID) ([]*index.LevelConfig, []parts.Part, error) {
+// configureLSMLevels configures the level configs for this table block.
+func (t *TableBlock) configureLSMLevels(levels []*IndexConfig, id ulid.ULID) ([]*index.LevelConfig, []parts.Part, error) {
 	config := make([]*index.LevelConfig, len(levels))
 	recovered := []parts.Part{}
 	abortRecovery := false
@@ -1233,9 +1244,9 @@ func (t *Table) configureLSMLevels(levels []*IndexConfig, id ulid.ULID) ([]*inde
 		}
 		switch lvl.Type {
 		case CompactionTypeParquet:
-			cfg.Compact = t.parquetCompaction
+			cfg.Compact = t.table.parquetCompaction
 		case CompactionTypeParquetDisk:
-			fileCompaction := NewFileCompaction(t, id, i+1)
+			fileCompaction := NewFileCompaction(t.table, id, i+1)
 			if abortRecovery { // If we failed to recover an LSM file, we need to abort recovery of all lower levels as well, and let the WAL recover.
 				if err := fileCompaction.Truncate(); err != nil {
 					return nil, nil, err

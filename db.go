@@ -1313,7 +1313,7 @@ func (db *DB) resetToTxn(txn uint64, wal WAL) {
 		// Before resetting the wal make sure any pending writes to the index are flushed.
 		errg := errgroup.Group{}
 		for _, table := range db.tables {
-			for _, syncer := range table.syncers {
+			for _, syncer := range table.ActiveBlock().syncers {
 				errg.Go(syncer.Sync)
 			}
 		}
