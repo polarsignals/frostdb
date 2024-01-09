@@ -14,11 +14,17 @@ import (
 	"github.com/google/uuid"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 const (
 	TagName = "frostdb"
 )
+
+type Record struct {
+	arrow.Record
+	SortingColumns []arrowutils.SortingColumn
+}
 
 // Build is a generic arrow.Record builder that ingests structs of type T. The
 // generated record can be passed to (*Table).InsertRecord.
@@ -86,6 +92,7 @@ const (
 type Build[T any] struct {
 	fields []*fieldRecord
 	buffer []arrow.Array
+	sort   []*fieldRecord
 }
 
 func NewBuild[T any](mem memory.Allocator) *Build[T] {
@@ -257,10 +264,20 @@ func (b *Build[T]) Append(values ...T) error {
 	return nil
 }
 
-func (b *Build[T]) NewRecord() arrow.Record {
+func (b *Build[T]) NewRecord() *Record {
 	fields := make([]arrow.Field, 0, len(b.fields))
 	for _, f := range b.fields {
-		fields = append(fields, f.build.Fields()...)
+		fs := f.build.Fields()
+		if f.sort {
+			if f.dynamic {
+				for j := 0; j < len(fs); j++ {
+					b.sort = append(b.sort, f)
+				}
+			} else {
+				b.sort = append(b.sort, f)
+			}
+		}
+		fields = append(fields, fs...)
 		b.buffer = f.build.NewArray(b.buffer)
 	}
 	defer func() {
@@ -268,12 +285,31 @@ func (b *Build[T]) NewRecord() arrow.Record {
 			b.buffer[i].Release()
 		}
 		b.buffer = b.buffer[:0]
+		b.sort = b.sort[:0]
 	}()
-	return array.NewRecord(
-		arrow.NewSchema(fields, nil),
-		b.buffer,
-		int64(b.buffer[0].Len()),
-	)
+	sort.Slice(b.sort, func(i, j int) bool {
+		return b.sort[i].sortOrder < b.sort[j].sortOrder
+	})
+	sortingCols := make([]arrowutils.SortingColumn, 0, len(b.sort))
+	for idx, f := range b.sort {
+		direction := arrowutils.Ascending
+		if f.direction == schemapb.SortingColumn_DIRECTION_DESCENDING {
+			direction = arrowutils.Descending
+		}
+		sortingCols = append(sortingCols, arrowutils.SortingColumn{
+			Index:      idx,
+			Direction:  direction,
+			NullsFirst: f.nullFirst,
+		})
+	}
+	return &Record{
+		Record: array.NewRecord(
+			arrow.NewSchema(fields, nil),
+			b.buffer,
+			int64(b.buffer[0].Len()),
+		),
+		SortingColumns: sortingCols,
+	}
 }
 
 func (b Build[T]) Schema(name string) (s *schemapb.Schema) {
