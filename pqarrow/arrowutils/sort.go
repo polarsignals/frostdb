@@ -74,6 +74,8 @@ func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
 
 // ReorderRecord uses indices to create a new record that is sorted according to
 // the indices array.
+//
+// Use compute.WithAllocator to pass a custom memory.Allocator.
 func ReorderRecord(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Record, error) {
 	// compute.Take doesn't support dictionaries. Use take on r when r does not have
 	// dictionary column.
