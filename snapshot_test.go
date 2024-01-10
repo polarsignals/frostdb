@@ -374,7 +374,7 @@ func TestSnapshotIsTakenOnUncompressedInserts(t *testing.T) {
 	defer table.Release()
 
 	for i := 0; i < numInserts; i++ {
-		err = table.Write(ctx, model{Bytes: "test"})
+		_, err = table.Write(ctx, model{Bytes: "test"})
 		require.NoError(t, err)
 	}
 	activeBlock := table.ActiveBlock()
@@ -391,7 +391,7 @@ func TestSnapshotIsTakenOnUncompressedInserts(t *testing.T) {
 	// These writes should now trigger a snapshot even though the active block
 	// size is much lower than the uncompressed insert size.
 	for i := 0; i < 2; i++ {
-		err = table.Write(ctx, model{Bytes: "test"})
+		_, err = table.Write(ctx, model{Bytes: "test"})
 		require.NoError(t, err)
 	}
 

@@ -293,7 +293,7 @@ func TestDurationAggregation(t *testing.T) {
 			Value:      3,
 		},
 	}
-	err = table.Write(context.Background(), records...)
+	_, err = table.Write(context.Background(), records...)
 	require.NoError(t, err)
 
 	engine := query.NewEngine(memory.DefaultAllocator, db.TableProvider())
