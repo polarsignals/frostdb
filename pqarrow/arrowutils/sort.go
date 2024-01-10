@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
@@ -50,26 +52,13 @@ func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
 	if len(columns) == 0 {
 		return nil, errors.New("pqarrow/arrowutils: at least one column is needed for sorting")
 	}
-	indicesBuilder := builder.NewOptInt32Builder(arrow.PrimitiveTypes.Int32)
-	defer indicesBuilder.Release()
-
-	if r.NumRows() == 0 {
-		return indicesBuilder.NewArray().(*array.Int32), nil
-	}
-	if r.NumRows() == 1 {
-		indicesBuilder.Append(0)
-		return indicesBuilder.NewArray().(*array.Int32), nil
-	}
-	indicesBuilder.Reserve(int(r.NumRows()))
-	for i := 0; i < int(r.NumRows()); i++ {
-		indicesBuilder.UnsafeSet(i, int32(i))
-	}
-	ms, err := newMultiColSorter(r, indicesBuilder, columns)
+	ms, err := newMultiColSorter(r, columns)
 	if err != nil {
 		return nil, err
 	}
+	defer ms.Release()
 	sort.Sort(ms)
-	return indicesBuilder.NewArray().(*array.Int32), nil
+	return ms.indices.NewArray().(*array.Int32), nil
 }
 
 // ReorderRecord uses indices to create a new record that is sorted according to
@@ -166,15 +155,16 @@ type multiColSorter struct {
 
 func newMultiColSorter(
 	r arrow.Record,
-	indices *builder.OptInt32Builder,
 	columns []SortingColumn,
 ) (*multiColSorter, error) {
-	ms := &multiColSorter{
-		indices:     indices,
-		directions:  make([]int, len(columns)),
-		nullsFirst:  make([]bool, len(columns)),
-		comparisons: make([]comparator, len(columns)),
+	ms := multiColSorterPool.Get().(*multiColSorter)
+	if r.NumRows() <= 1 {
+		if r.NumRows() == 1 {
+			ms.indices.Append(0)
+		}
+		return ms, nil
 	}
+	ms.Reserve(int(r.NumRows()), len(columns))
 	for i := range columns {
 		ms.directions[i] = int(columns[i].Direction.comparison())
 		ms.nullsFirst[i] = columns[i].NullsFirst
@@ -197,13 +187,45 @@ func newMultiColSorter(
 					},
 				}
 			default:
+				ms.Release()
 				return nil, fmt.Errorf("unsupported dictionary column type for sorting %T", e)
 			}
 		default:
+			ms.Release()
 			return nil, fmt.Errorf("unsupported column type for sorting %T", e)
 		}
 	}
 	return ms, nil
+}
+
+func (m *multiColSorter) Reserve(rows, columns int) {
+	m.indices.Reserve(rows)
+	for i := 0; i < rows; i++ {
+		m.indices.Set(i, int32(i))
+	}
+	m.comparisons = slices.Grow(m.comparisons, columns)[:columns]
+	m.directions = slices.Grow(m.directions, columns)[:columns]
+	m.nullsFirst = slices.Grow(m.nullsFirst, columns)[:columns]
+}
+
+func (m *multiColSorter) Reset() {
+	m.indices.Reserve(0)
+	m.comparisons = m.comparisons[:0]
+	m.directions = m.directions[:0]
+	m.nullsFirst = m.nullsFirst[:0]
+}
+
+func (m *multiColSorter) Release() {
+	m.Reset()
+	multiColSorterPool.Put(m)
+}
+
+var multiColSorterPool = &sync.Pool{
+	New: func() any {
+		return &multiColSorter{
+			indices: builder.NewOptInt32Builder(arrow.PrimitiveTypes.Int32),
+		}
+	},
 }
 
 var _ sort.Interface = (*multiColSorter)(nil)
