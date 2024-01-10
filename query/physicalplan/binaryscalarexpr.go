@@ -84,7 +84,7 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 	case arrow.FixedWidthTypes.Boolean:
 		switch operator {
 		case logicalplan.OpEq:
-			return BooleanArrayScalarEqual(left.(*array.Boolean), right.(*scalar.Boolean))
+			return ArrayScalarEqual(left, right)
 		case logicalplan.OpNotEq:
 			return BooleanArrayScalarNotEqual(left.(*array.Boolean), right.(*scalar.Boolean))
 		default:
@@ -93,7 +93,7 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 	case &arrow.FixedSizeBinaryType{ByteWidth: 16}:
 		switch operator {
 		case logicalplan.OpEq:
-			return FixedSizeBinaryArrayScalarEqual(left.(*array.FixedSizeBinary), right.(*scalar.FixedSizeBinary))
+			return ArrayScalarEqual(left, right)
 		case logicalplan.OpNotEq:
 			return FixedSizeBinaryArrayScalarNotEqual(left.(*array.FixedSizeBinary), right.(*scalar.FixedSizeBinary))
 		default:
@@ -102,7 +102,7 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 	case arrow.BinaryTypes.String:
 		switch operator {
 		case logicalplan.OpEq:
-			return StringArrayScalarEqual(left.(*array.String), right.(*scalar.String))
+			return ArrayScalarEqual(left, right)
 		case logicalplan.OpNotEq:
 			return StringArrayScalarNotEqual(left.(*array.String), right.(*scalar.String))
 		default:
@@ -113,9 +113,9 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 		case logicalplan.OpEq:
 			switch r := right.(type) {
 			case *scalar.Binary:
-				return BinaryArrayScalarEqual(left.(*array.Binary), r)
+				return ArrayScalarEqual(left, r)
 			case *scalar.String:
-				return BinaryArrayScalarEqual(left.(*array.Binary), r.Binary)
+				return ArrayScalarEqual(left, r.Binary)
 			default:
 				panic("something terrible has happened, this should have errored previously during validation")
 			}
@@ -134,7 +134,7 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 	case arrow.PrimitiveTypes.Int64:
 		switch operator {
 		case logicalplan.OpEq:
-			return Int64ArrayScalarEqual(left.(*array.Int64), right.(*scalar.Int64))
+			return ArrayScalarEqual(left, right)
 		case logicalplan.OpNotEq:
 			return Int64ArrayScalarNotEqual(left.(*array.Int64), right.(*scalar.Int64))
 		case logicalplan.OpLt:
@@ -151,7 +151,7 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 	case arrow.PrimitiveTypes.Int32:
 		switch operator {
 		case logicalplan.OpEq:
-			return Int32ArrayScalarEqual(left.(*array.Int32), right.(*scalar.Int32))
+			return ArrayScalarEqual(left, right)
 		case logicalplan.OpNotEq:
 			return Int32ArrayScalarNotEqual(left.(*array.Int32), right.(*scalar.Int32))
 		case logicalplan.OpLt:
@@ -168,7 +168,7 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 	case arrow.PrimitiveTypes.Uint64:
 		switch operator {
 		case logicalplan.OpEq:
-			return Uint64ArrayScalarEqual(left.(*array.Uint64), right.(*scalar.Uint64))
+			return ArrayScalarEqual(left, right)
 		case logicalplan.OpNotEq:
 			return Uint64ArrayScalarNotEqual(left.(*array.Uint64), right.(*scalar.Uint64))
 		case logicalplan.OpLt:
@@ -284,20 +284,6 @@ func DictionaryArrayScalarEqual(left *array.Dictionary, right scalar.Scalar) (*B
 	return res, nil
 }
 
-func FixedSizeBinaryArrayScalarEqual(left *array.FixedSizeBinary, right *scalar.FixedSizeBinary) (*Bitmap, error) {
-	res := NewBitmap()
-	for i := 0; i < left.Len(); i++ {
-		if left.IsNull(i) {
-			continue
-		}
-		if bytes.Equal(left.Value(i), right.Data()) {
-			res.Add(uint32(i))
-		}
-	}
-
-	return res, nil
-}
-
 func FixedSizeBinaryArrayScalarNotEqual(left *array.FixedSizeBinary, right *scalar.FixedSizeBinary) (*Bitmap, error) {
 	res := NewBitmap()
 	for i := 0; i < left.Len(); i++ {
@@ -306,20 +292,6 @@ func FixedSizeBinaryArrayScalarNotEqual(left *array.FixedSizeBinary, right *scal
 			continue
 		}
 		if !bytes.Equal(left.Value(i), right.Data()) {
-			res.Add(uint32(i))
-		}
-	}
-
-	return res, nil
-}
-
-func StringArrayScalarEqual(left *array.String, right *scalar.String) (*Bitmap, error) {
-	res := NewBitmap()
-	for i := 0; i < left.Len(); i++ {
-		if left.IsNull(i) {
-			continue
-		}
-		if left.Value(i) == string(right.Data()) {
 			res.Add(uint32(i))
 		}
 	}
@@ -342,20 +314,6 @@ func StringArrayScalarNotEqual(left *array.String, right *scalar.String) (*Bitma
 	return res, nil
 }
 
-func BinaryArrayScalarEqual(left *array.Binary, right *scalar.Binary) (*Bitmap, error) {
-	res := NewBitmap()
-	for i := 0; i < left.Len(); i++ {
-		if left.IsNull(i) {
-			continue
-		}
-		if bytes.Equal(left.Value(i), right.Data()) {
-			res.Add(uint32(i))
-		}
-	}
-
-	return res, nil
-}
-
 func BinaryArrayScalarNotEqual(left *array.Binary, right *scalar.Binary) (*Bitmap, error) {
 	res := NewBitmap()
 	for i := 0; i < left.Len(); i++ {
@@ -364,21 +322,6 @@ func BinaryArrayScalarNotEqual(left *array.Binary, right *scalar.Binary) (*Bitma
 			continue
 		}
 		if !bytes.Equal(left.Value(i), right.Data()) {
-			res.Add(uint32(i))
-		}
-	}
-
-	return res, nil
-}
-
-func Int64ArrayScalarEqual(left *array.Int64, right *scalar.Int64) (*Bitmap, error) {
-	res := NewBitmap()
-
-	for i := 0; i < left.Len(); i++ {
-		if left.IsNull(i) {
-			continue
-		}
-		if left.Value(i) == right.Value {
 			res.Add(uint32(i))
 		}
 	}
@@ -462,16 +405,76 @@ func Int64ArrayScalarGreaterThanOrEqual(left *array.Int64, right *scalar.Int64) 
 	return res, nil
 }
 
-func Uint64ArrayScalarEqual(left *array.Uint64, right *scalar.Uint64) (*Bitmap, error) {
+func ArrayScalarEqual(left arrow.Array, right scalar.Scalar) (*Bitmap, error) {
 	res := NewBitmap()
-
-	for i := 0; i < left.Len(); i++ {
-		if left.IsNull(i) {
-			continue
+	switch arr := left.(type) {
+	case *array.Boolean:
+		rightType, ok := right.(*scalar.Boolean)
+		if !ok {
+			return nil, fmt.Errorf("expected scalar.Boolean, got %T", right)
 		}
-		if left.Value(i) == right.Value {
-			res.Add(uint32(i))
+		for i := 0; i < arr.Len(); i++ {
+			if arr.IsNull(i) {
+				continue
+			}
+			if arr.Value(i) == rightType.Value {
+				res.Add(uint32(i))
+			}
 		}
+	case *array.FixedSizeBinary:
+		rightType, ok := right.(*scalar.FixedSizeBinary)
+		if !ok {
+			return nil, fmt.Errorf("expected scalar.FixedSizeBinary, got %T", right)
+		}
+		for i := 0; i < arr.Len(); i++ {
+			if arr.IsNull(i) {
+				continue
+			}
+			if bytes.Equal(arr.Value(i), rightType.Data()) {
+				res.Add(uint32(i))
+			}
+		}
+	case *array.Int32:
+		rightType, ok := right.(*scalar.Int32)
+		if !ok {
+			return nil, fmt.Errorf("expected scalar.Int32, got %T", right)
+		}
+		for i := 0; i < arr.Len(); i++ {
+			if arr.IsNull(i) {
+				continue
+			}
+			if arr.Value(i) == rightType.Value {
+				res.Add(uint32(i))
+			}
+		}
+	case *array.Int64:
+		rightType, ok := right.(*scalar.Int64)
+		if !ok {
+			return nil, fmt.Errorf("expected scalar.Int64, got %T", right)
+		}
+		for i := 0; i < arr.Len(); i++ {
+			if arr.IsNull(i) {
+				continue
+			}
+			if arr.Value(i) == rightType.Value {
+				res.Add(uint32(i))
+			}
+		}
+	case *array.Uint64:
+		rightType, ok := right.(*scalar.Uint64)
+		if !ok {
+			return nil, fmt.Errorf("expected scalar.Uint64, got %T", right)
+		}
+		for i := 0; i < arr.Len(); i++ {
+			if arr.IsNull(i) {
+				continue
+			}
+			if arr.Value(i) == rightType.Value {
+				res.Add(uint32(i))
+			}
+		}
+	default:
+		return nil, fmt.Errorf("unsupported array type: %T", arr)
 	}
 
 	return res, nil
@@ -553,21 +556,6 @@ func Uint64ArrayScalarGreaterThanOrEqual(left *array.Uint64, right *scalar.Uint6
 	return res, nil
 }
 
-func BooleanArrayScalarEqual(left *array.Boolean, right *scalar.Boolean) (*Bitmap, error) {
-	res := NewBitmap()
-
-	for i := 0; i < left.Len(); i++ {
-		if left.IsNull(i) {
-			continue
-		}
-		if left.Value(i) == right.Value {
-			res.Add(uint32(i))
-		}
-	}
-
-	return res, nil
-}
-
 func BooleanArrayScalarNotEqual(left *array.Boolean, right *scalar.Boolean) (*Bitmap, error) {
 	res := NewBitmap()
 
@@ -576,21 +564,6 @@ func BooleanArrayScalarNotEqual(left *array.Boolean, right *scalar.Boolean) (*Bi
 			continue
 		}
 		if left.Value(i) != right.Value {
-			res.Add(uint32(i))
-		}
-	}
-
-	return res, nil
-}
-
-func Int32ArrayScalarEqual(left *array.Int32, right *scalar.Int32) (*Bitmap, error) {
-	res := NewBitmap()
-
-	for i := 0; i < left.Len(); i++ {
-		if left.IsNull(i) {
-			continue
-		}
-		if left.Value(i) == right.Value {
 			res.Add(uint32(i))
 		}
 	}
