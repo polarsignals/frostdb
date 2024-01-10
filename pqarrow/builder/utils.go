@@ -177,8 +177,13 @@ func AppendGoValue(cb ColumnBuilder, v any) error {
 	case *array.BooleanBuilder:
 		b.Append(v.(bool))
 	case *array.BinaryDictionaryBuilder:
-		if err := b.Append(v.([]byte)); err != nil {
-			return err
+		switch e := v.(type) {
+		case string:
+			return b.Append([]byte(e))
+		case []byte:
+			return b.Append(e)
+		default:
+			return fmt.Errorf("unsupported type %T for append go value %T", e, b)
 		}
 	default:
 		return fmt.Errorf("unsupported type for append go value %T", b)
