@@ -8,6 +8,33 @@ value3  value2  null    value4  stack1  3   3
 ----
 
 exec
+select labels, stacktrace, timestamp, value where timestamp = 2
+----
+value2  value2  value3  null    stack1  2       2
+
+exec
+select labels, stacktrace, timestamp, value where timestamp != 2
+----
+value1  value2  null    null    stack1  1       1
+value3  value2  null    value4  stack1  3       3
+
+exec
+select labels, stacktrace, timestamp, value where timestamp < 2
+----
+value1  value2  null    null    stack1  1       1
+
+exec
+select labels, stacktrace, timestamp, value where timestamp <= 2
+----
+value1  value2  null    null    stack1  1       1
+value2  value2  value3  null    stack1  2       2
+
+exec
+select labels, stacktrace, timestamp, value where timestamp > 2
+----
+value3  value2  null    value4  stack1  3       3
+
+exec
 select labels, stacktrace, timestamp, value where timestamp >= 2
 ----
 value2  value2  value3  null    stack1  2       2
