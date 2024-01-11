@@ -74,95 +74,82 @@ func basicTable(t *testing.T, options ...Option) (*ColumnStore, *Table) {
 
 // This test issues concurrent writes to the database, and expects all of them to be recorded successfully.
 func Test_Table_Concurrency(t *testing.T) {
-	tests := map[string]struct {
-		granuleSize int64
-	}{
-		"25MB": {25 * 1024 * 1024},
-		"15MB": {15 * 1024 * 1024},
-		"8MB":  {8 * 1024 * 1024},
-		"1MB":  {1024 * 1024},
-	}
+	c, table := basicTable(t)
+	defer c.Close()
 
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			c, table := basicTable(t, WithGranuleSizeBytes(test.granuleSize))
-			defer c.Close()
-
-			generateRows := func(n int) arrow.Record {
-				rows := make(dynparquet.Samples, 0, n)
-				for i := 0; i < n; i++ {
-					rows = append(rows, dynparquet.Sample{
-						Labels: map[string]string{ // TODO would be nice to not have all the same column
-							"label1": "value1",
-							"label2": "value2",
-						},
-						Stacktrace: []uuid.UUID{
-							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-							{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-						},
-						Timestamp: rand.Int63(),
-						Value:     rand.Int63(),
-					})
-				}
-				r, err := rows.ToRecord()
-				require.NoError(t, err)
-
-				return r
-			}
-
-			// Spawn n workers that will insert values into the table
-			maxTxID := &atomic.Uint64{}
-			n := 8
-			inserts := 100
-			rows := 10
-			wg := &sync.WaitGroup{}
-			ctx := context.Background()
-			for i := 0; i < n; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					for i := 0; i < inserts; i++ {
-						tx, err := table.InsertRecord(ctx, generateRows(rows))
-						if err != nil {
-							fmt.Println("Received error on insert: ", err)
-						}
-
-						//	 Set the max tx id that we've seen
-						if maxTX := maxTxID.Load(); tx > maxTX {
-							maxTxID.CompareAndSwap(maxTX, tx)
-						}
-					}
-				}()
-			}
-
-			// Wait for all our writes to exit
-			wg.Wait()
-
-			// Wait for our last tx to be marked as complete
-			table.db.Wait(maxTxID.Load())
-
-			pool := memory.NewGoAllocator()
-
-			err := table.View(ctx, func(ctx context.Context, tx uint64) error {
-				totalrows := int64(0)
-				err := table.Iterator(
-					ctx,
-					tx,
-					pool,
-					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
-						totalrows += ar.NumRows()
-
-						return nil
-					}},
-				)
-
-				require.NoError(t, err)
-				require.Equal(t, int64(n*inserts*rows), totalrows)
-				return nil
+	generateRows := func(n int) arrow.Record {
+		rows := make(dynparquet.Samples, 0, n)
+		for i := 0; i < n; i++ {
+			rows = append(rows, dynparquet.Sample{
+				Labels: map[string]string{ // TODO would be nice to not have all the same column
+					"label1": "value1",
+					"label2": "value2",
+				},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+				},
+				Timestamp: rand.Int63(),
+				Value:     rand.Int63(),
 			})
-			require.NoError(t, err)
-		})
+		}
+		r, err := rows.ToRecord()
+		require.NoError(t, err)
+
+		return r
 	}
+
+	// Spawn n workers that will insert values into the table
+	maxTxID := &atomic.Uint64{}
+	n := 8
+	inserts := 100
+	rows := 10
+	wg := &sync.WaitGroup{}
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < inserts; i++ {
+				tx, err := table.InsertRecord(ctx, generateRows(rows))
+				if err != nil {
+					fmt.Println("Received error on insert: ", err)
+				}
+
+				//	 Set the max tx id that we've seen
+				if maxTX := maxTxID.Load(); tx > maxTX {
+					maxTxID.CompareAndSwap(maxTX, tx)
+				}
+			}
+		}()
+	}
+
+	// Wait for all our writes to exit
+	wg.Wait()
+
+	// Wait for our last tx to be marked as complete
+	table.db.Wait(maxTxID.Load())
+
+	pool := memory.NewGoAllocator()
+
+	err := table.View(ctx, func(ctx context.Context, tx uint64) error {
+		totalrows := int64(0)
+		err := table.Iterator(
+			ctx,
+			tx,
+			pool,
+			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				totalrows += ar.NumRows()
+
+				return nil
+			}},
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, int64(n*inserts*rows), totalrows)
+		return nil
+	})
+	require.NoError(t, err)
 }
 
 func Benchmark_Table_Insert_1000Rows_10Iters_10Writers(b *testing.B) {
@@ -974,7 +961,6 @@ func Test_Compact_Repeated(t *testing.T) {
 
 	c, err := New(
 		WithLogger(logger),
-		WithGranuleSizeBytes(10), // NOTE: set small granule size to force compaction
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -1101,7 +1087,7 @@ func Test_Table_DynamicColumnNotDefined(t *testing.T) {
 }
 
 func TestTableUniquePrimaryIndex(t *testing.T) {
-	c, err := New(WithGranuleSizeBytes(1), WithIndexConfig([]*IndexConfig{
+	c, err := New(WithIndexConfig([]*IndexConfig{
 		{Level: int(index.L0), MaxSize: 180, Type: CompactionTypeParquet},
 		{Level: int(index.L1), MaxSize: 1 * TiB},
 	}))
