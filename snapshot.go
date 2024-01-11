@@ -68,6 +68,8 @@ const (
 	minReadVersion = snapshotVersion
 )
 
+var ErrSkipPart = fmt.Errorf("skip part")
+
 type snapshotMetrics struct {
 	snapshotsTotal            *prometheus.CounterVec
 	snapshotFileSizeBytes     prometheus.Gauge
@@ -438,7 +440,7 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 					Tx:              p.TX(),
 					CompactionLevel: uint64(p.CompactionLevel()),
 				}
-				if err := func() error {
+				err := func() error {
 					if err := ctx.Err(); err != nil {
 						return err
 					}
@@ -453,6 +455,14 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 						defer recordWriter.Close()
 						return recordWriter.Write(record)
 					}
+
+					// If file compaction is enabled we do not need to snapshot the parquet parts.
+					for _, cfg := range db.columnStore.indexConfig {
+						if cfg.Type == CompactionTypeParquetDisk {
+							return ErrSkipPart
+						}
+					}
+
 					partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
 
 					buf, err := p.AsSerializedBuffer(schema)
@@ -467,10 +477,15 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 						return err
 					}
 					return nil
-				}(); err != nil {
+				}()
+				if err != nil {
+					if err == ErrSkipPart {
+						return true
+					}
 					ascendErr = err
 					return false
 				}
+
 				partMeta.EndOffset = int64(offW.offset)
 				granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
 				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
@@ -588,20 +603,20 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				schemaMsg,
 				options...,
 			)
-			table, err := db.Table(tableMeta.Name, tableConfig)
-			if err != nil {
-				return err
-			}
 
 			var blockUlid ulid.ULID
 			if err := blockUlid.UnmarshalBinary(tableMeta.ActiveBlock.Ulid); err != nil {
 				return err
 			}
 
+			table, err := db.table(tableMeta.Name, tableConfig, blockUlid)
+			if err != nil {
+				return err
+			}
+
 			table.mtx.Lock()
 			block := table.active
 			block.mtx.Lock()
-			block.ulid = blockUlid
 			// Store the last snapshot size so a snapshot is not triggered right
 			// after loading this snapshot.
 			block.lastSnapshotSize.Store(tableMeta.ActiveBlock.Size)
@@ -659,7 +674,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 				}
 
 				for _, part := range resultParts {
-					newIdx.InsertPart(index.SentinelType(part.CompactionLevel()), part)
+					newIdx.InsertPart(part)
 				}
 			}
 

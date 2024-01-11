@@ -1072,7 +1072,7 @@ const bloomFilterBitsPerValue = 10
 
 // NewWriter returns a new parquet writer with a concrete parquet schema
 // generated using the given concrete dynamic column names.
-func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string, sorting bool) (ParquetWriter, error) {
+func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string, sorting bool, options ...parquet.WriterOption) (ParquetWriter, error) {
 	ps, err := s.GetDynamicParquetSchema(dynamicColumns)
 	if err != nil {
 		return nil, err
@@ -1109,6 +1109,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string, sort
 			parquet.SortingColumns(cols...),
 		),
 	}
+	writerOptions = append(writerOptions, options...)
 	if sorting {
 		return parquet.NewSortingWriter[any](w, 32*1024, writerOptions...), nil
 	}

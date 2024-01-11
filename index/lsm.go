@@ -33,13 +33,16 @@ type LSM struct {
 
 	schema *dynparquet.Schema
 
-	prefix  string
-	levels  *Node
-	sizes   []atomic.Int64
-	configs []*LevelConfig
+	prefix        string
+	maxTXRecoverd []uint64
+	levels        *Node
+	sizes         []atomic.Int64
+	configs       []*LevelConfig
 
+	// Options
 	logger  log.Logger
 	metrics *LSMMetrics
+	wait    func(uint64)
 }
 
 // LSMMetrics are the metrics for an LSM index.
@@ -94,19 +97,23 @@ func NewLSMMetrics(reg prometheus.Registerer) *LSMMetrics {
 }
 
 // NewLSM returns an LSM-like index of len(levels) levels.
-func NewLSM(prefix string, schema *dynparquet.Schema, levels []*LevelConfig, options ...LSMOption) (*LSM, error) {
+// wait is a function that will block until the given transaction has been committed; this is used only during compaction to ensure
+// that all the tx in the level up to the compaction tx have been committed before compacting.
+func NewLSM(prefix string, schema *dynparquet.Schema, levels []*LevelConfig, wait func(uint64), options ...LSMOption) (*LSM, error) {
 	if err := validateLevels(levels); err != nil {
 		return nil, err
 	}
 
 	lsm := &LSM{
-		schema:     schema,
-		prefix:     prefix,
-		levels:     NewList(L0),
-		sizes:      make([]atomic.Int64, len(levels)),
-		configs:    levels,
-		compacting: &atomic.Bool{},
-		logger:     log.NewNopLogger(),
+		schema:        schema,
+		prefix:        prefix,
+		maxTXRecoverd: make([]uint64, len(levels)),
+		levels:        NewList(L0),
+		sizes:         make([]atomic.Int64, len(levels)),
+		configs:       levels,
+		compacting:    &atomic.Bool{},
+		logger:        log.NewNopLogger(),
+		wait:          wait,
 	}
 
 	for _, opt := range options {
@@ -167,7 +174,7 @@ func (l *LSM) MaxLevel() SentinelType {
 func (l *LSM) Add(tx uint64, record arrow.Record) {
 	record.Retain()
 	size := util.TotalRecordSize(record)
-	l.levels.Prepend(parts.NewArrowPart(tx, record, uint64(size), l.schema, parts.WithCompactionLevel(int(L0))))
+	l.levels.Insert(parts.NewArrowPart(tx, record, uint64(size), l.schema, parts.WithCompactionLevel(int(L0))))
 	l0 := l.sizes[L0].Add(int64(size))
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
 	if l0 >= l.configs[L0].MaxSize {
@@ -186,9 +193,29 @@ func (l *LSM) WaitForPendingCompactions() {
 }
 
 // InsertPart inserts a part into the LSM tree. It will be inserted into the correct level. It does not check if the insert should cause a compaction.
-// This should only be used during snapshot recovery.
-func (l *LSM) InsertPart(level SentinelType, part parts.Part) {
-	l.findLevel(level).Prepend(part)
+// This should only be used during snapshot recovery. It will drop the insert on the floor if the part is older than a part in the next level of the LSM. This indicates
+// that this part is already accounted for in the next level vis compaction.
+func (l *LSM) InsertPart(part parts.Part) {
+	level := SentinelType(part.CompactionLevel())
+	// Check the next levels if there is one to see if this part should be inserted.
+	if level != l.MaxLevel() {
+		for i := level + 1; i < l.MaxLevel()+1; i++ {
+			if part.TX() <= l.maxTXRecoverd[i] {
+				return
+			}
+		}
+	}
+
+	if r := part.Record(); r != nil {
+		r.Retain()
+	}
+
+	if tx := part.TX(); tx > l.maxTXRecoverd[level] {
+		l.maxTXRecoverd[level] = tx
+	}
+
+	// Insert the part into the correct level, but do not do this if parts with newer TXs have already been inserted.
+	l.findLevel(level).Insert(part)
 	size := l.sizes[level].Add(int64(part.Size()))
 	l.metrics.LevelSize.WithLabelValues(level.String()).Set(float64(size))
 }
@@ -334,9 +361,20 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts
 	}
 	l.metrics.Compactions.WithLabelValues(level.String()).Inc()
 
+	compact := l.findLevel(level)
+
+	// Wait for the watermark to reach the most recent transaction.
+	// This ensures a sorted list of transactions.
+	if level == L0 {
+		compact = compact.next.Load()
+		if compact == nil || compact.part == nil {
+			return nil // nothing to compact
+		}
+		l.wait(compact.part.TX())
+	}
+
 	nodeList := []*Node{}
 	var next *Node
-	compact := l.findLevel(level)
 	var iterErr error
 	compact.Iterate(func(node *Node) bool {
 		if node.part == nil { // sentinel encountered

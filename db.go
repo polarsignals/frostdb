@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow/go/v14/arrow/ipc"
+	"github.com/apache/arrow/go/v14/arrow/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
@@ -32,6 +33,7 @@ import (
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
+	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/wal"
 )
@@ -126,6 +128,14 @@ func New(
 
 	if s.enableWAL && s.storagePath == "" {
 		return nil, fmt.Errorf("storage path must be configured if WAL is enabled")
+	}
+
+	for _, cfg := range s.indexConfig {
+		if cfg.Type == CompactionTypeParquetDisk {
+			if !s.enableWAL && s.storagePath != "" {
+				return nil, fmt.Errorf("persistent disk compaction requires WAL to be enabled")
+			}
+		}
 	}
 
 	if err := s.recoverDBsFromStorage(context.Background()); err != nil {
@@ -481,10 +491,13 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		reg:         reg,
 		logger:      logger,
 		tracer:      s.tracer,
-		storagePath: filepath.Join(s.DatabasesDir(), name),
 		wal:         &wal.NopWAL{},
 		sources:     s.sources,
 		sinks:       s.sinks,
+	}
+
+	if s.storagePath != "" {
+		db.storagePath = filepath.Join(s.DatabasesDir(), name)
 	}
 
 	if err := applyOptsToDB(db); err != nil {
@@ -669,8 +682,17 @@ func (db *DB) trashDir() string {
 	return filepath.Join(db.storagePath, "trash")
 }
 
-// recover attempts to recover database state from a combination of snapshots
-// and the WAL.
+func (db *DB) indexDir() string {
+	return filepath.Join(db.storagePath, "index")
+}
+
+// recover attempts to recover database state from a combination of snapshots and the WAL.
+//
+// The recovery process is as follows:
+// 1. Load the latest snapshot (if one should exist).
+// 1.a. If on-disk LSM index files exist: Upon table creation during snapshot loading, the index files shall be recovered from, inserting parts into the index.
+// 2. Replay the WAL starting from the latest snapshot transaction.
+// 2.a. If on-disk LSM index files were loaded: Insertion into the index may drop the insertion if a part with a higher transaction already exists in the WAL.
 func (db *DB) recover(ctx context.Context, wal WAL) error {
 	level.Info(db.logger).Log(
 		"msg", "recovering db",
@@ -727,14 +749,24 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
+					cfg, recovered, err := table.ActiveBlock().configureLSMLevels(db.columnStore.indexConfig)
+					if err != nil {
+						return fmt.Errorf("configure lsm levels: %w", err)
+					}
+
 					table.ActiveBlock().index, err = index.NewLSM(
 						table.name,
 						table.schema,
-						table.configureLSMLevels(db.columnStore.indexConfig),
+						cfg,
+						db.Wait,
 						index.LSMWithMetrics(table.metrics.indexMetrics),
 					)
 					if err != nil {
-						return err
+						return fmt.Errorf("create new lsm index: %w", err)
+					}
+
+					for _, p := range recovered {
+						table.ActiveBlock().index.InsertPart(p)
 					}
 				}
 				db.mtx.Unlock()
@@ -752,9 +784,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	// WAL (i.e. entries that occupy space on disk but are useless).
 	performSnapshot := false
 
-	// Writes are performed concurrently to speed up replay.
-	var writeWg errgroup.Group
-	writeWg.SetLimit(runtime.GOMAXPROCS(0))
 	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -878,27 +907,26 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				return fmt.Errorf("get table: %w", err)
 			}
 
-			writeWg.Go(func() error {
-				switch e.Write.Arrow {
-				case true:
-					reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
-					if err != nil {
-						return fmt.Errorf("create ipc reader: %w", err)
-					}
-					record, err := reader.Read()
-					if err != nil {
-						return fmt.Errorf("read record: %w", err)
-					}
-
-					if err := table.active.InsertRecord(ctx, tx, record); err != nil {
-						return fmt.Errorf("insert record into block: %w", err)
-					}
-				default:
-					panic("parquet writes are deprecated")
+			switch e.Write.Arrow {
+			case true:
+				reader, err := ipc.NewReader(bytes.NewReader(entry.Data))
+				if err != nil {
+					return fmt.Errorf("create ipc reader: %w", err)
 				}
-				return nil
-			})
+				record, err := reader.Read()
+				if err != nil {
+					return fmt.Errorf("read record: %w", err)
+				}
+				defer reader.Release()
 
+				// TODO: the issue with this is we aren't prehashing the columns by not doing InsertRecord.
+				// If we prehash before WAL write we don't have to do that here.
+				size := util.TotalRecordSize(record)
+				table.active.index.InsertPart(parts.NewArrowPart(tx, record, uint64(size), table.schema, parts.WithCompactionLevel(int(index.L0))))
+			default:
+				panic("parquet writes are deprecated")
+			}
+			return nil
 		case *walpb.Entry_TableBlockPersisted_:
 			// If a block was persisted but the entry still exists in the WAL,
 			// a snapshot was not performed after persisting the block. Perform
@@ -913,10 +941,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		return nil
 	}); err != nil {
 		return err
-	}
-
-	if err := writeWg.Wait(); err != nil {
-		return fmt.Errorf("write error during replay: %w", err)
 	}
 
 	resetTxn := snapshotTx
@@ -1008,7 +1032,7 @@ func (db *DB) Close(options ...CloseOption) error {
 		return err
 	}
 
-	if shouldPersist || opts.clearStorage {
+	if (shouldPersist || opts.clearStorage) && db.storagePath != "" {
 		if err := db.dropStorage(); err != nil {
 			return err
 		}
@@ -1121,6 +1145,10 @@ func (db *DB) promoteReadOnlyTableLocked(name string, config *tablepb.TableConfi
 
 // Table will get or create a new table with the given name and config. If a table already exists with the given name, it will have it's configuration updated.
 func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
+	return db.table(name, config, generateULID())
+}
+
+func (db *DB) table(name string, config *tablepb.TableConfig, id ulid.ULID) (*Table, error) {
 	if config == nil {
 		return nil, fmt.Errorf("table config cannot be nil")
 	}
@@ -1171,7 +1199,6 @@ func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	tx, _, commit := db.begin()
 	defer commit()
 
-	id := generateULID()
 	if err := table.newTableBlock(0, tx, id); err != nil {
 		return nil, err
 	}
@@ -1286,6 +1313,18 @@ func (db *DB) resetToTxn(txn uint64, wal WAL) {
 	db.tx.Store(txn)
 	db.highWatermark.Store(txn)
 	if wal != nil {
+		// Before resetting the wal make sure any pending writes to the index are flushed.
+		errg := errgroup.Group{}
+		for _, table := range db.tables {
+			for _, syncer := range table.ActiveBlock().syncers {
+				errg.Go(syncer.Sync)
+			}
+		}
+
+		if err := errg.Wait(); err != nil {
+			level.Error(db.logger).Log("msg", "failed to sync index before resetting WAL; dataloss may occur", "err", err)
+		}
+
 		// This call resets the WAL to a zero state so that new records can be
 		// logged.
 		if err := wal.Reset(txn + 1); err != nil {

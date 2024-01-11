@@ -2,6 +2,7 @@ package index
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 
 	"github.com/polarsignals/frostdb/parts"
@@ -73,6 +74,32 @@ func (n *Node) Prepend(part parts.Part) *Node {
 	return n.prepend(&Node{
 		part: part,
 	})
+}
+
+// Insert a Node into the list, in order by Tx.
+func (n *Node) Insert(part parts.Part) {
+	node := &Node{
+		part: part,
+	}
+	tx := node.part.TX()
+	tryInsert := func() bool {
+		prev := n
+		next := n.next.Load()
+		for {
+			if next == nil {
+				return prev.next.CompareAndSwap(next, node)
+			}
+			if next.part == nil || next.part.TX() < tx {
+				node.next.Store(next)
+				return prev.next.CompareAndSwap(next, node)
+			}
+			prev = next
+			next = next.next.Load()
+		}
+	}
+	for !tryInsert() {
+		runtime.Gosched()
+	}
 }
 
 func (n *Node) prepend(node *Node) *Node {
