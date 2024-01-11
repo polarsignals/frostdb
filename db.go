@@ -53,7 +53,6 @@ type ColumnStore struct {
 	reg                 prometheus.Registerer
 	logger              log.Logger
 	tracer              trace.Tracer
-	granuleSizeBytes    int64
 	activeMemorySize    int64
 	storagePath         string
 	enableWAL           bool
@@ -101,7 +100,6 @@ func New(
 		indexConfig:         DefaultIndexConfig(),
 		indexDegree:         2,
 		splitSize:           2,
-		granuleSizeBytes:    1 * MiB,
 		activeMemorySize:    512 * MiB,
 	}
 
@@ -162,13 +160,6 @@ func WithTracer(tracer trace.Tracer) Option {
 func WithRegistry(reg prometheus.Registerer) Option {
 	return func(s *ColumnStore) error {
 		s.reg = reg
-		return nil
-	}
-}
-
-func WithGranuleSizeBytes(bytes int64) Option {
-	return func(s *ColumnStore) error {
-		s.granuleSizeBytes = bytes
 		return nil
 	}
 }
