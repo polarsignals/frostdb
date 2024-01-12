@@ -6,6 +6,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
+	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -22,6 +23,7 @@ func BenchmarkBinaryScalarOperation(b *testing.B) {
 	s := scalar.NewInt64Scalar(4) // chosen by fair dice roll. guaranteed to be random.
 
 	operators := []logicalplan.Op{
+		logicalplan.OpAnd,
 		logicalplan.OpEq,
 		logicalplan.OpNotEq,
 		logicalplan.OpLt,
@@ -37,4 +39,15 @@ func BenchmarkBinaryScalarOperation(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestBinaryScalarOperationNotImplemented(t *testing.T) {
+	ab := array.NewInt64Builder(memory.DefaultAllocator)
+	arr := ab.NewInt64Array()
+	ab.Release()
+
+	s := scalar.NewInt64Scalar(4) // chosen by fair dice roll. guaranteed to be random.
+
+	_, err := BinaryScalarOperation(arr, s, logicalplan.OpAnd)
+	require.Equal(t, err, ErrUnsupportedBinaryOperation)
 }

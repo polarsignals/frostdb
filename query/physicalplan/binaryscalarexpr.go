@@ -100,27 +100,15 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 		panic("TODO: list comparisons unimplemented")
 	}
 
-	switch operator {
-	case logicalplan.OpEq:
-		return ArrayScalarCompute("equal", left, right)
-	case logicalplan.OpNotEq:
-		return ArrayScalarCompute("not_equal", left, right)
-	case logicalplan.OpLt:
-		return ArrayScalarCompute("less", left, right)
-	case logicalplan.OpLtEq:
-		return ArrayScalarCompute("less_equal", left, right)
-	case logicalplan.OpGt:
-		return ArrayScalarCompute("greater", left, right)
-	case logicalplan.OpGtEq:
-		return ArrayScalarCompute("greater_equal", left, right)
-	}
-
-	return nil, ErrUnsupportedBinaryOperation
+	return ArrayScalarCompute(operator.ArrowString(), left, right)
 }
 
 func ArrayScalarCompute(funcName string, left arrow.Array, right scalar.Scalar) (*Bitmap, error) {
 	equalsResult, err := compute.CallFunction(context.TODO(), funcName, nil, compute.NewDatum(left), compute.NewDatum(right))
 	if err != nil {
+		if errors.Unwrap(err).Error() == "not implemented" {
+			return nil, ErrUnsupportedBinaryOperation
+		}
 		return nil, fmt.Errorf("error calling equal function: %w", err)
 	}
 	defer equalsResult.Release()
