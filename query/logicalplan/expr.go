@@ -69,6 +69,37 @@ func (o Op) String() string {
 	}
 }
 
+func (o Op) ArrowString() string {
+	switch o {
+	case OpEq:
+		return "equal"
+	case OpNotEq:
+		return "not_equal"
+	case OpLt:
+		return "less"
+	case OpLtEq:
+		return "less_equal"
+	case OpGt:
+		return "greater"
+	case OpGtEq:
+		return "greater_equal"
+	case OpAnd:
+		return "and"
+	case OpOr:
+		return "or"
+	case OpAdd:
+		return "add"
+	case OpSub:
+		return "subtract"
+	case OpMul:
+		return "multiply"
+	case OpDiv:
+		return "divide"
+	default:
+		panic("unknown operator")
+	}
+}
+
 type BinaryExpr struct {
 	Left  Expr
 	Op    Op
