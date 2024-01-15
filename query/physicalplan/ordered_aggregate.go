@@ -486,7 +486,7 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 		for i := range orderByCols {
 			orderByCols[i] = i
 		}
-		mergedRecord, err := arrowutils.MergeRecords(a.pool, records, orderByCols)
+		mergedRecord, err := arrowutils.MergeRecords(a.pool, records, orderByCols, 0)
 		if err != nil {
 			return err
 		}
