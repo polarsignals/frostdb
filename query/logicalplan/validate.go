@@ -203,7 +203,8 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 			named = dynColFinder.result
 		}
 
-		column, found := schema.ColumnByName(named.Name())
+		name, _, _ := strings.Cut(named.Name(), ".")
+		column, found := schema.ColumnByName(name)
 		if !found {
 			return &ExprValidationError{
 				message: fmt.Sprintf("column not found: %s", named.Name()),

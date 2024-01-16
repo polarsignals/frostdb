@@ -1165,3 +1165,60 @@ func TestTable_write_ptr_struct(t *testing.T) {
 	})
 	require.Nil(t, err)
 }
+
+func Test_Issue685(t *testing.T) {
+	c, err := New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		c.Close()
+	})
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	type ColMap struct {
+		Value      map[string]int64
+		Attributes map[string]string
+	}
+	table, err := NewGenericTable[ColMap](
+		db, "test", memory.NewGoAllocator(),
+	)
+	require.NoError(t, err)
+	defer table.Release()
+
+	_, err = table.Write(context.Background(), ColMap{
+		Value: map[string]int64{
+			"age": 9999,
+		},
+		Attributes: map[string]string{
+			"age": "9999",
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = table.Write(context.Background(), ColMap{
+		Value: map[string]int64{
+			"other": 1234,
+			"age":   3,
+		},
+		Attributes: map[string]string{
+			"age": "9999",
+		},
+	})
+	require.NoError(t, err)
+
+	engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
+	err = engine.ScanTable("test").
+		Aggregate(
+			[]logicalplan.Expr{
+				logicalplan.Sum(logicalplan.Col("value.age")),
+			},
+			nil,
+		).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			require.Equal(t, int64(1), r.NumRows())
+			require.Equal(t, int64(10002), r.Column(0).(*array.Int64).Value(0))
+			return nil
+		})
+	require.NoError(t, err)
+}
