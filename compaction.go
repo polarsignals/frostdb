@@ -1,7 +1,7 @@
 package frostdb
 
 import (
-	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +11,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/parquet-go/parquet-go"
+	"golang.org/x/exp/slices"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/parts"
@@ -23,51 +24,29 @@ const (
 var ErrCompactionRecoveryFailed = fmt.Errorf("failed to recover compacted level")
 
 type FileCompaction struct {
-	t      *Table
-	file   *os.File
-	offset int64 // Writing offsets into the file
-	ref    int64 // Number of references to file.
+	dir string
+
+	t *Table
 }
 
-func (f *FileCompaction) Close(cleanup bool) error {
-	err := f.file.Close()
-	if cleanup {
-		if err := os.Remove(f.file.Name()); err != nil {
-			return fmt.Errorf("failed to remove file: %v", err)
-		}
-	}
-	return err
-}
-
-func NewFileCompaction(t *Table, block ulid.ULID, lvl int) *FileCompaction {
+func NewFileCompaction(t *Table, block ulid.ULID, lvl int) (*FileCompaction, error) {
 	f := &FileCompaction{
 		t: t,
 	}
 
 	if t.db.storagePath == "" { // No storage path provided, use temp files.
-		file, err := os.CreateTemp("", fmt.Sprintf("L%v-*.parquet", lvl))
-		if err != nil {
-			panic(err)
-		}
-		level.Info(t.logger).Log("msg", "created temp file for level", "level", lvl, "file", file.Name())
-		f.file = file
-		return f
+		return nil, errors.New("temp file LSM is not supported")
 	}
 
-	indexDir := filepath.Join(t.db.indexDir(), t.name)
+	blockName := block.String()
+	indexDir := filepath.Join(t.db.indexDir(), t.name, blockName, fmt.Sprintf("L%v", lvl))
 	if err := os.MkdirAll(indexDir, dirPerms); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to create index dir: %v", err)
 	}
-
-	file, err := os.OpenFile(filepath.Join(indexDir, fmt.Sprintf("L%v-%s.parquet", lvl, block.String())), os.O_CREATE|os.O_RDWR, filePerms)
-	if err != nil {
-		panic(err)
-	}
-	f.file = file
-	return f
+	f.dir = indexDir
+	return f, nil
 }
 
-// accountingWriter is a writer that accounts for the number of bytes written.
 type accountingWriter struct {
 	w io.Writer
 	n int64
@@ -85,30 +64,38 @@ func (f *FileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 		return nil, 0, 0, fmt.Errorf("no parts to compact")
 	}
 
-	accountant := &accountingWriter{w: f.file}
-	preCompactionSize, err := f.t.compactParts(accountant, compact,
-		parquet.KeyValueMetadata(
-			ParquetCompactionTXKey, // Compacting up through this transaction.
-			fmt.Sprintf("%v", compact[0].TX()),
-		),
-	) // compact into the next level
-	if err != nil {
+	tx := compact[0].TX()
+	fileName := filepath.Join(f.dir, fmt.Sprintf("%v.parquet", tx))
+	var preCompactionSize int64
+	accountant := &accountingWriter{}
+	if err := func() error {
+		file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, filePerms)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		accountant.w = file
+		preCompactionSize, err = f.t.compactParts(accountant, compact,
+			parquet.KeyValueMetadata(
+				ParquetCompactionTXKey, // Compacting up through this transaction.
+				fmt.Sprintf("%v", compact[0].TX()),
+			),
+		) // compact into the next level
+		if err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
 		return nil, 0, 0, err
 	}
 
-	// Record the writing offset into the file.
-	prevOffset := f.offset
-	f.offset += accountant.n + 8
-	f.ref++
-
-	// Record the file size for recovery.
-	size := make([]byte, 8)
-	binary.LittleEndian.PutUint64(size, uint64(accountant.n))
-	if n, err := f.file.Write(size); n != 8 {
-		return nil, 0, 0, fmt.Errorf("failed to write size to file: %v", err)
+	file, err := os.Open(filepath.Join(f.dir, fmt.Sprintf("%v.parquet", tx)))
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("failed to open compacted parquet file: %v", err)
 	}
 
-	pf, err := parquet.OpenFile(io.NewSectionReader(f.file, prevOffset, accountant.n), accountant.n)
+	pf, err := parquet.OpenFile(file, accountant.n)
 	if err != nil {
 		return nil, 0, 0, err
 	}
@@ -118,92 +105,75 @@ func (f *FileCompaction) writeRecordsToParquetFile(compact []parts.Part, options
 		return nil, 0, 0, err
 	}
 
-	return []parts.Part{parts.NewParquetPart(compact[0].TX(), buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
+	return []parts.Part{parts.NewParquetPart(tx, buf, append(options, parts.WithRelease(f.fileRelease(file)))...)}, preCompactionSize, accountant.n, nil
 }
 
-// Truncate will truncate the file to 0 bytes. This is used when a compaction recovery fails.
-func (f *FileCompaction) Truncate() error {
-	return f.file.Truncate(0)
-}
-
-// release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.
-// release is not safe to call concurrently.
-func (f *FileCompaction) release() func() {
+func (f *FileCompaction) fileRelease(file *os.File) func() {
 	return func() {
-		f.ref--
-		if f.ref == 0 {
-			level.Info(f.t.logger).Log("msg", "truncating file", "file", f.file.Name())
-			if err := os.Truncate(f.file.Name(), 0); err != nil {
-				panic(fmt.Errorf("failed to truncate the level file: %v", err))
-			}
-
-			f.offset = 0
-			if _, err := f.file.Seek(0, io.SeekStart); err != nil {
-				panic(fmt.Errorf("failed to seek the level file: %v", err))
-			}
+		if err := file.Close(); err != nil {
+			level.Error(f.t.logger).Log("msg", "failed to close compacted parquet file", "err", err, "file", file.Name())
+		}
+		if err := os.Remove(file.Name()); err != nil {
+			level.Error(f.t.logger).Log("msg", "failed to remove compacted parquet file", "err", err, "file", file.Name())
 		}
 	}
 }
 
 func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) {
-	recovered, err := func() ([]parts.Part, error) {
-		info, err := os.Stat(f.file.Name())
+	recovered := []parts.Part{}
+	err := filepath.WalkDir(f.dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil, err
+			return err
 		}
 
-		if info.Size() == 0 { // file was truncated, nothing to recover.
-			return nil, nil
-		}
-
-		recovered := []parts.Part{}
-
-		// Recover all parts from file.
-		for offset := info.Size(); offset > 0; {
-			offset -= 8
-			size := make([]byte, 8)
-			if n, err := f.file.ReadAt(size, offset); n != 8 {
-				return nil, fmt.Errorf("failed to read size from file: %v", err)
-			}
-			parquetSize := int64(binary.LittleEndian.Uint64(size))
-			offset -= parquetSize
-
-			pf, err := parquet.OpenFile(io.NewSectionReader(f.file, offset, parquetSize), parquetSize)
+		// Process the parquet parts.
+		if filepath.Ext(path) == ".parquet" {
+			info, err := d.Info()
 			if err != nil {
-				return nil, err
+				level.Error(f.t.logger).Log("msg", "failed to get file info", "err", err, "file", path)
+				return nil
+			}
+
+			file, err := os.Open(path)
+			if err != nil {
+				level.Error(f.t.logger).Log("msg", "failed to open file", "err", err, "file", path)
+				return nil
+			}
+
+			pf, err := parquet.OpenFile(file, info.Size())
+			if err != nil {
+				level.Error(f.t.logger).Log("msg", "failed to open parquet file", "err", err, "file", path)
+				return nil
 			}
 
 			buf, err := dynparquet.NewSerializedBuffer(pf)
 			if err != nil {
-				return nil, err
+				level.Error(f.t.logger).Log("msg", "failed to create serialized buffer", "err", err, "file", path)
+				return nil
 			}
 
 			txstr, ok := buf.ParquetFile().Lookup(ParquetCompactionTXKey)
 			if !ok {
-				return nil, fmt.Errorf("failed to find compaction_tx metadata")
+				level.Error(f.t.logger).Log("msg", "failed to find compaction_tx metadata", "file", path)
+				return nil
 			}
 
 			tx, err := strconv.Atoi(txstr)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse compaction_tx metadata: %v", err)
+				level.Error(f.t.logger).Log("msg", "failed to parse compaction_tx metadata", "err", err, "file", path)
+				return nil
 			}
 
-			recovered = append(recovered, parts.NewParquetPart(uint64(tx), buf, append(options, parts.WithRelease(f.release()))...))
+			recovered = append(recovered, parts.NewParquetPart(uint64(tx), buf, append(options, parts.WithRelease(f.fileRelease(file)))...))
 		}
 
-		return recovered, nil
-	}()
+		return nil
+	})
 	if err != nil {
-		level.Error(f.t.logger).Log("msg", "truncating file after failed recovery", "err", err, "file", f.file.Name())
-		if err := os.Truncate(f.file.Name(), 0); err != nil {
-			return nil, fmt.Errorf("failed to truncate the level file %s: %v", f.file.Name(), err)
-		}
-
-		return nil, ErrCompactionRecoveryFailed
+		return nil, err
 	}
 
-	return recovered, err
+	// Reverse the recovered parts so they are in the correct order. We walk the filepath from lowest tx to highest, but we want to replay them in the opposite order.
+	slices.Reverse(recovered)
+	return recovered, nil
 }
-
-// Sync calls Sync on the underlying file.
-func (f *FileCompaction) Sync() error { return f.file.Sync() }

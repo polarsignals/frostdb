@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -318,9 +319,7 @@ type TableBlock struct {
 	// snapshot was last triggered.
 	lastSnapshotSize atomic.Int64
 
-	index   *index.LSM
-	closers []Closer
-	syncers []Sync
+	index *index.LSM
 
 	pendingWritersWg sync.WaitGroup
 	pendingReadersWg sync.WaitGroup
@@ -1031,9 +1030,12 @@ func (t *TableBlock) Serialize(writer io.Writer) error {
 
 // Close the block and release all resources.
 func (t *TableBlock) Close(cleanup bool) error {
-	for _, closer := range t.closers {
-		if err := closer.Close(cleanup); err != nil {
-			return fmt.Errorf("closer: %w", err)
+	if cleanup {
+		t.index.Release()
+
+		// Remove the block index dir
+		if err := os.RemoveAll(filepath.Join(t.table.db.indexDir(), t.table.name, t.ulid.String())); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1238,7 +1240,6 @@ type IndexConfig struct {
 func (t *TableBlock) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelConfig, []parts.Part, error) {
 	config := make([]*index.LevelConfig, len(levels))
 	recovered := []parts.Part{}
-	abortRecovery := false
 
 	// Recover in reverse order so that the highest level is recovered first.
 	// This allows us to throw away parts that were compacted into a higher level but for some reason weren't successfully removed.
@@ -1252,24 +1253,15 @@ func (t *TableBlock) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelCo
 		case CompactionTypeParquet:
 			cfg.Compact = t.table.parquetCompaction
 		case CompactionTypeParquetDisk:
-			fileCompaction := NewFileCompaction(t.table, t.ulid, i+1)
-			if abortRecovery { // If we failed to recover an LSM file, we need to abort recovery of all lower levels as well, and let the WAL recover.
-				if err := fileCompaction.Truncate(); err != nil {
-					return nil, nil, err
-				}
-			} else {
-				parts, err := fileCompaction.recover(parts.WithCompactionLevel(i + 1))
-				if err != nil {
-					if errors.Is(ErrCompactionRecoveryFailed, err) {
-						abortRecovery = true
-					} else {
-						return nil, nil, err
-					}
-				}
-				recovered = append(recovered, parts...)
+			fileCompaction, err := NewFileCompaction(t.table, t.ulid, i+1)
+			if err != nil {
+				return nil, nil, err
 			}
-			t.closers = append(t.closers, fileCompaction) // Append to closers so that the underlying files are closed on table close.
-			t.syncers = append(t.syncers, fileCompaction) // Append to syncers so that the underlying files are synced on wal truncation.
+			parts, err := fileCompaction.recover(parts.WithCompactionLevel(i + 1))
+			if err != nil {
+				level.Error(t.logger).Log("msg", "failed to recover parts for file compaction", "err", err, "level", i+1)
+			}
+			recovered = append(recovered, parts...)
 			cfg.Compact = fileCompaction.writeRecordsToParquetFile
 		default:
 			if i != len(levels)-1 { // Compaction type should not be set for last level

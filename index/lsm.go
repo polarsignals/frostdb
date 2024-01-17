@@ -138,6 +138,16 @@ func NewLSM(prefix string, schema *dynparquet.Schema, levels []*LevelConfig, wai
 	return lsm, nil
 }
 
+// Release releases all the parts in the LSM. The LSM is not safe for reuse after this.
+func (l *LSM) Release() {
+	l.levels.Iterate(func(node *Node) bool {
+		if node.part != nil {
+			node.part.Release()
+		}
+		return true
+	})
+}
+
 // Size returns the total size of the index in bytes.
 func (l *LSM) Size() int64 {
 	var size int64
@@ -200,8 +210,8 @@ func (l *LSM) WaitForPendingCompactions() {
 }
 
 // InsertPart inserts a part into the LSM tree. It will be inserted into the correct level. It does not check if the insert should cause a compaction.
-// This should only be used during snapshot recovery. It will drop the insert on the floor if the part is older than a part in the next level of the LSM. This indicates
-// that this part is already accounted for in the next level vis compaction.
+// This should only be used during recovery. It will drop the insert on the floor if the part is older than a part in the next level (i.e it has a lower tx) of the LSM.
+// This indicates that this part is already accounted for in the next level via compaction.
 func (l *LSM) InsertPart(part parts.Part) {
 	level := SentinelType(part.CompactionLevel())
 	// Check the next levels if there is one to see if this part should be inserted.

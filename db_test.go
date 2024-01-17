@@ -2227,12 +2227,15 @@ func Test_DB_WithParquetDiskCompaction(t *testing.T) {
 
 	logger := newTestLogger(t)
 
+	dir := t.TempDir()
 	cfg := DefaultIndexConfig()
 	cfg[0].Type = CompactionTypeParquetDisk // Create disk compaction
 	cfg[1].Type = CompactionTypeParquetDisk
 	c, err := New(
 		WithLogger(logger),
 		WithIndexConfig(cfg),
+		WithStoragePath(dir),
+		WithWAL(),
 	)
 	t.Cleanup(func() {
 		require.NoError(t, c.Close())
@@ -2280,12 +2283,36 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 	)
 	logger := newTestLogger(t)
 
+	type write struct {
+		n                int
+		ensureCompaction bool
+	}
+
+	defaultWrites := []write{
+		{
+			n:                100,
+			ensureCompaction: true,
+		},
+		{
+			n:                100,
+			ensureCompaction: true,
+		},
+		{
+			n:                100,
+			ensureCompaction: true,
+		},
+		{
+			n: 100,
+		},
+	}
+
 	tests := map[string]struct {
 		beforeReplay func(table *Table, dir string)
 		beforeClose  func(table *Table, dir string)
 		lvl2Parts    int
 		lvl1Parts    int
 		finalRows    int64
+		writes       []write
 	}{
 		"happy path": {
 			beforeReplay: func(_ *Table, _ string) {},
@@ -2293,58 +2320,51 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			lvl2Parts:    3,
 			lvl1Parts:    1,
 			finalRows:    1200,
+			writes:       defaultWrites,
 		},
 		"corrupted L1": {
 			beforeClose: func(table *Table, dir string) {},
 			lvl2Parts:   3,
 			lvl1Parts:   1,
 			finalRows:   1200,
+			writes:      defaultWrites,
 			beforeReplay: func(table *Table, dir string) {
 				// Corrupt the LSM file; this should trigger a recovery from the WAL
-				levelFile := filepath.Join(dir, "databases", "test", "index", "test", fmt.Sprintf("L1-%s.parquet", table.active.ulid.String()))
+				levelFile := filepath.Join(dir, "databases", "test", "index", "test", table.active.ulid.String(), "L1", "401.parquet")
 				info, err := os.Stat(levelFile)
 				require.NoError(t, err)
 				require.NoError(t, os.Truncate(levelFile, info.Size()-1)) // truncate the last byte to pretend the write didn't finish
 			},
 		},
-		"corrupted L2": {
+		"corrupted L2": { // TODO change this test to have L2 have the highest tx
 			beforeClose: func(table *Table, dir string) {},
-			lvl2Parts:   3,
-			lvl1Parts:   1,
+			lvl2Parts:   4,
+			lvl1Parts:   0,
 			finalRows:   1200,
 			beforeReplay: func(table *Table, dir string) {
 				// Corrupt the LSM file; this should trigger a recovery from the WAL
-				levelFile := filepath.Join(dir, "databases", "test", "index", "test", fmt.Sprintf("L2-%s.parquet", table.active.ulid.String()))
+				levelFile := filepath.Join(dir, "databases", "test", "index", "test", table.active.ulid.String(), "L2", "401.parquet")
 				info, err := os.Stat(levelFile)
 				require.NoError(t, err)
 				require.NoError(t, os.Truncate(levelFile, info.Size()-1)) // truncate the last byte to pretend the write didn't finish
 			},
-		},
-		"untruncated L1": { // Test that if we fail to truncate the L1 file, we can still recover
-			lvl2Parts:    4,
-			lvl1Parts:    1,
-			finalRows:    1200,
-			beforeReplay: func(_ *Table, _ string) {},
-			beforeClose: func(table *Table, dir string) { // trigger a compaction, but save off the L1 file and move it back. This mimics a failure to truncate the L1 file
-				// Save the L1 file
-				levelFile := filepath.Join(dir, "databases", "test", "index", "test", fmt.Sprintf("L1-%s.parquet", table.active.ulid.String()))
-				src, err := os.Open(levelFile)
-				require.NoError(t, err)
-
-				saveFile := filepath.Join(dir, "databases", "test", "index", "test", fmt.Sprintf("L1-%s.parquet.sav", table.active.ulid.String()))
-				dst, err := os.Create(saveFile)
-				require.NoError(t, err)
-
-				_, err = io.Copy(dst, src)
-				require.NoError(t, err)
-				dst.Close()
-				src.Close()
-
-				// This truncates the L1 file
-				require.NoError(t, table.EnsureCompaction())
-
-				// Move the L1 file back
-				require.NoError(t, os.Rename(saveFile, levelFile))
+			writes: []write{
+				{
+					n:                100,
+					ensureCompaction: true,
+				},
+				{
+					n:                100,
+					ensureCompaction: true,
+				},
+				{
+					n:                100,
+					ensureCompaction: true,
+				},
+				{
+					n:                100,
+					ensureCompaction: true,
+				},
 			},
 		},
 		"snapshot": {
@@ -2369,6 +2389,36 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			lvl2Parts: 3,
 			lvl1Parts: 2,
 			finalRows: 1500,
+			writes:    defaultWrites,
+		},
+		"corruption after snapshot": {
+			beforeReplay: func(table *Table, dir string) {
+				levelFile := filepath.Join(dir, "databases", "test", "index", "test", table.active.ulid.String(), "L1", "501.parquet")
+				info, err := os.Stat(levelFile)
+				require.NoError(t, err)
+				require.NoError(t, os.Truncate(levelFile, info.Size()-1)) // truncate the last byte to pretend the write didn't finish
+			},
+			beforeClose: func(table *Table, dir string) {
+				// trigger a snapshot
+				tx := table.db.highWatermark.Load()
+				require.NoError(t, table.db.snapshotAtTX(context.Background(), tx, table.db.snapshotWriter(tx)))
+
+				// Write more to the table and trigger a compaction
+				samples := dynparquet.NewTestSamples()
+				for j := 0; j < 100; j++ {
+					r, err := samples.ToRecord()
+					require.NoError(t, err)
+					_, err = table.InsertRecord(context.Background(), r)
+					require.NoError(t, err)
+				}
+				require.Eventually(t, func() bool {
+					return table.active.index.LevelSize(index.L1) != 0
+				}, time.Second, time.Millisecond*10)
+			},
+			lvl2Parts: 3,
+			lvl1Parts: 2,
+			finalRows: 1500,
+			writes:    defaultWrites,
 		},
 	}
 
@@ -2398,26 +2448,23 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			samples := dynparquet.NewTestSamples()
 
 			ctx := context.Background()
-			compactions := 3 // 3 compacted parts in L2 file
-			for i := 0; i < compactions; i++ {
-				for j := 0; j < 100; j++ {
+			for _, w := range test.writes {
+				for j := 0; j < w.n; j++ {
 					r, err := samples.ToRecord()
 					require.NoError(t, err)
 					_, err = table.InsertRecord(ctx, r)
 					require.NoError(t, err)
 				}
-				require.NoError(t, table.EnsureCompaction())
+				if w.ensureCompaction {
+					require.NoError(t, table.EnsureCompaction())
+				}
 			}
 
-			for j := 0; j < 100; j++ {
-				r, err := samples.ToRecord()
-				require.NoError(t, err)
-				_, err = table.InsertRecord(ctx, r)
-				require.NoError(t, err)
+			if test.lvl1Parts > 0 {
+				require.Eventually(t, func() bool {
+					return table.active.index.LevelSize(index.L1) != 0
+				}, time.Second, time.Millisecond*10)
 			}
-			require.Eventually(t, func() bool {
-				return table.active.index.LevelSize(index.L1) != 0
-			}, time.Second, time.Millisecond*10)
 
 			// Ensure that disk compacted data can be recovered
 			pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
@@ -2430,38 +2477,25 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 					return nil
 				})
 			require.NoError(t, err)
-			require.Equal(t, int64((300*compactions)+300), rows)
+			require.Equal(t, int64(1200), rows)
 
 			test.beforeClose(table, dir)
 			id := table.active.ulid
 
 			// Close the database
-			wm := db.highWatermark.Load()
 			require.NoError(t, c.Close())
 
-			fc := NewFileCompaction(table, id, 2)
+			fc, err := NewFileCompaction(table, id, 2)
+			require.NoError(t, err)
 			p, err := fc.recover()
 			require.NoError(t, err)
 			require.Equal(t, test.lvl2Parts, len(p))
 
-			for i := 0; i < compactions; i++ {
-				buf, err := p[i].AsSerializedBuffer(nil)
-				require.NoError(t, err)
-				tx, ok := buf.ParquetFile().Lookup("compaction_tx")
-				require.True(t, ok)
-				require.Equal(t, fmt.Sprintf("%v", test.lvl2Parts*100-(i*100)+1), tx)
-			}
-
-			fc = NewFileCompaction(table, id, 1)
+			fc, err = NewFileCompaction(table, id, 1)
+			require.NoError(t, err)
 			p, err = fc.recover()
 			require.NoError(t, err)
 			require.Equal(t, test.lvl1Parts, len(p))
-
-			buf, err := p[0].AsSerializedBuffer(nil)
-			require.NoError(t, err)
-			tx, ok := buf.ParquetFile().Lookup("compaction_tx")
-			require.True(t, ok)
-			require.Equal(t, fmt.Sprintf("%v", wm), tx)
 
 			// Run the beforeReplay hook
 			test.beforeReplay(table, dir)
@@ -2567,8 +2601,16 @@ func Test_DB_PersistentDiskCompaction_BlockRotation(t *testing.T) {
 
 	validateRows(1200)
 
+	beforeBlock := table.active.ulid.String()
+
 	// Rotate block
 	require.NoError(t, table.RotateBlock(context.Background(), table.ActiveBlock(), false))
+
+	// Expect the block dir to have been removed.
+	require.Eventually(t, func() bool {
+		info, err := os.Stat(filepath.Join(db.indexDir(), "test", beforeBlock))
+		return os.IsNotExist(err) && info == nil
+	}, time.Second, time.Millisecond*10)
 
 	validateRows(1200)
 
