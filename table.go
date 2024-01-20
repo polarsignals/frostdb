@@ -676,11 +676,14 @@ func (t *Table) InsertRecord(ctx context.Context, record arrow.Record) (uint64, 
 	tx, _, commit := t.db.begin()
 	defer commit()
 
-	if err := t.wal.LogRecord(tx, t.name, record); err != nil {
+	preHashedRecord := dynparquet.PrehashColumns(t.schema, record)
+	defer preHashedRecord.Release()
+
+	if err := t.wal.LogRecord(tx, t.name, preHashedRecord); err != nil {
 		return tx, fmt.Errorf("append to log: %w", err)
 	}
 
-	if err := block.InsertRecord(ctx, tx, record); err != nil {
+	if err := block.InsertRecord(ctx, tx, preHashedRecord); err != nil {
 		return tx, fmt.Errorf("insert buffer into block: %w", err)
 	}
 
@@ -1004,9 +1007,6 @@ func (t *TableBlock) InsertRecord(_ context.Context, tx uint64, record arrow.Rec
 		t.table.metrics.zeroRowsInserted.Add(1)
 		return nil
 	}
-
-	record = dynparquet.PrehashColumns(t.table.schema, record)
-	defer record.Release()
 
 	t.index.Add(tx, record)
 	t.table.metrics.numParts.Inc()
