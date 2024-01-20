@@ -234,7 +234,7 @@ func (m *multiColSorter) Len() int { return m.indices.Len() }
 
 func (m *multiColSorter) Less(i, j int) bool {
 	for idx := range m.comparisons {
-		cmp := m.compare(idx, int(m.indices.UnsafeValue(i)), int(m.indices.UnsafeValue(j)))
+		cmp := m.compare(idx, int(m.indices.Value(i)), int(m.indices.Value(j)))
 		if cmp != 0 {
 			// Use direction to reorder the comparison. Direction determines if the list
 			// is in ascending or descending.
@@ -282,7 +282,7 @@ func (m *multiColSorter) compare(idx, i, j int) int {
 }
 
 func (m *multiColSorter) Swap(i, j int) {
-	m.indices.UnsafeSwap(i, j)
+	m.indices.Swap(i, j)
 }
 
 type comparator interface {
