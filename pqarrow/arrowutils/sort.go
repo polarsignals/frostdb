@@ -61,11 +61,11 @@ func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
 	return ms.indices.NewArray().(*array.Int32), nil
 }
 
-// ReorderRecord uses indices to create a new record that is sorted according to
-// the indices array.
+// Take uses indices which is an array of row index and returns a new record
+// that only contains rows specified in indices.
 //
 // Use compute.WithAllocator to pass a custom memory.Allocator.
-func ReorderRecord(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Record, error) {
+func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Record, error) {
 	// compute.Take doesn't support dictionaries. Use take on r when r does not have
 	// dictionary column.
 	var hasDictionary bool
