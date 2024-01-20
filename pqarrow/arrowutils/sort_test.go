@@ -225,7 +225,7 @@ func TestReorderRecord(t *testing.T) {
 		indices := array.NewInt32Builder(mem)
 		indices.AppendValues([]int32{2, 1, 0}, nil)
 		by := indices.NewInt32Array()
-		result, err := arrowutils.ReorderRecord(
+		result, err := arrowutils.Take(
 			compute.WithAllocator(context.Background(), mem), r, by)
 		require.Nil(t, err)
 		defer result.Release()
@@ -258,7 +258,7 @@ func TestReorderRecord(t *testing.T) {
 		indices := array.NewInt32Builder(mem)
 		indices.AppendValues([]int32{2, 1, 0}, nil)
 		by := indices.NewInt32Array()
-		result, err := arrowutils.ReorderRecord(
+		result, err := arrowutils.Take(
 			compute.WithAllocator(context.Background(), mem), r, by)
 		require.Nil(t, err)
 		defer result.Release()
