@@ -16,7 +16,7 @@ import (
 // MergeRecords merges the given records. The records must all have the same
 // schema. orderByCols is a slice of indexes into the columns that the records
 // and resulting records are ordered by. While ordering the limit is checked before appending more rows.
-// If limit is less than 1, no limit is applied.
+// If limit is  0, no limit is applied.
 // Note that the given records should already be ordered by the given columns.
 // WARNING: Only ascending ordering is currently supported.
 func MergeRecords(
