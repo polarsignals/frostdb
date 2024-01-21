@@ -114,7 +114,7 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 	if err != nil {
 		return nil, err
 	}
-	return array.NewRecord(r.Schema(), resArr, r.NumRows()), nil
+	return array.NewRecord(r.Schema(), resArr, int64(indices.Len())), nil
 }
 
 func takeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, indices *array.Int32) error {
