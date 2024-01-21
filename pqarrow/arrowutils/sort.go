@@ -79,8 +79,8 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 		res, err := compute.Take(
 			ctx,
 			compute.TakeOptions{BoundsCheck: true},
-			compute.NewDatum(r),
-			compute.NewDatum(indices),
+			compute.NewDatumWithoutOwning(r),
+			compute.NewDatumWithoutOwning(indices),
 		)
 		if err != nil {
 			return nil, err
