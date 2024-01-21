@@ -79,17 +79,10 @@ func (b *builderBase) AppendNulls(n int) {
 
 // SetNull is setting the value at the index i to null.
 func (b *builderBase) SetNull(i int) {
-	if i < 0 || i >= b.length {
-		panic("arrow/array: index out of range")
-	}
 	bitutil.ClearBit(b.validityBitmap, i)
 }
 
 func (b *builderBase) IsValid(n int) bool {
-	if n < 0 || n >= b.length {
-		panic(fmt.Sprintf("IsValid: invalid index %d", n))
-	}
-
 	return bitutil.BitIsSet(b.validityBitmap, n)
 }
 
@@ -101,10 +94,6 @@ func (b *builderBase) appendValid(n int) {
 }
 
 func (b *builderBase) IsNull(n int) bool {
-	if n < 0 || n >= b.length {
-		panic(fmt.Sprintf("IsValid: invalid index %d", n))
-	}
-
 	return bitutil.BitIsNotSet(b.validityBitmap, n)
 }
 
@@ -294,9 +283,6 @@ func (b *OptBinaryBuilder) ResetToLength(n int) {
 }
 
 func (b *OptBinaryBuilder) Value(i int) []byte {
-	if i < 0 || i >= b.length {
-		panic("arrow/array: index out of range")
-	}
 	if i == b.length-1 { // last value
 		return b.data[b.offsets[i]:]
 	}
@@ -376,16 +362,10 @@ func (b *OptInt64Builder) Append(v int64) {
 }
 
 func (b *OptInt64Builder) Set(i int, v int64) {
-	if i < 0 || i >= len(b.data) {
-		panic("arrow/array: index out of range")
-	}
 	b.data[i] = v
 }
 
 func (b *OptInt64Builder) Add(i int, v int64) {
-	if i < 0 || i >= len(b.data) {
-		panic("arrow/array: index out of range")
-	}
 	b.data[i] += v
 }
 
@@ -498,16 +478,10 @@ func (b *OptBooleanBuilder) Append(data []byte, valid int) {
 }
 
 func (b *OptBooleanBuilder) Set(i int, v bool) {
-	if i < 0 || i >= b.length {
-		panic("arrow/array: index out of range")
-	}
 	bitutil.SetBitTo(b.data, i, v)
 }
 
 func (b *OptBooleanBuilder) Value(i int) bool {
-	if i < 0 || i >= b.length {
-		panic("arrow/array: index out of range")
-	}
 	return bitutil.BitIsSet(b.data, i)
 }
 
@@ -644,9 +618,6 @@ func (b *OptInt32Builder) Swap(i, j int) {
 }
 
 func (b *OptInt32Builder) Add(i int, v int32) {
-	if i < 0 || i >= len(b.data) {
-		panic("arrow/array: index out of range")
-	}
 	b.data[i] += v
 }
 
