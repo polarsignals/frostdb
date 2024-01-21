@@ -49,7 +49,6 @@ type LSM struct {
 type LSMMetrics struct {
 	Compactions        *prometheus.CounterVec
 	LevelSize          *prometheus.GaugeVec
-	LevelParts         *prometheus.GaugeVec
 	CompactionDuration prometheus.Histogram
 }
 
@@ -87,11 +86,6 @@ func NewLSMMetrics(reg prometheus.Registerer) *LSMMetrics {
 		LevelSize: promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
 			Name: "frostdb_lsm_level_size_bytes",
 			Help: "The size of the level in bytes.",
-		}, []string{"level"}),
-
-		LevelParts: promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-			Name: "frostdb_lsm_level_size_parts",
-			Help: "The number of parts in the level.",
 		}, []string{"level"}),
 
 		CompactionDuration: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
@@ -183,7 +177,6 @@ func (l *LSM) Add(tx uint64, record arrow.Record) {
 	l.levels.Insert(parts.NewArrowPart(tx, record, uint64(size), l.schema, parts.WithCompactionLevel(int(L0))))
 	l0 := l.sizes[L0].Add(int64(size))
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
-	l.metrics.LevelParts.WithLabelValues(L0.String()).Inc()
 	if l0 >= l.configs[L0].MaxSize {
 		if l.compacting.CompareAndSwap(false, true) {
 			l.compactionWg.Add(1)
@@ -225,7 +218,6 @@ func (l *LSM) InsertPart(part parts.Part) {
 	l.findLevel(level).Insert(part)
 	size := l.sizes[level].Add(int64(part.Size()))
 	l.metrics.LevelSize.WithLabelValues(level.String()).Set(float64(size))
-	l.metrics.LevelParts.WithLabelValues(level.String()).Inc()
 }
 
 func (l *LSM) String() string {
@@ -451,7 +443,6 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts
 		}
 		l.sizes[level+1].Add(int64(compactedSize))
 		l.metrics.LevelSize.WithLabelValues(SentinelType(level + 1).String()).Set(float64(l.sizes[level+1].Load()))
-		l.metrics.LevelParts.WithLabelValues(SentinelType(level + 1).String()).Add(float64(len(compacted)))
 	}
 
 	// Replace the compacted list with the new list
@@ -463,7 +454,6 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts
 	}
 	l.sizes[level].Add(-int64(size))
 	l.metrics.LevelSize.WithLabelValues(level.String()).Set(float64(l.sizes[level].Load()))
-	l.metrics.LevelParts.WithLabelValues(level.String()).Sub(float64(len(mergeList)))
 
 	// release the old parts
 	l.Lock()
