@@ -127,8 +127,19 @@ func takeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, 
 }
 
 func takeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arrow.Array, indices *array.Int32) error {
-	base := a.Dictionary().(*array.String)
-	// Only string dictionaries are supported.
+	var add func(b *array.BinaryDictionaryBuilder, idx int) error
+	switch e := a.Dictionary().(type) {
+	case *array.String:
+		add = func(b *array.BinaryDictionaryBuilder, idx int) error {
+			return b.AppendString(e.Value(idx))
+		}
+	case *array.Binary:
+		add = func(b *array.BinaryDictionaryBuilder, idx int) error {
+			return b.Append(e.Value(idx))
+		}
+	default:
+		panic(fmt.Sprintf("unexpected dictionary type %T for take", e))
+	}
 	r := array.NewBuilder(compute.GetAllocator(ctx), a.DataType()).(*array.BinaryDictionaryBuilder)
 	defer r.Release()
 	r.Reserve(indices.Len())
@@ -137,7 +148,7 @@ func takeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arr
 			r.AppendNull()
 			continue
 		}
-		err := r.AppendString(base.Value(a.GetValueIndex(int(i))))
+		err := add(r, a.GetValueIndex(int(i)))
 		if err != nil {
 			return err
 		}
