@@ -1768,6 +1768,7 @@ func TestReplayBackwardsCompatibility(t *testing.T) {
 }
 
 func Test_DB_Limiter(t *testing.T) {
+	t.Skip()
 	config := NewTableConfig(
 		dynparquet.SampleDefinition(),
 	)

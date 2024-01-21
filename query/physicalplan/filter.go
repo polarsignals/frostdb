@@ -9,10 +9,12 @@ import (
 	"github.com/RoaringBitmap/roaring"
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/compute"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -265,42 +267,22 @@ func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record
 	if bitmap.IsEmpty() {
 		return nil, true, nil
 	}
-
-	indicesToKeep := bitmap.ToArray()
-	ranges := buildIndexRanges(indicesToKeep)
-
-	totalRows := int64(0)
-	recordRanges := make([]arrow.Record, len(ranges))
-	defer func() {
-		for _, r := range recordRanges {
-			r.Release()
-		}
-	}()
-	for j, r := range ranges {
-		recordRanges[j] = ar.NewSlice(int64(r.Start), int64(r.End))
-		totalRows += int64(r.End - r.Start)
+	b := array.NewInt32Builder(pool)
+	defer b.Release()
+	b.Reserve(int(bitmap.GetCardinality()))
+	bitmap.Iterate(func(x uint32) bool {
+		b.UnsafeAppend(int32(x))
+		return true
+	})
+	indices := b.NewInt32Array()
+	defer indices.Release()
+	r, err := arrowutils.Take(
+		compute.WithAllocator(context.Background(), pool), ar, indices,
+	)
+	if err != nil {
+		return nil, true, err
 	}
-
-	cols := make([]arrow.Array, ar.NumCols())
-	defer func() {
-		for _, col := range cols {
-			col.Release()
-		}
-	}()
-	numRanges := len(recordRanges)
-	for i := range cols {
-		colRanges := make([]arrow.Array, 0, numRanges)
-		for _, rr := range recordRanges {
-			colRanges = append(colRanges, rr.Column(i))
-		}
-
-		cols[i], err = array.Concatenate(colRanges, pool)
-		if err != nil {
-			return nil, true, err
-		}
-	}
-
-	return array.NewRecord(ar.Schema(), cols, totalRows), false, nil
+	return r, false, nil
 }
 
 type IndexRange struct {
