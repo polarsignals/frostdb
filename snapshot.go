@@ -292,7 +292,7 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 }
 
 func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64, dir string, truncateWAL bool) (uint64, error) {
-	if err := loadSnapshot(ctx, db, r, size, tx, dir); err != nil {
+	if err := loadSnapshot(ctx, db, r, size, dir); err != nil {
 		return 0, err
 	}
 	watermark := tx
@@ -580,7 +580,7 @@ func readFooter(r io.ReaderAt, size int64) (*snapshotpb.FooterData, error) {
 // loadSnapshot loads a snapshot from the given io.ReaderAt and returns the
 // txnMetadata (if any) the snapshot was created with and an error if any
 // occurred.
-func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64, tx uint64, dir string) error {
+func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64, dir string) error {
 	footer, err := readFooter(r, size)
 	if err != nil {
 		return err
@@ -616,7 +616,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64, tx uin
 			}
 
 			// Restore the table index from tx snapshot dir
-			if err := restoreIndexFilesFromSnapshot(ctx, db, tableMeta.Name, dir, blockUlid.String()); err != nil {
+			if err := restoreIndexFilesFromSnapshot(db, tableMeta.Name, dir, blockUlid.String()); err != nil {
 				return err
 			}
 
@@ -760,7 +760,7 @@ func StoreSnapshot(ctx context.Context, tx uint64, db *DB, snapshot io.Reader) e
 }
 
 // Will restore the index files found in the given directory back to the table's index directory.
-func restoreIndexFilesFromSnapshot(ctx context.Context, db *DB, table, snapshotDir, blockID string) error {
+func restoreIndexFilesFromSnapshot(db *DB, table, snapshotDir, blockID string) error {
 	// Remove the current index directory.
 	if err := os.RemoveAll(filepath.Join(db.indexDir(), table)); err != nil {
 		return fmt.Errorf("failed to remove index directory: %w", err)

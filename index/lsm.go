@@ -67,15 +67,14 @@ type LSMMetrics struct {
 	CompactionDuration prometheus.Histogram
 }
 
-// TODO rewrite a description of the config here.
+// LevelConfig is the configuration for a level in the LSM.
+// The MaxSize is the maximum size of the level in bytes before it triggers a compaction into the next level.
 type LevelConfig struct {
 	Level   SentinelType
 	MaxSize int64
 	Type    CompactionType
 	Compact Compaction
 }
-
-type compact func(parts []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error)
 
 type Level interface {
 	Compact(parts []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error)

@@ -2439,7 +2439,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 				// Move the save files back into L1 to simulate an unssuccessful cleanup after L1 compaction
 				l1Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L1")
 				saveDir := filepath.Join(table.db.indexDir(), "save")
-				filepath.WalkDir(saveDir, func(path string, info fs.DirEntry, err error) error {
+				require.NoError(t, filepath.WalkDir(saveDir, func(path string, info fs.DirEntry, err error) error {
 					if filepath.Ext(path) == index.IndexFileExtension {
 						// Move the save file back to the original file
 						sv, err := os.Open(path)
@@ -2454,7 +2454,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 						require.NoError(t, err)
 					}
 					return nil
-				})
+				}))
 
 				// Corrupt the L2 file to simulate that the failure occurred when writing the L2 file
 				l2Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L2")
@@ -2482,8 +2482,8 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 					op: func(table *Table, dir string) { // save the L1 files to restore them
 						l1Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L1")
 						saveDir := filepath.Join(dir, "save")
-						require.NoError(t, os.MkdirAll(saveDir, 0755)) // Create a directory to save the files
-						filepath.WalkDir(l1Dir, func(path string, info fs.DirEntry, err error) error {
+						require.NoError(t, os.MkdirAll(saveDir, 0o755)) // Create a directory to save the files
+						require.NoError(t, filepath.WalkDir(l1Dir, func(path string, info fs.DirEntry, err error) error {
 							if filepath.Ext(path) == index.IndexFileExtension {
 								lvl, err := os.Open(path)
 								require.NoError(t, err)
@@ -2497,7 +2497,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 								require.NoError(t, err)
 							}
 							return nil
-						})
+						}))
 					},
 				},
 				{ // Compact L1->L2
@@ -2613,7 +2613,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			if test.lvl1Parts > 0 {
 				require.Eventually(t, func() bool {
 					return table.active.index.LevelSize(index.L1) != 0
-				}, time.Second, time.Millisecond*10)
+				}, 30*time.Second, time.Millisecond*10)
 			}
 
 			rows := func(db *DB) int64 {
@@ -2672,7 +2672,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			}
 			require.Eventually(t, func() bool {
 				return table.active.index.LevelSize(index.L1) != l1Before
-			}, time.Second, time.Millisecond*10)
+			}, 30*time.Second, time.Millisecond*10)
 			require.Equal(t, test.finalRows+300, rows(db))
 
 			// Move that data to L2

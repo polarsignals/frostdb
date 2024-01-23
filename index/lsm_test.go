@@ -19,7 +19,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 )
 
-func compactParts(w io.Writer, compact []parts.Part, options ...parquet.WriterOption) (int64, error) {
+func compactParts(w io.Writer, compact []parts.Part, _ ...parquet.WriterOption) (int64, error) {
 	schema := dynparquet.NewSampleSchema()
 	bufs := []dynparquet.DynamicRowGroup{}
 	var size int64
