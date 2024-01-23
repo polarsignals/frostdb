@@ -66,7 +66,7 @@ type ColumnStore struct {
 	// splitSize is the number of new granules that are created when granules are split (default =2)
 	splitSize int
 	// indexConfig is the configuration settings for the lsm index
-	indexConfig []*IndexConfig
+	indexConfig []*index.LevelConfig
 
 	sources []DataSource
 	sinks   []DataSink
@@ -129,7 +129,7 @@ func New(
 	}
 
 	for _, cfg := range s.indexConfig {
-		if cfg.Type == CompactionTypeParquetDisk {
+		if cfg.Type == index.CompactionTypeParquetDisk {
 			if !s.enableWAL && s.storagePath != "" {
 				return nil, fmt.Errorf("persistent disk compaction requires WAL to be enabled")
 			}
@@ -228,7 +228,7 @@ func WithStoragePath(path string) Option {
 	}
 }
 
-func WithIndexConfig(indexConfig []*IndexConfig) Option {
+func WithIndexConfig(indexConfig []*index.LevelConfig) Option {
 	return func(s *ColumnStore) error {
 		s.indexConfig = indexConfig
 		return nil
@@ -740,24 +740,16 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// already been persisted.
 				db.mtx.Lock()
 				if table, ok := db.tables[e.TableBlockPersisted.TableName]; ok {
-					cfg, recovered, err := table.ActiveBlock().configureLSMLevels(db.columnStore.indexConfig)
-					if err != nil {
-						return fmt.Errorf("configure lsm levels: %w", err)
-					}
-
 					table.ActiveBlock().index, err = index.NewLSM(
-						table.name,
+						filepath.Join(table.db.indexDir(), table.name, table.ActiveBlock().ulid.String()), // Any index files are found at <db.indexDir>/<table.name>/<block.id>
 						table.schema,
-						cfg,
+						table.IndexConfig(),
 						db.Wait,
 						index.LSMWithMetrics(table.metrics.indexMetrics),
+						index.LSMWithLogger(table.logger),
 					)
 					if err != nil {
 						return fmt.Errorf("create new lsm index: %w", err)
-					}
-
-					for _, p := range recovered {
-						table.ActiveBlock().index.InsertPart(p)
 					}
 				}
 				db.mtx.Unlock()
@@ -1301,18 +1293,6 @@ func (db *DB) resetToTxn(txn uint64, wal WAL) {
 	db.tx.Store(txn)
 	db.highWatermark.Store(txn)
 	if wal != nil {
-		// Before resetting the wal make sure any pending writes to the index are flushed.
-		errg := errgroup.Group{}
-		for _, table := range db.tables {
-			for _, syncer := range table.ActiveBlock().syncers {
-				errg.Go(syncer.Sync)
-			}
-		}
-
-		if err := errg.Wait(); err != nil {
-			level.Error(db.logger).Log("msg", "failed to sync index before resetting WAL; dataloss may occur", "err", err)
-		}
-
 		// This call resets the WAL to a zero state so that new records can be
 		// logged.
 		if err := wal.Reset(txn + 1); err != nil {

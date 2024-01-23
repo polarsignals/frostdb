@@ -53,11 +53,11 @@ var (
 
 // DefaultIndexConfig returns the default level configs used. This is a function
 // So that any modifications to the result will not affect the default config.
-func DefaultIndexConfig() []*IndexConfig {
-	return []*IndexConfig{
-		{Level: int(index.L0), MaxSize: 1024 * 1024 * 15, Type: CompactionTypeParquet},  // Compact to in-memory Parquet buffer after 15MiB of data
-		{Level: int(index.L1), MaxSize: 1024 * 1024 * 128, Type: CompactionTypeParquet}, // Compact to a single in-memory Parquet buffer after 128MiB of Parquet files
-		{Level: int(index.L2), MaxSize: 1024 * 1024 * 512},                              // Final level. Rotate after 512MiB of Parquet files
+func DefaultIndexConfig() []*index.LevelConfig {
+	return []*index.LevelConfig{
+		{Level: index.L0, MaxSize: 1024 * 1024 * 15, Type: index.CompactionTypeParquetMemory},  // Compact to in-memory Parquet buffer after 15MiB of data
+		{Level: index.L1, MaxSize: 1024 * 1024 * 128, Type: index.CompactionTypeParquetMemory}, // Compact to a single in-memory Parquet buffer after 128MiB of Parquet files
+		{Level: index.L2, MaxSize: 1024 * 1024 * 512},                                          // Final level. Rotate after 512MiB of Parquet files
 	}
 }
 
@@ -318,9 +318,7 @@ type TableBlock struct {
 	// snapshot was last triggered.
 	lastSnapshotSize atomic.Int64
 
-	index   *index.LSM
-	closers []Closer
-	syncers []Sync
+	index *index.LSM
 
 	pendingWritersWg sync.WaitGroup
 	pendingReadersWg sync.WaitGroup
@@ -493,7 +491,9 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	block.pendingReadersWg.Wait()
 	block.pendingWritersWg.Wait()
 
-	// TODO thor call Release on all records in the block...
+	if err := block.index.Close(); err != nil {
+		level.Error(t.logger).Log("msg", "failed to close index", "err", err)
+	}
 }
 
 func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
@@ -626,12 +626,7 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 	// We don't check t.db.columnStore.manualBlockRotation here because this is
 	// the entry point for users to trigger a manual block rotation and they
 	// will specify through skipPersist if they want the block to be persisted.
-	go func() {
-		t.writeBlock(block, skipPersist, true)
-		if err := block.Close(true); err != nil {
-			level.Error(t.logger).Log("msg", "closing block", "err", err)
-		}
-	}()
+	go t.writeBlock(block, skipPersist, true)
 
 	return nil
 }
@@ -966,25 +961,17 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		prevTx: prevTx,
 	}
 
-	cfg, recovered, err := tb.configureLSMLevels(table.db.columnStore.indexConfig)
-	if err != nil {
-		return nil, fmt.Errorf("configure LSM levels: %w", err)
-	}
-
+	var err error
 	tb.index, err = index.NewLSM(
-		table.name,
+		filepath.Join(table.db.indexDir(), table.name, id.String()), // Any index files are found at <db.indexDir>/<table.name>/<block.id>
 		table.schema,
-		cfg,
+		table.IndexConfig(),
 		table.db.Wait,
 		index.LSMWithMetrics(table.metrics.indexMetrics),
+		index.LSMWithLogger(table.logger),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("new LSM: %w", err)
-	}
-
-	// Inserts parts into the index that were recovered.
-	for _, p := range recovered {
-		tb.index.InsertPart(p)
 	}
 
 	return tb, nil
@@ -1027,16 +1014,6 @@ func (t *TableBlock) Index() *index.LSM {
 // Serialize the table block into a single Parquet file.
 func (t *TableBlock) Serialize(writer io.Writer) error {
 	return t.index.Rotate(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
-}
-
-// Close the block and release all resources.
-func (t *TableBlock) Close(cleanup bool) error {
-	for _, closer := range t.closers {
-		if err := closer.Close(cleanup); err != nil {
-			return fmt.Errorf("closer: %w", err)
-		}
-	}
-	return nil
 }
 
 type ParquetWriter interface {
@@ -1214,105 +1191,6 @@ func (t *Table) close() {
 	t.active.pendingWritersWg.Wait()
 	t.closing = true
 	t.active.index.WaitForPendingCompactions()
-
-	if err := t.active.Close(false); err != nil {
-		level.Error(t.logger).Log("msg", "closing table block", "err", err)
-	}
-}
-
-type CompactionType int
-
-const (
-	CompactionTypeUnknown CompactionType = iota
-	CompactionTypeParquet
-	CompactionTypeParquetDisk
-)
-
-type IndexConfig struct {
-	Level   int
-	MaxSize int64
-	Type    CompactionType
-}
-
-// configureLSMLevels configures the level configs for this table block.
-func (t *TableBlock) configureLSMLevels(levels []*IndexConfig) ([]*index.LevelConfig, []parts.Part, error) {
-	config := make([]*index.LevelConfig, len(levels))
-	recovered := []parts.Part{}
-	abortRecovery := false
-
-	// Recover in reverse order so that the highest level is recovered first.
-	// This allows us to throw away parts that were compacted into a higher level but for some reason weren't successfully removed.
-	for i := len(levels) - 1; i >= 0; i-- {
-		lvl := levels[i]
-		cfg := &index.LevelConfig{
-			Level:   index.SentinelType(lvl.Level),
-			MaxSize: lvl.MaxSize,
-		}
-		switch lvl.Type {
-		case CompactionTypeParquet:
-			cfg.Compact = t.table.parquetCompaction
-		case CompactionTypeParquetDisk:
-			fileCompaction := NewFileCompaction(t.table, t.ulid, i+1)
-			if abortRecovery { // If we failed to recover an LSM file, we need to abort recovery of all lower levels as well, and let the WAL recover.
-				if err := fileCompaction.Truncate(); err != nil {
-					return nil, nil, err
-				}
-			} else {
-				parts, err := fileCompaction.recover(parts.WithCompactionLevel(i + 1))
-				if err != nil {
-					if errors.Is(ErrCompactionRecoveryFailed, err) {
-						abortRecovery = true
-					} else {
-						return nil, nil, err
-					}
-				}
-				recovered = append(recovered, parts...)
-			}
-			t.closers = append(t.closers, fileCompaction) // Append to closers so that the underlying files are closed on table close.
-			t.syncers = append(t.syncers, fileCompaction) // Append to syncers so that the underlying files are synced on wal truncation.
-			cfg.Compact = fileCompaction.writeRecordsToParquetFile
-		default:
-			if i != len(levels)-1 { // Compaction type should not be set for last level
-				panic(fmt.Sprintf("unknown compaction type: %v", lvl.Type))
-			}
-		}
-		config[i] = cfg
-	}
-
-	return config, recovered, nil
-}
-
-func (t *Table) parquetCompaction(compact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
-	var (
-		buf                                   *dynparquet.SerializedBuffer
-		preCompactionSize, postCompactionSize int64
-		err                                   error
-	)
-	if len(compact) > 1 {
-		var b bytes.Buffer
-		preCompactionSize, err = t.compactParts(&b, compact)
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		buf, err = dynparquet.ReaderFromBytes(b.Bytes())
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		postCompactionSize = int64(b.Len())
-	} else if len(compact) == 1 {
-		// It's more efficient to skip compactParts if there's only one part.
-		// The only thing we want to ensure is that this part is converted to
-		// parquet if it is an arrow part.
-		singlePart := compact[0]
-		preCompactionSize = singlePart.Size()
-		buf, err = compact[0].AsSerializedBuffer(t.schema)
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		postCompactionSize = buf.ParquetFile().Size()
-	}
-
-	return []parts.Part{parts.NewParquetPart(0, buf, options...)}, preCompactionSize, postCompactionSize, nil
 }
 
 func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []parts.Part) (parts.Part, int64, int64, error) {
@@ -1557,4 +1435,24 @@ func (t *Table) distinctRecordsForCompaction(compact []parts.Part) ([]arrow.Reco
 		return nil, err
 	}
 	return newRecords, nil
+}
+
+// IndexConfig returns the index configuration for the table. It makes a copy of the column store index config and injects it's compactParts method.
+func (t *Table) IndexConfig() []*index.LevelConfig {
+	config := make([]*index.LevelConfig, 0, len(t.db.columnStore.indexConfig))
+	for i, c := range t.db.columnStore.indexConfig {
+		compactFunc := t.compactParts
+		if i == len(t.db.columnStore.indexConfig)-1 {
+			// The last level is the in-memory level, which is never compacted.
+			compactFunc = nil
+		}
+		config = append(config, &index.LevelConfig{
+			Level:   c.Level,
+			MaxSize: c.MaxSize,
+			Type:    c.Type,
+			Compact: compactFunc, // TODO: this is bad and it should feel bad. We shouldn't need the table object to define how parts are compacted. Refactor needed.
+		})
+	}
+
+	return config
 }
