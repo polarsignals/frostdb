@@ -187,7 +187,7 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, writeSnapshot func(co
 	var fileSize int64
 	start := time.Now()
 	if err := func() error {
-		snapshotsDir := db.snapshotsDir()
+		snapshotsDir := snapshotDir(db, tx)
 		if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
 			return err
 		}
@@ -252,16 +252,16 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 	// No error should be returned from snapshotsDo.
 	_ = db.snapshotsDo(ctx, dir, func(parsedTx uint64, entry os.DirEntry) (bool, error) {
 		if err := func() error {
-			f, err := os.Open(filepath.Join(dir, entry.Name()))
+			f, err := os.Open(filepath.Join(dir, entry.Name(), snapshotFileName(parsedTx)))
 			if err != nil {
 				return err
 			}
 			defer f.Close()
-			info, err := entry.Info()
+			info, err := f.Stat()
 			if err != nil {
 				return err
 			}
-			watermark, err := LoadSnapshot(ctx, db, parsedTx, f, info.Size(), false)
+			watermark, err := LoadSnapshot(ctx, db, parsedTx, f, info.Size(), filepath.Join(dir, entry.Name()), false)
 			if err != nil {
 				return err
 			}
@@ -291,8 +291,8 @@ func (db *DB) loadLatestSnapshotFromDir(ctx context.Context, dir string) (uint64
 	return 0, fmt.Errorf("%s", errString)
 }
 
-func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64, truncateWAL bool) (uint64, error) {
-	if err := loadSnapshot(ctx, db, r, size); err != nil {
+func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size int64, dir string, truncateWAL bool) (uint64, error) {
+	if err := loadSnapshot(ctx, db, r, size, tx, dir); err != nil {
 		return 0, err
 	}
 	watermark := tx
@@ -310,12 +310,12 @@ func (db *DB) getLatestValidSnapshotTxn(ctx context.Context) (uint64, error) {
 	// No error should be returned from snapshotsDo.
 	_ = db.snapshotsDo(ctx, dir, func(parsedTx uint64, entry os.DirEntry) (bool, error) {
 		if err := func() error {
-			f, err := os.Open(filepath.Join(dir, entry.Name()))
+			f, err := os.Open(filepath.Join(dir, entry.Name(), snapshotFileName(parsedTx)))
 			if err != nil {
 				return err
 			}
 			defer f.Close()
-			info, err := entry.Info()
+			info, err := f.Stat()
 			if err != nil {
 				return err
 			}
@@ -382,7 +382,7 @@ func (db *DB) offlineSnapshotWriter(tx uint64) func(context.Context, io.Writer) 
 	}
 }
 
-func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline bool) error {
+func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline bool) error {
 	offW := newOffsetWriter(w)
 	w = offW
 	var tables []*Table
@@ -417,6 +417,12 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 			if err != nil {
 				return err
 			}
+
+			// Snapshot the table index.
+			if err := block.index.Snapshot(snapshotIndexDir(db, tx, t.name, block.ulid.String())); err != nil {
+				return fmt.Errorf("failed to snapshot table %s index: %w", t.name, err)
+			}
+
 			tableMeta := &snapshotpb.Table{
 				Name:   t.name,
 				Config: t.config.Load(),
@@ -458,7 +464,7 @@ func WriteSnapshot(ctx context.Context, _ uint64, db *DB, w io.Writer, offline b
 
 					// If file compaction is enabled we do not need to snapshot the parquet parts.
 					for _, cfg := range db.columnStore.indexConfig {
-						if cfg.Type == CompactionTypeParquetDisk {
+						if cfg.Type == index.CompactionTypeParquetDisk {
 							return ErrSkipPart
 						}
 					}
@@ -574,7 +580,7 @@ func readFooter(r io.ReaderAt, size int64) (*snapshotpb.FooterData, error) {
 // loadSnapshot loads a snapshot from the given io.ReaderAt and returns the
 // txnMetadata (if any) the snapshot was created with and an error if any
 // occurred.
-func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error {
+func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64, tx uint64, dir string) error {
 	footer, err := readFooter(r, size)
 	if err != nil {
 		return err
@@ -606,6 +612,11 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64) error 
 
 			var blockUlid ulid.ULID
 			if err := blockUlid.UnmarshalBinary(tableMeta.ActiveBlock.Ulid); err != nil {
+				return err
+			}
+
+			// Restore the table index from tx snapshot dir
+			if err := restoreIndexFilesFromSnapshot(ctx, db, tableMeta.Name, dir, blockUlid.String()); err != nil {
 				return err
 			}
 
@@ -703,14 +714,14 @@ func (db *DB) cleanupSnapshotDir(ctx context.Context, tx uint64) error {
 			// Continue.
 			return true, nil
 		}
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
 			return false, err
 		}
 		return true, nil
 	})
 }
 
-// snapshotsDo executes the given callback with the filename of each snapshot
+// snapshotsDo executes the given callback with the directory of each snapshot
 // in dir in reverse lexicographical order (most recent snapshot first). If
 // false or an error is returned by the callback, the iteration is aborted and
 // the error returned.
@@ -725,7 +736,7 @@ func (db *DB) snapshotsDo(ctx context.Context, dir string, callback func(tx uint
 			return ctx.Err()
 		}
 		name := entry.Name()
-		if entry.IsDir() || len(name) < 20 {
+		if len(name) < 20 {
 			continue
 		}
 		parsedTx, err := getTxFromSnapshotFileName(name)
@@ -746,4 +757,52 @@ func StoreSnapshot(ctx context.Context, tx uint64, db *DB, snapshot io.Reader) e
 		_, err := io.Copy(w, snapshot)
 		return err
 	})
+}
+
+// Will restore the index files found in the given directory back to the table's index directory.
+func restoreIndexFilesFromSnapshot(ctx context.Context, db *DB, table, snapshotDir, blockID string) error {
+	// Remove the current index directory.
+	if err := os.RemoveAll(filepath.Join(db.indexDir(), table)); err != nil {
+		return fmt.Errorf("failed to remove index directory: %w", err)
+	}
+
+	snapshotIndexDir := filepath.Join(snapshotDir, "index", table, blockID)
+
+	// Restore the index files from the snapshot files.
+	return filepath.WalkDir(snapshotIndexDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("failed to walk snapshot index directory: %w", err)
+		}
+
+		if d.IsDir() { // Level dirs expected
+			return nil
+		}
+
+		if filepath.Ext(path) != index.IndexFileExtension {
+			return nil // unknown file
+		}
+
+		// Expected file path is .../<level>/<file>
+		filename := filepath.Base(path)
+		lvl := filepath.Base(filepath.Dir(path))
+
+		if err := os.MkdirAll(filepath.Join(db.indexDir(), table, blockID, lvl), dirPerms); err != nil {
+			return err
+		}
+
+		// Hard link the file back into the index directory.
+		if err := os.Link(path, filepath.Join(db.indexDir(), table, blockID, lvl, filename)); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+func snapshotDir(db *DB, tx uint64) string {
+	return filepath.Join(db.snapshotsDir(), fmt.Sprintf("%020d", tx))
+}
+
+func snapshotIndexDir(db *DB, tx uint64, table, block string) string {
+	return filepath.Join(snapshotDir(db, tx), "index", table, block)
 }
