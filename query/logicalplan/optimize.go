@@ -1,6 +1,8 @@
 package logicalplan
 
-import "slices"
+import (
+	"slices"
+)
 
 var hashedMatch = "hashed"
 
@@ -30,28 +32,7 @@ func (p *AverageAggregationPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 	}
 
 	for i, aggExpr := range plan.Aggregation.AggExprs {
-		var aggFunc *AggregationFunction
-		var alias *AliasExpr
-		var column Expr
-
-		// In case the aggregation contains an alias
-		if aliasExpr, ok := aggExpr.(*AliasExpr); ok {
-			alias = aliasExpr
-			if af, ok := aliasExpr.Expr.(*AggregationFunction); ok {
-				if af.Func == AggFuncAvg {
-					column = af.Expr
-					aggFunc = af
-				}
-			}
-		}
-		if ae, ok := aggExpr.(*AggregationFunction); ok {
-			if ae.Func == AggFuncAvg {
-				column = ae.Expr
-				aggFunc = ae
-			}
-		}
-
-		if aggFunc == nil {
+		if aggExpr.Func != AggFuncAvg {
 			// no aggregation func found, skipping
 			continue
 		}
@@ -59,22 +40,18 @@ func (p *AverageAggregationPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 		// Delete this average aggregation from the logicalplan.
 		plan.Aggregation.AggExprs = slices.Delete(plan.Aggregation.AggExprs, i, i+1)
 		// Add sum and count aggregation for the column to the logicalplan.
-		plan.Aggregation.AggExprs = append(plan.Aggregation.AggExprs,
-			Sum(aggFunc.Expr),
-			Count(aggFunc.Expr),
-		)
+		sum := Sum(aggExpr.Expr)
+		count := Count(aggExpr.Expr)
 
-		projection := &AverageExpr{Expr: column}
-		if alias != nil {
-			alias.Expr = column
-			projection.Expr = alias
-		}
+		// TODO(brancz): This can cause the same aggregations to be added
+		// multiple times, we should have an optimizer that deduplicates these.
+		plan.Aggregation.AggExprs = append(plan.Aggregation.AggExprs, sum, count)
 
 		// Wrap the aggregations with the average projection to always call it after aggregating.
 		plan = &LogicalPlan{
 			Input: plan,
 			Projection: &Projection{
-				Exprs: []Expr{projection},
+				Exprs: []Expr{Div(sum, count).Alias(aggExpr.String())},
 			},
 		}
 	}
@@ -140,10 +117,18 @@ func (p *PhysicalProjectionPushDown) optimize(plan *LogicalPlan, columnsUsedExpr
 type ProjectionPushDown struct{}
 
 func (p *ProjectionPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
-	// Don't perform the optimization if filters or aggregations contain a column that projections do not.
-	// Otherwise we'll removed the columns we're filtering/aggregating.
-	// Also never remove prehashed columns if there is an aggregation being performed.
-	projectColumns := projectionColumns(plan)
+	// Don't perform the optimization if filters or aggregations contain a
+	// column that projections do not. Otherwise we'll removed the columns
+	// we're filtering/aggregating. Also never remove prehashed columns if
+	// there is an aggregation being performed.
+	projectColumns, computed := projectionColumns(plan)
+	if computed {
+		// If there are computed columns, we can't push down the projection.
+		// There are probably smarter things we can do but for now we'll just
+		// bail.
+		return plan
+	}
+
 	projectMap := map[string]bool{}
 	filterColumns := filterColumns(plan)
 	aggColumns := aggregationColumns(plan)
@@ -225,21 +210,31 @@ func aggregationColumns(plan *LogicalPlan) []Expr {
 	return append(columnsUsedExprs, aggregationColumns(plan.Input)...)
 }
 
-// projectionColumns returns all the column matchers for projections in a given plan.
-func projectionColumns(plan *LogicalPlan) []Expr {
+// projectionColumns returns all the column matchers for
+// projections in a given plan. Also returns whether there are any
+// computed projections which would prevent projection push down.
+func projectionColumns(plan *LogicalPlan) ([]Expr, bool) {
 	if plan == nil {
-		return nil
+		return nil, false
 	}
 
 	columnsUsedExprs := []Expr{}
 	switch {
 	case plan.Projection != nil:
 		for _, expr := range plan.Projection.Exprs {
+			if expr.Computed() {
+				return nil, true
+			}
 			columnsUsedExprs = append(columnsUsedExprs, expr.ColumnsUsedExprs()...)
 		}
 	}
 
-	return append(columnsUsedExprs, projectionColumns(plan.Input)...)
+	cols, computed := projectionColumns(plan.Input)
+	if computed {
+		return nil, true
+	}
+
+	return append(columnsUsedExprs, cols...), false
 }
 
 func removeProjection(plan *LogicalPlan) *LogicalPlan {

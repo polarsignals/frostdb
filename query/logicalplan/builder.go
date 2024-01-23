@@ -118,7 +118,7 @@ func (b Builder) Distinct(
 }
 
 func (b Builder) Aggregate(
-	aggExpr []Expr,
+	aggExpr []*AggregationFunction,
 	groupExprs []Expr,
 ) Builder {
 	return Builder{

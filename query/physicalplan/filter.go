@@ -63,7 +63,7 @@ func (f PreExprVisitorFunc) PostVisit(_ logicalplan.Expr) bool {
 
 func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) {
 	switch expr.Op {
-	case logicalplan.OpEq, logicalplan.OpNotEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpRegexMatch, logicalplan.OpRegexNotMatch:
+	case logicalplan.OpEq, logicalplan.OpNotEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpRegexMatch, logicalplan.OpRegexNotMatch, logicalplan.OpAdd, logicalplan.OpSub, logicalplan.OpMul, logicalplan.OpDiv:
 		var leftColumnRef *ArrayRef
 		expr.Left.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
@@ -119,12 +119,12 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 	case logicalplan.OpAnd:
 		left, err := booleanExpr(expr.Left)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("left bool expr: %w", err)
 		}
 
 		right, err := booleanExpr(expr.Right)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("right bool expr: %w", err)
 		}
 
 		return &AndExpr{
@@ -134,12 +134,12 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 	case logicalplan.OpOr:
 		left, err := booleanExpr(expr.Left)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("left bool expr: %w", err)
 		}
 
 		right, err := booleanExpr(expr.Right)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("right bool expr: %w", err)
 		}
 
 		return &OrExpr{
@@ -147,7 +147,7 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Right: right,
 		}, nil
 	default:
-		panic("unsupported binary boolean expression")
+		return nil, fmt.Errorf("binary expr %s: %w", expr.Op.String(), ErrUnsupportedBooleanExpression)
 	}
 }
 
@@ -213,7 +213,7 @@ func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
 func Filter(pool memory.Allocator, tracer trace.Tracer, filterExpr logicalplan.Expr) (*PredicateFilter, error) {
 	expr, err := booleanExpr(filterExpr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create bool expr: %w", err)
 	}
 
 	return newFilter(pool, tracer, expr), nil

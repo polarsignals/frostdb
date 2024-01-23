@@ -559,6 +559,11 @@ func (f *AggregationFunction) Accept(visitor Visitor) bool {
 		return false
 	}
 
+	continu = visitor.Visit(f)
+	if !continu {
+		return false
+	}
+
 	return visitor.PostVisit(f)
 }
 
@@ -667,7 +672,7 @@ func (e *AliasExpr) Name() string {
 	return e.Alias
 }
 
-func (e *AliasExpr) String() string { return e.Name() }
+func (e *AliasExpr) String() string { return fmt.Sprintf("%s as %s", e.Expr.String(), e.Alias) }
 
 func (e *AliasExpr) Computed() bool {
 	return e.Expr.Computed()
@@ -738,7 +743,7 @@ func (d *DurationExpr) Accept(visitor Visitor) bool {
 }
 
 func (d *DurationExpr) Name() string {
-	return ""
+	return fmt.Sprintf("second(%d)", int(d.duration.Seconds()))
 }
 
 func (d *DurationExpr) String() string { return d.Name() }
@@ -758,51 +763,6 @@ func (d *DurationExpr) Computed() bool {
 
 func (d *DurationExpr) Value() time.Duration {
 	return d.duration
-}
-
-type AverageExpr struct {
-	Expr Expr
-}
-
-func (a *AverageExpr) Clone() Expr {
-	return &AverageExpr{
-		Expr: a.Expr.Clone(),
-	}
-}
-
-func (a *AverageExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
-	return a.Expr.DataType(s)
-}
-
-func (a *AverageExpr) Name() string {
-	return a.Expr.Name()
-}
-
-func (a *AverageExpr) String() string { return a.Name() }
-
-func (a *AverageExpr) ColumnsUsedExprs() []Expr {
-	return a.Expr.ColumnsUsedExprs()
-}
-
-func (a *AverageExpr) MatchPath(path string) bool {
-	return a.Expr.MatchPath(path)
-}
-
-func (a *AverageExpr) MatchColumn(name string) bool {
-	return a.Expr.MatchColumn(name)
-}
-
-func (a *AverageExpr) Computed() bool {
-	return true
-}
-
-func (a *AverageExpr) Accept(visitor Visitor) bool {
-	continu := visitor.PreVisit(a)
-	if !continu {
-		return false
-	}
-
-	return visitor.PostVisit(a)
 }
 
 func RegExpColumnMatch(match *regexp.Regexp) *RegexpColumnMatch {

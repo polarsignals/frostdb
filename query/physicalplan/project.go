@@ -8,6 +8,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/apache/arrow/go/v14/arrow/scalar"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -16,6 +17,8 @@ import (
 type columnProjection interface {
 	// Name returns the name of the column that this projection will return.
 	Name() string
+	// String returns the string representation as it may have been used to create the projection.
+	String() string
 	// Projects one or more columns. Each element in the field list corresponds to an element in the list of arrays.
 	Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error)
 }
@@ -29,20 +32,29 @@ func (a aliasProjection) Name() string {
 	return a.name
 }
 
+func (a aliasProjection) String() string {
+	return a.expr.String()
+}
+
 func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	switch e := a.expr.Expr.(type) {
 	case *logicalplan.BinaryExpr:
-		boolExpr, err := binaryBooleanExpr(e)
+		p, err := projectionFromExpr(e)
 		if err != nil {
 			return nil, nil, err
 		}
-		fields, array, err := boolExprProjection{boolExpr: boolExpr}.Project(mem, ar)
+		fields, array, err := p.Project(mem, ar)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("project binary expr: %w", err)
 		}
 		for i, field := range fields {
-			if a.expr.Expr.MatchColumn(field.Name) {
-				fields[i].Name = a.name
+			if e.MatchColumn(field.Name) {
+				fields[i] = arrow.Field{
+					Name:     a.name,
+					Type:     fields[i].Type,
+					Nullable: fields[i].Nullable,
+					Metadata: fields[i].Metadata,
+				}
 			}
 		}
 		return fields, array, nil
@@ -50,6 +62,15 @@ func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow
 		for i := 0; i < ar.Schema().NumFields(); i++ {
 			field := ar.Schema().Field(i)
 			if a.expr.MatchColumn(field.Name) {
+				field.Name = a.name
+				ar.Column(i).Retain() // Retain the column since we're keeping it.
+				return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
+			}
+		}
+	case *logicalplan.AggregationFunction:
+		for i := 0; i < ar.Schema().NumFields(); i++ {
+			field := ar.Schema().Field(i)
+			if e.MatchColumn(field.Name) {
 				field.Name = a.name
 				ar.Column(i).Retain() // Retain the column since we're keeping it.
 				return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
@@ -73,6 +94,10 @@ func (b binaryExprProjection) Name() string {
 	return b.expr.String()
 }
 
+func (b binaryExprProjection) String() string {
+	return b.expr.String()
+}
+
 func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	leftFields, leftArrays, err := b.left.Project(mem, ar)
 	if err != nil {
@@ -84,8 +109,12 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 		return nil, nil, fmt.Errorf("project right side of binary expression: %w", err)
 	}
 
-	if len(leftFields) != 1 || len(rightFields) != 1 || len(leftArrays) != 1 || len(rightArrays) != 1 {
-		return nil, nil, fmt.Errorf("binary expression projection expected one field and one array for each side")
+	if len(leftFields) != 1 || len(leftArrays) != 1 {
+		return nil, nil, fmt.Errorf("binary expression projection expected one field and one array for each side, got %d fields and %d arrays on left", len(leftFields), len(leftArrays))
+	}
+
+	if len(rightFields) != 1 || len(rightArrays) != 1 {
+		return nil, nil, fmt.Errorf("binary expression projection expected one field and one array for each side, got %d fields and %d arrays on right", len(rightFields), len(rightArrays))
 	}
 
 	leftArray := leftArrays[0]
@@ -95,39 +124,123 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 	case *array.Int64:
 		switch b.expr.Op {
 		case logicalplan.OpAdd:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{AddInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					AddInt64s(mem, leftArray, rightArray.(*array.Int64)),
+				}, nil
 		case logicalplan.OpSub:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{SubInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					SubInt64s(mem, leftArray, rightArray.(*array.Int64)),
+				}, nil
 		case logicalplan.OpMul:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{MulInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					MulInt64s(mem, leftArray, rightArray.(*array.Int64)),
+				}, nil
 		case logicalplan.OpDiv:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{DivInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					DivInt64s(mem, leftArray, rightArray.(*array.Int64)),
+				}, nil
 		default:
 			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
 		}
 	case *array.Float64:
 		switch b.expr.Op {
 		case logicalplan.OpAdd:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{AddFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					AddFloat64s(mem, leftArray, rightArray.(*array.Float64)),
+				}, nil
 		case logicalplan.OpSub:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{SubFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					SubFloat64s(mem, leftArray, rightArray.(*array.Float64)),
+				}, nil
 		case logicalplan.OpMul:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{MulFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					MulFloat64s(mem, leftArray, rightArray.(*array.Float64)),
+				}, nil
 		case logicalplan.OpDiv:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{DivFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					DivFloat64s(mem, leftArray, rightArray.(*array.Float64)),
+				}, nil
 		default:
 			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
 		}
 	case *array.Int32:
 		switch b.expr.Op {
 		case logicalplan.OpAdd:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{AddInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					AddInt32s(mem, leftArray, rightArray.(*array.Int32)),
+				}, nil
 		case logicalplan.OpSub:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{SubInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					SubInt32s(mem, leftArray, rightArray.(*array.Int32)),
+				}, nil
 		case logicalplan.OpMul:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{MulInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					MulInt32s(mem, leftArray, rightArray.(*array.Int32)),
+				}, nil
 		case logicalplan.OpDiv:
-			return []arrow.Field{leftFields[0]}, []arrow.Array{DivInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+			return []arrow.Field{{
+					Name:     b.expr.Name(),
+					Type:     leftFields[0].Type,
+					Nullable: leftFields[0].Nullable,
+					Metadata: leftFields[0].Metadata,
+				}}, []arrow.Array{
+					DivInt32s(mem, leftArray, rightArray.(*array.Int32)),
+				}, nil
 		default:
 			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
 		}
@@ -300,6 +413,10 @@ func (b boolExprProjection) Name() string {
 	return b.boolExpr.String()
 }
 
+func (b boolExprProjection) String() string {
+	return b.boolExpr.String()
+}
+
 func (b boolExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	var partiallyComputedExprRes arrow.Array
 	if ar.Schema().HasField(b.boolExpr.String()) {
@@ -368,6 +485,10 @@ func (p plainProjection) Name() string {
 	return p.expr.ColumnName
 }
 
+func (p plainProjection) String() string {
+	return p.expr.ColumnName
+}
+
 func (p plainProjection) Project(_ memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	for i := 0; i < ar.Schema().NumFields(); i++ {
 		field := ar.Schema().Field(i)
@@ -380,11 +501,41 @@ func (p plainProjection) Project(_ memory.Allocator, ar arrow.Record) ([]arrow.F
 	return nil, nil, nil
 }
 
+type literalProjection struct {
+	value scalar.Scalar
+}
+
+func (p literalProjection) Name() string {
+	return p.value.String()
+}
+
+func (p literalProjection) String() string {
+	return p.value.String()
+}
+
+func (p literalProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	arr, err := scalar.MakeArrayFromScalar(p.value, int(ar.NumRows()), mem)
+	if err != nil {
+		return nil, nil, fmt.Errorf("make array from literal value: %w", err)
+	}
+
+	return []arrow.Field{{
+			Name: p.value.String(),
+			Type: p.value.DataType(),
+		}}, []arrow.Array{
+			arr,
+		}, nil
+}
+
 type dynamicProjection struct {
 	expr *logicalplan.DynamicColumn
 }
 
 func (p dynamicProjection) Name() string {
+	return p.expr.ColumnName
+}
+
+func (p dynamicProjection) String() string {
 	return p.expr.ColumnName
 }
 
@@ -411,9 +562,17 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		return plainProjection{
 			expr: e,
 		}, nil
+	case *logicalplan.AggregationFunction:
+		return plainProjection{
+			expr: logicalplan.Col(e.Name()),
+		}, nil
 	case *logicalplan.DynamicColumn:
 		return dynamicProjection{
 			expr: e,
+		}, nil
+	case *logicalplan.LiteralExpr:
+		return literalProjection{
+			value: e.Value,
 		}, nil
 	case *logicalplan.AliasExpr:
 		return aliasProjection{
@@ -425,7 +584,7 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		case logicalplan.OpEq, logicalplan.OpNotEq, logicalplan.OpGt, logicalplan.OpGtEq, logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpRegexMatch, logicalplan.OpRegexNotMatch, logicalplan.OpAnd, logicalplan.OpOr:
 			boolExpr, err := binaryBooleanExpr(e)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("boolean projection from expr: %w", err)
 			}
 			return boolExprProjection{
 				boolExpr: boolExpr,
@@ -433,12 +592,12 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		case logicalplan.OpAdd, logicalplan.OpSub, logicalplan.OpMul, logicalplan.OpDiv:
 			left, err := projectionFromExpr(e.Left)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("left projection for arithmetic projection: %w", err)
 			}
 
 			right, err := projectionFromExpr(e.Right)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("right projection for arithmetic projection: %w", err)
 			}
 
 			return binaryExprProjection{
@@ -450,8 +609,6 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		default:
 			return nil, fmt.Errorf("unknown binary expression: %s", e.String())
 		}
-	case *logicalplan.AverageExpr:
-		return &averageProjection{expr: e}, nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type for projection: %T", expr)
 	}
@@ -542,110 +699,17 @@ func (p *Projection) Draw() *Diagram {
 
 	var columns []string
 	for _, p := range p.colProjections {
-		columns = append(columns, p.Name())
+		columns = append(columns, p.String())
 	}
-	details := fmt.Sprintf("Projection (%s)", strings.Join(columns, ","))
+	details := fmt.Sprintf("Projection (%s)", strings.Join(columns, ", "))
 	return &Diagram{Details: details, Child: child}
-}
-
-type averageProjection struct {
-	expr logicalplan.Expr
-}
-
-func (a *averageProjection) Name() string {
-	return a.expr.Name()
-}
-
-func (a *averageProjection) Project(mem memory.Allocator, r arrow.Record) ([]arrow.Field, []arrow.Array, error) {
-	columnName := a.expr.Name()
-	resultName := "avg(" + columnName + ")"
-	if avgExpr, ok := a.expr.(*logicalplan.AverageExpr); ok {
-		if ae, ok := avgExpr.Expr.(*logicalplan.AliasExpr); ok {
-			columnName = ae.Expr.Name()
-			resultName = ae.Alias
-		}
-	}
-
-	columnSum := "sum(" + columnName + ")"
-	columnCount := "count(" + columnName + ")"
-
-	schema := r.Schema()
-
-	sumIndex := schema.FieldIndices(columnSum)
-	if len(sumIndex) != 1 {
-		return nil, nil, fmt.Errorf("sum column for average projection for column %s not found", columnName)
-	}
-	countIndex := schema.FieldIndices(columnCount)
-	if len(countIndex) != 1 {
-		return nil, nil, fmt.Errorf("count column for average projection for column %s not found", columnName)
-	}
-
-	sums := r.Column(sumIndex[0])
-	counts := r.Column(countIndex[0])
-
-	fields := make([]arrow.Field, 0, schema.NumFields()-1)
-	columns := make([]arrow.Array, 0, schema.NumFields()-1)
-
-	// Only add the fields and columns that aren't the average's underlying sum and count columns.
-	for i := 0; i < schema.NumFields(); i++ {
-		field := schema.Field(i)
-		if i != sumIndex[0] && i != countIndex[0] {
-			fields = append(fields, field)
-			columns = append(columns, r.Column(i))
-			r.Column(i).Retain() // Retain the column since we're keeping it.
-		}
-	}
-
-	// Add the field and column for the projected average aggregation.
-	switch sums.DataType().ID() {
-	case arrow.INT64:
-		fields = append(fields, arrow.Field{
-			Name: resultName,
-			Type: &arrow.Int64Type{},
-		})
-		columns = append(columns, avgInt64arrays(mem, sums, counts))
-	case arrow.FLOAT64:
-		fields = append(fields, arrow.Field{
-			Name: resultName,
-			Type: &arrow.Float64Type{},
-		})
-		columns = append(columns, avgFloat64arrays(mem, sums, counts))
-	default:
-		return nil, nil, fmt.Errorf("Datatype %s is not supported for average projection", sums.DataType().ID())
-	}
-
-	return fields, columns, nil
-}
-
-func avgInt64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array {
-	sumsInts := sums.(*array.Int64)
-	countsInts := counts.(*array.Int64)
-
-	res := array.NewInt64Builder(pool)
-	defer res.Release()
-	for i := 0; i < sumsInts.Len(); i++ {
-		res.Append(sumsInts.Value(i) / countsInts.Value(i))
-	}
-
-	return res.NewArray()
-}
-
-func avgFloat64arrays(pool memory.Allocator, sums, counts arrow.Array) arrow.Array {
-	sumsFloats := sums.(*array.Float64)
-	countsInts := counts.(*array.Int64)
-
-	res := array.NewFloat64Builder(pool)
-	defer res.Release()
-	for i := 0; i < sumsFloats.Len(); i++ {
-		res.Append(sumsFloats.Value(i) / float64(countsInts.Value(i)))
-	}
-
-	return res.NewArray()
 }
 
 type allProjection struct{}
 
 func (a allProjection) Name() string { return "all" }
+
+func (a allProjection) String() string { return "*" }
 
 func (a allProjection) Project(_ memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
 	return ar.Schema().Fields(), ar.Columns(), nil

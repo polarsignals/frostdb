@@ -21,6 +21,7 @@ type astVisitor struct {
 	err         error
 
 	exprStack []logicalplan.Expr
+	groupBy   []logicalplan.Expr
 }
 
 var _ ast.Visitor = &astVisitor{}
@@ -51,19 +52,105 @@ func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
 		expr.Fields.Accept(v)
 		switch {
 		case expr.GroupBy != nil:
+			// This represents everything before the "group by" clause.
+			beforeGroupBy := v.exprStack
 			expr.GroupBy.Accept(v)
-			var agg []logicalplan.Expr
-			var groups []logicalplan.Expr
+			// This represents everything after the "group by" clause.
+			afterGroupBy := v.exprStack[len(beforeGroupBy):]
+			groups := afterGroupBy
 
-			for _, expr := range v.exprStack {
-				switch expr.(type) {
-				case *logicalplan.AliasExpr, *logicalplan.AggregationFunction:
-					agg = append(agg, expr)
-				default:
-					groups = append(groups, expr)
+			includedPreprojections := make(map[string]struct{})
+			preProjections := []logicalplan.Expr{}
+			postProjections := []logicalplan.Expr{}
+			aggregations := []*logicalplan.AggregationFunction{}
+
+			for _, expr := range beforeGroupBy {
+				// Walk the expression tree and separate out what projections
+				// need to be done before aggregations, and which can be done
+				// after. We don't support nested aggregations, so we can just
+				// find aggregation functions and put their expressions into
+				// the pre-projections. If we wanted to support nested
+				// aggregations, this would need to be more sophisticated.
+				aggCollector := &aggregationCollector{}
+				expr.Accept(aggCollector)
+
+				if len(aggCollector.aggregations) > 0 {
+					// This is the expression that will be aggregated so we
+					// need to ensure that it is in the pre-projection.
+					for _, agg := range aggCollector.aggregations {
+						if _, ok := includedPreprojections[agg.Expr.Name()]; !ok {
+							preProjections = append(preProjections, agg.Expr)
+							// The same expression can be used in multiple
+							// aggregations, but we only need to project it
+							// once.
+							includedPreprojections[agg.Expr.Name()] = struct{}{}
+						}
+						if agg.Func == logicalplan.AggFuncAvg {
+							// For avg, we need to project the count and sum
+							// separately.
+							count := &logicalplan.AggregationFunction{
+								Func: logicalplan.AggFuncCount,
+								Expr: agg.Expr,
+							}
+							sum := &logicalplan.AggregationFunction{
+								Func: logicalplan.AggFuncSum,
+								Expr: agg.Expr,
+							}
+							aggregations = append(aggregations, count, sum)
+							var avgProjection logicalplan.Expr = &logicalplan.BinaryExpr{
+								Left:  logicalplan.Col(sum.Name()),
+								Op:    logicalplan.OpDiv,
+								Right: logicalplan.Col(count.Name()),
+							}
+							if e, ok := expr.(*logicalplan.AliasExpr); ok {
+								avgProjection = &logicalplan.AliasExpr{
+									Expr:  avgProjection,
+									Alias: e.Alias,
+								}
+							}
+							postProjections = append(postProjections, avgProjection)
+							continue
+						}
+
+						aggregations = append(aggregations, agg)
+					}
+					postProjections = append(postProjections, expr)
+				} else {
+					preProjections = append(preProjections, expr)
+					if _, ok := expr.(*logicalplan.DynamicColumn); ok {
+						postProjections = append(postProjections, expr)
+					} else {
+						postProjections = append(postProjections, logicalplan.Col(expr.Name()))
+					}
 				}
 			}
-			v.builder = v.builder.Aggregate(agg, groups)
+
+			// We need to ensure that anything we group by is in the pre-projection.
+			for _, expr := range afterGroupBy {
+				found := false
+				for _, preExpr := range preProjections {
+					if expr.Name() == preExpr.Name() {
+						found = true
+						break
+					}
+				}
+				if !found {
+					preProjections = append(preProjections, expr)
+				}
+			}
+
+			// Insert a projection for any groups that need to be computed
+			// before they can be used for an aggregation, for example:
+			//
+			// SELECT sum(value), (timestamp/1000) as timestamp_bucket group by timestamp_bucket
+			v.builder = v.builder.Project(preProjections...)
+			v.builder = v.builder.Aggregate(aggregations, groups)
+
+			// Insert a projection for any groups that need to be computed
+			// before they can be used for an aggregation, for example:
+			//
+			// SELECT sum(value)/count(value) value_avg, (timestamp/1000) as timestamp_bucket group by timestamp_bucket
+			v.builder = v.builder.Project(postProjections...)
 		case expr.Distinct:
 			v.builder = v.builder.Distinct(v.exprStack...)
 		default:
@@ -72,6 +159,25 @@ func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
 		return n, true
 	}
 	return n, false
+}
+
+type aggregationCollector struct {
+	aggregations []*logicalplan.AggregationFunction
+}
+
+func (a *aggregationCollector) PreVisit(e logicalplan.Expr) bool {
+	return true
+}
+
+func (a *aggregationCollector) Visit(e logicalplan.Expr) bool {
+	if agg, ok := e.(*logicalplan.AggregationFunction); ok {
+		a.aggregations = append(a.aggregations, agg)
+	}
+	return true
+}
+
+func (a *aggregationCollector) PostVisit(e logicalplan.Expr) bool {
+	return true
 }
 
 func (v *astVisitor) Leave(n ast.Node) (nRes ast.Node, ok bool) {
@@ -145,7 +251,7 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			return nil
 		}
 		v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
-			Left:  logicalplan.Col(leftExpr.Name()),
+			Left:  leftExpr,
 			Op:    frostDBOp,
 			Right: rightExpr,
 		})
@@ -170,7 +276,14 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 	case *ast.SelectField:
 		if as := expr.AsName.String(); as != "" {
 			lastExpr := len(v.exprStack) - 1
-			v.exprStack[lastExpr] = v.exprStack[lastExpr].(*logicalplan.AggregationFunction).Alias(as) // TODO should probably just be an alias expr and not from an aggregate function
+			switch v.exprStack[lastExpr].(type) {
+			case *logicalplan.AggregationFunction:
+				v.exprStack[lastExpr] = v.exprStack[lastExpr].(*logicalplan.AggregationFunction).Alias(as) // TODO should probably just be an alias expr and not from an aggregate function
+			case *logicalplan.BinaryExpr:
+				v.exprStack[lastExpr] = v.exprStack[lastExpr].(*logicalplan.BinaryExpr).Alias(as)
+			default:
+				return fmt.Errorf("unhandled select field %s", as)
+			}
 		}
 	case *ast.PatternRegexpExpr:
 		rightExpr, newExprs := pop(v.exprStack)
@@ -186,7 +299,8 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			e.Op = logicalplan.OpRegexNotMatch
 		}
 		v.exprStack = append(v.exprStack, e)
-	case *ast.FieldList, *ast.ColumnNameExpr, *ast.GroupByClause, *ast.ByItem, *ast.RowExpr,
+	case *ast.GroupByClause:
+	case *ast.FieldList, *ast.ColumnNameExpr, *ast.ByItem, *ast.RowExpr,
 		*ast.ParenthesesExpr:
 		// Deliberate pass-through nodes.
 	case *ast.FuncCallExpr:

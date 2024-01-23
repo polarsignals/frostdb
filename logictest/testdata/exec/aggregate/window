@@ -11,52 +11,53 @@ value4  stack1  123000  4
 ----
 
 exec
-select sum(value) as value_sum group by second(1)
+select sum(value) as value_sum, (timestamp/1000)*1000 as timestamp_bucket group by timestamp_bucket
 ----
-120000  1
-121000  2
-122000  3
-123000  4
+1       120000
+2       121000
+3       122000
+4       123000
 
 exec
-select sum(value) as value_sum group by second(2)
+select sum(value) as value_sum, (timestamp/2000)*2000 as timestamp_bucket group by timestamp_bucket
 ----
-120000  3
-122000  7
+3       120000
+7       122000
 
 exec
-select sum(value) as value_sum group by second(3)
+select sum(value) as value_sum, (timestamp/3000)*3000 as timestamp_bucket group by timestamp_bucket
 ----
-120000  6
-123000  4
+6       120000
+4       123000
 
 exec
-select sum(value) as value_sum, count(value) as value_count group by second(3)
+select sum(value) as value_sum, count(value) as value_count, (timestamp/3000)*3000 as timestamp_bucket group by timestamp_bucket
 ----
-120000  6       3
-123000  4       1
+6       3       120000
+4       1       123000
 
 exec
-select sum(value) as value_sum group by second(4)
+select sum(value) as value_sum, (timestamp/4000)*4000 as timestamp_bucket group by timestamp_bucket
 ----
-120000  10
+10      120000
 
 exec
-select sum(value) as value_sum group by labels.label1, second(5)
+select labels.label1, (timestamp/5000)*5000 as timestamp_bucket, sum(value) as value_sum group by labels.label1, timestamp_bucket
+# TODO: Not sure if this is strictly correct. Previously with "group by second(5)" we preserved the timestamp if there was only a single timestamp.
 ----
 value1  120000  1
-value2  121000  2
-value3  122000  3
-value4  123000  4
+value2  120000  2
+value3  120000  3
+value4  120000  4
 
 exec
-select sum(value) as value_sum, count(timestamp) as timestamp_count group by second(2)
+select (timestamp/2000)*2000 as timestamp_bucket, sum(value) as value_sum, count(timestamp) as timestamp_count group by timestamp_bucket
 ----
 120000  3       2
 122000  7       2
 
 exec
-select count(timestamp) as timestamp_count group by second(3)
+select (timestamp/3000)*3000 as timestamp_bucket, count(timestamp) as timestamp_count group by timestamp_bucket
 ----
 120000  3
 123000  1

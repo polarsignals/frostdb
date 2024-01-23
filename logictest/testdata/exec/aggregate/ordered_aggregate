@@ -26,7 +26,7 @@ type2   value3  1   1
 ----
 
 exec
-select sum(value) as value_sum group by (example_type, labels)
+select example_type, labels, sum(value) as value_sum group by (example_type, labels)
 ----
 type1   null    null    value3  2
 type1   null    value2  null    2

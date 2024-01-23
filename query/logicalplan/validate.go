@@ -171,8 +171,6 @@ type Named interface {
 }
 
 func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
-	aliases := map[string]struct{}{}
-
 	for _, expr := range plan.Aggregation.AggExprs {
 		// check that the aggregation expression has the required structure
 		colFinder := newTypeFinder((*Column)(nil))
@@ -210,16 +208,6 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 				message: fmt.Sprintf("column not found: %s", named.Name()),
 				expr:    expr,
 			}
-		}
-
-		if alias, ok := expr.(*AliasExpr); ok {
-			if _, found := aliases[alias.Alias]; found {
-				return &ExprValidationError{
-					message: fmt.Sprintf("alias used twice: %s", alias.Alias),
-					expr:    expr,
-				}
-			}
-			aliases[alias.Alias] = struct{}{}
 		}
 
 		// check that the column type can be aggregated by the function type

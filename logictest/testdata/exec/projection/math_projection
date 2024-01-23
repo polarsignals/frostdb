@@ -1,10 +1,10 @@
 createtable schema=default
 ----
 
-insert cols=(labels.label1, timestamp, value)
-value1 1 2
-value1 3 4
-value1 5 6
+insert cols=(labels.label1, stacktrace, timestamp, value)
+value1 stack1 1 2
+value1 stack1 3 4
+value1 stack2 5 6
 ----
 
 exec
@@ -13,3 +13,9 @@ select value * timestamp
 2
 12
 30
+
+exec
+select stacktrace, sum(value * timestamp) group by stacktrace
+----
+stack1  14
+stack2  30

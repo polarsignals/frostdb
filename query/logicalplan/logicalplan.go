@@ -248,7 +248,7 @@ func (p *Projection) String() string {
 }
 
 type Aggregation struct {
-	AggExprs   []Expr
+	AggExprs   []*AggregationFunction
 	GroupExprs []Expr
 }
 

@@ -69,32 +69,10 @@ func TestAggregationMustHaveExpr(t *testing.T) {
 	require.True(t, strings.HasPrefix(planErr.message, "invalid aggregation: expression cannot be nil"))
 }
 
-func TestAggregationExprCannotHaveInvalidType(t *testing.T) {
-	invalidExprs := [][]Expr{
-		{Literal(4)},
-		{Col("Test")},
-	}
-
-	for _, expr := range invalidExprs {
-		_, err := (&Builder{}).
-			Aggregate(expr, nil).
-			Build()
-
-		require.NotNil(t, err)
-		require.NotNil(t, err)
-		planErr, ok := err.(*PlanValidationError)
-		require.True(t, ok)
-		require.True(t, strings.HasPrefix(planErr.message, "invalid aggregation"))
-		require.Len(t, planErr.children, 1)
-		exprErr := planErr.children[0]
-		require.True(t, strings.HasPrefix(exprErr.message, "aggregation expression is invalid"))
-	}
-}
-
 func TestAggregationExprColumnMustExistInSchema(t *testing.T) {
 	_, err := (&Builder{}).
 		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-		Aggregate([]Expr{Sum(Col("bad_column"))}, nil).
+		Aggregate([]*AggregationFunction{Sum(Col("bad_column"))}, nil).
 		Build()
 
 	require.NotNil(t, err)
@@ -123,7 +101,7 @@ func TestAggregationCannotSumOrMaxTextColumn(t *testing.T) {
 	} {
 		_, err := (&Builder{}).
 			Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-			Aggregate([]Expr{testCase.fn(Col("example_type"))}, nil).
+			Aggregate([]*AggregationFunction{testCase.fn(Col("example_type"))}, nil).
 			Build()
 
 		require.NotNil(t, err)
@@ -135,24 +113,6 @@ func TestAggregationCannotSumOrMaxTextColumn(t *testing.T) {
 		exprErr := planErr.children[0]
 		require.True(t, strings.HasPrefix(exprErr.message, testCase.errMsg))
 	}
-}
-
-func TestAggregationCannotUseAliasTwice(t *testing.T) {
-	_, err := (&Builder{}).
-		Scan(&mockTableProvider{dynparquet.NewSampleSchema()}, "table1").
-		Aggregate([]Expr{
-			Sum(Col("value")).Alias("value"), // should use e.g. sum_foo
-			Max(Col("value")).Alias("value"), // should use e.g. max_foo
-		}, nil).
-		Build()
-
-	require.NotNil(t, err)
-	planErr, ok := err.(*PlanValidationError)
-	require.True(t, ok)
-	require.True(t, strings.HasPrefix(planErr.message, "invalid aggregation"))
-	require.Len(t, planErr.children, 1)
-	exprErr := planErr.children[0]
-	require.True(t, strings.HasPrefix(exprErr.message, "alias used twice: value"))
 }
 
 func TestFilterBinaryExprLeftSideMustBeColumn(t *testing.T) {

@@ -15,10 +15,10 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
-		Project(Col("stacktrace")).
+		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
 		Build()
 
 	optimizer := &PhysicalProjectionPushDown{}
@@ -33,6 +33,7 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 		// use a more efficient datastructure in the future.
 		PhysicalProjection: []Expr{
 			&Column{ColumnName: "stacktrace"},
+			&Column{ColumnName: "value"},
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "value"},
 			DynCol(hashedMatch),
@@ -70,10 +71,10 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
-		Project(Col("stacktrace")).
+		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
 		Build()
 
 	optimizer := &FilterPushDown{}
@@ -101,10 +102,10 @@ func TestRemoveProjectionAtRoot(t *testing.T) {
 		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
-		Project(Col("stacktrace")).
+		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
 		Build()
 
 	p = removeProjection(p)
@@ -118,7 +119,7 @@ func TestRemoveMiddleProjection(t *testing.T) {
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Project(Col("stacktrace")).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
 		Build()
@@ -134,7 +135,7 @@ func TestRemoveLowestProjection(t *testing.T) {
 		Project(Col("stacktrace")).
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
 		Build()
@@ -149,7 +150,7 @@ func TestProjectionPushDown(t *testing.T) {
 		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("labels")).
@@ -177,7 +178,7 @@ func TestAllOptimizers(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
