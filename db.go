@@ -909,9 +909,6 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 					return fmt.Errorf("read record: %w", err)
 				}
 				defer reader.Release()
-
-				// TODO: the issue with this is we aren't prehashing the columns by not doing InsertRecord.
-				// If we prehash before WAL write we don't have to do that here.
 				size := util.TotalRecordSize(record)
 				table.active.index.InsertPart(parts.NewArrowPart(tx, record, uint64(size), table.schema, parts.WithCompactionLevel(int(index.L0))))
 			default:
