@@ -3,6 +3,9 @@ package index
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +23,18 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
+type CompactionType int
+
+const (
+	CompactionTypeUnknown CompactionType = iota
+
+	// CompactionTypeParquetDisk is a compaction type that will compact the parts into a Parquet file on disk.
+	CompactionTypeParquetDisk
+
+	// CompactionTypeParquetMemory is a compaction type that will compact the parts into a Parquet file in memory.
+	CompactionTypeParquetMemory
+)
+
 // LSM is a log-structured merge-tree like index. It is implemented as a single linked list of parts.
 //
 // Arrow records are always added to the L0 list. When a list reaches it's configured max size it is compacted
@@ -33,11 +48,11 @@ type LSM struct {
 
 	schema *dynparquet.Schema
 
-	prefix        string
+	dir           string
 	maxTXRecoverd []uint64
-	levels        *Node
+	levels        []Level
+	partList      *Node
 	sizes         []atomic.Int64
-	configs       []*LevelConfig
 
 	// Options
 	logger  log.Logger
@@ -52,14 +67,20 @@ type LSMMetrics struct {
 	CompactionDuration prometheus.Histogram
 }
 
-// LevelConfig is the configuration for a level in the LSM tree.
-// The Level is the sentinel node that represents the level.
-// The MaxSize is the maximum size in bytes that the level can reach before it triggers compaction into the next level.
-// The Compact function is called when the level reaches it's max size. NOTE: that this is not yet implemtened and the database will rotate the full block as normal.
+// TODO rewrite a description of the config here.
 type LevelConfig struct {
 	Level   SentinelType
 	MaxSize int64
-	Compact func([]parts.Part, ...parts.Option) ([]parts.Part, int64, int64, error)
+	Type    CompactionType
+	Compact Compaction
+}
+
+type compact func(parts []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error)
+
+type Level interface {
+	Compact(parts []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error)
+	MaxSize() int64
+	Snapshot(dir string) error
 }
 
 type LSMOption func(*LSM)
@@ -99,18 +120,17 @@ func NewLSMMetrics(reg prometheus.Registerer) *LSMMetrics {
 // NewLSM returns an LSM-like index of len(levels) levels.
 // wait is a function that will block until the given transaction has been committed; this is used only during compaction to ensure
 // that all the tx in the level up to the compaction tx have been committed before compacting.
-func NewLSM(prefix string, schema *dynparquet.Schema, levels []*LevelConfig, wait func(uint64), options ...LSMOption) (*LSM, error) {
+func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, wait func(uint64), options ...LSMOption) (*LSM, error) {
 	if err := validateLevels(levels); err != nil {
 		return nil, err
 	}
 
 	lsm := &LSM{
 		schema:        schema,
-		prefix:        prefix,
+		dir:           dir,
 		maxTXRecoverd: make([]uint64, len(levels)),
-		levels:        NewList(L0),
+		partList:      NewList(L0),
 		sizes:         make([]atomic.Int64, len(levels)),
-		configs:       levels,
 		compacting:    &atomic.Bool{},
 		logger:        log.NewNopLogger(),
 		wait:          wait,
@@ -120,16 +140,84 @@ func NewLSM(prefix string, schema *dynparquet.Schema, levels []*LevelConfig, wai
 		opt(lsm)
 	}
 
+	// Configure the LSM levels.
+	settings, recovered, err := configureLSMLevels(dir, levels, lsm.logger)
+	if err != nil {
+		return nil, err
+	}
+	lsm.levels = settings
+
 	// Reverse iterate (due to prepend) to create the chain of sentinel nodes.
 	for i := len(levels) - 1; i > 0; i-- {
-		lsm.levels.Sentinel(levels[i].Level)
+		lsm.partList.Sentinel(levels[i].Level)
 	}
 
 	if lsm.metrics == nil {
 		lsm.metrics = NewLSMMetrics(prometheus.NewRegistry())
 	}
 
+	// Replay the recovered parts
+	for _, part := range recovered {
+		lsm.InsertPart(part)
+	}
+
 	return lsm, nil
+}
+
+func (l *LSM) Close() error {
+	l.Lock()
+	defer l.Unlock()
+
+	// Release all the parts to free up any underlying resources.
+	l.partList.Iterate(func(node *Node) bool {
+		if node.part != nil {
+			node.part.Release()
+		}
+		return true
+	})
+
+	// Remove the index directory
+	if err := os.RemoveAll(l.dir); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// configureLSMLevels will configure the LSM levels. It will recover the levels from disk and return the recovered parts.
+func configureLSMLevels(dir string, levels []*LevelConfig, logger log.Logger) ([]Level, []parts.Part, error) {
+	settings := make([]Level, len(levels))
+	recovered := []parts.Part{}
+
+	// Recover in reverse order so that the highest level is recovered first.
+	// This allows us to throw away parts that were compacted into a higher level but for some reason weren't successfully removed.
+	for i := len(levels) - 1; i >= 0; i-- {
+		lvl := levels[i]
+		switch lvl.Type {
+		case CompactionTypeParquetMemory:
+			settings[i] = &inMemoryLevel{
+				maxSize: lvl.MaxSize,
+				compact: lvl.Compact,
+			}
+		case CompactionTypeParquetDisk:
+			fileCompaction, err := NewFileCompaction(filepath.Join(dir, fmt.Sprintf("L%v", i+1)), lvl.MaxSize, lvl.Compact, logger) // TODO: it would be nice to not need to inject the compact function here.
+			if err != nil {
+				return nil, nil, err
+			}
+			parts, err := fileCompaction.recover(parts.WithCompactionLevel(i + 1))
+			if err != nil {
+				level.Error(logger).Log("msg", "failed to recover parts", "err", err, "level", i+1)
+			}
+			recovered = append(recovered, parts...)
+			settings[i] = fileCompaction
+		default:
+			if i != len(levels)-1 { // Compaction type should not be set for last level
+				panic(fmt.Sprintf("unknown compaction type: %v", lvl.Type))
+			}
+		}
+	}
+
+	return settings, recovered, nil
 }
 
 // Size returns the total size of the index in bytes.
@@ -144,6 +232,31 @@ func (l *LSM) Size() int64 {
 // LevelSize returns the size of a specific level in bytes.
 func (l *LSM) LevelSize(t SentinelType) int64 {
 	return l.sizes[t].Load()
+}
+
+// Snapshot will create a snapshot of the LSM. This will block until all compactions have completed.
+func (l *LSM) Snapshot(dir string) error {
+	for !l.compacting.CompareAndSwap(false, true) {
+		// TODO: Maybe don't use a tight loop?
+		runtime.Gosched()
+	}
+	defer l.compacting.Store(false)
+
+	// call snapshot on all the levels.
+	for i, lvl := range l.levels {
+		if lvl != nil {
+			lvldir := filepath.Join(dir, fmt.Sprintf("L%v", i+1))
+			if err := os.MkdirAll(lvldir, dirPerms); err != nil {
+				return err
+			}
+
+			if err := lvl.Snapshot(lvldir); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func validateLevels(levels []*LevelConfig) error {
@@ -168,16 +281,16 @@ func validateLevels(levels []*LevelConfig) error {
 }
 
 func (l *LSM) MaxLevel() SentinelType {
-	return SentinelType(len(l.configs) - 1)
+	return SentinelType(len(l.levels) - 1)
 }
 
 func (l *LSM) Add(tx uint64, record arrow.Record) {
 	record.Retain()
 	size := util.TotalRecordSize(record)
-	l.levels.Insert(parts.NewArrowPart(tx, record, uint64(size), l.schema, parts.WithCompactionLevel(int(L0))))
+	l.partList.Insert(parts.NewArrowPart(tx, record, uint64(size), l.schema, parts.WithCompactionLevel(int(L0))))
 	l0 := l.sizes[L0].Add(int64(size))
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
-	if l0 >= l.configs[L0].MaxSize {
+	if l0 >= l.levels[L0].MaxSize() {
 		if l.compacting.CompareAndSwap(false, true) {
 			l.compactionWg.Add(1)
 			go func() {
@@ -226,18 +339,18 @@ func (l *LSM) String() string {
 		s += fmt.Sprintf("L%v: %d ", i, l.sizes[i].Load())
 	}
 	s += "\n"
-	s += l.levels.String()
+	s += l.partList.String()
 	return s
 }
 
 func (l *LSM) Prefixes(_ context.Context, _ string) ([]string, error) {
-	return []string{l.prefix}, nil
+	return []string{}, nil
 }
 
 func (l *LSM) Iterate(iter func(node *Node) bool) {
 	l.RLock()
 	defer l.RUnlock()
-	l.levels.Iterate(iter)
+	l.partList.Iterate(iter)
 }
 
 func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter logicalplan.Expr, tx uint64, callback func(context.Context, any) error) error {
@@ -249,7 +362,7 @@ func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter l
 		return fmt.Errorf("boolean expr: %w", err)
 	}
 	var iterError error
-	l.levels.Iterate(func(node *Node) bool {
+	l.partList.Iterate(func(node *Node) bool {
 		if node.part == nil { // encountered a sentinel node; continue on
 			return true
 		}
@@ -296,7 +409,7 @@ func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter l
 // TODO: this should be changed to just retain the sentinel nodes in the lsm struct to do an O(1) lookup.
 func (l *LSM) findLevel(level SentinelType) *Node {
 	var list *Node
-	l.levels.Iterate(func(node *Node) bool {
+	l.partList.Iterate(func(node *Node) bool {
 		if node.part == nil && node.sentinel == level {
 			list = node
 			return false
@@ -310,7 +423,7 @@ func (l *LSM) findLevel(level SentinelType) *Node {
 // findNode returns the node that points to node.
 func (l *LSM) findNode(node *Node) *Node {
 	var list *Node
-	l.levels.Iterate(func(n *Node) bool {
+	l.partList.Iterate(func(n *Node) bool {
 		if n.next.Load() == node {
 			list = n
 			return false
@@ -342,7 +455,7 @@ func (l *LSM) Rotate(level SentinelType, externalWriter func([]parts.Part) (part
 		l.metrics.CompactionDuration.Observe(time.Since(start).Seconds())
 	}()
 
-	for i := 0; i < len(l.configs)-1; i++ {
+	for i := 0; i < len(l.levels)-1; i++ {
 		if err := l.merge(SentinelType(i), nil); err != nil {
 			return err
 		}
@@ -353,10 +466,10 @@ func (l *LSM) Rotate(level SentinelType, externalWriter func([]parts.Part) (part
 // Merge will merge the given level into an arrow record for the next level using the configured Compact function for the given level.
 // If this is the max level of the LSM an external writer must be provided to write the merged part elsewhere.
 func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts.Part, int64, int64, error)) error {
-	if int(level) > len(l.configs) {
+	if int(level) > len(l.levels) {
 		return fmt.Errorf("level %d does not exist", level)
 	}
-	if int(level) == len(l.configs)-1 && externalWriter == nil {
+	if int(level) == len(l.levels)-1 && externalWriter == nil {
 		return fmt.Errorf("cannot merge the last level without an external writer")
 	}
 	l.metrics.Compactions.WithLabelValues(level.String()).Inc()
@@ -421,7 +534,7 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts
 			s.next.Store(next)
 		}
 	} else {
-		compacted, size, compactedSize, err = l.configs[level].Compact(mergeList, parts.WithCompactionLevel(int(level)+1))
+		compacted, size, compactedSize, err = l.levels[level].Compact(mergeList, parts.WithCompactionLevel(int(level)+1))
 		if err != nil {
 			return err
 		}
@@ -474,8 +587,8 @@ func (l *LSM) compact(ignoreSizes bool) error {
 		l.metrics.CompactionDuration.Observe(time.Since(start).Seconds())
 	}()
 
-	for i := 0; i < len(l.configs)-1; i++ {
-		if ignoreSizes || l.sizes[i].Load() >= l.configs[i].MaxSize {
+	for i := 0; i < len(l.levels)-1; i++ {
+		if ignoreSizes || l.sizes[i].Load() >= l.levels[i].MaxSize() {
 			if err := l.merge(SentinelType(i), nil); err != nil {
 				level.Error(l.logger).Log("msg", "failed to merge level", "level", i, "err", err)
 				return err
