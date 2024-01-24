@@ -95,7 +95,7 @@ func (f *FileCompaction) createIndexFile(id int) (*os.File, error) {
 }
 
 func (f *FileCompaction) openIndexFile(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_RDWR, filePerms)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
