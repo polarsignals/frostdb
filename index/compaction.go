@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -34,8 +35,8 @@ type FileCompaction struct {
 
 	// internal data
 	indexFiles []*os.File
-	offset     int64 // Writing offsets into the file
-	ref        int64 // Number of references to file.
+	offset     int64          // Writing offsets into the file
+	parts      sync.WaitGroup // Wait group for parts that are currently reference in this level.
 
 	// Options
 	logger log.Logger
@@ -163,43 +164,35 @@ func (f *FileCompaction) Compact(compact []parts.Part, options ...parts.Option) 
 		return nil, 0, 0, err
 	}
 
-	f.ref++
-	return []parts.Part{parts.NewParquetPart(compact[0].TX(), buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
+	f.parts.Add(1)
+	return []parts.Part{parts.NewParquetPart(compact[0].TX(), buf, append(options, parts.WithRelease(f.parts.Done))...)}, preCompactionSize, accountant.n, nil
 }
 
-// Truncate will truncate the file to 0 bytes. This is used when a compaction recovery fails.
-func (f *FileCompaction) Truncate() error {
-	return f.file().Truncate(0)
-}
-
-// release will account for all the Parts currently pointing to this file. Once the last one has been released it will truncate the file.
-// release is not safe to call concurrently.
-func (f *FileCompaction) release() func() {
-	return func() {
-		f.ref--
-		if f.ref == 0 {
-			for _, file := range f.indexFiles {
-				if err := file.Close(); err != nil {
-					level.Error(f.logger).Log("msg", "failed to close level file", "err", err)
-				}
-			}
-
-			// Delete all the files in the directory level. And open a new file.
-			if err := os.RemoveAll(f.dir); err != nil {
-				level.Error(f.logger).Log("msg", "failed to remove level directory", "err", err)
-			}
-
-			if err := os.MkdirAll(f.dir, dirPerms); err != nil {
-				level.Error(f.logger).Log("msg", "failed to create level directory", "err", err)
-			}
-
-			f.indexFiles = nil
-			_, err := f.createIndexFile(len(f.indexFiles))
-			if err != nil {
-				level.Error(f.logger).Log("msg", "failed to create new level file", "err", err)
-			}
+// Reset is called when the level no longer has active parts in it at the end of a compaction.
+func (f *FileCompaction) Reset() error {
+	f.parts.Wait() // Wait for all parts to be released.
+	for _, file := range f.indexFiles {
+		if err := file.Close(); err != nil {
+			level.Error(f.logger).Log("msg", "failed to close level file", "err", err)
 		}
 	}
+
+	// Delete all the files in the directory level. And open a new file.
+	if err := os.RemoveAll(f.dir); err != nil {
+		level.Error(f.logger).Log("msg", "failed to remove level directory", "err", err)
+	}
+
+	if err := os.MkdirAll(f.dir, dirPerms); err != nil {
+		level.Error(f.logger).Log("msg", "failed to create level directory", "err", err)
+	}
+
+	f.indexFiles = nil
+	_, err := f.createIndexFile(len(f.indexFiles))
+	if err != nil {
+		level.Error(f.logger).Log("msg", "failed to create new level file", "err", err)
+	}
+
+	return nil
 }
 
 // recovery the level from the given directory.
@@ -235,6 +228,7 @@ func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 		}
 
 		// Recover all parts from file.
+		fileParts := []parts.Part{}
 		if err := func() error {
 			for offset := info.Size(); offset > 0; {
 				offset -= 8
@@ -265,12 +259,16 @@ func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 					return fmt.Errorf("failed to parse compaction_tx metadata: %v", err)
 				}
 
-				f.ref++
-				recovered = append(recovered, parts.NewParquetPart(uint64(tx), buf, append(options, parts.WithRelease(f.release()))...))
+				f.parts.Add(1)
+				fileParts = append(recovered, parts.NewParquetPart(uint64(tx), buf, append(options, parts.WithRelease(f.parts.Done))...))
 			}
 
 			return nil
 		}(); err != nil {
+			for _, part := range fileParts {
+				part.Release()
+			}
+
 			// If we failed to recover the file, remove it.
 			if err := f.file().Close(); err != nil {
 				level.Error(f.logger).Log("msg", "failed to close level file after failed recovery", "err", err)
@@ -279,6 +277,7 @@ func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 			return err
 		}
 
+		recovered = append(recovered, fileParts...)
 		return nil
 	})
 	if err != nil {
@@ -298,6 +297,7 @@ type inMemoryLevel struct {
 
 func (l *inMemoryLevel) MaxSize() int64          { return l.maxSize }
 func (l *inMemoryLevel) Snapshot(_ string) error { return nil }
+func (l *inMemoryLevel) Reset() error            { return nil }
 func (l *inMemoryLevel) Compact(toCompact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
 	if len(toCompact) == 0 {
 		return nil, 0, 0, fmt.Errorf("no parts to compact")

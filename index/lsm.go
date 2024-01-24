@@ -79,6 +79,7 @@ type Level interface {
 	Compact(parts []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error)
 	MaxSize() int64
 	Snapshot(dir string) error
+	Reset() error
 }
 
 type LSMOption func(*LSM)
@@ -393,7 +394,8 @@ func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter l
 			}
 
 			if mayContainUsefulData {
-				if err := callback(ctx, rg); err != nil {
+				node.part.Retain() // Create another reference to this part
+				if err := callback(ctx, &releaseableRowGroup{DynamicRowGroup: rg, release: node.part.Release}); err != nil {
 					iterError = err
 					return false
 				}
@@ -402,6 +404,20 @@ func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter l
 		return true
 	})
 	return iterError
+}
+
+type releaseableRowGroup struct {
+	dynparquet.DynamicRowGroup
+	release func()
+}
+
+func (r *releaseableRowGroup) Release() {
+	r.release()
+}
+
+type ReleaseableRowGroup interface {
+	dynparquet.DynamicRowGroup
+	Release()
 }
 
 // TODO: this should be changed to just retain the sentinel nodes in the lsm struct to do an O(1) lookup.
@@ -563,6 +579,11 @@ func (l *LSM) merge(level SentinelType) error {
 	defer l.Unlock()
 	for _, part := range mergeList {
 		part.Release()
+	}
+
+	// Reset the level that was just compacted
+	if level != L0 {
+		l.levels[level-1].Reset()
 	}
 
 	return nil
