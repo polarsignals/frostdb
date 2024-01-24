@@ -857,19 +857,8 @@ func (t *Table) Iterator(
 		}))
 	}
 
-	// pending blocks could be uploaded to the bucket while we iterate on them.
-	// to avoid to iterate on them again while reading the block file
-	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
-	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
-	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
-	defer func() {
-		for _, block := range memoryBlocks {
-			block.pendingReadersWg.Done()
-		}
-	}()
-
 	errg.Go(func() error {
-		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, memoryBlocks, lastBlockTimestamp, iterOpts.InMemoryOnly, rowGroups); err != nil {
+		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.InMemoryOnly, rowGroups); err != nil {
 			return err
 		}
 		close(rowGroups)
@@ -983,19 +972,8 @@ func (t *Table) SchemaIterator(
 		}))
 	}
 
-	// pending blocks could be uploaded to the bucket while we iterate on them.
-	// to avoid to iterate on them again while reading the block file
-	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
-	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
-	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
-	defer func() {
-		for _, block := range memoryBlocks {
-			block.pendingReadersWg.Done()
-		}
-	}()
-
 	errg.Go(func() error {
-		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, memoryBlocks, lastBlockTimestamp, iterOpts.InMemoryOnly, rowGroups); err != nil {
+		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.InMemoryOnly, rowGroups); err != nil {
 			return err
 		}
 		close(rowGroups)
@@ -1193,14 +1171,22 @@ func (t *Table) collectRowGroups(
 	ctx context.Context,
 	tx uint64,
 	filterExpr logicalplan.Expr,
-	memoryBlocks []*TableBlock,
-	lastBlockTimestamp uint64,
 	skipSources bool,
 	rowGroups chan<- any,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/collectRowGroups")
 	defer span.End()
 
+	// pending blocks could be uploaded to the bucket while we iterate on them.
+	// to avoid to iterate on them again while reading the block file
+	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
+	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
+	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
+	defer func() {
+		for _, block := range memoryBlocks {
+			block.pendingReadersWg.Done()
+		}
+	}()
 	for _, block := range memoryBlocks {
 		if err := block.index.Scan(ctx, "", t.schema, filterExpr, tx, func(ctx context.Context, v any) error {
 			select {
