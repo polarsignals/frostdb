@@ -260,7 +260,7 @@ func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 				}
 
 				f.parts.Add(1)
-				fileParts = append(recovered, parts.NewParquetPart(uint64(tx), buf, append(options, parts.WithRelease(f.parts.Done))...))
+				fileParts = append(fileParts, parts.NewParquetPart(uint64(tx), buf, append(options, parts.WithRelease(f.parts.Done))...))
 			}
 
 			return nil

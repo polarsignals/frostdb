@@ -143,6 +143,11 @@ func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, wait f
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		for _, part := range recovered {
+			part.Release()
+		}
+	}()
 	lsm.levels = settings
 
 	// Reverse iterate (due to prepend) to create the chain of sentinel nodes.
@@ -317,9 +322,8 @@ func (l *LSM) InsertPart(part parts.Part) {
 		}
 	}
 
-	if r := part.Record(); r != nil {
-		r.Retain()
-	}
+	// Retain the part
+	part.Retain()
 
 	if tx := part.TX(); tx > l.maxTXRecoverd[level] {
 		l.maxTXRecoverd[level] = tx
