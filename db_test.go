@@ -2233,11 +2233,13 @@ func Test_DB_WithParquetDiskCompaction(t *testing.T) {
 	c, err := New(
 		WithLogger(logger),
 		WithIndexConfig(cfg),
+		WithWAL(),
+		WithStoragePath(t.TempDir()),
 	)
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, c.Close())
 	})
-	require.NoError(t, err)
 	db, err := c.DB(context.Background(), "test")
 	require.NoError(t, err)
 	table, err := db.Table("test", config)

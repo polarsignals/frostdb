@@ -130,8 +130,8 @@ func New(
 
 	for _, cfg := range s.indexConfig {
 		if cfg.Type == index.CompactionTypeParquetDisk {
-			if !s.enableWAL && s.storagePath != "" {
-				return nil, fmt.Errorf("persistent disk compaction requires WAL to be enabled")
+			if !s.enableWAL || s.storagePath == "" {
+				return nil, fmt.Errorf("persistent disk compaction requires WAL and storage path to be enabled")
 			}
 		}
 	}
