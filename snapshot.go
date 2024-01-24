@@ -418,11 +418,6 @@ func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline 
 				return err
 			}
 
-			// Snapshot the table index.
-			if err := block.index.Snapshot(snapshotIndexDir(db, tx, t.name, block.ulid.String())); err != nil {
-				return fmt.Errorf("failed to snapshot table %s index: %w", t.name, err)
-			}
-
 			tableMeta := &snapshotpb.Table{
 				Name:   t.name,
 				Config: t.config.Load(),
@@ -497,6 +492,13 @@ func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline 
 				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
 				return true
 			})
+
+			// Snapshot the table index. Perform this after the parts have been written to the snapshot to prevent a scenario where
+			// we snapshot the index, but before we can write the L0 parts they get compacted to the new index files.
+			if err := block.index.Snapshot(snapshotIndexDir(db, tx, t.name, block.ulid.String())); err != nil {
+				return fmt.Errorf("failed to snapshot table %s index: %w", t.name, err)
+			}
+
 			metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
 			return ascendErr
 		}(); err != nil {
