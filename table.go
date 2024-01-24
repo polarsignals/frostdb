@@ -810,6 +810,26 @@ func (t *Table) Iterator(
 						if err != nil {
 							return err
 						}
+					case index.ReleaseableRowGroup:
+						defer t.Release()
+						if err := converter.Convert(ctx, t); err != nil {
+							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
+						}
+						// This RowGroup had no relevant data. Ignore it.
+						if len(converter.Fields()) == 0 {
+							continue
+						}
+						if converter.NumRows() >= bufferSize {
+							err := func() error {
+								r := converter.NewRecord()
+								defer r.Release()
+								converter.Reset() // Reset the converter to drop any dictionaries that were built.
+								return callback(ctx, r)
+							}()
+							if err != nil {
+								return err
+							}
+						}
 					case dynparquet.DynamicRowGroup:
 						if err := converter.Convert(ctx, t); err != nil {
 							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
@@ -918,6 +938,25 @@ func (t *Table) SchemaIterator(
 						if err != nil {
 							return err
 						}
+					case index.ReleaseableRowGroup:
+						if rg == nil {
+							return errors.New("received nil rowGroup") // shouldn't happen, but anyway
+						}
+						defer t.Release()
+						parquetFields := t.Schema().Fields()
+						fieldNames := make([]string, 0, len(parquetFields))
+						for _, f := range parquetFields {
+							fieldNames = append(fieldNames, f.Name())
+						}
+
+						b.Field(0).(*array.StringBuilder).AppendValues(fieldNames, nil)
+
+						record := b.NewRecord()
+						if err := callback(ctx, record); err != nil {
+							return err
+						}
+						record.Release()
+						b.Release()
 					case dynparquet.DynamicRowGroup:
 						if rg == nil {
 							return errors.New("received nil rowGroup") // shouldn't happen, but anyway
