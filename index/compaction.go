@@ -169,7 +169,7 @@ func (f *FileCompaction) Compact(compact []parts.Part, options ...parts.Option) 
 }
 
 // Reset is called when the level no longer has active parts in it at the end of a compaction.
-func (f *FileCompaction) Reset() error {
+func (f *FileCompaction) Reset() {
 	f.parts.Wait() // Wait for all parts to be released.
 	for _, file := range f.indexFiles {
 		if err := file.Close(); err != nil {
@@ -191,8 +191,6 @@ func (f *FileCompaction) Reset() error {
 	if err != nil {
 		level.Error(f.logger).Log("msg", "failed to create new level file", "err", err)
 	}
-
-	return nil
 }
 
 // recovery the level from the given directory.
@@ -297,7 +295,7 @@ type inMemoryLevel struct {
 
 func (l *inMemoryLevel) MaxSize() int64          { return l.maxSize }
 func (l *inMemoryLevel) Snapshot(_ string) error { return nil }
-func (l *inMemoryLevel) Reset() error            { return nil }
+func (l *inMemoryLevel) Reset()                  {}
 func (l *inMemoryLevel) Compact(toCompact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
 	if len(toCompact) == 0 {
 		return nil, 0, 0, fmt.Errorf("no parts to compact")

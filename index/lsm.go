@@ -78,7 +78,7 @@ type Level interface {
 	Compact(parts []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error)
 	MaxSize() int64
 	Snapshot(dir string) error
-	Reset() error
+	Reset()
 }
 
 type LSMOption func(*LSM)
@@ -178,6 +178,13 @@ func (l *LSM) Close() error {
 		}
 		return true
 	})
+
+	// Reset the levels to ensure that none of the parts are still being referenced.
+	for i := range l.levels {
+		if l.levels[i] != nil {
+			l.levels[i].Reset()
+		}
+	}
 
 	// Remove the index directory
 	if err := os.RemoveAll(l.dir); err != nil {
