@@ -243,15 +243,17 @@ func (l *LSM) Snapshot(dir string) error {
 
 	// call snapshot on all the levels.
 	for i, lvl := range l.levels {
-		if lvl != nil {
-			lvldir := filepath.Join(dir, fmt.Sprintf("L%v", i+1))
-			if err := os.MkdirAll(lvldir, dirPerms); err != nil {
-				return err
-			}
+		if lvl == nil {
+			continue
+		}
 
-			if err := lvl.Snapshot(lvldir); err != nil {
-				return err
-			}
+		lvldir := filepath.Join(dir, fmt.Sprintf("L%v", i+1))
+		if err := os.MkdirAll(lvldir, dirPerms); err != nil {
+			return err
+		}
+
+		if err := lvl.Snapshot(lvldir); err != nil {
+			return err
 		}
 	}
 
