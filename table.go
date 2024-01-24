@@ -1013,7 +1013,7 @@ func (t *TableBlock) Index() *index.LSM {
 
 // Serialize the table block into a single Parquet file.
 func (t *TableBlock) Serialize(writer io.Writer) error {
-	return t.index.Rotate(t.index.MaxLevel(), t.table.externalParquetCompaction(writer))
+	return t.index.Rotate(t.table.externalParquetCompaction(writer))
 }
 
 type ParquetWriter interface {

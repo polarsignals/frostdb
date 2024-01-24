@@ -444,7 +444,7 @@ func (l *LSM) EnsureCompaction() error {
 }
 
 // Rotate will write all parts in the LSM into the external writer. No changes are made to the LSM.
-func (l *LSM) Rotate(level SentinelType, externalWriter func([]parts.Part) (parts.Part, int64, int64, error)) error {
+func (l *LSM) Rotate(externalWriter func([]parts.Part) (parts.Part, int64, int64, error)) error {
 	for !l.compacting.CompareAndSwap(false, true) {
 		runtime.Gosched()
 		continue
