@@ -41,7 +41,6 @@ const (
 //
 // [L0]->[record]->[record]->[L1]->[record/parquet]->[record/parquet] etc.
 type LSM struct {
-	sync.RWMutex
 	compacting   sync.Mutex
 	compactionWg sync.WaitGroup
 
@@ -164,8 +163,8 @@ func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, wait f
 }
 
 func (l *LSM) Close() error {
-	l.Lock()
-	defer l.Unlock()
+	l.compacting.Lock()
+	defer l.compacting.Unlock()
 
 	// Release all the parts to free up any underlying resources.
 	l.partList.Iterate(func(node *Node) bool {
@@ -347,15 +346,10 @@ func (l *LSM) Prefixes(_ context.Context, _ string) ([]string, error) {
 }
 
 func (l *LSM) Iterate(iter func(node *Node) bool) {
-	l.RLock()
-	defer l.RUnlock()
 	l.partList.Iterate(iter)
 }
 
 func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter logicalplan.Expr, tx uint64, callback func(context.Context, any) error) error {
-	l.RLock()
-	defer l.RUnlock()
-
 	booleanFilter, err := expr.BooleanExpr(filter)
 	if err != nil {
 		return fmt.Errorf("boolean expr: %w", err)
@@ -575,8 +569,6 @@ func (l *LSM) merge(level SentinelType) error {
 	l.metrics.LevelSize.WithLabelValues(level.String()).Set(float64(l.sizes[level].Load()))
 
 	// release the old parts
-	l.Lock()
-	defer l.Unlock()
 	for _, part := range mergeList {
 		part.Release()
 	}
