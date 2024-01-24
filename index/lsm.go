@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,7 +42,7 @@ const (
 // [L0]->[record]->[record]->[L1]->[record/parquet]->[record/parquet] etc.
 type LSM struct {
 	sync.RWMutex
-	compacting   *atomic.Bool
+	compacting   sync.Mutex
 	compactionWg sync.WaitGroup
 
 	schema *dynparquet.Schema
@@ -130,7 +129,7 @@ func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, wait f
 		maxTXRecoverd: make([]uint64, len(levels)),
 		partList:      NewList(L0),
 		sizes:         make([]atomic.Int64, len(levels)),
-		compacting:    &atomic.Bool{},
+		compacting:    sync.Mutex{},
 		logger:        log.NewNopLogger(),
 		wait:          wait,
 	}
@@ -235,11 +234,8 @@ func (l *LSM) LevelSize(t SentinelType) int64 {
 
 // Snapshot will create a snapshot of the LSM. This will block until all compactions have completed.
 func (l *LSM) Snapshot(dir string) error {
-	for !l.compacting.CompareAndSwap(false, true) {
-		// TODO: Maybe don't use a tight loop?
-		runtime.Gosched()
-	}
-	defer l.compacting.Store(false)
+	l.compacting.Lock()
+	defer l.compacting.Unlock()
 
 	// call snapshot on all the levels.
 	for i, lvl := range l.levels {
@@ -292,9 +288,10 @@ func (l *LSM) Add(tx uint64, record arrow.Record) {
 	l0 := l.sizes[L0].Add(int64(size))
 	l.metrics.LevelSize.WithLabelValues(L0.String()).Set(float64(l0))
 	if l0 >= l.levels[L0].MaxSize() {
-		if l.compacting.CompareAndSwap(false, true) {
+		if l.compacting.TryLock() {
 			l.compactionWg.Add(1)
 			go func() {
+				defer l.compacting.Unlock()
 				defer l.compactionWg.Done()
 				_ = l.compact(false)
 			}()
@@ -438,20 +435,15 @@ func (l *LSM) findNode(node *Node) *Node {
 // EnsureCompaction forces a compaction of all levels, regardless of whether the
 // levels are below the target size.
 func (l *LSM) EnsureCompaction() error {
-	for !l.compacting.CompareAndSwap(false, true) {
-		runtime.Gosched()
-		continue
-	}
+	l.compacting.Lock()
+	defer l.compacting.Unlock()
 	return l.compact(true /* ignoreSizes */)
 }
 
 // Rotate will write all parts in the LSM into the external writer. No changes are made to the LSM.
 func (l *LSM) Rotate(externalWriter func([]parts.Part) (parts.Part, int64, int64, error)) error {
-	for !l.compacting.CompareAndSwap(false, true) {
-		runtime.Gosched()
-		continue
-	}
-	defer l.compacting.Store(false)
+	l.compacting.Lock()
+	defer l.compacting.Unlock()
 	start := time.Now()
 	defer func() {
 		l.metrics.CompactionDuration.Observe(time.Since(start).Seconds())
@@ -579,7 +571,6 @@ func (l *LSM) merge(level SentinelType) error {
 // compact is a cascading compaction routine. It will start at the lowest level and compact until the next level is either the max level or the next level does not exceed the max size.
 // compact can not be run concurrently.
 func (l *LSM) compact(ignoreSizes bool) error {
-	defer l.compacting.Store(false)
 	start := time.Now()
 	defer func() {
 		l.metrics.CompactionDuration.Observe(time.Since(start).Seconds())
