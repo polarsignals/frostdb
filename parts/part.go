@@ -13,6 +13,7 @@ type Part interface {
 	// record part, nil is returned.
 	Record() arrow.Record
 	Release()
+	Retain()
 	SerializeBuffer(schema *dynparquet.Schema, w dynparquet.ParquetWriter) error
 	AsSerializedBuffer(schema *dynparquet.Schema) (*dynparquet.SerializedBuffer, error)
 	NumRows() int64

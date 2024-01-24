@@ -34,6 +34,8 @@ func NewArrowPart(tx uint64, record arrow.Record, size uint64, schema *dynparque
 	return p
 }
 
+func (p *arrowPart) Retain() { p.record.Retain() }
+
 func (p *arrowPart) Record() arrow.Record {
 	return p.record
 }
