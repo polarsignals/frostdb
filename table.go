@@ -1207,6 +1207,10 @@ func (t *Table) externalParquetCompaction(writer io.Writer) func(compact []parts
 // compactParts will compact the given parts into a Parquet file written to w.
 // It returns the size in bytes of the compacted parts.
 func (t *Table) compactParts(w io.Writer, compact []parts.Part, options ...parquet.WriterOption) (int64, error) {
+	if len(compact) == 0 {
+		return 0, nil
+	}
+
 	preCompactionSize := int64(0)
 	for _, p := range compact {
 		preCompactionSize += p.Size()

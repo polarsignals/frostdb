@@ -436,16 +436,17 @@ func (l *LSM) findNode(node *Node) *Node {
 // EnsureCompaction forces a compaction of all levels, regardless of whether the
 // levels are below the target size.
 func (l *LSM) EnsureCompaction() error {
-	for !l.compacting.CompareAndSwap(false, true) { // TODO: should backoff retry this probably
-		// Satisfy linter with a statement.
+	for !l.compacting.CompareAndSwap(false, true) {
+		runtime.Gosched()
 		continue
 	}
 	return l.compact(true /* ignoreSizes */)
 }
 
+// Rotate will write all parts in the LSM into the external writer. No changes are made to the LSM.
 func (l *LSM) Rotate(level SentinelType, externalWriter func([]parts.Part) (parts.Part, int64, int64, error)) error {
-	for !l.compacting.CompareAndSwap(false, true) { // TODO: should backoff retry this probably
-		// Satisfy linter with a statement.
+	for !l.compacting.CompareAndSwap(false, true) {
+		runtime.Gosched()
 		continue
 	}
 	defer l.compacting.Store(false)
@@ -454,22 +455,29 @@ func (l *LSM) Rotate(level SentinelType, externalWriter func([]parts.Part) (part
 		l.metrics.CompactionDuration.Observe(time.Since(start).Seconds())
 	}()
 
-	for i := 0; i < len(l.levels)-1; i++ {
-		if err := l.merge(SentinelType(i), nil); err != nil {
-			return err
+	// Write all the parts to the external writer
+	compact := []parts.Part{}
+	l.partList.Iterate(func(node *Node) bool {
+		if node.part == nil {
+			return true
 		}
-	}
-	return l.merge(level, externalWriter)
+
+		compact = append(compact, node.part)
+		return true
+	})
+
+	_, _, _, err := externalWriter(compact)
+	return err
 }
 
 // Merge will merge the given level into an arrow record for the next level using the configured Compact function for the given level.
 // If this is the max level of the LSM an external writer must be provided to write the merged part elsewhere.
-func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts.Part, int64, int64, error)) error {
+func (l *LSM) merge(level SentinelType) error {
 	if int(level) > len(l.levels) {
 		return fmt.Errorf("level %d does not exist", level)
 	}
-	if int(level) == len(l.levels)-1 && externalWriter == nil {
-		return fmt.Errorf("cannot merge the last level without an external writer")
+	if int(level) == len(l.levels)-1 {
+		return fmt.Errorf("cannot merge the last level")
 	}
 	l.metrics.Compactions.WithLabelValues(level.String()).Inc()
 
@@ -523,43 +531,32 @@ func (l *LSM) merge(level SentinelType, externalWriter func([]parts.Part) (parts
 	s := &Node{
 		sentinel: level + 1,
 	}
-	if externalWriter != nil {
-		_, size, _, err = externalWriter(mergeList)
-		if err != nil {
-			return err
-		}
-		// Drop compacted files from list
-		if next != nil {
-			s.next.Store(next)
-		}
-	} else {
-		compacted, size, compactedSize, err = l.levels[level].Compact(mergeList, parts.WithCompactionLevel(int(level)+1))
-		if err != nil {
-			return err
-		}
-
-		// Create new list for the compacted parts.
-		compactedList := &Node{
-			part: compacted[0],
-		}
-		node := compactedList
-		for _, p := range compacted[1:] {
-			node.next.Store(&Node{
-				part: p,
-			})
-			node = node.next.Load()
-		}
-		s.next.Store(compactedList)
-		if next != nil {
-			node.next.Store(next)
-		}
-		l.sizes[level+1].Add(int64(compactedSize))
-		l.metrics.LevelSize.WithLabelValues(SentinelType(level + 1).String()).Set(float64(l.sizes[level+1].Load()))
+	compacted, size, compactedSize, err = l.levels[level].Compact(mergeList, parts.WithCompactionLevel(int(level)+1))
+	if err != nil {
+		return err
 	}
+
+	// Create new list for the compacted parts.
+	compactedList := &Node{
+		part: compacted[0],
+	}
+	node := compactedList
+	for _, p := range compacted[1:] {
+		node.next.Store(&Node{
+			part: p,
+		})
+		node = node.next.Load()
+	}
+	s.next.Store(compactedList)
+	if next != nil {
+		node.next.Store(next)
+	}
+	l.sizes[level+1].Add(int64(compactedSize))
+	l.metrics.LevelSize.WithLabelValues(SentinelType(level + 1).String()).Set(float64(l.sizes[level+1].Load()))
 
 	// Replace the compacted list with the new list
 	// find the node that points to the first node in our compacted list.
-	node := l.findNode(nodeList[0])
+	node = l.findNode(nodeList[0])
 	for !node.next.CompareAndSwap(nodeList[0], s) {
 		// This can happen at most once in the scenario where a new part is added to the L0 list while we are trying to replace it.
 		node = l.findNode(nodeList[0])
@@ -588,7 +585,7 @@ func (l *LSM) compact(ignoreSizes bool) error {
 
 	for i := 0; i < len(l.levels)-1; i++ {
 		if ignoreSizes || l.sizes[i].Load() >= l.levels[i].MaxSize() {
-			if err := l.merge(SentinelType(i), nil); err != nil {
+			if err := l.merge(SentinelType(i)); err != nil {
 				level.Error(l.logger).Log("msg", "failed to merge level", "level", i, "err", err)
 				return err
 			}

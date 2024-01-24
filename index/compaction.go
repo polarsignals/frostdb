@@ -41,20 +41,6 @@ type FileCompaction struct {
 	logger log.Logger
 }
 
-func (f *FileCompaction) Close(cleanup bool) error {
-	for _, file := range f.indexFiles {
-		if err := file.Close(); err != nil {
-			return err
-		}
-	}
-	if cleanup {
-		if err := os.RemoveAll(f.dir); err != nil {
-			return fmt.Errorf("failed to remove file: %v", err)
-		}
-	}
-	return nil
-}
-
 func NewFileCompaction(dir string, maxSize int64, compact Compaction, logger log.Logger) (*FileCompaction, error) {
 	f := &FileCompaction{
 		dir:     dir,
@@ -153,8 +139,6 @@ func (f *FileCompaction) Compact(compact []parts.Part, options ...parts.Option) 
 
 	// Record the writing offset into the file.
 	prevOffset := f.offset
-	f.offset += accountant.n + 8
-	f.ref++
 
 	// Record the file size for recovery.
 	size := make([]byte, 8)
@@ -162,6 +146,7 @@ func (f *FileCompaction) Compact(compact []parts.Part, options ...parts.Option) 
 	if n, err := f.file().Write(size); n != 8 {
 		return nil, 0, 0, fmt.Errorf("failed to write size to file: %v", err)
 	}
+	f.offset += accountant.n + 8
 
 	// Sync file after writing.
 	if err := f.Sync(); err != nil {
@@ -178,6 +163,7 @@ func (f *FileCompaction) Compact(compact []parts.Part, options ...parts.Option) 
 		return nil, 0, 0, err
 	}
 
+	f.ref++
 	return []parts.Part{parts.NewParquetPart(compact[0].TX(), buf, append(options, parts.WithRelease(f.release()))...)}, preCompactionSize, accountant.n, nil
 }
 
