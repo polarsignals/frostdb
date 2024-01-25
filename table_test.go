@@ -25,6 +25,7 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
+	"github.com/polarsignals/frostdb/internal/records"
 	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -1221,4 +1222,43 @@ func Test_Issue685(t *testing.T) {
 			return nil
 		})
 	require.NoError(t, err)
+}
+
+func TestGenericTable_BuildAndSort(t *testing.T) {
+	mem := memory.NewGoAllocator()
+
+	t.Run("no sorting column", func(t *testing.T) {
+		type Sample struct {
+			Value int64
+		}
+		table := &GenericTable[Sample]{
+			build: records.NewBuild[Sample](mem),
+			mem:   mem,
+		}
+		r, err := table.BuildAndSort(context.Background(),
+			Sample{Value: 2},
+			Sample{Value: 1},
+			Sample{Value: 0},
+		)
+		require.NoError(t, err)
+		want := []int64{2, 1, 0}
+		require.Equal(t, want, r.Column(0).(*array.Int64).Int64Values())
+	})
+	t.Run("with sorting column", func(t *testing.T) {
+		type Sample struct {
+			Value int64 `frostdb:",asc"`
+		}
+		table := &GenericTable[Sample]{
+			build: records.NewBuild[Sample](mem),
+			mem:   mem,
+		}
+		r, err := table.BuildAndSort(context.Background(),
+			Sample{Value: 2},
+			Sample{Value: 1},
+			Sample{Value: 0},
+		)
+		require.NoError(t, err)
+		want := []int64{0, 1, 2}
+		require.Equal(t, want, r.Column(0).(*array.Int64).Int64Values())
+	})
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/compute"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/apache/arrow/go/v14/arrow/util"
 	"github.com/dustin/go-humanize"
@@ -39,6 +40,7 @@ import (
 	"github.com/polarsignals/frostdb/internal/records"
 	"github.com/polarsignals/frostdb/parts"
 	"github.com/polarsignals/frostdb/pqarrow"
+	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/query/physicalplan"
 	"github.com/polarsignals/frostdb/recovery"
@@ -230,21 +232,47 @@ type GenericTable[T any] struct {
 	*Table
 	mu    sync.Mutex
 	build *records.Build[T]
+	mem   memory.Allocator
 }
 
 func (t *GenericTable[T]) Release() {
 	t.build.Release()
 }
 
-// Write builds arrow.Record directly from values and calls (*Table).InsertRecord.
+// Write builds arrow.Record directly from values and calls
+// (*Table).InsertRecord. If T has sorting columns, the built arrow.Record will
+// be sorted.
 func (t *GenericTable[T]) Write(ctx context.Context, values ...T) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	err := t.build.Append(values...)
+	r, err := t.BuildAndSort(compute.WithAllocator(context.Background(), t.mem), values...)
 	if err != nil {
 		return 0, err
 	}
-	return t.InsertRecord(ctx, t.build.NewRecord())
+	defer r.Release()
+	return t.InsertRecord(ctx, r)
+}
+
+// BuildAndSort builds arrow.Record from values and sorts it if T has sorting
+// columns defined.
+//
+// This method is not safe for concurrent use.
+func (t *GenericTable[T]) BuildAndSort(ctx context.Context, values ...T) (arrow.Record, error) {
+	err := t.build.Append(values...)
+	if err != nil {
+		return nil, err
+	}
+	record := t.build.NewRecord()
+	if len(record.SortingColumns) > 0 {
+		defer record.Release()
+		idx, err := arrowutils.SortRecord(record, record.SortingColumns)
+		if err != nil {
+			return nil, err
+		}
+		defer idx.Release()
+		return arrowutils.Take(ctx, record, idx)
+	}
+	return record, nil
 }
 
 func NewGenericTable[T any](db *DB, name string, mem memory.Allocator, options ...TableOption) (*GenericTable[T], error) {
@@ -253,7 +281,7 @@ func NewGenericTable[T any](db *DB, name string, mem memory.Allocator, options .
 	if err != nil {
 		return nil, err
 	}
-	return &GenericTable[T]{build: build, Table: table}, nil
+	return &GenericTable[T]{build: build, Table: table, mem: mem}, nil
 }
 
 type Table struct {
