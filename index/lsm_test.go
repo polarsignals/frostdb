@@ -1,7 +1,6 @@
 package index
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -20,21 +19,7 @@ import (
 	"github.com/polarsignals/frostdb/parts"
 )
 
-func parquetCompaction(compact []parts.Part, _ ...parts.Option) ([]parts.Part, int64, int64, error) {
-	b := &bytes.Buffer{}
-	size, err := compactParts(b, compact)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	buf, err := dynparquet.ReaderFromBytes(b.Bytes())
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	return []parts.Part{parts.NewParquetPart(0, buf)}, size, int64(b.Len()), nil
-}
-
-func compactParts(w io.Writer, compact []parts.Part) (int64, error) {
+func compactParts(w io.Writer, compact []parts.Part, _ ...parquet.WriterOption) (int64, error) {
 	schema := dynparquet.NewSampleSchema()
 	bufs := []dynparquet.DynamicRowGroup{}
 	var size int64
@@ -80,7 +65,7 @@ func compactParts(w io.Writer, compact []parts.Part) (int64, error) {
 func check(t *testing.T, lsm *LSM, records, buffers int) {
 	t.Helper()
 	seen := map[SentinelType]bool{}
-	lsm.levels.Iterate(func(node *Node) bool {
+	lsm.partList.Iterate(func(node *Node) bool {
 		if node.part == nil {
 			if seen[node.sentinel] {
 				t.Fatal("duplicate sentinel")
@@ -107,8 +92,8 @@ func check(t *testing.T, lsm *LSM, records, buffers int) {
 func Test_LSM_Basic(t *testing.T) {
 	t.Parallel()
 	lsm, err := NewLSM("test", nil, []*LevelConfig{
-		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
-		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
+		{Level: L0, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: L1, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
 	},
 		func(uint64) {},
@@ -123,27 +108,27 @@ func Test_LSM_Basic(t *testing.T) {
 	lsm.Add(2, r)
 	lsm.Add(3, r)
 	check(t, lsm, 3, 0)
-	require.NoError(t, lsm.merge(L0, nil))
+	require.NoError(t, lsm.merge(L0))
 	check(t, lsm, 0, 1)
 	lsm.Add(4, r)
 	check(t, lsm, 1, 1)
 	lsm.Add(5, r)
 	check(t, lsm, 2, 1)
-	require.NoError(t, lsm.merge(L0, nil))
+	require.NoError(t, lsm.merge(L0))
 	check(t, lsm, 0, 2)
 	lsm.Add(6, r)
 	check(t, lsm, 1, 2)
-	require.NoError(t, lsm.merge(L1, nil))
+	require.NoError(t, lsm.merge(L1))
 	check(t, lsm, 1, 1)
-	require.NoError(t, lsm.merge(L0, nil))
+	require.NoError(t, lsm.merge(L0))
 	check(t, lsm, 0, 2)
 }
 
 func Test_LSM_DuplicateSentinel(t *testing.T) {
 	t.Parallel()
 	lsm, err := NewLSM("test", nil, []*LevelConfig{
-		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
-		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
+		{Level: L0, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: L1, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
 	},
 		func(uint64) {},
@@ -158,16 +143,16 @@ func Test_LSM_DuplicateSentinel(t *testing.T) {
 	lsm.Add(2, r)
 	lsm.Add(3, r)
 	check(t, lsm, 3, 0)
-	require.NoError(t, lsm.merge(L0, nil))
+	require.NoError(t, lsm.merge(L0))
 	check(t, lsm, 0, 1)
-	require.NoError(t, lsm.merge(L0, nil))
+	require.NoError(t, lsm.merge(L0))
 	check(t, lsm, 0, 1)
 }
 
 func Test_LSM_Compaction(t *testing.T) {
 	t.Parallel()
 	lsm, err := NewLSM("test", nil, []*LevelConfig{
-		{Level: L0, MaxSize: 1, Compact: parquetCompaction},
+		{Level: L0, MaxSize: 1, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024},
 	},
 		func(uint64) {},
@@ -187,10 +172,10 @@ func Test_LSM_Compaction(t *testing.T) {
 func Test_LSM_CascadeCompaction(t *testing.T) {
 	t.Parallel()
 	lsm, err := NewLSM("test", nil, []*LevelConfig{
-		{Level: L0, MaxSize: 257, Compact: parquetCompaction},
-		{Level: L1, MaxSize: 2281, Compact: parquetCompaction},
-		{Level: L2, MaxSize: 2281, Compact: parquetCompaction},
-		{Level: 3, MaxSize: 2281, Compact: parquetCompaction},
+		{Level: L0, MaxSize: 257, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: L1, MaxSize: 2281, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: L2, MaxSize: 2281, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: 3, MaxSize: 2281, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: 4, MaxSize: 2281},
 	},
 		func(uint64) {},
@@ -222,8 +207,8 @@ func Test_LSM_CascadeCompaction(t *testing.T) {
 func Test_LSM_InOrderInsert(t *testing.T) {
 	t.Parallel()
 	lsm, err := NewLSM("test", nil, []*LevelConfig{
-		{Level: L0, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
-		{Level: L1, MaxSize: 1024 * 1024 * 1024, Compact: parquetCompaction},
+		{Level: L0, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: L1, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
 	},
 		func(uint64) {},

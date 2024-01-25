@@ -2,6 +2,7 @@ package parts
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/parquet-go/parquet-go"
@@ -13,6 +14,7 @@ import (
 type parquetPart struct {
 	basePart
 
+	ref *atomic.Int32
 	buf *dynparquet.SerializedBuffer
 }
 
@@ -20,8 +22,11 @@ func (p *parquetPart) Record() arrow.Record {
 	return nil
 }
 
+func (p *parquetPart) Retain() { p.ref.Add(1) }
+
 func (p *parquetPart) Release() {
-	if p.release != nil {
+	ref := p.ref.Add(-1)
+	if ref <= 0 && p.release != nil {
 		p.release()
 	}
 }
@@ -39,6 +44,7 @@ func NewParquetPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Opti
 		basePart: basePart{
 			tx: tx,
 		},
+		ref: &atomic.Int32{},
 		buf: buf,
 	}
 
@@ -46,6 +52,7 @@ func NewParquetPart(tx uint64, buf *dynparquet.SerializedBuffer, options ...Opti
 		opt(&p.basePart)
 	}
 
+	p.ref.Add(1)
 	return p
 }
 
