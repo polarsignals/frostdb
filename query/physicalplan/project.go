@@ -103,11 +103,21 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 	if err != nil {
 		return nil, nil, fmt.Errorf("project left side of binary expression: %w", err)
 	}
+	defer func() {
+		for _, arr := range leftArrays {
+			arr.Release()
+		}
+	}()
 
 	rightFields, rightArrays, err := b.right.Project(mem, ar)
 	if err != nil {
 		return nil, nil, fmt.Errorf("project right side of binary expression: %w", err)
 	}
+	defer func() {
+		for _, arr := range rightArrays {
+			arr.Release()
+		}
+	}()
 
 	if len(leftFields) != 1 || len(leftArrays) != 1 {
 		return nil, nil, fmt.Errorf("binary expression projection expected one field and one array for each side, got %d fields and %d arrays on left", len(leftFields), len(leftArrays))
