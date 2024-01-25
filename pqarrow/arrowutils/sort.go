@@ -1,6 +1,8 @@
 package arrowutils
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -183,20 +185,31 @@ func newMultiColSorter(
 	for i, col := range columns {
 		switch e := r.Column(col.Index).(type) {
 		case *array.Int64:
-			ms.comparisons[i] = &orderedSorter[int64]{array: e}
+			ms.comparisons[i] = newOrderedSorter[int64](e, cmp.Compare)
 		case *array.Float64:
-			ms.comparisons[i] = &orderedSorter[float64]{array: e}
+			ms.comparisons[i] = newOrderedSorter[float64](e, cmp.Compare)
 		case *array.String:
-			ms.comparisons[i] = &orderedSorter[string]{array: e}
+			ms.comparisons[i] = newOrderedSorter[string](e, cmp.Compare)
+		case *array.Binary:
+			ms.comparisons[i] = newOrderedSorter[[]byte](e, bytes.Compare)
 		case *array.Dictionary:
 			switch elem := e.Dictionary().(type) {
 			case *array.String:
-				ms.comparisons[i] = &orderedSorter[string]{
-					array: &stringDictionary{
+				ms.comparisons[i] = newOrderedSorter[string](
+					&stringDictionary{
 						dict: e,
 						elem: elem,
 					},
-				}
+					cmp.Compare,
+				)
+			case *array.Binary:
+				ms.comparisons[i] = newOrderedSorter[[]byte](
+					&binaryDictionary{
+						dict: e,
+						elem: elem,
+					},
+					bytes.Compare,
+				)
 			default:
 				ms.Release()
 				return nil, fmt.Errorf("unsupported dictionary column type for sorting %T", e)
@@ -301,13 +314,21 @@ type comparator interface {
 	IsNull(int) bool
 }
 
-type orderedArray[T int64 | float64 | string] interface {
+type orderedArray[T any] interface {
 	Value(int) T
 	IsNull(int) bool
 }
 
-type orderedSorter[T int64 | float64 | string] struct {
-	array orderedArray[T]
+type orderedSorter[T any] struct {
+	array   orderedArray[T]
+	compare func(T, T) int
+}
+
+func newOrderedSorter[T any](a orderedArray[T], compare func(T, T) int) *orderedSorter[T] {
+	return &orderedSorter[T]{
+		array:   a,
+		compare: compare,
+	}
 }
 
 func (s *orderedSorter[T]) IsNull(i int) bool {
@@ -315,15 +336,7 @@ func (s *orderedSorter[T]) IsNull(i int) bool {
 }
 
 func (s *orderedSorter[T]) Compare(i, j int) int {
-	x := s.array.Value(i)
-	y := s.array.Value(j)
-	if x < y {
-		return -1
-	}
-	if x > y {
-		return 1
-	}
-	return 0
+	return s.compare(s.array.Value(i), s.array.Value(j))
 }
 
 type stringDictionary struct {
@@ -336,5 +349,18 @@ func (s *stringDictionary) IsNull(i int) bool {
 }
 
 func (s *stringDictionary) Value(i int) string {
+	return s.elem.Value(s.dict.GetValueIndex(i))
+}
+
+type binaryDictionary struct {
+	dict *array.Dictionary
+	elem *array.Binary
+}
+
+func (s *binaryDictionary) IsNull(i int) bool {
+	return s.dict.IsNull(i)
+}
+
+func (s *binaryDictionary) Value(i int) []byte {
 	return s.elem.Value(s.dict.GetValueIndex(i))
 }
