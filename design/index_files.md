@@ -14,15 +14,14 @@ when we could just reference the index file instead.
 Instead FrostDB should use persistent index files that don't requrie snapshots to copy data but instead hard link the files in the snapshot directory for recovery.
 
 Index files have the format of:
-
-|--------------------|
-|   <ParquetFile>    |
-|   <uint64 size>    |
-|   <ParquetFile>    |
-|   <uint64 size>    |
-|   <ParquetFile>    |
-|   <uint64 size>    |
-|--------------------|
+|                    |
+| -----------------  |
+|   `<ParquetFile>`  |
+|   `<uint64 size>`  |
+|   `<ParquetFile>`  |
+|   `<uint64 size>`  |
+|   `<ParquetFile>`  |
+|   `<uint64 size>`  |
 
 Where Parquet files are appending togehter with a uint64 that represents the number of bytes in the previous ParquetFile.
 Each Parquet file represents a single Part in the LSM index. The Part's transaction id is stored in the Parquet file with a metadata key of 'compaction_tx'
