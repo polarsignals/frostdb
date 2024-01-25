@@ -1,0 +1,4 @@
+[{"binary":null,"binary_dict":null,"bool":null,"float":null,"int":null,"string":null,"string_dict":null}
+,{"binary":["YQ==","Yg=="],"binary_dict":["YQ==","Yg=="],"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["a","b"]}
+,{"binary":["YQ==","Yg=="],"binary_dict":["Yw==","ZA=="],"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["c","d"]}
+]

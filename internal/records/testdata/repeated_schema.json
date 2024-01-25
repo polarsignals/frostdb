@@ -1,0 +1,63 @@
+{
+  "name":  "repeated",
+  "columns":  [
+    {
+      "name":  "int",
+      "storageLayout":  {
+        "type":  "TYPE_INT64",
+        "nullable":  true,
+        "repeated":  true
+      }
+    },
+    {
+      "name":  "float",
+      "storageLayout":  {
+        "type":  "TYPE_DOUBLE",
+        "nullable":  true,
+        "repeated":  true
+      }
+    },
+    {
+      "name":  "bool",
+      "storageLayout":  {
+        "type":  "TYPE_BOOL",
+        "nullable":  true,
+        "repeated":  true
+      }
+    },
+    {
+      "name":  "string",
+      "storageLayout":  {
+        "type":  "TYPE_STRING",
+        "nullable":  true,
+        "repeated":  true
+      }
+    },
+    {
+      "name":  "string_dict",
+      "storageLayout":  {
+        "type":  "TYPE_STRING",
+        "encoding":  "ENCODING_RLE_DICTIONARY",
+        "nullable":  true,
+        "repeated":  true
+      }
+    },
+    {
+      "name":  "binary",
+      "storageLayout":  {
+        "type":  "TYPE_BINARY",
+        "nullable":  true,
+        "repeated":  true
+      }
+    },
+    {
+      "name":  "binary_dict",
+      "storageLayout":  {
+        "type":  "TYPE_BINARY",
+        "encoding":  "ENCODING_RLE_DICTIONARY",
+        "nullable":  true,
+        "repeated":  true
+      }
+    }
+  ]
+}

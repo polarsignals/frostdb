@@ -23,8 +23,10 @@ message Column {
   StorageLayout storage_layout = 2;
   // Whether the column can dynamically expand.
   bool dynamic = 3;
-  // Prehash the column before storing it. This is an optimization to speed up aggregation queries when this column is often aggregated.
-  // This will create a separate non-dynamic column with the same name and the prefix "hashed." that contains the prehashed values.
+  // Prehash the column before storing it. This is an optimization to speed up
+  // aggregation queries when this column is often aggregated. This will create
+  // a separate non-dynamic column with the same name and the prefix "hashed."
+  // that contains the prehashed values.
   bool prehash = 4;
 }
 
@@ -46,6 +48,8 @@ message StorageLayout {
     TYPE_INT32 = 5;
     // Represents a uint64 type.
     TYPE_UINT64 = 6;
+    // Represents a []byte type.
+    TYPE_BINARY = 7;
   }
 
   // Type of the column.

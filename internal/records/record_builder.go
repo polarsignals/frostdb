@@ -190,6 +190,11 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 			)
 		case reflect.Slice:
 			switch {
+			case isBinary(fty):
+				typ, styp = baseType(fty, dictionary)
+				fr.typ = styp
+				fr.nullable = true
+				fr.build = newFieldBuild(typ, mem, name, true)
 			case isUUIDSlice(fty):
 				fr.typ = schemapb.StorageLayout_TYPE_STRING
 				fr.build = newUUIDSliceField(mem, name)
@@ -511,7 +516,11 @@ func baseType(fty reflect.Type, dictionary bool) (typ arrow.DataType, sty schema
 		typ = arrow.BinaryTypes.String
 		sty = schemapb.StorageLayout_TYPE_STRING
 	default:
-		panic("frostdb/dynschema: " + fty.String() + " is npt supported")
+		if !isBinary(fty) {
+			panic("frostdb/dynschema: " + fty.String() + " is npt supported")
+		}
+		typ = arrow.BinaryTypes.Binary
+		sty = schemapb.StorageLayout_TYPE_BINARY
 	}
 	if dictionary {
 		typ = &arrow.DictionaryType{
@@ -616,16 +625,19 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 			e.Append(v.Interface().(string))
 			return nil
 		}
+
+	case *array.BinaryBuilder:
+		f.buildFunc = func(v reflect.Value) error {
+			e.Append(v.Bytes())
+			return nil
+		}
+
 	case *array.BinaryDictionaryBuilder:
 		f.buildFunc = func(v reflect.Value) error {
-			if nullable {
-				if v.IsNil() {
-					e.AppendNull()
-					return nil
-				}
-				v = v.Elem()
+			if v.Kind() == reflect.String {
+				return e.AppendString(v.String())
 			}
-			return e.AppendString(v.Interface().(string))
+			return e.Append(v.Bytes())
 		}
 	case *array.ListBuilder:
 		switch build := e.ValueBuilder().(type) {
@@ -690,6 +702,19 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 					return nil
 				})
 			}
+		case *array.BinaryBuilder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyBinary(v, func(i []byte) error {
+					build.Append(i)
+					return nil
+				})
+			}
 		case *array.BinaryDictionaryBuilder:
 			f.buildFunc = func(v reflect.Value) error {
 				if v.Len() == 0 {
@@ -698,7 +723,10 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 				}
 				e.Append(true)
 				build.Reserve(v.Len())
-				return applyString(v, build.AppendString)
+				if v.Type().Elem().Kind() == reflect.String {
+					return applyString(v, build.AppendString)
+				}
+				return applyBinary(v, build.Append)
 			}
 		case *array.BooleanBuilder:
 			f.buildFunc = func(v reflect.Value) error {
@@ -718,6 +746,12 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 		panic("frostdb:dynschema: unsupported array builder " + b.Type().String())
 	}
 	return
+}
+
+func applyBinary(v reflect.Value, apply func([]byte) error) error {
+	return listApply[[]byte](v, func(v reflect.Value) []byte {
+		return v.Bytes()
+	}, apply)
 }
 
 func applyString(v reflect.Value, apply func(string) error) error {
@@ -836,10 +870,17 @@ func walkTag(tag string, f func(key, value string)) {
 	walkTag(tag, f)
 }
 
-var uuidSliceType = reflect.TypeOf([]uuid.UUID{})
+var (
+	uuidSliceType = reflect.TypeOf([]uuid.UUID{})
+	binaryType    = reflect.TypeOf([]byte{})
+)
 
 func isUUIDSlice(typ reflect.Type) bool {
 	return typ.AssignableTo(uuidSliceType)
+}
+
+func isBinary(typ reflect.Type) bool {
+	return typ == binaryType
 }
 
 var (

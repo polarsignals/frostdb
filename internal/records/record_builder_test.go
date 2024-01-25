@@ -1,6 +1,7 @@
 package records_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/apache/arrow/go/v14/arrow/memory"
@@ -46,6 +47,42 @@ func TestBuild(t *testing.T) {
 		require.JSONEq(t, want, string(got))
 	})
 
+	t.Run("Binary", func(t *testing.T) {
+		type Repeated struct {
+			Binary     []byte
+			BinaryDict []byte `frostdb:",rle_dict"`
+		}
+		b := records.NewBuild[Repeated](memory.DefaultAllocator)
+		defer b.Release()
+
+		m := protojson.MarshalOptions{Multiline: true}
+		d, _ := m.Marshal(b.Schema("repeated"))
+		wantSchema, err := os.ReadFile("testdata/binary_schema.json")
+		require.NoError(t, err)
+		require.JSONEq(t, string(wantSchema), string(d))
+
+		err = b.Append(
+			Repeated{}, // nulls
+			Repeated{
+				Binary:     []byte("a"),
+				BinaryDict: []byte("a"),
+			},
+			Repeated{
+				Binary:     []byte("a"),
+				BinaryDict: []byte("a"),
+			},
+			Repeated{
+				Binary:     []byte("a"),
+				BinaryDict: []byte("c"),
+			},
+		)
+		require.Nil(t, err)
+		r := b.NewRecord()
+		data, _ := r.MarshalJSON()
+		want, err := os.ReadFile("testdata/binary_record.json")
+		require.NoError(t, err)
+		require.JSONEq(t, string(want), string(data))
+	})
 	t.Run("Repeated", func(t *testing.T) {
 		type Repeated struct {
 			Int        []int64
@@ -53,61 +90,18 @@ func TestBuild(t *testing.T) {
 			Bool       []bool
 			String     []string
 			StringDict []string `frostdb:",rle_dict"`
+			Binary     [][]byte
+			BinaryDict [][]byte `frostdb:",rle_dict"`
 		}
 		b := records.NewBuild[Repeated](memory.DefaultAllocator)
 		defer b.Release()
-
-		wantSchema := `{
-  "name": "repeated",
-  "columns": [
-    {
-      "name": "int",
-      "storageLayout": {
-        "type": "TYPE_INT64",
-        "nullable": true,
-        "repeated": true
-      }
-    },
-    {
-      "name": "float",
-      "storageLayout": {
-        "type": "TYPE_DOUBLE",
-        "nullable": true,
-        "repeated": true
-      }
-    },
-    {
-      "name": "bool",
-      "storageLayout": {
-        "type": "TYPE_BOOL",
-        "nullable": true,
-        "repeated": true
-      }
-    },
-    {
-      "name": "string",
-      "storageLayout": {
-        "type": "TYPE_STRING",
-        "nullable": true,
-        "repeated": true
-      }
-    },
-    {
-      "name": "string_dict",
-      "storageLayout": {
-        "type": "TYPE_STRING",
-        "encoding": "ENCODING_RLE_DICTIONARY",
-        "nullable": true,
-        "repeated": true
-      }
-    }
-  ]
-}`
+		wantSchema, err := os.ReadFile("testdata/repeated_schema.json")
+		require.NoError(t, err)
 		m := protojson.MarshalOptions{Multiline: true}
 		d, _ := m.Marshal(b.Schema("repeated"))
-		require.JSONEq(t, wantSchema, string(d))
+		require.JSONEq(t, string(wantSchema), string(d))
 
-		err := b.Append(
+		err = b.Append(
 			Repeated{}, // nulls
 			Repeated{
 				Int:        []int64{1, 2},
@@ -115,6 +109,8 @@ func TestBuild(t *testing.T) {
 				Bool:       []bool{true, true},
 				String:     []string{"a", "b"},
 				StringDict: []string{"a", "b"},
+				Binary:     [][]byte{[]byte("a"), []byte("b")},
+				BinaryDict: [][]byte{[]byte("a"), []byte("b")},
 			},
 			Repeated{
 				Int:        []int64{1, 2},
@@ -122,17 +118,18 @@ func TestBuild(t *testing.T) {
 				Bool:       []bool{true, true},
 				String:     []string{"a", "b"},
 				StringDict: []string{"c", "d"},
+				Binary:     [][]byte{[]byte("a"), []byte("b")},
+				BinaryDict: [][]byte{[]byte("c"), []byte("d")},
 			},
 		)
 		require.Nil(t, err)
-		want := `[{"bool":null,"float":null,"int":null,"string":null,"string_dict":null}
-,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["a","b"]}
-,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["c","d"]}
-]`
+		want, err := os.ReadFile("testdata/repeated_record.json")
+		require.NoError(t, err)
 		r := b.NewRecord()
 		data, _ := r.MarshalJSON()
-		require.JSONEq(t, want, string(data))
+		require.JSONEq(t, string(want), string(data))
 	})
+
 }
 
 func TestBuild_pointer_base_types(t *testing.T) {

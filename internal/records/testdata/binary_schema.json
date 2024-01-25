@@ -1,0 +1,20 @@
+{
+  "name":  "repeated",
+  "columns":  [
+    {
+      "name":  "binary",
+      "storageLayout":  {
+        "type":  "TYPE_BINARY",
+        "nullable":  true
+      }
+    },
+    {
+      "name":  "binary_dict",
+      "storageLayout":  {
+        "type":  "TYPE_BINARY",
+        "encoding":  "ENCODING_RLE_DICTIONARY",
+        "nullable":  true
+      }
+    }
+  ]
+}
