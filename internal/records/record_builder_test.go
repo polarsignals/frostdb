@@ -129,7 +129,6 @@ func TestBuild(t *testing.T) {
 		data, _ := r.MarshalJSON()
 		require.JSONEq(t, string(want), string(data))
 	})
-
 }
 
 func TestBuild_pointer_base_types(t *testing.T) {
