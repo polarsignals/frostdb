@@ -28,11 +28,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
@@ -103,12 +101,7 @@ func WithoutWAL() TableOption {
 
 func WithUniquePrimaryIndex(unique bool) TableOption {
 	return func(config *tablepb.TableConfig) error {
-		switch e := config.Schema.(type) {
-		case *tablepb.TableConfig_DeprecatedSchema:
-			e.DeprecatedSchema.UniquePrimaryIndex = unique
-		case *tablepb.TableConfig_SchemaV2:
-			e.SchemaV2.UniquePrimaryIndex = unique
-		}
+		config.Schema.UniquePrimaryIndex = unique
 		return nil
 	}
 }
@@ -133,24 +126,11 @@ func defaultTableConfig() *tablepb.TableConfig {
 }
 
 func NewTableConfig(
-	schema proto.Message,
+	schema *schemapb.Schema,
 	options ...TableOption,
 ) *tablepb.TableConfig {
 	t := defaultTableConfig()
-
-	switch v := schema.(type) {
-	case *schemapb.Schema:
-		t.Schema = &tablepb.TableConfig_DeprecatedSchema{
-			DeprecatedSchema: v,
-		}
-	case *schemav2pb.Schema:
-		t.Schema = &tablepb.TableConfig_SchemaV2{
-			SchemaV2: v,
-		}
-	default:
-		panic(fmt.Sprintf("unsupported schema type: %T", v))
-	}
-
+	t.Schema = schema
 	for _, opt := range options {
 		_ = opt(t)
 	}
@@ -344,15 +324,11 @@ type tableMetrics struct {
 }
 
 func schemaFromTableConfig(tableConfig *tablepb.TableConfig) (*dynparquet.Schema, error) {
-	switch schema := tableConfig.Schema.(type) {
-	case *tablepb.TableConfig_DeprecatedSchema:
-		return dynparquet.SchemaFromDefinition(schema.DeprecatedSchema)
-	case *tablepb.TableConfig_SchemaV2:
-		return dynparquet.SchemaFromDefinition(schema.SchemaV2)
-	default:
+	if tableConfig.Schema == nil {
 		// No schema defined for table; read/only table
 		return nil, nil
 	}
+	return dynparquet.SchemaFromDefinition(tableConfig.Schema)
 }
 
 func newTable(

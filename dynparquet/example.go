@@ -16,8 +16,6 @@ var (
 	NewTestSamples            = samples.NewTestSamples
 	PrehashedSampleDefinition = samples.PrehashedSampleDefinition
 	SampleDefinitionWithFloat = samples.SampleDefinitionWithFloat
-	NewNestedSampleSchema     = samples.NewNestedSampleSchema
-	LabelColumn               = samples.LabelColumn
 	GenerateTestSamples       = samples.GenerateTestSamples
 )
 

@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
@@ -1198,7 +1197,7 @@ func Test_DB_TableNotExist(t *testing.T) {
 }
 
 func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
-	for _, schema := range []proto.Message{
+	for _, schema := range []*schemapb.Schema{
 		dynparquet.SampleDefinition(),
 		dynparquet.PrehashedSampleDefinition(),
 	} {

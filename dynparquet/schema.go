@@ -19,7 +19,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 )
 
 const (
@@ -110,7 +109,7 @@ func (dyn dynamicSortingColumn) Path() []string { return dyn.path }
 // ability that any column definition that is dynamic will have columns
 // dynamically created as their column name is seen for the first time.
 type Schema struct {
-	def            proto.Message
+	def            *schemapb.Schema
 	columns        []ColumnDefinition
 	columnIndexes  map[string]int
 	sortingColumns []SortingColumn
@@ -146,147 +145,45 @@ func (s *Schema) IsDynamicColumn(column string) bool {
 	return s.columns[s.columnIndexes[column[0:periodPosition]]].Dynamic
 }
 
-func findLeavesFromNode(node *schemav2pb.Node) []ColumnDefinition {
-	switch n := node.Type.(type) {
-	case *schemav2pb.Node_Leaf:
-		ret, err := storageLayoutToParquetNode(&v2storageLayoutWrapper{n.Leaf.StorageLayout})
-		if err != nil {
-			panic("sheisse")
-		}
-		return []ColumnDefinition{
-			{
-				Name:          n.Leaf.Name,
-				StorageLayout: ret,
-				Dynamic:       false, // TODO(can we get rid of dynamic cols): do we need dynamic columns to be separate?
-			},
-		}
-	case *schemav2pb.Node_Group:
-		columns := make([]ColumnDefinition, 0, len(n.Group.Nodes))
-		for _, g := range n.Group.Nodes {
-			columns = append(columns, findLeavesFromNode(g)...)
-		}
-
-		return columns
-	default:
-		panic(fmt.Sprintf("unknown node type: %v", n))
-	}
-}
-
-func ParquetSchemaFromV2Definition(def *schemav2pb.Schema) *parquet.Schema {
-	root := parquet.Group{}
-	for _, node := range def.Root.Nodes {
-		root[nameFromNodeDef(node)] = nodeFromDefinition(node)
-	}
-
-	return parquet.NewSchema(def.Root.Name, root)
-}
-
-func nodeFromDefinition(node *schemav2pb.Node) parquet.Node {
-	switch n := node.Type.(type) {
-	case *schemav2pb.Node_Leaf:
-		ret, err := storageLayoutToParquetNode(&v2storageLayoutWrapper{n.Leaf.StorageLayout})
-		if err != nil {
-			panic("sheisse")
-		}
-		return ret
-	case *schemav2pb.Node_Group:
-		group := parquet.Group{}
-		for _, g := range n.Group.Nodes {
-			group[nameFromNodeDef(g)] = nodeFromDefinition(g)
-		}
-
-		var node parquet.Node
-		node = group
-		if n.Group.Nullable {
-			node = parquet.Optional(node)
-		}
-
-		if n.Group.Repeated {
-			node = parquet.Repeated(node)
-		}
-
-		return node
-	default:
-		panic(fmt.Sprintf("unknown node type: %v", n))
-	}
-}
-
-func nameFromNodeDef(node *schemav2pb.Node) string {
-	switch n := node.Type.(type) {
-	case *schemav2pb.Node_Leaf:
-		return n.Leaf.Name
-	case *schemav2pb.Node_Group:
-		return n.Group.Name
-	default:
-		panic(fmt.Sprintf("unknown node type: %v", n))
-	}
-}
-
-func SchemaFromDefinition(msg proto.Message) (*Schema, error) {
+func SchemaFromDefinition(def *schemapb.Schema) (*Schema, error) {
 	var (
 		columns            []ColumnDefinition
 		sortingColumns     []SortingColumn
 		uniquePrimaryIndex bool
 	)
-	switch def := msg.(type) {
-	case *schemapb.Schema:
-		columns = make([]ColumnDefinition, 0, len(def.Columns))
-		for _, col := range def.Columns {
-			layout, err := storageLayoutToParquetNode(&v1storageLayoutWrapper{col.StorageLayout})
-			if err != nil {
-				return nil, err
-			}
-			columns = append(columns, ColumnDefinition{
-				Name:          col.Name,
-				StorageLayout: layout,
-				Dynamic:       col.Dynamic,
-				PreHash:       col.Prehash,
-			})
+	columns = make([]ColumnDefinition, 0, len(def.Columns))
+	for _, col := range def.Columns {
+		layout, err := storageLayoutToParquetNode(&v1storageLayoutWrapper{col.StorageLayout})
+		if err != nil {
+			return nil, err
 		}
-
-		sortingColumns = make([]SortingColumn, 0, len(def.SortingColumns))
-		for _, col := range def.SortingColumns {
-			var sortingColumn SortingColumn
-			switch col.Direction {
-			case schemapb.SortingColumn_DIRECTION_ASCENDING:
-				sortingColumn = Ascending(col.Name)
-			case schemapb.SortingColumn_DIRECTION_DESCENDING:
-				sortingColumn = Descending(col.Name)
-			default:
-				return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
-			}
-			if col.NullsFirst {
-				sortingColumn = NullsFirst(sortingColumn)
-			}
-			sortingColumns = append(sortingColumns, sortingColumn)
-		}
-		uniquePrimaryIndex = def.UniquePrimaryIndex
-	case *schemav2pb.Schema:
-		columns = []ColumnDefinition{}
-		for _, node := range def.Root.Nodes {
-			columns = append(columns, findLeavesFromNode(node)...)
-		}
-
-		sortingColumns = make([]SortingColumn, 0, len(def.SortingColumns))
-		for _, col := range def.SortingColumns {
-			var sortingColumn SortingColumn
-			switch col.Direction {
-			case schemav2pb.SortingColumn_DIRECTION_ASCENDING:
-				sortingColumn = Ascending(col.Path)
-			case schemav2pb.SortingColumn_DIRECTION_DESCENDING:
-				sortingColumn = Descending(col.Path)
-			default:
-				return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
-			}
-			if col.NullsFirst {
-				sortingColumn = NullsFirst(sortingColumn)
-			}
-			sortingColumns = append(sortingColumns, sortingColumn)
-		}
-		uniquePrimaryIndex = def.UniquePrimaryIndex
+		columns = append(columns, ColumnDefinition{
+			Name:          col.Name,
+			StorageLayout: layout,
+			Dynamic:       col.Dynamic,
+			PreHash:       col.Prehash,
+		})
 	}
 
-	return newSchema(msg, columns, sortingColumns, uniquePrimaryIndex), nil
+	sortingColumns = make([]SortingColumn, 0, len(def.SortingColumns))
+	for _, col := range def.SortingColumns {
+		var sortingColumn SortingColumn
+		switch col.Direction {
+		case schemapb.SortingColumn_DIRECTION_ASCENDING:
+			sortingColumn = Ascending(col.Name)
+		case schemapb.SortingColumn_DIRECTION_DESCENDING:
+			sortingColumn = Descending(col.Name)
+		default:
+			return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
+		}
+		if col.NullsFirst {
+			sortingColumn = NullsFirst(sortingColumn)
+		}
+		sortingColumns = append(sortingColumns, sortingColumn)
+	}
+	uniquePrimaryIndex = def.UniquePrimaryIndex
+
+	return newSchema(def, columns, sortingColumns, uniquePrimaryIndex), nil
 }
 
 // DefinitionFromParquetFile converts a parquet file into a schemapb.Schema.
@@ -451,26 +348,6 @@ func (s *v1storageLayoutWrapper) GetCompressionInt32() int32 {
 	return int32(s.StorageLayout.GetCompression())
 }
 
-type v2storageLayoutWrapper struct {
-	*schemav2pb.StorageLayout
-}
-
-func (s *v2storageLayoutWrapper) GetTypeInt32() int32 {
-	return int32(s.StorageLayout.GetType())
-}
-
-func (s *v2storageLayoutWrapper) GetEncodingInt32() int32 {
-	return int32(s.StorageLayout.GetEncoding())
-}
-
-func (s *v2storageLayoutWrapper) GetCompressionInt32() int32 {
-	return int32(s.StorageLayout.GetCompression())
-}
-
-func StorageLayoutWrapper(_ *schemav2pb.StorageLayout) StorageLayout {
-	return nil
-}
-
 func storageLayoutToParquetNode(l StorageLayout) (parquet.Node, error) {
 	var node parquet.Node
 	switch l.GetTypeInt32() {
@@ -554,7 +431,7 @@ func compressionFromDefinition(comp int32) (compress.Codec, error) {
 // important as it determines the order in which data is written to a file or
 // laid out in memory.
 func newSchema(
-	def proto.Message,
+	def *schemapb.Schema,
 	columns []ColumnDefinition,
 	sortingColumns []SortingColumn,
 	uniquePrimaryIndex bool,
@@ -590,14 +467,7 @@ func newSchema(
 }
 
 func (s *Schema) Name() string {
-	switch sc := s.def.(type) {
-	case *schemapb.Schema:
-		return sc.GetName()
-	case *schemav2pb.Schema:
-		return sc.Root.GetName()
-	default:
-		panic("unknown schema version")
-	}
+	return s.def.Name
 }
 
 func (s *Schema) Definition() proto.Message {
@@ -625,49 +495,35 @@ func (s *Schema) SortingColumns() []ColumnDefinition {
 }
 
 func (s *Schema) ParquetSchema() *parquet.Schema {
-	switch schema := s.def.(type) {
-	case *schemav2pb.Schema:
-		return ParquetSchemaFromV2Definition(schema)
-	case *schemapb.Schema:
-		g := parquet.Group{}
-		for _, col := range s.columns {
-			g[col.Name] = col.StorageLayout
-		}
-		return parquet.NewSchema(s.Name(), g)
-	default:
-		panic(fmt.Sprintf("unknown schema version %T", schema))
+	g := parquet.Group{}
+	for _, col := range s.columns {
+		g[col.Name] = col.StorageLayout
 	}
+	return parquet.NewSchema(s.Name(), g)
+
 }
 
 // dynamicParquetSchema returns the parquet schema for the dynamic schema with the
 // concrete dynamic column names given in the argument.
 func (s Schema) dynamicParquetSchema(dynamicColumns map[string][]string) (*parquet.Schema, error) {
-	switch def := s.def.(type) {
-	case *schemav2pb.Schema:
-		return ParquetSchemaFromV2Definition(def), nil
-	case *schemapb.Schema:
-		g := parquet.Group{}
-		for _, col := range s.columns {
-			if col.Dynamic {
-				dyn := dynamicColumnsFor(col.Name, dynamicColumns)
-				for _, name := range dyn {
-					g[col.Name+"."+name] = col.StorageLayout
-					if col.PreHash {
-						g[HashedColumnName(col.Name+"."+name)] = parquet.Int(64) // TODO(thor): Do we need compression etc. here?
-					}
+	g := parquet.Group{}
+	for _, col := range s.columns {
+		if col.Dynamic {
+			dyn := dynamicColumnsFor(col.Name, dynamicColumns)
+			for _, name := range dyn {
+				g[col.Name+"."+name] = col.StorageLayout
+				if col.PreHash {
+					g[HashedColumnName(col.Name+"."+name)] = parquet.Int(64) // TODO(thor): Do we need compression etc. here?
 				}
-				continue
 			}
-			g[col.Name] = col.StorageLayout
-			if col.PreHash {
-				g[HashedColumnName(col.Name)] = parquet.Int(64) // TODO(thor): Do we need compression etc. here?
-			}
+			continue
 		}
-
-		return parquet.NewSchema(s.Name(), g), nil
-	default:
-		return nil, fmt.Errorf("unsupported schema definition version")
+		g[col.Name] = col.StorageLayout
+		if col.PreHash {
+			g[HashedColumnName(col.Name)] = parquet.Int(64) // TODO(thor): Do we need compression etc. here?
+		}
 	}
+	return parquet.NewSchema(s.Name(), g), nil
 }
 
 // parquetSortingSchema returns the parquet schema of just the sorting columns
@@ -1009,39 +865,6 @@ func (s *Schema) NewBuffer(dynamicColumns map[string][]string) (*Buffer, error) 
 			),
 		),
 		fields: ps.Schema.Fields(),
-	}, nil
-}
-
-func (s *Schema) NewBufferV2(dynamicColumns ...*schemav2pb.Node) (*Buffer, error) {
-	schema, ok := s.def.(*schemav2pb.Schema)
-	if !ok {
-		return nil, fmt.Errorf("unsupported schema")
-	}
-
-	// merge all the dynamic columns; then merge into the top-level schema
-	if len(dynamicColumns) > 0 {
-		mergedCols := dynamicColumns[0]
-		for i := 1; i < len(dynamicColumns); i++ {
-			proto.Merge(mergedCols, dynamicColumns[i])
-		}
-		proto.Merge(schema, &schemav2pb.Schema{
-			Root: &schemav2pb.Group{
-				Nodes: []*schemav2pb.Node{mergedCols},
-			},
-		})
-	}
-
-	ps := ParquetSchemaFromV2Definition(schema)
-	cols := s.ParquetSortingColumns(map[string][]string{})
-	return &Buffer{
-		dynamicColumns: map[string][]string{}, // unused for v2
-		buffer: parquet.NewBuffer(
-			ps,
-			parquet.SortingRowGroupConfig(
-				parquet.SortingColumns(cols...),
-			),
-		),
-		fields: ps.Fields(),
 	}, nil
 }
 
@@ -1655,25 +1478,4 @@ func (r *remappedValueReader) ReadValues(v []parquet.Value) (int, error) {
 	}
 
 	return n, nil
-}
-
-func SortingColumnsFromDef(def *schemav2pb.Schema) ([]parquet.SortingColumn, error) {
-	sortingColumns := make([]parquet.SortingColumn, 0, len(def.SortingColumns))
-	for _, col := range def.SortingColumns {
-		var sortingColumn SortingColumn
-		switch col.Direction {
-		case schemav2pb.SortingColumn_DIRECTION_ASCENDING:
-			sortingColumn = Ascending(col.Path)
-		case schemav2pb.SortingColumn_DIRECTION_DESCENDING:
-			sortingColumn = Descending(col.Path)
-		default:
-			return nil, fmt.Errorf("unknown sorting direction %q, only \"ascending\", \"descending\" are valid choices", col.Direction)
-		}
-		if col.NullsFirst {
-			sortingColumn = NullsFirst(sortingColumn)
-		}
-		sortingColumns = append(sortingColumns, sortingColumn)
-	}
-
-	return sortingColumns, nil
 }

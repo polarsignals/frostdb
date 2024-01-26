@@ -3,20 +3,15 @@ syntax = "proto3";
 package frostdb.table.v1alpha1;
 
 import "frostdb/schema/v1alpha1/schema.proto";
-import "frostdb/schema/v1alpha2/schema.proto";
 
 // TableConfig is the configuration information for a table.
 message TableConfig {
-  // Schema of the table.
-  oneof schema {
-    // Deprecated schema definition. Used for backwards compatibility.
-    frostdb.schema.v1alpha1.Schema deprecated_schema = 1;
-    // Schema of the table. Use this field.
-    frostdb.schema.v1alpha2.Schema schema_v2 = 2;
-  }
-  // RowGroupSize is the size in rows of row groups that are written to Parquet files.
+  frostdb.schema.v1alpha1.Schema schema = 1;
+  // RowGroupSize is the size in rows of row groups that are written to Parquet
+  // files.
   uint64 row_group_size = 3;
-  // BlockReaderLimit is the concurrency limit of the number of Go routines spawned when reading storage blocks.
+  // BlockReaderLimit is the concurrency limit of the number of Go routines
+  // spawned when reading storage blocks.
   uint64 block_reader_limit = 4;
   // DisableWal disables the write ahead log for this table.
   bool disable_wal = 5;

@@ -16,7 +16,6 @@ import (
 	"github.com/oklog/ulid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/arrow/go/v14/arrow/ipc"
 	"github.com/apache/arrow/go/v14/arrow/util"
@@ -24,7 +23,6 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
-	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/parts"
@@ -590,16 +588,6 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64, dir st
 
 	for i, tableMeta := range footer.TableMetadata {
 		if err := func() error {
-			var schemaMsg proto.Message
-			switch v := tableMeta.Config.Schema.(type) {
-			case *tablepb.TableConfig_DeprecatedSchema:
-				schemaMsg = v.DeprecatedSchema
-			case *tablepb.TableConfig_SchemaV2:
-				schemaMsg = v.SchemaV2
-			default:
-				return fmt.Errorf("unhandled schema type: %T", v)
-			}
-
 			options := []TableOption{
 				WithRowGroupSize(int(tableMeta.Config.RowGroupSize)),
 				WithBlockReaderLimit(int(tableMeta.Config.BlockReaderLimit)),
@@ -608,7 +596,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64, dir st
 				options = append(options, WithoutWAL())
 			}
 			tableConfig := NewTableConfig(
-				schemaMsg,
+				tableMeta.Config.Schema,
 				options...,
 			)
 

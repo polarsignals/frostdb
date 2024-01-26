@@ -28,8 +28,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
@@ -775,16 +773,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
 			entry := e.NewTableBlock
-			var schema proto.Message
-			switch v := entry.Config.Schema.(type) {
-			case *tablepb.TableConfig_DeprecatedSchema:
-				schema = v.DeprecatedSchema
-			case *tablepb.TableConfig_SchemaV2:
-				schema = v.SchemaV2
-			default:
-				return fmt.Errorf("unhandled schema type: %T", v)
-			}
-
+			schema := entry.Config.Schema
 			var id ulid.ULID
 			if err := id.UnmarshalBinary(entry.BlockId); err != nil {
 				return err
@@ -846,13 +835,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			table.pendingBlocks[table.active] = struct{}{}
 			go table.writeBlock(table.active, db.columnStore.manualBlockRotation, false)
 
-			protoEqual := false
-			switch schema.(type) {
-			case *schemav2pb.Schema:
-				protoEqual = proto.Equal(schema, table.config.Load().GetSchemaV2())
-			case *schemapb.Schema:
-				protoEqual = proto.Equal(schema, table.config.Load().GetDeprecatedSchema())
-			}
+			protoEqual := proto.Equal(schema, table.config.Load().GetSchema())
 			if !protoEqual {
 				// If schemas are identical from block to block we should we
 				// reuse the previous schema in order to retain pooled memory

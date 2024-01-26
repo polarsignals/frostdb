@@ -2,16 +2,13 @@ package samples
 
 import (
 	"sort"
-	"testing"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
-	"google.golang.org/protobuf/proto"
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
-	schemav2pb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	"github.com/polarsignals/frostdb/internal/records"
 )
 
@@ -284,100 +281,4 @@ func GenerateTestSamples(n int) Samples {
 			})
 	}
 	return s
-}
-
-func NestedListDef(name string, layout *schemav2pb.StorageLayout) *schemav2pb.Node_Group {
-	return &schemav2pb.Node_Group{
-		Group: &schemav2pb.Group{
-			Name: name,
-			Nodes: []*schemav2pb.Node{ // NOTE that this nested group structure for a list is for backwards compatability: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
-				{
-					Type: &schemav2pb.Node_Group{
-						Group: &schemav2pb.Group{
-							Name:     "list",
-							Repeated: true,
-							Nodes: []*schemav2pb.Node{
-								{
-									Type: &schemav2pb.Node_Leaf{
-										Leaf: &schemav2pb.Leaf{
-											Name:          "element",
-											StorageLayout: layout,
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func LabelColumn(name string) *schemav2pb.Node {
-	return &schemav2pb.Node{
-		Type: &schemav2pb.Node_Group{
-			Group: &schemav2pb.Group{
-				Name: "labels",
-				Nodes: []*schemav2pb.Node{
-					{
-						Type: &schemav2pb.Node_Leaf{
-							Leaf: &schemav2pb.Leaf{
-								Name: name,
-								StorageLayout: &schemav2pb.StorageLayout{
-									Type:     schemav2pb.StorageLayout_TYPE_STRING,
-									Nullable: true,
-									Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func NewNestedSampleSchema(t testing.TB) proto.Message {
-	t.Helper()
-	return &schemav2pb.Schema{
-		Root: &schemav2pb.Group{
-			Name: "nested",
-			Nodes: []*schemav2pb.Node{
-				{
-					Type: &schemav2pb.Node_Group{
-						Group: &schemav2pb.Group{
-							Name:  "labels",
-							Nodes: []*schemav2pb.Node{},
-						},
-					},
-				},
-				{
-					Type: NestedListDef("timestamps", &schemav2pb.StorageLayout{
-						Type:     schemav2pb.StorageLayout_TYPE_INT64,
-						Nullable: true,
-						Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-					}),
-				},
-				{
-					Type: NestedListDef("values", &schemav2pb.StorageLayout{
-						Type:     schemav2pb.StorageLayout_TYPE_INT64,
-						Nullable: true,
-						Encoding: schemav2pb.StorageLayout_ENCODING_RLE_DICTIONARY,
-					}),
-				},
-			},
-		},
-		SortingColumns: []*schemav2pb.SortingColumn{
-			{
-				Path:       "labels",
-				Direction:  schemav2pb.SortingColumn_DIRECTION_ASCENDING,
-				NullsFirst: true,
-			},
-			{
-				Path:      "timestamp",
-				Direction: schemav2pb.SortingColumn_DIRECTION_ASCENDING,
-			},
-		},
-	}
 }
