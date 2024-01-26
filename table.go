@@ -516,26 +516,32 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 		return
 	}
 
-	tx, _, commit := t.db.begin()
-	defer commit()
+	if err := func() error {
+		tx, _, commit := t.db.begin()
+		defer commit()
 
-	buf, err := block.ulid.MarshalBinary()
-	if err != nil {
-		level.Error(t.logger).Log("msg", "failed to record block persistence in WAL: marshal ulid", "err", err)
-		return
-	}
+		buf, err := block.ulid.MarshalBinary()
+		if err != nil {
+			level.Error(t.logger).Log("msg", "failed to record block persistence in WAL: marshal ulid", "err", err)
+			return err
+		}
 
-	if err := t.wal.Log(tx, &walpb.Record{
-		Entry: &walpb.Entry{
-			EntryType: &walpb.Entry_TableBlockPersisted_{
-				TableBlockPersisted: &walpb.Entry_TableBlockPersisted{
-					TableName: t.name,
-					BlockId:   buf,
+		if err := t.wal.Log(tx, &walpb.Record{
+			Entry: &walpb.Entry{
+				EntryType: &walpb.Entry_TableBlockPersisted_{
+					TableBlockPersisted: &walpb.Entry_TableBlockPersisted{
+						TableName: t.name,
+						BlockId:   buf,
+					},
 				},
 			},
-		},
-	}); err != nil {
-		level.Error(t.logger).Log("msg", "failed to record block persistence in WAL", "err", err)
+		}); err != nil {
+			level.Error(t.logger).Log("msg", "failed to record block persistence in WAL", "err", err)
+			return err
+		}
+
+		return nil
+	}(); err != nil {
 		return
 	}
 
@@ -577,6 +583,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 			// TODO(asubiotto): Eventually we should register a cancel function
 			// that is called with a grace period on db.Close.
 			ctx := context.Background()
+			tx := t.db.beginRead()
 			if err := t.db.snapshotAtTX(ctx, tx, t.db.snapshotWriter(tx)); err != nil {
 				level.Error(t.logger).Log(
 					"msg", "failed to write snapshot on block rotation",
@@ -766,6 +773,16 @@ func (t *Table) Iterator(
 		return errors.New("no callbacks provided")
 	}
 	rowGroups := make(chan any, len(callbacks)*4) // buffer up to 4 row groups per callback
+	defer func() {                                // Drain the channel of any leftover parts due to cancellation or error
+		for rg := range rowGroups {
+			switch t := rg.(type) {
+			case index.ReleaseableRowGroup:
+				t.Release()
+			case arrow.Record:
+				t.Release()
+			}
+		}
+	}()
 
 	// Previously we sorted all row groups into a single row group here,
 	// but it turns out that none of the downstream uses actually rely on
@@ -788,7 +805,7 @@ func (t *Table) Iterator(
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case rg, ok := <-rowGroups:
+				case rg, ok := <-rowGroups: // TODO we HAVE to ensure that we have drained the rowGroups channel now with file backed parts.
 					if !ok {
 						r := converter.NewRecord()
 						if r == nil {
@@ -892,6 +909,16 @@ func (t *Table) SchemaIterator(
 	}
 
 	rowGroups := make(chan any, len(callbacks)*4) // buffer up to 4 row groups per callback
+	defer func() {                                // Drain the channel of any leftover parts due to cancellation or error
+		for rg := range rowGroups {
+			switch t := rg.(type) {
+			case index.ReleaseableRowGroup:
+				t.Release()
+			case arrow.Record:
+				t.Release()
+			}
+		}
+	}()
 
 	schema := arrow.NewSchema(
 		[]arrow.Field{
@@ -1189,12 +1216,8 @@ func (t *Table) collectRowGroups(
 	}()
 	for _, block := range memoryBlocks {
 		if err := block.index.Scan(ctx, "", t.schema, filterExpr, tx, func(ctx context.Context, v any) error {
-			select {
-			case rowGroups <- v:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			rowGroups <- v
+			return nil
 		}); err != nil {
 			return err
 		}
@@ -1208,12 +1231,8 @@ func (t *Table) collectRowGroups(
 	for _, source := range t.db.sources {
 		span.AddEvent(fmt.Sprintf("source/%s", source.String()))
 		if err := source.Scan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, lastBlockTimestamp, func(ctx context.Context, v any) error {
-			select {
-			case rowGroups <- v:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			rowGroups <- v
+			return nil
 		}); err != nil {
 			return err
 		}
