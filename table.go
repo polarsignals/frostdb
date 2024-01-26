@@ -805,7 +805,7 @@ func (t *Table) Iterator(
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case rg, ok := <-rowGroups: // TODO we HAVE to ensure that we have drained the rowGroups channel now with file backed parts.
+				case rg, ok := <-rowGroups:
 					if !ok {
 						r := converter.NewRecord()
 						if r == nil {
