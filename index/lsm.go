@@ -158,6 +158,10 @@ func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, wait f
 
 	if lsm.metrics == nil {
 		lsm.metrics = NewLSMMetrics(prometheus.NewRegistry())
+	} else {
+		for _, lvl := range levels {
+			lsm.metrics.LevelSize.WithLabelValues(lvl.Level.String()).Set(0)
+		}
 	}
 
 	// Replay the recovered parts
@@ -371,6 +375,7 @@ func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter l
 	if err != nil {
 		return fmt.Errorf("boolean expr: %w", err)
 	}
+
 	var iterError error
 	l.partList.Iterate(func(node *Node) bool {
 		if node.part == nil { // encountered a sentinel node; continue on
@@ -587,10 +592,10 @@ func (l *LSM) merge(level SentinelType) error {
 
 	// release the old parts
 	l.Lock()
-	defer l.Unlock()
 	for _, part := range mergeList {
 		part.Release()
 	}
+	l.Unlock()
 
 	// Reset the level that was just compacted
 	if level != L0 {
