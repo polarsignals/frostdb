@@ -500,7 +500,6 @@ func (s *Schema) ParquetSchema() *parquet.Schema {
 		g[col.Name] = col.StorageLayout
 	}
 	return parquet.NewSchema(s.Name(), g)
-
 }
 
 // dynamicParquetSchema returns the parquet schema for the dynamic schema with the
