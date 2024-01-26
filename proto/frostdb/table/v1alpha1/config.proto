@@ -6,7 +6,12 @@ import "frostdb/schema/v1alpha1/schema.proto";
 
 // TableConfig is the configuration information for a table.
 message TableConfig {
-  frostdb.schema.v1alpha1.Schema schema = 1;
+  reserved 2;
+  // Schema of the table.
+  oneof schema {
+    // Deprecated schema definition. Used for backwards compatibility.
+    frostdb.schema.v1alpha1.Schema deprecated_schema = 1;
+  }
   // RowGroupSize is the size in rows of row groups that are written to Parquet
   // files.
   uint64 row_group_size = 3;

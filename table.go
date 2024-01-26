@@ -101,7 +101,7 @@ func WithoutWAL() TableOption {
 
 func WithUniquePrimaryIndex(unique bool) TableOption {
 	return func(config *tablepb.TableConfig) error {
-		config.Schema.UniquePrimaryIndex = unique
+		config.GetDeprecatedSchema().UniquePrimaryIndex = unique
 		return nil
 	}
 }
@@ -130,7 +130,9 @@ func NewTableConfig(
 	options ...TableOption,
 ) *tablepb.TableConfig {
 	t := defaultTableConfig()
-	t.Schema = schema
+	t.Schema = &tablepb.TableConfig_DeprecatedSchema{
+		DeprecatedSchema: schema,
+	}
 	for _, opt := range options {
 		_ = opt(t)
 	}
@@ -328,7 +330,7 @@ func schemaFromTableConfig(tableConfig *tablepb.TableConfig) (*dynparquet.Schema
 		// No schema defined for table; read/only table
 		return nil, nil
 	}
-	return dynparquet.SchemaFromDefinition(tableConfig.Schema)
+	return dynparquet.SchemaFromDefinition(tableConfig.GetDeprecatedSchema())
 }
 
 func newTable(

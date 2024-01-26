@@ -596,7 +596,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64, dir st
 				options = append(options, WithoutWAL())
 			}
 			tableConfig := NewTableConfig(
-				tableMeta.Config.Schema,
+				tableMeta.Config.GetDeprecatedSchema(),
 				options...,
 			)
 

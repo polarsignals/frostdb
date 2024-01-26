@@ -49,6 +49,15 @@ func (m *TableConfig) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if vtmsg, ok := m.Schema.(interface {
+		MarshalToSizedBufferVT([]byte) (int, error)
+	}); ok {
+		size, err := vtmsg.MarshalToSizedBufferVT(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+	}
 	if m.DisableWal {
 		i--
 		if m.DisableWal {
@@ -69,8 +78,18 @@ func (m *TableConfig) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x18
 	}
-	if m.Schema != nil {
-		size, err := m.Schema.MarshalToSizedBufferVT(dAtA[:i])
+	return len(dAtA) - i, nil
+}
+
+func (m *TableConfig_DeprecatedSchema) MarshalToVT(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVT(dAtA[:size])
+}
+
+func (m *TableConfig_DeprecatedSchema) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	if m.DeprecatedSchema != nil {
+		size, err := m.DeprecatedSchema.MarshalToSizedBufferVT(dAtA[:i])
 		if err != nil {
 			return 0, err
 		}
@@ -81,7 +100,6 @@ func (m *TableConfig) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	}
 	return len(dAtA) - i, nil
 }
-
 func encodeVarint(dAtA []byte, offset int, v uint64) int {
 	offset -= sov(v)
 	base := offset
@@ -99,9 +117,8 @@ func (m *TableConfig) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	if m.Schema != nil {
-		l = m.Schema.SizeVT()
-		n += 1 + l + sov(uint64(l))
+	if vtmsg, ok := m.Schema.(interface{ SizeVT() int }); ok {
+		n += vtmsg.SizeVT()
 	}
 	if m.RowGroupSize != 0 {
 		n += 1 + sov(uint64(m.RowGroupSize))
@@ -113,6 +130,19 @@ func (m *TableConfig) SizeVT() (n int) {
 		n += 2
 	}
 	n += len(m.unknownFields)
+	return n
+}
+
+func (m *TableConfig_DeprecatedSchema) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.DeprecatedSchema != nil {
+		l = m.DeprecatedSchema.SizeVT()
+		n += 1 + l + sov(uint64(l))
+	}
 	return n
 }
 
@@ -153,7 +183,7 @@ func (m *TableConfig) UnmarshalVT(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Schema", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field DeprecatedSchema", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -180,11 +210,16 @@ func (m *TableConfig) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Schema == nil {
-				m.Schema = &v1alpha1.Schema{}
-			}
-			if err := m.Schema.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
-				return err
+			if oneof, ok := m.Schema.(*TableConfig_DeprecatedSchema); ok {
+				if err := oneof.DeprecatedSchema.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+					return err
+				}
+			} else {
+				v := &v1alpha1.Schema{}
+				if err := v.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+					return err
+				}
+				m.Schema = &TableConfig_DeprecatedSchema{DeprecatedSchema: v}
 			}
 			iNdEx = postIndex
 		case 3:

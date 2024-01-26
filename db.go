@@ -773,7 +773,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_NewTableBlock_:
 			entry := e.NewTableBlock
-			schema := entry.Config.Schema
+			schema := entry.Config.GetDeprecatedSchema()
 			var id ulid.ULID
 			if err := id.UnmarshalBinary(entry.BlockId); err != nil {
 				return err
@@ -835,7 +835,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 			table.pendingBlocks[table.active] = struct{}{}
 			go table.writeBlock(table.active, db.columnStore.manualBlockRotation, false)
 
-			protoEqual := proto.Equal(schema, table.config.Load().GetSchema())
+			protoEqual := proto.Equal(schema, table.config.Load().GetDeprecatedSchema())
 			if !protoEqual {
 				// If schemas are identical from block to block we should we
 				// reuse the previous schema in order to retain pooled memory
