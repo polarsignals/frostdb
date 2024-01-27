@@ -1408,7 +1408,6 @@ func TestDBRecover(t *testing.T) {
 		require.NoError(t, err)
 
 		// Insert 3 txns.
-		var lastWriteTx uint64
 		for i := 0; i < numInserts; i++ {
 			samples := dynparquet.NewTestSamples()
 			for j := range samples {
@@ -1416,15 +1415,20 @@ func TestDBRecover(t *testing.T) {
 			}
 			r, err := samples.ToRecord()
 			require.NoError(t, err)
-			writeTx, err := table.InsertRecord(ctx, r)
+			_, err = table.InsertRecord(ctx, r)
 			require.NoError(t, err)
+			// Wait until a snapshot is written for each write (it is the txn
+			// immediately preceding the write). This has to be done in a loop,
+			// otherwise writes may not cause a snapshot given that there
+			// might be a snapshot in progress.
 			if i > 0 {
-				// Wait until a snapshot is written for each write (it is the txn
-				// immediately preceding the write). This has to be done in a loop,
-				// otherwise writes may not cause a snapshot given that there
-				// might be a snapshot in progress.
-				db.Wait(writeTx - 1)
-				lastWriteTx = writeTx
+				require.Eventually(t, func() bool {
+					files, err := os.ReadDir(db.snapshotsDir())
+					if err != nil {
+						return false
+					}
+					return len(files) == i && !db.snapshotInProgress.Load()
+				}, 30*time.Second, 100*time.Millisecond)
 			}
 		}
 		// At this point, there should be 2 snapshots. One was triggered before
@@ -1432,8 +1436,14 @@ func TestDBRecover(t *testing.T) {
 		if blockRotation {
 			// A block rotation should trigger the third snapshot.
 			require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
-			// Wait for both the new block txn, and the old block rotation txn.
-			db.Wait(lastWriteTx + 2)
+			// Wait for the snapshot to complete
+			require.Eventually(t, func() bool {
+				files, err := os.ReadDir(db.snapshotsDir())
+				if err != nil {
+					return false
+				}
+				return len(files) == 3 && !db.snapshotInProgress.Load()
+			}, 30*time.Second, 100*time.Millisecond)
 		}
 
 		// Verify that there are now 3 snapshots and their txns.
@@ -1445,9 +1455,9 @@ func TestDBRecover(t *testing.T) {
 			require.NoError(t, err)
 			snapshotTxns = append(snapshotTxns, tx)
 		}
-		expectedSnapshots := []uint64{3, 5}
+		expectedSnapshots := []uint64{2, 3}
 		if blockRotation {
-			expectedSnapshots = append(expectedSnapshots, 8)
+			expectedSnapshots = append(expectedSnapshots, 6)
 		}
 		require.Equal(t, expectedSnapshots, snapshotTxns)
 		return dir

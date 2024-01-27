@@ -25,7 +25,6 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
-	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/parts"
 )
@@ -131,7 +130,7 @@ func (db *DB) snapshot(ctx context.Context, async bool, onSuccess func()) {
 		return
 	}
 
-	tx, _, commit := db.begin()
+	tx := db.beginRead()
 	level.Debug(db.logger).Log(
 		"msg", "starting a new snapshot",
 		"tx", tx,
@@ -139,28 +138,6 @@ func (db *DB) snapshot(ctx context.Context, async bool, onSuccess func()) {
 	doSnapshot := func(writeSnapshot func(context.Context, io.Writer) error) {
 		start := time.Now()
 		defer db.snapshotInProgress.Store(false)
-		defer commit()
-		if db.columnStore.enableWAL {
-			// Appending a snapshot record to the WAL is necessary,
-			// since the WAL expects a 1:1 relationship between txn ids
-			// and record indexes. This is done before the actual snapshot so
-			// that a failure to snapshot still appends a record to the WAL,
-			// avoiding a WAL deadlock.
-			if err := db.wal.Log(
-				tx,
-				&walpb.Record{
-					Entry: &walpb.Entry{
-						EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
-					},
-				},
-			); err != nil {
-				level.Error(db.logger).Log(
-					"msg", "failed to append snapshot record to WAL", "err", err,
-				)
-				return
-			}
-		}
-
 		if err := db.snapshotAtTX(ctx, tx, writeSnapshot); err != nil {
 			level.Error(db.logger).Log(
 				"msg", "failed to snapshot database", "err", err,
@@ -187,7 +164,7 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, writeSnapshot func(co
 	var fileSize int64
 	start := time.Now()
 	if err := func() error {
-		snapshotsDir := snapshotDir(db, tx)
+		snapshotsDir := SnapshotDir(db, tx)
 		if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
 			return err
 		}
@@ -801,10 +778,10 @@ func restoreIndexFilesFromSnapshot(db *DB, table, snapshotDir, blockID string) e
 	})
 }
 
-func snapshotDir(db *DB, tx uint64) string {
+func SnapshotDir(db *DB, tx uint64) string {
 	return filepath.Join(db.snapshotsDir(), fmt.Sprintf("%020d", tx))
 }
 
 func snapshotIndexDir(db *DB, tx uint64, table, block string) string {
-	return filepath.Join(snapshotDir(db, tx), "index", table, block)
+	return filepath.Join(SnapshotDir(db, tx), "index", table, block)
 }
