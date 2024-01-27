@@ -221,7 +221,7 @@ func configureLSMLevels(dir string, levels []*LevelConfig, logger log.Logger) ([
 			}
 			parts, err := fileCompaction.recover(parts.WithCompactionLevel(i + 1))
 			if err != nil {
-				level.Error(logger).Log("msg", "failed to recover parts", "err", err, "level", i+1)
+				return nil, nil, fmt.Errorf("failed to recover level %v parts: %w", i+1, err)
 			}
 			recovered = append(recovered, parts...)
 			settings[i] = fileCompaction
