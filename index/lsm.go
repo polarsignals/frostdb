@@ -173,6 +173,8 @@ func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, wait f
 }
 
 func (l *LSM) Close() error {
+	l.compacting.Lock()
+	defer l.compacting.Unlock()
 	l.Lock()
 	defer l.Unlock()
 
