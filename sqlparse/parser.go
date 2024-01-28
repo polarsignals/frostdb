@@ -3,6 +3,7 @@ package sqlparse
 import (
 	"fmt"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/pingcap/tidb/parser"
 
 	"github.com/polarsignals/frostdb/query"
@@ -27,7 +28,12 @@ type ParseResult struct {
 // queryEngine.ScanTable is provided as a starting point and no table needs to
 // be specified in the SQL statement. Additionally, the idea is to change to
 // creating logical plans directly (rather than through a builder).
-func (p *Parser) ExperimentalParse(builder query.Builder, dynColNames []string, sql string) (ParseResult, error) {
+func (p *Parser) ExperimentalParse(
+	builder query.Builder,
+	dynColNames []string,
+	sql string,
+	schema *parquet.Schema,
+) (ParseResult, error) {
 	asts, _, err := p.p.Parse(sql, "", "")
 	if err != nil {
 		return ParseResult{}, err
@@ -37,7 +43,7 @@ func (p *Parser) ExperimentalParse(builder query.Builder, dynColNames []string, 
 		return ParseResult{}, fmt.Errorf("cannot handle multiple asts, found %d", len(asts))
 	}
 
-	v := newASTVisitor(builder, dynColNames)
+	v := newASTVisitor(builder, dynColNames, schema)
 	asts[0].Accept(v)
 	if v.err != nil {
 		return ParseResult{}, v.err

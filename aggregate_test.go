@@ -117,19 +117,23 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 			var res arrow.Record
 			err = engine.ScanTable("test").
 				Aggregate(
-					[]logicalplan.Expr{testCase.fn(logicalplan.Col("value")).Alias(testCase.alias)},
+					[]*logicalplan.AggregationFunction{
+						testCase.fn(logicalplan.Col("value")),
+					},
 					[]logicalplan.Expr{logicalplan.Col("labels.label2")},
-				).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-				r.Retain()
-				res = r
-				return nil
-			})
+				).
+				Project(testCase.fn(logicalplan.Col("value")).Alias(testCase.alias)).
+				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+					r.Retain()
+					res = r
+					return nil
+				})
 			require.NoError(t, err)
 			require.NotNil(t, res)
 			defer res.Release()
 
 			cols := res.Columns()
-			require.Equal(t, 2, len(cols))
+			require.Equal(t, 1, len(cols))
 			for i, col := range cols {
 				require.Equal(t, 2, col.Len(), "unexpected number of values in column %s", res.Schema().Field(i).Name)
 			}
@@ -212,8 +216,13 @@ func TestAggregationProjection(t *testing.T) {
 
 	records := []arrow.Record{}
 	err = engine.ScanTable("test").
+		Project(
+			logicalplan.DynCol("labels"),
+			logicalplan.Col("timestamp"),
+			logicalplan.Col("value"),
+		).
 		Aggregate(
-			[]logicalplan.Expr{
+			[]*logicalplan.AggregationFunction{
 				logicalplan.Sum(logicalplan.Col("value")),
 				logicalplan.Max(logicalplan.Col("value")),
 			},
@@ -307,7 +316,7 @@ func TestDurationAggregation(t *testing.T) {
 
 	_ = engine.ScanTable("test").
 		Aggregate(
-			[]logicalplan.Expr{
+			[]*logicalplan.AggregationFunction{
 				logicalplan.Sum(logicalplan.Col("value")),
 			},
 			[]logicalplan.Expr{
@@ -384,7 +393,7 @@ func BenchmarkAggregation(b *testing.B) {
 		name: "sum",
 		builder: engine.ScanTable("test").
 			Aggregate(
-				[]logicalplan.Expr{
+				[]*logicalplan.AggregationFunction{
 					logicalplan.Sum(logicalplan.Col("value")),
 				},
 				[]logicalplan.Expr{
@@ -395,7 +404,7 @@ func BenchmarkAggregation(b *testing.B) {
 		name: "count",
 		builder: engine.ScanTable("test").
 			Aggregate(
-				[]logicalplan.Expr{
+				[]*logicalplan.AggregationFunction{
 					logicalplan.Count(logicalplan.Col("value")),
 				},
 				[]logicalplan.Expr{
@@ -406,7 +415,7 @@ func BenchmarkAggregation(b *testing.B) {
 		name: "max",
 		builder: engine.ScanTable("test").
 			Aggregate(
-				[]logicalplan.Expr{
+				[]*logicalplan.AggregationFunction{
 					logicalplan.Max(logicalplan.Col("value")),
 				},
 				[]logicalplan.Expr{
@@ -498,7 +507,7 @@ func Test_Aggregation_DynCol(t *testing.T) {
 
 	err = engine.ScanTable("test").
 		Aggregate(
-			[]logicalplan.Expr{logicalplan.Max(logicalplan.DynCol("foo"))},
+			[]*logicalplan.AggregationFunction{logicalplan.Max(logicalplan.DynCol("foo"))},
 			nil,
 		).
 		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {

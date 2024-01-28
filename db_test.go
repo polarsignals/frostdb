@@ -254,7 +254,7 @@ func TestDBWithWAL(t *testing.T) {
 	engine := query.NewEngine(pool, db.TableProvider())
 	err = engine.ScanTable("test").
 		Aggregate(
-			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.label2")},
 		).
 		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
@@ -1364,7 +1364,7 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 	engine := query.NewEngine(pool, db.TableProvider())
 	err = engine.ScanTable("test").
 		Aggregate(
-			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.label2")},
 		).
 		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
@@ -1815,7 +1815,7 @@ func Test_DB_Limiter(t *testing.T) {
 					),
 				).
 				Aggregate(
-					[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+					[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 					[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
 				).
 				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
@@ -1950,7 +1950,7 @@ func Test_DB_EngineInMemory(t *testing.T) {
 	engine := query.NewEngine(pool, db.TableProvider(), query.WithPhysicalplanOptions(physicalplan.WithInMemoryOnly()))
 	err = engine.ScanTable("test").
 		Aggregate(
-			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
 		).
 		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
@@ -1962,7 +1962,7 @@ func Test_DB_EngineInMemory(t *testing.T) {
 	engine = query.NewEngine(pool, db.TableProvider())
 	err = engine.ScanTable("test").
 		Aggregate(
-			[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
 		).
 		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {

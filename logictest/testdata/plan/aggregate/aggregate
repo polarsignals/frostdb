@@ -67,3 +67,8 @@ exec
 explain select sum(value * timestamp) group by stacktrace
 ----
 TableScan [concurrent] - Projection (value * timestamp, stacktrace) - HashAggregate (sum(value * timestamp) by stacktrace) - Synchronizer - HashAggregate (sum(value * timestamp) by stacktrace) - Projection (sum(value * timestamp))
+
+exec
+explain select avg(value) group by stacktrace
+----
+TableScan [concurrent] - Projection (value, stacktrace) - HashAggregate (count(value),sum(value) by stacktrace) - Synchronizer - HashAggregate (count(value),sum(value) by stacktrace) - Projection (sum(value) / count(value) as avg(value))

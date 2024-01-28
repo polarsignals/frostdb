@@ -189,6 +189,71 @@ func (e *BinaryExpr) Alias(alias string) *AliasExpr {
 	return &AliasExpr{Expr: e, Alias: alias}
 }
 
+func Convert(e Expr, t arrow.DataType) *ConvertExpr {
+	return &ConvertExpr{Expr: e, Type: t}
+}
+
+type ConvertExpr struct {
+	Expr Expr
+	Type arrow.DataType
+}
+
+func (e *ConvertExpr) Clone() Expr {
+	return &ConvertExpr{
+		Expr: e.Expr.Clone(),
+		Type: e.Type,
+	}
+}
+
+func (e *ConvertExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(e)
+	if !continu {
+		return false
+	}
+
+	continu = e.Expr.Accept(visitor)
+	if !continu {
+		return false
+	}
+
+	continu = visitor.Visit(e)
+	if !continu {
+		return false
+	}
+
+	return visitor.PostVisit(e)
+}
+
+func (e *ConvertExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
+	return e.Type, nil
+}
+
+func (e *ConvertExpr) Name() string {
+	return "convert(" + e.Expr.Name() + ", " + e.Type.String() + ")"
+}
+
+func (e *ConvertExpr) String() string { return e.Name() }
+
+func (e *ConvertExpr) ColumnsUsedExprs() []Expr {
+	return e.Expr.ColumnsUsedExprs()
+}
+
+func (e *ConvertExpr) MatchPath(path string) bool {
+	return strings.HasPrefix(e.Name(), path)
+}
+
+func (e *ConvertExpr) MatchColumn(columnName string) bool {
+	return e.Name() == columnName
+}
+
+func (e *ConvertExpr) Computed() bool {
+	return true
+}
+
+func (e *ConvertExpr) Alias(alias string) *AliasExpr {
+	return &AliasExpr{Expr: e, Alias: alias}
+}
+
 type Column struct {
 	ColumnName string
 }

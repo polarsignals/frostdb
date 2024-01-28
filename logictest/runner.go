@@ -71,6 +71,7 @@ type Runner struct {
 	schemas                   map[string]*schemapb.Schema
 	activeTable               Table
 	activeTableName           string
+	activeTableParquetSchema  *parquet.Schema
 	activeTableDynamicColumns []string
 	sqlParser                 *sqlparse.Parser
 }
@@ -127,6 +128,7 @@ func (r *Runner) handleCreateTable(_ context.Context, c *datadriven.TestData) (s
 	}
 	r.activeTable = table
 	r.activeTableName = name
+	r.activeTableParquetSchema = table.Schema().ParquetSchema()
 	for _, c := range table.Schema().Columns() {
 		if c.Dynamic {
 			r.activeTableDynamicColumns = append(r.activeTableDynamicColumns, c.Name)
@@ -384,9 +386,15 @@ func (r *Runner) handleExec(ctx context.Context, c *datadriven.TestData) (string
 	return b.String(), nil
 }
 
-func (r *Runner) parseSQL(dynColNames []string, sql string) (sqlparse.ParseResult, error) {
+func (r *Runner) parseSQL(
+	dynColNames []string,
+	sql string,
+) (sqlparse.ParseResult, error) {
 	res, err := r.sqlParser.ExperimentalParse(
-		r.db.ScanTable(r.activeTableName), dynColNames, sql,
+		r.db.ScanTable(r.activeTableName),
+		dynColNames,
+		sql,
+		r.activeTableParquetSchema,
 	)
 	if err != nil {
 		return sqlparse.ParseResult{}, err

@@ -24,6 +24,7 @@ type columnProjection interface {
 }
 
 type aliasProjection struct {
+	p    columnProjection
 	expr *logicalplan.AliasExpr
 	name string
 }
@@ -37,50 +38,21 @@ func (a aliasProjection) String() string {
 }
 
 func (a aliasProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
-	switch e := a.expr.Expr.(type) {
-	case *logicalplan.BinaryExpr:
-		p, err := projectionFromExpr(e)
-		if err != nil {
-			return nil, nil, err
-		}
-		fields, array, err := p.Project(mem, ar)
-		if err != nil {
-			return nil, nil, fmt.Errorf("project binary expr: %w", err)
-		}
-		for i, field := range fields {
-			if e.MatchColumn(field.Name) {
-				fields[i] = arrow.Field{
-					Name:     a.name,
-					Type:     fields[i].Type,
-					Nullable: fields[i].Nullable,
-					Metadata: fields[i].Metadata,
-				}
-			}
-		}
-		return fields, array, nil
-	case *logicalplan.Column:
-		for i := 0; i < ar.Schema().NumFields(); i++ {
-			field := ar.Schema().Field(i)
-			if a.expr.MatchColumn(field.Name) {
-				field.Name = a.name
-				ar.Column(i).Retain() // Retain the column since we're keeping it.
-				return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
-			}
-		}
-	case *logicalplan.AggregationFunction:
-		for i := 0; i < ar.Schema().NumFields(); i++ {
-			field := ar.Schema().Field(i)
-			if e.MatchColumn(field.Name) {
-				field.Name = a.name
-				ar.Column(i).Retain() // Retain the column since we're keeping it.
-				return []arrow.Field{field}, []arrow.Array{ar.Column(i)}, nil
-			}
-		}
-	default:
-		return nil, nil, fmt.Errorf("unsupported alias expression type: %T", e)
+	fields, arrays, err := a.p.Project(mem, ar)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return nil, nil, nil
+	if len(fields) == 0 || len(fields) != len(arrays) {
+		return nil, nil, fmt.Errorf("invalid projection for alias: fields and arrays must be non-empty and of equal length")
+	}
+
+	return []arrow.Field{{
+		Name:     a.name,
+		Type:     fields[0].Type,
+		Nullable: fields[0].Nullable,
+		Metadata: fields[0].Metadata,
+	}}, arrays, nil
 }
 
 type binaryExprProjection struct {
@@ -511,6 +483,70 @@ func (p plainProjection) Project(_ memory.Allocator, ar arrow.Record) ([]arrow.F
 	return nil, nil, nil
 }
 
+type convertProjection struct {
+	p    columnProjection
+	expr *logicalplan.ConvertExpr
+}
+
+func (p convertProjection) Name() string {
+	return p.expr.Name()
+}
+
+func (p convertProjection) String() string {
+	return p.expr.Name()
+}
+
+func (p convertProjection) convert(mem memory.Allocator, c arrow.Array) (arrow.Array, error) {
+	switch c := c.(type) {
+	case *array.Int64:
+		switch p.expr.Type {
+		case arrow.PrimitiveTypes.Float64:
+			return convertInt64ToFloat64(mem, c), nil
+		default:
+			return nil, fmt.Errorf("unsupported conversion from %s to %s", c.DataType(), p.expr.Type)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported conversion from %s to %s", c.DataType(), p.expr.Type)
+	}
+}
+
+func convertInt64ToFloat64(mem memory.Allocator, c *array.Int64) *array.Float64 {
+	defer c.Release()
+	res := array.NewFloat64Builder(mem)
+	defer res.Release()
+
+	res.Resize(c.Len())
+
+	for i := 0; i < c.Len(); i++ {
+		res.Append(float64(c.Value(i)))
+	}
+
+	return res.NewFloat64Array()
+}
+
+func (p convertProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	fields, cols, err := p.p.Project(mem, ar)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(fields) == 0 || len(fields) != len(cols) {
+		return nil, nil, fmt.Errorf("invalid projection for convert: fields and arrays must be non-empty and of equal length")
+	}
+
+	c, err := p.convert(mem, cols[0])
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return []arrow.Field{{
+		Name:     p.expr.Name(),
+		Type:     p.expr.Type,
+		Nullable: fields[0].Nullable,
+		Metadata: fields[0].Metadata,
+	}}, []arrow.Array{c}, nil
+}
+
 type literalProjection struct {
 	value scalar.Scalar
 }
@@ -572,6 +608,16 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		return plainProjection{
 			expr: e,
 		}, nil
+	case *logicalplan.ConvertExpr:
+		p, err := projectionFromExpr(e.Expr)
+		if err != nil {
+			return nil, fmt.Errorf("projection to convert: %w", err)
+		}
+
+		return convertProjection{
+			p:    p,
+			expr: e,
+		}, nil
 	case *logicalplan.AggregationFunction:
 		return plainProjection{
 			expr: logicalplan.Col(e.Name()),
@@ -585,9 +631,15 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 			value: e.Value,
 		}, nil
 	case *logicalplan.AliasExpr:
+		p, err := projectionFromExpr(e.Expr)
+		if err != nil {
+			return nil, fmt.Errorf("projection to convert: %w", err)
+		}
+
 		return aliasProjection{
+			p:    p,
 			expr: e,
-			name: e.Name(),
+			name: e.Alias,
 		}, nil
 	case *logicalplan.BinaryExpr:
 		switch e.Op {

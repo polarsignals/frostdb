@@ -121,12 +121,58 @@ func (b Builder) Aggregate(
 	aggExpr []*AggregationFunction,
 	groupExprs []Expr,
 ) Builder {
+	resolvedAggExpr := make([]*AggregationFunction, 0, len(aggExpr))
+	projectExprs := make([]Expr, 0, len(aggExpr))
+	avgFound := false
+	for _, agg := range aggExpr {
+		if agg.Func == AggFuncAvg {
+			avgFound = true
+			sum := &AggregationFunction{
+				Func: AggFuncSum,
+				Expr: agg.Expr,
+			}
+			count := &AggregationFunction{
+				Func: AggFuncCount,
+				Expr: agg.Expr,
+			}
+
+			div := (&BinaryExpr{
+				Left:  sum,
+				Op:    OpDiv,
+				Right: count,
+			}).Alias(agg.String())
+
+			resolvedAggExpr = append(resolvedAggExpr, sum, count)
+			projectExprs = append(projectExprs, div)
+		} else {
+			resolvedAggExpr = append(resolvedAggExpr, agg)
+			projectExprs = append(projectExprs, agg)
+		}
+	}
+
+	if !avgFound {
+		return Builder{
+			plan: &LogicalPlan{
+				Aggregation: &Aggregation{
+					GroupExprs: groupExprs,
+					AggExprs:   aggExpr,
+				},
+				Input: b.plan,
+			},
+		}
+	}
+
 	return Builder{
 		plan: &LogicalPlan{
-			Input: b.plan,
-			Aggregation: &Aggregation{
-				GroupExprs: groupExprs,
-				AggExprs:   aggExpr,
+			Projection: &Projection{
+				Exprs: append(groupExprs, projectExprs...),
+			},
+			Input: &LogicalPlan{
+				Aggregation: &Aggregation{
+					GroupExprs: groupExprs,
+					AggExprs:   resolvedAggExpr,
+				},
+				Input: b.plan,
 			},
 		},
 	}
