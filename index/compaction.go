@@ -62,7 +62,6 @@ func (f *FileCompaction) MaxSize() int64 { return f.maxSize }
 // Snapshot will create a new index file and all future compacitons are written to that index file.
 func (f *FileCompaction) Snapshot(dir string) error {
 	for i, file := range f.indexFiles {
-
 		if i == len(f.indexFiles)-1 {
 			// Sync the last file if it has data in it.
 			if f.offset > 0 {
