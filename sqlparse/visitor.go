@@ -24,7 +24,6 @@ type astVisitor struct {
 	schema      *parquet.Schema
 
 	exprStack []logicalplan.Expr
-	groupBy   []logicalplan.Expr
 }
 
 var _ ast.Visitor = &astVisitor{}
@@ -198,6 +197,7 @@ func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
 			// SELECT sum(value)/count(value) value_avg, (timestamp/1000) as timestamp_bucket group by timestamp_bucket
 			v.builder = v.builder.Project(postProjections...)
 		case expr.Distinct:
+			v.builder = v.builder.Project(v.exprStack...)
 			v.builder = v.builder.Distinct(v.exprStack...)
 		default:
 			v.builder = v.builder.Project(v.exprStack...)
@@ -211,7 +211,7 @@ type aggregationCollector struct {
 	aggregations []*logicalplan.AggregationFunction
 }
 
-func (a *aggregationCollector) PreVisit(e logicalplan.Expr) bool {
+func (a *aggregationCollector) PreVisit(_ logicalplan.Expr) bool {
 	return true
 }
 
@@ -222,7 +222,7 @@ func (a *aggregationCollector) Visit(e logicalplan.Expr) bool {
 	return true
 }
 
-func (a *aggregationCollector) PostVisit(e logicalplan.Expr) bool {
+func (a *aggregationCollector) PostVisit(_ logicalplan.Expr) bool {
 	return true
 }
 

@@ -172,7 +172,8 @@ type TableScan struct {
 	TableName     string
 
 	// PhysicalProjection describes the columns that are to be physically read
-	// by the table scan.
+	// by the table scan. This is an Expr so it can be either a column or
+	// dynamic column.
 	PhysicalProjection []Expr
 
 	// Filter is the predicate that is to be applied by the table scan to rule

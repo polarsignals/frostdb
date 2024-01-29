@@ -224,7 +224,7 @@ func (e *ConvertExpr) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(e)
 }
 
-func (e *ConvertExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
+func (e *ConvertExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
 	return e.Type, nil
 }
 
