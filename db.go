@@ -814,6 +814,8 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 						if err != nil {
 							return fmt.Errorf("promoting read only table: %w", err)
 						}
+					} else if table, ok = db.tables[tableName]; ok {
+						// Do nothing, the table already exists.
 					} else {
 						table, err = newTable(
 							db,
@@ -1087,8 +1089,25 @@ func (db *DB) getMinTXPersisted() uint64 {
 }
 
 func (db *DB) readOnlyTable(name string) (*Table, error) {
+	db.mtx.RLock()
 	table, ok := db.tables[name]
+	db.mtx.RUnlock()
 	if ok {
+		return table, nil
+	}
+
+	db.mtx.Lock()
+	defer db.mtx.Unlock()
+
+	// Need to double-check that in the meantime another table with the same
+	// name wasn't concurrently created.
+	table, ok = db.tables[name]
+	if ok {
+		return table, nil
+	}
+
+	// Check if this table exists as a read only table
+	if table, ok := db.roTables[name]; ok {
 		return table, nil
 	}
 
