@@ -496,8 +496,13 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 	}
 
 	if dbSetupErr := func() error {
-		if err := os.RemoveAll(db.trashDir()); err != nil {
-			return err
+		if db.storagePath != "" {
+			if err := os.RemoveAll(db.trashDir()); err != nil {
+				return err
+			}
+			if err := os.RemoveAll(db.indexDir()); err != nil { // Remove the index directory. These are either restored from snapshots or rebuilt from the WAL.
+				return err
+			}
 		}
 		db.txPool = NewTxPool(&db.highWatermark)
 		// Wait to start the compactor pool since benchmarks show that WAL

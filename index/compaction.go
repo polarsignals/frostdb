@@ -61,24 +61,25 @@ func (f *FileCompaction) MaxSize() int64 { return f.maxSize }
 
 // Snapshot will create a new index file and all future compacitons are written to that index file.
 func (f *FileCompaction) Snapshot(dir string) error {
-	if len(f.indexFiles) > 0 && f.offset == 0 { // If we are at the beginning of the file, no need to create a new file.
-		return nil
-	}
-
-	// First sync the current file if there is one.
-	if len(f.indexFiles) > 0 {
-		if err := f.Sync(); err != nil {
-			return err
-		}
-
-		for _, file := range f.indexFiles {
-			// Hard link the file into the snapshot directory.
-			if err := os.Link(file.Name(), filepath.Join(dir, filepath.Base(file.Name()))); err != nil {
-				return err
+	for i, file := range f.indexFiles {
+		if i == len(f.indexFiles)-1 {
+			// Sync the last file if it has data in it.
+			if f.offset > 0 {
+				if err := f.Sync(); err != nil {
+					return err
+				}
+			} else {
+				return nil // Skip empty file.
 			}
 		}
+
+		// Hard link the file into the snapshot directory.
+		if err := os.Link(file.Name(), filepath.Join(dir, filepath.Base(file.Name()))); err != nil {
+			return err
+		}
 	}
 
+	// Rotate the active file if it has data in it.
 	_, err := f.createIndexFile(len(f.indexFiles))
 	return err
 }
