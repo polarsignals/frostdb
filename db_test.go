@@ -2486,8 +2486,10 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 				},
 				{ // trigger a snapshot (leaving the only valid data in L1)
 					op: func(table *Table, dir string) {
-						tx := table.db.highWatermark.Load()
-						require.NoError(t, table.db.snapshotAtTX(context.Background(), tx, table.db.snapshotWriter(tx)))
+						table.db.snapshot(context.Background(), false, func() {
+							require.NoError(t, table.db.reclaimDiskSpace(context.Background(), nil))
+							time.Sleep(100 * time.Millisecond) // WAL flushes every 50ms
+						})
 					},
 				},
 				{
@@ -2524,6 +2526,8 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 				// trigger a snapshot
 				success := false
 				table.db.snapshot(context.Background(), false, func() {
+					require.NoError(t, table.db.reclaimDiskSpace(context.Background(), nil))
+					time.Sleep(100 * time.Millisecond) // WAL flushes every 50ms
 					success = true
 				})
 				require.True(t, success)
@@ -2555,8 +2559,10 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			},
 			beforeClose: func(table *Table, dir string) {
 				// trigger a snapshot
-				tx := table.db.highWatermark.Load()
-				require.NoError(t, table.db.snapshotAtTX(context.Background(), tx, table.db.snapshotWriter(tx)))
+				table.db.snapshot(context.Background(), false, func() {
+					require.NoError(t, table.db.reclaimDiskSpace(context.Background(), nil))
+					time.Sleep(100 * time.Millisecond) // WAL flushes every 50ms
+				})
 
 				// Write more to the table and trigger a compaction
 				samples := dynparquet.NewTestSamples()
@@ -2588,8 +2594,10 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			},
 			beforeClose: func(table *Table, dir string) {
 				// trigger a snapshot
-				tx := table.db.highWatermark.Load()
-				require.NoError(t, table.db.snapshotAtTX(context.Background(), tx, table.db.snapshotWriter(tx)))
+				table.db.snapshot(context.Background(), false, func() {
+					require.NoError(t, table.db.reclaimDiskSpace(context.Background(), nil))
+					time.Sleep(100 * time.Millisecond) // WAL flushes every 50ms
+				})
 			},
 			lvl2Parts: 3,
 			lvl1Parts: 2,
