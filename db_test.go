@@ -2583,14 +2583,14 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 		},
 		"corrupted snapshot": { // The actual snapshot index file is corrupted
 			beforeReplay: func(table *Table, dir string) {
-				filepath.WalkDir(table.db.snapshotsDir(), func(path string, info fs.DirEntry, err error) error {
+				require.NoError(t, filepath.WalkDir(table.db.snapshotsDir(), func(path string, info fs.DirEntry, err error) error {
 					if filepath.Ext(path) == index.IndexFileExtension {
 						info, err := os.Stat(path)
 						require.NoError(t, err)
 						require.NoError(t, os.Truncate(path, info.Size()-1)) // truncate the last byte to corrupt the file
 					}
 					return nil
-				})
+				}))
 			},
 			beforeClose: func(table *Table, dir string) {
 				// trigger a snapshot
