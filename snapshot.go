@@ -607,7 +607,7 @@ func loadSnapshot(ctx context.Context, db *DB, r io.ReaderAt, size int64, dir st
 
 			table, err := db.table(tableMeta.Name, tableConfig, blockUlid)
 			if err != nil {
-				return err
+				return fmt.Errorf("recovering table from snapshot: %w", err)
 			}
 
 			table.mtx.Lock()
@@ -752,6 +752,10 @@ func restoreIndexFilesFromSnapshot(db *DB, table, snapshotDir, blockID string) e
 	}
 
 	snapshotIndexDir := filepath.Join(snapshotDir, "index", table, blockID)
+
+	if err := index.ValidateIndexDir(snapshotIndexDir); err != nil {
+		return fmt.Errorf("failed to validate snapshot index directory: %w", err)
+	}
 
 	// Restore the index files from the snapshot files.
 	return filepath.WalkDir(snapshotIndexDir, func(path string, d os.DirEntry, err error) error {

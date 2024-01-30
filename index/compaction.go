@@ -336,6 +336,7 @@ func ValidateIndexDir(dir string) error {
 		if err != nil {
 			return fmt.Errorf("failed to open index file %s: %w", path, err)
 		}
+		defer idxfile.Close()
 
 		// Attempt to read the final Parquet file to ensure it is valid.
 		info, err := idxfile.Stat()
