@@ -300,6 +300,12 @@ func (db *DB) getLatestValidSnapshotTxn(ctx context.Context) (uint64, error) {
 			if _, err := readFooter(f, info.Size()); err != nil {
 				return err
 			}
+
+			// Validate any index files if the exist
+			if err := index.ValidateIndexDir(filepath.Join(dir, entry.Name(), "index")); err != nil {
+				return err
+			}
+
 			return nil
 		}(); err != nil {
 			level.Debug(db.logger).Log(

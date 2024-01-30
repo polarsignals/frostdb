@@ -316,3 +316,47 @@ func (l *inMemoryLevel) Compact(toCompact []parts.Part, options ...parts.Option)
 	postCompactionSize := int64(b.Len())
 	return []parts.Part{parts.NewParquetPart(0, buf, options...)}, preCompactionSize, postCompactionSize, nil
 }
+
+// ValidateIndexDir will validate each index file in the given directory. It will read the last part in each file and ensure that it can open it.
+func ValidateIndexDir(dir string) error {
+	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("failed to walk snapshot index directory: %w", err)
+		}
+
+		if d.IsDir() { // Table and Level dirs expected
+			return nil
+		}
+
+		if filepath.Ext(path) != IndexFileExtension {
+			return nil // unknown file
+		}
+
+		idxfile, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("failed to open index file %s: %w", path, err)
+		}
+
+		// Attempt to read the final Parquet file to ensure it is valid.
+		info, err := idxfile.Stat()
+		if err != nil {
+			return fmt.Errorf("failed to get index file %s info: %w", path, err)
+		}
+
+		offset := info.Size() - 8
+		size := make([]byte, 8)
+		if n, err := idxfile.ReadAt(size, offset); n != 8 {
+			return fmt.Errorf("failed to read index file %s size: %w", path, err)
+		}
+
+		parquetSize := int64(binary.LittleEndian.Uint64(size))
+		offset -= parquetSize
+
+		_, err = parquet.OpenFile(io.NewSectionReader(idxfile, offset, parquetSize), parquetSize)
+		if err != nil {
+			return fmt.Errorf("failed to open final part of %s: %w", path, err)
+		}
+
+		return nil
+	})
+}
