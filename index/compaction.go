@@ -250,7 +250,7 @@ func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 
 				txstr, ok := buf.ParquetFile().Lookup(ParquetCompactionTXKey)
 				if !ok {
-					return fmt.Errorf("failed to find compaction_tx metadata")
+					return fmt.Errorf("failed to find compaction_tx metadata: %s", file.Name())
 				}
 
 				tx, err := strconv.Atoi(txstr)

@@ -714,6 +714,9 @@ func (db *DB) snapshotsDo(ctx context.Context, dir string, callback func(tx uint
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if filepath.Ext(entry.Name()) == ".fdbs" { // Legacy snapshots were stored at the top-level. Ignore these
+			continue
+		}
 		name := entry.Name()
 		if len(name) < 20 {
 			continue
