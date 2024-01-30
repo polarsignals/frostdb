@@ -127,28 +127,41 @@ func (f *FileCompaction) Compact(compact []parts.Part, options ...parts.Option) 
 	if len(compact) == 0 {
 		return nil, 0, 0, fmt.Errorf("no parts to compact")
 	}
-
+	var (
+		prevOffset        int64
+		preCompactionSize int64
+	)
 	accountant := &accountingWriter{w: f.file()}
-	preCompactionSize, err := f.compact(accountant, compact,
-		parquet.KeyValueMetadata(
-			ParquetCompactionTXKey, // Compacting up through this transaction.
-			fmt.Sprintf("%v", compact[0].TX()),
-		),
-	) // compact into the next level
-	if err != nil {
+	write := func() error {
+		var err error
+		preCompactionSize, err = f.compact(accountant, compact,
+			parquet.KeyValueMetadata(
+				ParquetCompactionTXKey, // Compacting up through this transaction.
+				fmt.Sprintf("%v", compact[0].TX()),
+			),
+		) // compact into the next level
+		if err != nil {
+			return err
+		}
+
+		// Record the writing offset into the file.
+		prevOffset = f.offset
+
+		// Record the file size for recovery.
+		size := make([]byte, 8)
+		binary.LittleEndian.PutUint64(size, uint64(accountant.n))
+		if n, err := f.file().Write(size); n != 8 {
+			return fmt.Errorf("failed to write size to file: %v", err)
+		}
+		f.offset += accountant.n + 8
+		return nil
+	}
+	if err := write(); err != nil {
+		if _, err := f.file().Seek(f.offset, io.SeekStart); err != nil {
+			panic(err) // We've corrupted the file, panic. TODO gracefully handle this case.
+		}
 		return nil, 0, 0, err
 	}
-
-	// Record the writing offset into the file.
-	prevOffset := f.offset
-
-	// Record the file size for recovery.
-	size := make([]byte, 8)
-	binary.LittleEndian.PutUint64(size, uint64(accountant.n))
-	if n, err := f.file().Write(size); n != 8 {
-		return nil, 0, 0, fmt.Errorf("failed to write size to file: %v", err)
-	}
-	f.offset += accountant.n + 8
 
 	// Sync file after writing.
 	if err := f.Sync(); err != nil {
