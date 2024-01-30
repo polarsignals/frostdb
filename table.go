@@ -1216,8 +1216,12 @@ func (t *Table) collectRowGroups(
 	}()
 	for _, block := range memoryBlocks {
 		if err := block.index.Scan(ctx, "", t.schema, filterExpr, tx, func(ctx context.Context, v any) error {
-			rowGroups <- v
-			return nil
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case rowGroups <- v:
+				return nil
+			}
 		}); err != nil {
 			return err
 		}
@@ -1231,8 +1235,12 @@ func (t *Table) collectRowGroups(
 	for _, source := range t.db.sources {
 		span.AddEvent(fmt.Sprintf("source/%s", source.String()))
 		if err := source.Scan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, lastBlockTimestamp, func(ctx context.Context, v any) error {
-			rowGroups <- v
-			return nil
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case rowGroups <- v:
+				return nil
+			}
 		}); err != nil {
 			return err
 		}
