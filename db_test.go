@@ -2575,6 +2575,27 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			finalRows: 1500,
 			writes:    defaultWrites,
 		},
+		"corrupted snapshot": { // The actual snapshot index file is corrupted
+			beforeReplay: func(table *Table, dir string) {
+				filepath.WalkDir(table.db.snapshotsDir(), func(path string, info fs.DirEntry, err error) error {
+					if filepath.Ext(path) == index.IndexFileExtension {
+						info, err := os.Stat(path)
+						require.NoError(t, err)
+						require.NoError(t, os.Truncate(path, info.Size()-1)) // truncate the last byte to corrupt the file
+					}
+					return nil
+				})
+			},
+			beforeClose: func(table *Table, dir string) {
+				// trigger a snapshot
+				tx := table.db.highWatermark.Load()
+				require.NoError(t, table.db.snapshotAtTX(context.Background(), tx, table.db.snapshotWriter(tx)))
+			},
+			lvl2Parts: 3,
+			lvl1Parts: 2,
+			finalRows: 0, // We expect data loss in this scenario
+			writes:    defaultWrites,
+		},
 	}
 
 	for name, test := range tests {
