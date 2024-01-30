@@ -1296,7 +1296,7 @@ func (t *Table) compactParts(w io.Writer, compact []parts.Part, options ...parqu
 			}()
 			// Note that the records must be sorted (sortInput=true) because
 			// there is no guarantee that order is maintained.
-			return preCompactionSize, t.writeRecordsToParquet(w, distinctRecords, true)
+			return preCompactionSize, t.writeRecordsToParquet(w, distinctRecords, true, options...)
 		}
 	}
 
@@ -1441,19 +1441,29 @@ func (t *Table) buffersForCompaction(w io.Writer, inputParts []parts.Part) ([]dy
 	return result, nil
 }
 
-func (t *Table) writeRecordsToParquet(w io.Writer, records []arrow.Record, sortInput bool) error {
+func (t *Table) writeRecordsToParquet(w io.Writer, records []arrow.Record, sortInput bool, options ...parquet.WriterOption) error {
 	dynColSets := make([]map[string][]string, 0, len(records))
 	for _, r := range records {
 		dynColSets = append(dynColSets, pqarrow.RecordDynamicCols(r))
 	}
 	dynCols := dynparquet.MergeDynamicColumnSets(dynColSets)
-	pw, err := t.schema.GetWriter(w, dynCols, sortInput)
-	if err != nil {
-		return err
+	var writer dynparquet.ParquetWriter
+	if len(options) > 0 {
+		var err error
+		writer, err = t.schema.NewWriter(w, dynCols, false, options...)
+		if err != nil {
+			return err
+		}
+	} else {
+		pw, err := t.schema.GetWriter(w, dynCols, sortInput)
+		if err != nil {
+			return err
+		}
+		defer t.schema.PutWriter(pw)
+		writer = pw
 	}
-	defer t.schema.PutWriter(pw)
 
-	return pqarrow.RecordsToFile(t.schema, pw, records)
+	return pqarrow.RecordsToFile(t.schema, writer, records)
 }
 
 // distinctRecordsForCompaction performs a distinct on the given parts. If at
