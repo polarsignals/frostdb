@@ -71,4 +71,14 @@ TableScan [concurrent] - Projection (value * timestamp, stacktrace) - HashAggreg
 exec
 explain select avg(value) group by stacktrace
 ----
-TableScan [concurrent] - Projection (value, stacktrace) - HashAggregate (count(value),sum(value) by stacktrace) - Synchronizer - HashAggregate (count(value),sum(value) by stacktrace) - Projection (sum(value) / count(value) as avg(value))
+TableScan [concurrent] - Projection (value, stacktrace) - HashAggregate (sum(value),count(value) by stacktrace) - Synchronizer - HashAggregate (sum(value),count(value) by stacktrace) - Projection (stacktrace, sum(value) / count(value) as avg(value)) - Projection (avg(value))
+
+exec
+explain select max(value) - min(value), sum(value) / count(value) group by labels.label1
+----
+TableScan [concurrent] - Projection (value, labels.label1) - HashAggregate (max(value),min(value),sum(value),count(value) by labels.label1) - Synchronizer - HashAggregate (max(value),min(value),sum(value),count(value) by labels.label1) - Projection (max(value) - min(value), sum(value) / count(value))
+
+exec
+explain select labels.label1, (max(value) - min(value)) / 2, sum(value) / count(value), (sum(value) / count(value)) * 2 group by labels.label1
+----
+TableScan [concurrent] - Projection (labels.label1, value) - HashAggregate (max(value),min(value),sum(value),count(value),sum(value),count(value) by labels.label1) - Synchronizer - HashAggregate (max(value),min(value),sum(value),count(value),sum(value),count(value) by labels.label1) - Projection (labels.label1, max(value) - min(value) / 2, sum(value) / count(value), sum(value) / count(value) * 2)

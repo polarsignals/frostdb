@@ -356,12 +356,24 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 		}
 	}
 
-	if concreteAggregateFieldsFound != aggregate.concreteAggregations ||
+	// It's ok for the same aggregation to be found multiple times, optimizers
+	// should remove them but for correctness in the case where they don't we
+	// need to handle it, so concrete aggregates are allowed to be different
+	// from concrete aggregations.
+	if (concreteAggregateFieldsFound == 0 || aggregate.concreteAggregations == 0) ||
 		(len(aggregate.dynamicAggregations) > 0) && dynamicAggregateFieldsFound == 0 {
 		// To perform an aggregation ALL concrete columns must have been matched
 		// or at least one dynamic column if performing dynamic aggregations.
-		fmt.Println(r)
-		return errors.New("aggregate field not found, aggregations are not possible without it")
+		exprs := make([]string, len(aggregate.aggregations))
+		for i, col := range aggregate.aggregations {
+			exprs[i] = col.expr.String()
+		}
+
+		if a.finalStage {
+			return fmt.Errorf("aggregate field(s) not found %#v, final aggregations are not possible without it (%d concrete aggregation fields found; %d concrete aggregations)", exprs, concreteAggregateFieldsFound, aggregate.concreteAggregations)
+		} else {
+			return fmt.Errorf("aggregate field(s) not found %#v, aggregations are not possible without it (%d concrete aggregation fields found; %d concrete aggregations)", exprs, concreteAggregateFieldsFound, aggregate.concreteAggregations)
+		}
 	}
 
 	numRows := int(r.NumRows())

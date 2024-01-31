@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
 	"github.com/parquet-go/parquet-go"
 	"github.com/pingcap/tidb/parser/ast"
@@ -85,9 +84,6 @@ func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
 				// "sum(value) as value_sum_or_anything_else" then the actual
 				// query plan nesting looks something like:
 				// alias(value_sum_or_anything_else, sum(value))
-				// sum(value) / count(value) as value_avg
-				// alias(value_avg, div(sum(value), count(value)))
-				// and it finds: sum(value), count(value)
 
 				if len(aggCollector.aggregations) > 0 {
 					// This is the expression that will be aggregated so we
@@ -100,66 +96,10 @@ func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
 							// once.
 							includedPreprojections[agg.Expr.Name()] = struct{}{}
 						}
-						if agg.Func == logicalplan.AggFuncAvg {
-							// The avg function is a special case where we need
-							// to project the count and sum expressions and
-							// then divide them.
-							//
-							// Essentially this:
-							//
-							// avg(value)
-							//
-							// Becomes this:
-							//
-							// alias("avg(value)", div(sum(value), count(value)))
-
-							// For avg, we need to project the count and sum
-							// separately.
-							count := &logicalplan.AggregationFunction{
-								Func: logicalplan.AggFuncCount,
-								Expr: agg.Expr,
-							}
-
-							sum := &logicalplan.AggregationFunction{
-								Func: logicalplan.AggFuncSum,
-								Expr: agg.Expr,
-							}
-							aggregations = append(aggregations, count, sum)
-
-							t, err := agg.Expr.DataType(v.schema)
-							if err != nil {
-								v.err = err
-								return nil, true
-							}
-
-							var typedCount logicalplan.Expr = count
-							if !arrow.TypeEqual(t, arrow.PrimitiveTypes.Int64) {
-								typedCount = logicalplan.Convert(count, arrow.PrimitiveTypes.Float64)
-							}
-
-							var avgProjection logicalplan.Expr = &logicalplan.BinaryExpr{
-								Left:  sum,
-								Op:    logicalplan.OpDiv,
-								Right: typedCount,
-							}
-							if e, ok := expr.(*logicalplan.AliasExpr); ok {
-								avgProjection = &logicalplan.AliasExpr{
-									Expr:  avgProjection,
-									Alias: e.Alias,
-								}
-							} else {
-								avgProjection = &logicalplan.AliasExpr{
-									Expr:  avgProjection,
-									Alias: expr.String(),
-								}
-							}
-							postProjections = append(postProjections, avgProjection)
-							continue
-						}
 
 						aggregations = append(aggregations, agg)
-						postProjections = append(postProjections, expr)
 					}
+					postProjections = append(postProjections, expr)
 				} else {
 					preProjections = append(preProjections, expr)
 					if _, ok := expr.(*logicalplan.DynamicColumn); ok {
@@ -326,6 +266,8 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			case *logicalplan.AggregationFunction:
 				v.exprStack[lastExpr] = e.Alias(as)
 			case *logicalplan.BinaryExpr:
+				v.exprStack[lastExpr] = e.Alias(as)
+			case *logicalplan.Column:
 				v.exprStack[lastExpr] = e.Alias(as)
 			default:
 				return fmt.Errorf("unhandled select field %s", as)
