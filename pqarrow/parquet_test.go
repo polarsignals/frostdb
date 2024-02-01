@@ -9,6 +9,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/parquet-go/parquet-go"
+	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,7 +81,7 @@ func BenchmarkRecordsToFile(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := recordToRows(
-			noopWriter{}, func(string) bool { return false }, record, 0, numRows, parquetFields.Fields(),
+			noopWriter{}, func(string) (dynparquet.ColumnDefinition, bool) { return dynparquet.ColumnDefinition{}, false }, record, 0, numRows, parquetFields.Fields(),
 		); err != nil {
 			b.Fatal(err)
 		}
@@ -167,7 +168,7 @@ func TestRecordToRows_list(t *testing.T) {
 	}
 	clone := &cloneWriter{}
 	if err := recordToRows(
-		clone, func(string) bool { return false }, r, 0, int(r.NumRows()), parquetFields.Fields(),
+		clone, func(string) (dynparquet.ColumnDefinition, bool) { return dynparquet.ColumnDefinition{}, false }, r, 0, int(r.NumRows()), parquetFields.Fields(),
 	); err != nil {
 		t.Fatal(err)
 	}

@@ -332,7 +332,7 @@ func TestIsDynamicColumn(t *testing.T) {
 		}
 		schema, err := SchemaFromDefinition(def)
 		require.NoError(t, err)
-		schema.IsDynamicColumn(tc.cName)
+		schema.FindDynamicColumnForConcreteColumn(tc.cName)
 	}
 }
 
@@ -351,7 +351,7 @@ func BenchmarkIsDynamicColumn(b *testing.B) {
 	schema, err := SchemaFromDefinition(def)
 	require.NoError(b, err)
 	for i := 0; i < b.N; i++ {
-		_ = schema.IsDynamicColumn("labels.label1")
+		schema.FindDynamicColumnForConcreteColumn("labels.label1")
 	}
 }
 

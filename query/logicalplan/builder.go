@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/apache/arrow/go/v14/arrow"
-	"github.com/parquet-go/parquet-go"
 )
 
 type Builder struct {
 	plan *LogicalPlan
+	err  error
 }
 
 func (b Builder) Scan(
@@ -58,8 +58,12 @@ type Visitor interface {
 	PostVisit(expr Expr) bool
 }
 
+type ExprTypeFinder interface {
+	DataTypeForExpr(expr Expr) (arrow.DataType, error)
+}
+
 type Expr interface {
-	DataType(*parquet.Schema) (arrow.DataType, error)
+	DataType(ExprTypeFinder) (arrow.DataType, error)
 	Accept(Visitor) bool
 	Name() string
 	fmt.Stringer
@@ -136,10 +140,20 @@ func (b Builder) Aggregate(
 				Expr: agg.Expr,
 			}
 
+			var countExpr Expr = count
+			aggType, err := agg.Expr.DataType(b.plan)
+			if err != nil {
+				b.err = err
+			}
+
+			if !arrow.TypeEqual(aggType, arrow.PrimitiveTypes.Int64) {
+				countExpr = Convert(countExpr, aggType)
+			}
+
 			div := (&BinaryExpr{
 				Left:  sum,
 				Op:    OpDiv,
-				Right: count,
+				Right: countExpr,
 			}).Alias(agg.String())
 
 			resolvedAggExpr = append(resolvedAggExpr, sum, count)
@@ -179,6 +193,10 @@ func (b Builder) Aggregate(
 }
 
 func (b Builder) Build() (*LogicalPlan, error) {
+	if b.err != nil {
+		return nil, b.err
+	}
+
 	if err := Validate(b.plan); err != nil {
 		return nil, err
 	}

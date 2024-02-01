@@ -891,7 +891,7 @@ func Test_Insert_Repeated(t *testing.T) {
 			converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
 			defer converter.Close()
 
-			require.NoError(t, converter.Convert(ctx, buffer))
+			require.NoError(t, converter.Convert(ctx, buffer, table.Schema()))
 			record := converter.NewRecord()
 			defer record.Release()
 
@@ -1004,7 +1004,7 @@ func Test_Compact_Repeated(t *testing.T) {
 	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
 	defer converter.Close()
 
-	require.NoError(t, converter.Convert(ctx, buffer))
+	require.NoError(t, converter.Convert(ctx, buffer, table.Schema()))
 	before := converter.NewRecord()
 	defer before.Release()
 

@@ -360,7 +360,7 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 	// should remove them but for correctness in the case where they don't we
 	// need to handle it, so concrete aggregates are allowed to be different
 	// from concrete aggregations.
-	if (concreteAggregateFieldsFound == 0 || aggregate.concreteAggregations == 0) ||
+	if ((concreteAggregateFieldsFound == 0 || aggregate.concreteAggregations == 0) && (len(aggregate.dynamicAggregations) == 0)) ||
 		(len(aggregate.dynamicAggregations) > 0) && dynamicAggregateFieldsFound == 0 {
 		// To perform an aggregation ALL concrete columns must have been matched
 		// or at least one dynamic column if performing dynamic aggregations.

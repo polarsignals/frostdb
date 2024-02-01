@@ -9,6 +9,7 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/memory"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/pqarrow/convert"
 )
 
 // LogicalPlan is a logical representation of a query. Each LogicalPlan is a
@@ -98,6 +99,63 @@ func (plan *LogicalPlan) string(indent int) string {
 		res += "\n" + plan.Input.string(indent+1)
 	}
 	return res
+}
+
+func (plan *LogicalPlan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
+	switch {
+	case plan.SchemaScan != nil:
+		t, err := plan.SchemaScan.DataTypeForExpr(expr)
+		if err != nil {
+			return nil, fmt.Errorf("data type for expr %v within SchemaScan: %w", expr, err)
+		}
+
+		return t, nil
+	case plan.TableScan != nil:
+		t, err := plan.TableScan.DataTypeForExpr(expr)
+		if err != nil {
+			return nil, fmt.Errorf("data type for expr %v within TableScan: %w", expr, err)
+		}
+
+		return t, nil
+	case plan.Filter != nil:
+		t, err := plan.Input.DataTypeForExpr(expr)
+		if err != nil {
+			return nil, fmt.Errorf("data type for expr %v within Filter: %w", expr, err)
+		}
+
+		return t, nil
+	case plan.Projection != nil:
+		t, err := expr.DataType(plan.Input)
+		if err != nil {
+			return nil, fmt.Errorf("data type for expr %v within Projection: %w", expr, err)
+		}
+
+		return t, nil
+	case plan.Aggregation != nil:
+		if agg, ok := expr.(*AggregationFunction); ok {
+			if agg.Func == AggFuncCount {
+				return arrow.PrimitiveTypes.Int64, nil
+			}
+
+			return agg.Expr.DataType(plan.Input)
+		}
+
+		t, err := expr.DataType(plan.Input)
+		if err != nil {
+			return nil, fmt.Errorf("data type for expr %v within Aggregation: %w", expr, err)
+		}
+
+		return t, nil
+	case plan.Distinct != nil:
+		t, err := expr.DataType(plan.Input)
+		if err != nil {
+			return nil, fmt.Errorf("data type for expr %v within Distinct: %w", expr, err)
+		}
+
+		return t, nil
+	default:
+		return nil, fmt.Errorf("unknown logical plan")
+	}
 }
 
 // TableReader returns the table reader.
@@ -190,6 +248,63 @@ type TableScan struct {
 	SkipSources bool
 }
 
+func (scan *TableScan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
+	tp, err := scan.TableProvider.GetTable(scan.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("get table %q: %w", scan.TableName, err)
+	}
+
+	s := tp.Schema()
+
+	t, err := DataTypeForExprWithSchema(expr, s)
+	if err != nil {
+		return nil, fmt.Errorf("type for expr %q in table %q", expr, scan.TableName)
+	}
+
+	return t, nil
+}
+
+func DataTypeForExprWithSchema(expr Expr, s *dynparquet.Schema) (arrow.DataType, error) {
+	switch expr := expr.(type) {
+	case *Column:
+		colDef, found := s.FindDynamicColumnForConcreteColumn(expr.ColumnName)
+		if found {
+			t, err := convert.ParquetNodeToType(colDef.StorageLayout)
+			if err != nil {
+				return nil, fmt.Errorf("convert parquet node to type: %w", err)
+			}
+
+			return t, nil
+		}
+
+		colDef, found = s.FindColumn(expr.ColumnName)
+		if found {
+			t, err := convert.ParquetNodeToType(colDef.StorageLayout)
+			if err != nil {
+				return nil, fmt.Errorf("convert parquet node to type: %w", err)
+			}
+
+			return t, nil
+		}
+
+		return nil, fmt.Errorf("column %q not found", expr.ColumnName)
+	case *DynamicColumn:
+		colDef, found := s.FindDynamicColumn(expr.ColumnName)
+		if found {
+			t, err := convert.ParquetNodeToType(colDef.StorageLayout)
+			if err != nil {
+				return nil, fmt.Errorf("convert parquet node to type: %w", err)
+			}
+
+			return t, nil
+		}
+
+		return nil, fmt.Errorf("dynamic column %q not found", expr.ColumnName)
+	default:
+		return nil, fmt.Errorf("unhandled expr type %T", expr)
+	}
+}
+
 func (scan *TableScan) String() string {
 	return "TableScan" +
 		" Table: " + scan.TableName +
@@ -222,6 +337,19 @@ type SchemaScan struct {
 
 func (s *SchemaScan) String() string {
 	return "SchemaScan"
+}
+
+func (s *SchemaScan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
+	switch expr := expr.(type) {
+	case *Column:
+		if expr.ColumnName == "name" {
+			return arrow.BinaryTypes.String, nil
+		}
+
+		return nil, fmt.Errorf("unknown column %s", expr.ColumnName)
+	default:
+		return nil, fmt.Errorf("unhandled expr %T", expr)
+	}
 }
 
 type Filter struct {

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -109,11 +110,11 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 	c := NewParquetConverter(alloc, logicalplan.IterOptions{})
 	defer c.Close()
 
-	require.NoError(t, c.Convert(ctx, buf0))
-	require.NoError(t, c.Convert(ctx, buf1))
-	require.NoError(t, c.Convert(ctx, buf2))
-	require.NoError(t, c.Convert(ctx, buf3))
-	require.NoError(t, c.Convert(ctx, buf4))
+	require.NoError(t, c.Convert(ctx, buf0, dynSchema))
+	require.NoError(t, c.Convert(ctx, buf1, dynSchema))
+	require.NoError(t, c.Convert(ctx, buf2, dynSchema))
+	require.NoError(t, c.Convert(ctx, buf3, dynSchema))
+	require.NoError(t, c.Convert(ctx, buf4, dynSchema))
 
 	ar := c.NewRecord()
 	defer ar.Release()
@@ -225,7 +226,7 @@ func TestMergeToArrow(t *testing.T) {
 
 	ctx := context.Background()
 
-	as, err := ParquetRowGroupToArrowSchema(ctx, merge, logicalplan.IterOptions{})
+	as, err := ParquetRowGroupToArrowSchema(ctx, merge, dynSchema, logicalplan.IterOptions{})
 	require.NoError(t, err)
 	require.Len(t, as.Fields(), 8)
 	require.Equal(t, as.Field(0), arrow.Field{Name: "example_type", Type: &arrow.DictionaryType{
@@ -257,7 +258,7 @@ func TestMergeToArrow(t *testing.T) {
 
 	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
-	require.NoError(t, c.Convert(ctx, merge))
+	require.NoError(t, c.Convert(ctx, merge, dynSchema))
 	ar := c.NewRecord()
 	require.Equal(t, int64(5), ar.NumRows())
 	require.Equal(t, int64(8), ar.NumCols())
@@ -292,7 +293,7 @@ func BenchmarkNestedParquetToArrow(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		require.NoError(b, c.Convert(ctx, pb))
+		require.NoError(b, c.Convert(ctx, pb, schema))
 		// Reset converter.
 		_ = c.NewRecord()
 	}
@@ -328,7 +329,7 @@ func BenchmarkParquetToArrow(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		require.NoError(b, c.Convert(ctx, buf))
+		require.NoError(b, c.Convert(ctx, buf, dynSchema))
 		// Reset converter.
 		_ = c.NewRecord()
 	}
@@ -446,6 +447,7 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 	as, err := ParquetRowGroupToArrowSchema(
 		ctx,
 		buf,
+		dynSchema,
 		logicalplan.IterOptions{
 			PhysicalProjection: []logicalplan.Expr{
 				logicalplan.Col("example_type"),
@@ -474,7 +476,7 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 			DistinctColumns: distinctColumns,
 		})
 	defer c.Close()
-	require.NoError(t, c.Convert(ctx, buf))
+	require.NoError(t, c.Convert(ctx, buf, dynSchema))
 	ar := c.NewRecord()
 	require.Equal(t, int64(1), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
@@ -542,6 +544,7 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	as, err := ParquetRowGroupToArrowSchema(
 		ctx,
 		buf,
+		dynSchema,
 		logicalplan.IterOptions{
 			PhysicalProjection: []logicalplan.Expr{
 				logicalplan.Col("example_type"),
@@ -567,7 +570,7 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 		DistinctColumns: distinctColumns,
 	})
 	defer c.Close()
-	require.NoError(t, c.Convert(ctx, buf))
+	require.NoError(t, c.Convert(ctx, buf, dynSchema))
 	ar := c.NewRecord()
 	require.Equal(t, int64(2), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
@@ -587,7 +590,18 @@ func TestList(t *testing.T) {
 
 	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
-	require.NoError(t, c.Convert(ctx, buf))
+	s, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
+		Name: "test",
+		Columns: []*schemapb.Column{{
+			Name: "data",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_INT64,
+				Repeated: true,
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, c.Convert(ctx, buf, s))
 
 	record := c.NewRecord()
 	t.Log(record)
@@ -765,6 +779,7 @@ func Test_ParquetRowGroupToArrowSchema_Groups(t *testing.T) {
 			as, err := ParquetRowGroupToArrowSchema(
 				ctx,
 				buf,
+				schema,
 				logicalplan.IterOptions{
 					PhysicalProjection: test.physicalProjections,
 				},
@@ -804,7 +819,7 @@ func Test_ParquetToArrowV2(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, c.Convert(ctx, pb))
+		require.NoError(t, c.Convert(ctx, pb, schema))
 	}
 	r := c.NewRecord()
 	defer r.Release()
@@ -840,7 +855,7 @@ func Test_ParquetToArrow(t *testing.T) {
 	c := NewParquetConverter(alloc, logicalplan.IterOptions{})
 	defer c.Close()
 
-	require.NoError(t, c.Convert(ctx, buf))
+	require.NoError(t, c.Convert(ctx, buf, dynSchema))
 	r := c.NewRecord()
 	defer r.Release()
 	require.Equal(t, int64(1000), r.NumRows())

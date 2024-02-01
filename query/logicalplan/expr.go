@@ -3,15 +3,11 @@ package logicalplan
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
-	"github.com/parquet-go/parquet-go"
-
-	"github.com/polarsignals/frostdb/pqarrow/convert"
 )
 
 type Op uint32
@@ -138,26 +134,26 @@ func (e *BinaryExpr) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(e)
 }
 
-func (e *BinaryExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
+func (e *BinaryExpr) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	leftType, err := e.Left.DataType(l)
+	if err != nil {
+		return nil, fmt.Errorf("left operand: %w", err)
+	}
+
+	rightType, err := e.Right.DataType(l)
+	if err != nil {
+		return nil, fmt.Errorf("right operand: %w", err)
+	}
+
+	if !arrow.TypeEqual(leftType, rightType) {
+		return nil, fmt.Errorf("left and right operands must be of the same type, got %s and %s", leftType, rightType)
+	}
+
 	switch e.Op {
 	case OpEq, OpNotEq, OpLt, OpLtEq, OpGt, OpGtEq, OpAnd, OpOr:
 		return arrow.FixedWidthTypes.Boolean, nil
 	case OpAdd, OpSub, OpMul, OpDiv:
-		leftType, err := e.Left.DataType(s)
-		if err != nil {
-			return nil, fmt.Errorf("left operand: %w", err)
-		}
-
-		rightType, err := e.Right.DataType(s)
-		if err != nil {
-			return nil, fmt.Errorf("right operand: %w", err)
-		}
-
-		if arrow.TypeEqual(leftType, rightType, arrow.CheckMetadata()) {
-			return leftType, nil
-		}
-
-		return nil, fmt.Errorf("left and right operands must be of the same type, got %s and %s", leftType, rightType)
+		return leftType, nil
 	default:
 		return nil, errors.New("unknown operator")
 	}
@@ -224,7 +220,14 @@ func (e *ConvertExpr) Accept(visitor Visitor) bool {
 	return visitor.PostVisit(e)
 }
 
-func (e *ConvertExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
+func (e *ConvertExpr) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	// We don't care about the result, but we want to make sure the expression
+	// tree typing is correct.
+	_, err := e.Expr.DataType(l)
+	if err != nil {
+		return nil, fmt.Errorf("convert type: %w", err)
+	}
+
 	return e.Type, nil
 }
 
@@ -281,52 +284,13 @@ func (c *Column) Name() string {
 
 func (c *Column) String() string { return c.Name() }
 
-func (c *Column) DataType(s *parquet.Schema) (arrow.DataType, error) {
-	for _, field := range s.Fields() {
-		af, err := c.findField("", field)
-		if err != nil {
-			return nil, err
-		}
-		if af.Name != "" {
-			return af.Type, nil
-		}
+func (c *Column) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	t, err := l.DataTypeForExpr(c)
+	if err != nil {
+		return nil, fmt.Errorf("column %q type: %w", c.ColumnName, err)
 	}
 
-	return nil, errors.New("column not found")
-}
-
-func fullPath(prefix string, parquetField parquet.Field) string {
-	if prefix == "" {
-		return parquetField.Name()
-	}
-	return strings.Join([]string{prefix, parquetField.Name()}, ".")
-}
-
-func (c *Column) findField(prefix string, field parquet.Field) (arrow.Field, error) {
-	if c.ColumnName == fullPath(prefix, field) {
-		return convert.ParquetFieldToArrowField(field)
-	}
-
-	if !field.Leaf() && strings.HasPrefix(c.ColumnName, fullPath(prefix, field)) {
-		group := []arrow.Field{}
-		for _, f := range field.Fields() {
-			af, err := c.findField(fullPath(prefix, field), f)
-			if err != nil {
-				return arrow.Field{}, err
-			}
-			if af.Name != "" {
-				group = append(group, af)
-			}
-		}
-		if len(group) > 0 {
-			return arrow.Field{
-				Name:     field.Name(),
-				Type:     arrow.StructOf(group...),
-				Nullable: field.Optional(),
-			}, nil
-		}
-	}
-	return arrow.Field{}, nil
+	return t, nil
 }
 
 func (c *Column) Alias(alias string) *AliasExpr {
@@ -506,16 +470,13 @@ func DynCol(name string) *DynamicColumn {
 	return &DynamicColumn{ColumnName: name}
 }
 
-func (c *DynamicColumn) DataType(s *parquet.Schema) (arrow.DataType, error) {
-	for _, field := range s.Fields() {
-		if names := strings.Split(field.Name(), "."); len(names) == 2 {
-			if names[0] == c.ColumnName {
-				return convert.ParquetNodeToType(field)
-			}
-		}
+func (c *DynamicColumn) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	t, err := l.DataTypeForExpr(c)
+	if err != nil {
+		return nil, fmt.Errorf("dynamic column %q type: %w", c.ColumnName, err)
 	}
 
-	return nil, errors.New("column not found")
+	return t, nil
 }
 
 func (c *DynamicColumn) ColumnsUsedExprs() []Expr {
@@ -568,7 +529,7 @@ func Literal(v interface{}) *LiteralExpr {
 	}
 }
 
-func (e *LiteralExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
+func (e *LiteralExpr) DataType(_ ExprTypeFinder) (arrow.DataType, error) {
 	return e.Value.DataType(), nil
 }
 
@@ -609,8 +570,8 @@ func (f *AggregationFunction) Clone() Expr {
 	}
 }
 
-func (f *AggregationFunction) DataType(s *parquet.Schema) (arrow.DataType, error) {
-	return f.Expr.DataType(s)
+func (f *AggregationFunction) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	return f.Expr.DataType(l)
 }
 
 func (f *AggregationFunction) Accept(visitor Visitor) bool {
@@ -729,8 +690,8 @@ func (e *AliasExpr) Clone() Expr {
 	}
 }
 
-func (e *AliasExpr) DataType(s *parquet.Schema) (arrow.DataType, error) {
-	return e.Expr.DataType(s)
+func (e *AliasExpr) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	return e.Expr.DataType(l)
 }
 
 func (e *AliasExpr) Name() string {
@@ -790,7 +751,7 @@ func (d *DurationExpr) Clone() Expr {
 	}
 }
 
-func (d *DurationExpr) DataType(_ *parquet.Schema) (arrow.DataType, error) {
+func (d *DurationExpr) DataType(_ ExprTypeFinder) (arrow.DataType, error) {
 	return &arrow.DurationType{}, nil
 }
 
@@ -830,72 +791,13 @@ func (d *DurationExpr) Value() time.Duration {
 	return d.duration
 }
 
-func RegExpColumnMatch(match *regexp.Regexp) *RegexpColumnMatch {
-	return &RegexpColumnMatch{
-		match: match,
-	}
-}
-
-func RegExpNotColumnMatch(match *regexp.Regexp) *RegexpColumnMatch {
-	return &RegexpColumnMatch{
-		inverse: true,
-		match:   match,
-	}
-}
-
-type RegexpColumnMatch struct {
-	inverse bool
-	match   *regexp.Regexp
-}
-
-func (a *RegexpColumnMatch) Clone() Expr {
-	return &RegexpColumnMatch{
-		match: a.match,
-	}
-}
-
-func (a *RegexpColumnMatch) DataType(_ *parquet.Schema) (arrow.DataType, error) {
-	return nil, nil
-}
-
-func (a *RegexpColumnMatch) Name() string {
-	return a.match.String()
-}
-
-func (a *RegexpColumnMatch) String() string { return a.Name() }
-
-func (a *RegexpColumnMatch) ColumnsUsedExprs() []Expr {
-	return []Expr{a}
-}
-
-func (a *RegexpColumnMatch) MatchPath(path string) bool {
-	return a.match.MatchString(path) != a.inverse
-}
-
-func (a *RegexpColumnMatch) MatchColumn(name string) bool {
-	return a.match.MatchString(name) != a.inverse
-}
-
-func (a *RegexpColumnMatch) Computed() bool {
-	return true
-}
-
-func (a *RegexpColumnMatch) Accept(visitor Visitor) bool {
-	continu := visitor.PreVisit(a)
-	if !continu {
-		return false
-	}
-
-	return visitor.PostVisit(a)
-}
-
 type AllExpr struct{}
 
 func All() *AllExpr {
 	return &AllExpr{}
 }
 
-func (a *AllExpr) DataType(*parquet.Schema) (arrow.DataType, error) { return nil, nil }
+func (a *AllExpr) DataType(ExprTypeFinder) (arrow.DataType, error) { return nil, nil }
 func (a *AllExpr) Accept(visitor Visitor) bool {
 	continu := visitor.PreVisit(a)
 	if !continu {
@@ -924,7 +826,7 @@ func Not(expr Expr) *NotExpr {
 	}
 }
 
-func (n *NotExpr) DataType(*parquet.Schema) (arrow.DataType, error) { return nil, nil }
+func (n *NotExpr) DataType(ExprTypeFinder) (arrow.DataType, error) { return nil, nil }
 func (n *NotExpr) Accept(visitor Visitor) bool {
 	continu := visitor.PreVisit(n)
 	if !continu {
