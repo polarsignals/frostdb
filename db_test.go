@@ -2796,3 +2796,87 @@ func Test_DB_PersistentDiskCompaction_BlockRotation(t *testing.T) {
 
 	validateRows(2400)
 }
+
+func Test_DB_PersistentDiskCompaction_NonOverlappingCompaction(t *testing.T) {
+	t.Parallel()
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+	logger := newTestLogger(t)
+
+	dir := t.TempDir()
+	cfg := []*index.LevelConfig{
+		{Level: index.L0, MaxSize: 336, Type: index.CompactionTypeParquetDisk},
+		{Level: index.L1, MaxSize: 1024 * 1024 * 128, Type: index.CompactionTypeParquetDisk},
+		{Level: index.L2, MaxSize: 1024 * 1024 * 512},
+	}
+	c, err := New(
+		WithLogger(logger),
+		WithIndexConfig(cfg),
+		WithStoragePath(dir),
+		WithWAL(),
+		WithManualBlockRotation(),
+	)
+	t.Cleanup(func() {
+		require.NoError(t, c.Close())
+	})
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ { // Create non-overlapping samples for compaction
+		samples := dynparquet.GenerateTestSamples(1)
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+	require.Eventually(t, func() bool {
+		return table.active.index.LevelSize(index.L1) != 0
+	}, time.Second, time.Millisecond*10)
+
+	// Snapshot the file
+	success := false
+	table.db.snapshot(context.Background(), false, func() {
+		success = true
+	})
+	require.True(t, success)
+
+	// Close the database
+	require.NoError(t, c.Close())
+
+	// Recover from the snapshot
+	c, err = New(
+		WithLogger(logger),
+		WithIndexConfig(cfg),
+		WithStoragePath(dir),
+		WithWAL(),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, c.Close())
+	})
+	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err = db.Table("test", config)
+	require.NoError(t, err)
+
+	validateRows := func(expected int64) {
+		pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+		defer pool.AssertSize(t, 0)
+		rows := int64(0)
+		engine := query.NewEngine(pool, db.TableProvider())
+		err = engine.ScanTable("test").
+			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+				rows += r.NumRows()
+				return nil
+			})
+		require.NoError(t, err)
+		require.Equal(t, expected, rows)
+	}
+
+	validateRows(3)
+}
