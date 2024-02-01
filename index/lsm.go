@@ -195,7 +195,7 @@ func (l *LSM) Close() error {
 
 	// Remove the index directory
 	if err := os.RemoveAll(l.dir); err != nil {
-		return err
+		return fmt.Errorf("remove lsm dir: %w", err)
 	}
 
 	return nil

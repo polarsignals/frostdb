@@ -9,8 +9,9 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/parquet-go/parquet-go"
-	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/stretchr/testify/require"
+
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 type noopWriter struct{}

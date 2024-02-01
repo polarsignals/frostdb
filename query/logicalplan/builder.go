@@ -16,6 +16,7 @@ func (b Builder) Scan(
 	tableName string,
 ) Builder {
 	return Builder{
+		err: b.err,
 		plan: &LogicalPlan{
 			TableScan: &TableScan{
 				TableProvider: provider,
@@ -30,6 +31,7 @@ func (b Builder) ScanSchema(
 	tableName string,
 ) Builder {
 	return Builder{
+		err: b.err,
 		plan: &LogicalPlan{
 			SchemaScan: &SchemaScan{
 				TableProvider: provider,
@@ -43,6 +45,7 @@ func (b Builder) Project(
 	exprs ...Expr,
 ) Builder {
 	return Builder{
+		err: b.err,
 		plan: &LogicalPlan{
 			Input: b.plan,
 			Projection: &Projection{
@@ -99,6 +102,7 @@ func (b Builder) Filter(expr Expr) Builder {
 	}
 
 	return Builder{
+		err: b.err,
 		plan: &LogicalPlan{
 			Input: b.plan,
 			Filter: &Filter{
@@ -112,6 +116,7 @@ func (b Builder) Distinct(
 	exprs ...Expr,
 ) Builder {
 	return Builder{
+		err: b.err,
 		plan: &LogicalPlan{
 			Input: b.plan,
 			Distinct: &Distinct{
@@ -128,6 +133,8 @@ func (b Builder) Aggregate(
 	resolvedAggExpr := make([]*AggregationFunction, 0, len(aggExpr))
 	projectExprs := make([]Expr, 0, len(aggExpr))
 	avgFound := false
+
+	var err error
 	for _, agg := range aggExpr {
 		if agg.Func == AggFuncAvg {
 			avgFound = true
@@ -140,12 +147,13 @@ func (b Builder) Aggregate(
 				Expr: agg.Expr,
 			}
 
-			var countExpr Expr = count
-			aggType, err := agg.Expr.DataType(b.plan)
-			if err != nil {
-				b.err = err
-			}
-
+			var (
+				countExpr Expr = count
+				aggType   arrow.DataType
+			)
+			aggType, err = agg.Expr.DataType(b.plan)
+			// intentionally not handling the error here, as it will be handled
+			// in the build function.
 			if !arrow.TypeEqual(aggType, arrow.PrimitiveTypes.Int64) {
 				countExpr = Convert(countExpr, aggType)
 			}
@@ -166,6 +174,7 @@ func (b Builder) Aggregate(
 
 	if !avgFound {
 		return Builder{
+			err: err,
 			plan: &LogicalPlan{
 				Aggregation: &Aggregation{
 					GroupExprs: groupExprs,
@@ -177,6 +186,7 @@ func (b Builder) Aggregate(
 	}
 
 	return Builder{
+		err: err,
 		plan: &LogicalPlan{
 			Projection: &Projection{
 				Exprs: append(groupExprs, projectExprs...),

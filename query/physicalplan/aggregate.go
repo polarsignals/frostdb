@@ -371,9 +371,8 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 
 		if a.finalStage {
 			return fmt.Errorf("aggregate field(s) not found %#v, final aggregations are not possible without it (%d concrete aggregation fields found; %d concrete aggregations)", exprs, concreteAggregateFieldsFound, aggregate.concreteAggregations)
-		} else {
-			return fmt.Errorf("aggregate field(s) not found %#v, aggregations are not possible without it (%d concrete aggregation fields found; %d concrete aggregations)", exprs, concreteAggregateFieldsFound, aggregate.concreteAggregations)
 		}
+		return fmt.Errorf("aggregate field(s) not found %#v, aggregations are not possible without it (%d concrete aggregation fields found; %d concrete aggregations)", exprs, concreteAggregateFieldsFound, aggregate.concreteAggregations)
 	}
 
 	numRows := int(r.NumRows())
