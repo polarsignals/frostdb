@@ -248,14 +248,17 @@ func (f *FileCompaction) recover(options ...parts.Option) ([]parts.Part, error) 
 					return err
 				}
 
+				var tx int
 				txstr, ok := buf.ParquetFile().Lookup(ParquetCompactionTXKey)
 				if !ok {
-					return fmt.Errorf("failed to find compaction_tx metadata: %s", file.Name())
-				}
-
-				tx, err := strconv.Atoi(txstr)
-				if err != nil {
-					return fmt.Errorf("failed to parse compaction_tx metadata: %v", err)
+					level.Warn(f.logger).Log("msg", "failed to find compaction_tx metadata", "file", file.Name())
+					tx = 0 // Downgrade the compaction tx so that all future reads will be able to read this part.
+				} else {
+					tx, err = strconv.Atoi(txstr)
+					if err != nil {
+						level.Warn(f.logger).Log("msg", "failed to parse compaction_tx metadata", "file", file.Name(), "err", err)
+						tx = 0 // Downgrade the compaction tx so that all future reads will be able to read this part.
+					}
 				}
 
 				f.parts.Add(1)
