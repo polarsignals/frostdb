@@ -1300,7 +1300,7 @@ func (t *Table) compactParts(w io.Writer, compact []parts.Part, options ...parqu
 		}
 	}
 
-	bufs, err := t.buffersForCompaction(w, compact)
+	bufs, err := t.buffersForCompaction(w, compact, options...)
 	if err != nil {
 		return 0, err
 	}
@@ -1362,7 +1362,7 @@ func (t *Table) compactParts(w io.Writer, compact []parts.Part, options ...parqu
 // the minimum slice of dynamic row groups to be merged together for compaction.
 // If nil, nil is returned, the resulting serialized buffer is written directly
 // to w as an optimization.
-func (t *Table) buffersForCompaction(w io.Writer, inputParts []parts.Part) ([]dynparquet.DynamicRowGroup, error) {
+func (t *Table) buffersForCompaction(w io.Writer, inputParts []parts.Part, options ...parquet.WriterOption) ([]dynparquet.DynamicRowGroup, error) {
 	nonOverlappingParts, overlappingParts, err := parts.FindMaximumNonOverlappingSet(t.schema, inputParts)
 	if err != nil {
 		return nil, err
@@ -1424,7 +1424,7 @@ func (t *Table) buffersForCompaction(w io.Writer, inputParts []parts.Part) ([]dy
 		records = append(records, p.Record())
 	}
 
-	if err := t.writeRecordsToParquet(w, records, false); err != nil {
+	if err := t.writeRecordsToParquet(w, records, false, options...); err != nil {
 		return nil, err
 	}
 
