@@ -69,9 +69,14 @@ func TestLogicalPlanBuilderWithoutProjection(t *testing.T) {
 			Exprs: []Expr{&Column{ColumnName: "labels.test"}},
 		},
 		Input: &LogicalPlan{
-			TableScan: &TableScan{
-				TableProvider: tableProvider,
-				TableName:     "table1",
+			Projection: &Projection{
+				Exprs: []Expr{&Column{ColumnName: "labels.test"}},
+			},
+			Input: &LogicalPlan{
+				TableScan: &TableScan{
+					TableProvider: tableProvider,
+					TableName:     "table1",
+				},
 			},
 		},
 	}, p)

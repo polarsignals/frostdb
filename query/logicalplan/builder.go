@@ -69,6 +69,7 @@ type Expr interface {
 	DataType(ExprTypeFinder) (arrow.DataType, error)
 	Accept(Visitor) bool
 	Name() string
+	Equal(Expr) bool
 	fmt.Stringer
 
 	// ColumnsUsedExprs extracts all the expressions that are used that cause
@@ -118,9 +119,14 @@ func (b Builder) Distinct(
 	return Builder{
 		err: b.err,
 		plan: &LogicalPlan{
-			Input: b.plan,
 			Distinct: &Distinct{
 				Exprs: exprs,
+			},
+			Input: &LogicalPlan{
+				Projection: &Projection{
+					Exprs: exprs,
+				},
+				Input: b.plan,
 			},
 		},
 	}

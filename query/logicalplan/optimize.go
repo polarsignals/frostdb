@@ -116,6 +116,20 @@ func (p *DistinctPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
 	return plan
 }
 
+func exprsEqual(a, b []Expr) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i, expr := range a {
+		if !expr.Equal(b[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []Expr) {
 	switch {
 	case plan.TableScan != nil:
@@ -124,6 +138,16 @@ func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []Expr) {
 		}
 	case plan.Distinct != nil:
 		distinctColumns = append(distinctColumns, plan.Distinct.Exprs...)
+	case plan.Projection != nil:
+		if !exprsEqual(distinctColumns, plan.Projection.Exprs) {
+			// if and only if the distinct columns are identical to the
+			// projection columns we can perform the optimization, so we need
+			// to reset it in this case.
+			distinctColumns = []Expr{}
+		}
+	default:
+		// reset distinct columns
+		distinctColumns = []Expr{}
 	}
 
 	if plan.Input != nil {

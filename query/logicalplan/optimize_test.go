@@ -59,7 +59,7 @@ func TestOptimizeDistinctPushDown(t *testing.T) {
 		},
 	},
 		// Distinct -> TableScan
-		p.Input.TableScan,
+		p.Input.Input.TableScan,
 	)
 }
 
@@ -144,7 +144,7 @@ func TestProjectionPushDownOfDistinct(t *testing.T) {
 
 	p = (&PhysicalProjectionPushDown{}).Optimize(p)
 
-	require.Equal(t, []Expr{DynCol("labels")}, p.Input.TableScan.PhysicalProjection)
+	require.Equal(t, []Expr{DynCol("labels")}, p.Input.Input.TableScan.PhysicalProjection)
 }
 
 func TestAllOptimizers(t *testing.T) {

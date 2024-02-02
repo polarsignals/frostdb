@@ -102,6 +102,19 @@ type BinaryExpr struct {
 	Right Expr
 }
 
+func (e *BinaryExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return e == nil
+	}
+
+	if b, ok := other.(*BinaryExpr); ok {
+		return e.Op == b.Op && e.Left.Equal(b.Left) && e.Right.Equal(b.Right)
+	}
+
+	return false
+}
+
 func (e *BinaryExpr) Clone() Expr {
 	return &BinaryExpr{
 		Left:  e.Left.Clone(),
@@ -194,6 +207,19 @@ type ConvertExpr struct {
 	Type arrow.DataType
 }
 
+func (e *ConvertExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return e == nil
+	}
+
+	if c, ok := other.(*ConvertExpr); ok {
+		return arrow.TypeEqual(e.Type, c.Type) && e.Expr.Equal(c.Expr)
+	}
+
+	return false
+}
+
 func (e *ConvertExpr) Clone() Expr {
 	return &ConvertExpr{
 		Expr: e.Expr.Clone(),
@@ -259,6 +285,19 @@ func (e *ConvertExpr) Alias(alias string) *AliasExpr {
 
 type Column struct {
 	ColumnName string
+}
+
+func (c *Column) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return c == nil
+	}
+
+	if col, ok := other.(*Column); ok {
+		return c.ColumnName == col.ColumnName
+	}
+
+	return false
 }
 
 func (c *Column) Clone() Expr {
@@ -458,6 +497,19 @@ type DynamicColumn struct {
 	ColumnName string
 }
 
+func (c *DynamicColumn) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return c == nil
+	}
+
+	if col, ok := other.(*DynamicColumn); ok {
+		return c.ColumnName == col.ColumnName
+	}
+
+	return false
+}
+
 func (c *DynamicColumn) Clone() Expr {
 	return &DynamicColumn{ColumnName: c.ColumnName}
 }
@@ -513,6 +565,19 @@ type LiteralExpr struct {
 	Value scalar.Scalar
 }
 
+func (e *LiteralExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return e == nil
+	}
+
+	if lit, ok := other.(*LiteralExpr); ok {
+		return scalar.Equals(e.Value, lit.Value)
+	}
+
+	return false
+}
+
 func (e *LiteralExpr) Clone() Expr {
 	return &LiteralExpr{
 		Value: e.Value,
@@ -561,6 +626,19 @@ func (e *LiteralExpr) MatchColumn(columnName string) bool {
 type AggregationFunction struct {
 	Func AggFunc
 	Expr Expr
+}
+
+func (f *AggregationFunction) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return f == nil
+	}
+
+	if agg, ok := other.(*AggregationFunction); ok {
+		return f.Func == agg.Func && f.Expr.Equal(agg.Expr)
+	}
+
+	return false
 }
 
 func (f *AggregationFunction) Clone() Expr {
@@ -683,6 +761,19 @@ type AliasExpr struct {
 	Alias string
 }
 
+func (e *AliasExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return e == nil
+	}
+
+	if alias, ok := other.(*AliasExpr); ok {
+		return e.Alias == alias.Alias && e.Expr.Equal(alias.Expr)
+	}
+
+	return false
+}
+
 func (e *AliasExpr) Clone() Expr {
 	return &AliasExpr{
 		Expr:  e.Expr.Clone(),
@@ -745,6 +836,19 @@ type DurationExpr struct {
 	duration time.Duration
 }
 
+func (d *DurationExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return d == nil
+	}
+
+	if dur, ok := other.(*DurationExpr); ok {
+		return d.duration == dur.duration
+	}
+
+	return false
+}
+
 func (d *DurationExpr) Clone() Expr {
 	return &DurationExpr{
 		duration: d.duration,
@@ -797,6 +901,16 @@ func All() *AllExpr {
 	return &AllExpr{}
 }
 
+func (a *AllExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return a == nil
+	}
+
+	_, ok := other.(*AllExpr)
+	return ok
+}
+
 func (a *AllExpr) DataType(ExprTypeFinder) (arrow.DataType, error) { return nil, nil }
 func (a *AllExpr) Accept(visitor Visitor) bool {
 	continu := visitor.PreVisit(a)
@@ -824,6 +938,19 @@ func Not(expr Expr) *NotExpr {
 	return &NotExpr{
 		Expr: expr,
 	}
+}
+
+func (n *NotExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return n == nil
+	}
+
+	if not, ok := other.(*NotExpr); ok {
+		return n.Expr.Equal(not.Expr)
+	}
+
+	return false
 }
 
 func (n *NotExpr) DataType(ExprTypeFinder) (arrow.DataType, error) { return nil, nil }
