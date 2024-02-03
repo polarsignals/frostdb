@@ -277,7 +277,12 @@ func DivInt64s(mem memory.Allocator, left, right *array.Int64) *array.Int64 {
 	res.Resize(left.Len())
 
 	for i := 0; i < left.Len(); i++ {
-		res.Append(left.Value(i) / right.Value(i))
+		rightValue := right.Value(i)
+		if right.Value(i) == 0 {
+			res.AppendNull()
+		} else {
+			res.Append(left.Value(i) / rightValue)
+		}
 	}
 
 	return res.NewInt64Array()
@@ -329,7 +334,12 @@ func DivFloat64s(mem memory.Allocator, left, right *array.Float64) *array.Float6
 	res.Resize(left.Len())
 
 	for i := 0; i < left.Len(); i++ {
-		res.Append(left.Value(i) / right.Value(i))
+		rightValue := right.Value(i)
+		if right.Value(i) == 0 {
+			res.AppendNull()
+		} else {
+			res.Append(left.Value(i) / rightValue)
+		}
 	}
 
 	return res.NewFloat64Array()
@@ -381,7 +391,12 @@ func DivInt32s(mem memory.Allocator, left, right *array.Int32) *array.Int32 {
 	res.Resize(left.Len())
 
 	for i := 0; i < left.Len(); i++ {
-		res.Append(left.Value(i) / right.Value(i))
+		rightValue := right.Value(i)
+		if right.Value(i) == 0 {
+			res.AppendNull()
+		} else {
+			res.Append(left.Value(i) / rightValue)
+		}
 	}
 
 	return res.NewInt32Array()
