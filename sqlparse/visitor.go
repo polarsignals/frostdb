@@ -5,9 +5,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
 	"github.com/parquet-go/parquet-go"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/test_driver"
 
@@ -236,6 +238,7 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			v.exprStack = append(v.exprStack, logicalplan.Or(leftExpr, rightExpr))
 			return nil
 		}
+
 		v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
 			Left:  leftExpr,
 			Op:    frostDBOp,
@@ -308,6 +311,17 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		default:
 			return fmt.Errorf("unhandled func call: %s", expr.FnName.String())
 		}
+	case *ast.FuncCastExpr:
+		var t arrow.DataType
+		switch expr.Tp.GetType() {
+		case mysql.TypeFloat:
+			t = arrow.PrimitiveTypes.Float64
+		default:
+			return fmt.Errorf("unhandled cast type: %s", expr.Tp)
+		}
+		e, newExprs := pop(v.exprStack)
+		v.exprStack = newExprs
+		v.exprStack = append(v.exprStack, logicalplan.Convert(e, t))
 	default:
 		return fmt.Errorf("unhandled ast node %T", expr)
 	}
