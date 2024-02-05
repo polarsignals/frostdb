@@ -102,127 +102,49 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 	leftArray := leftArrays[0]
 	rightArray := rightArrays[0]
 
+	resultFields := []arrow.Field{{
+		Name:     b.expr.Name(),
+		Type:     leftFields[0].Type,
+		Nullable: leftFields[0].Nullable,
+		Metadata: leftFields[0].Metadata,
+	}}
 	switch leftArray := leftArray.(type) {
 	case *array.Int64:
 		switch b.expr.Op {
 		case logicalplan.OpAdd:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					AddInt64s(mem, leftArray, rightArray.(*array.Int64)),
-				}, nil
+			return resultFields, []arrow.Array{AddInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
 		case logicalplan.OpSub:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					SubInt64s(mem, leftArray, rightArray.(*array.Int64)),
-				}, nil
+			return resultFields, []arrow.Array{SubInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
 		case logicalplan.OpMul:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					MulInt64s(mem, leftArray, rightArray.(*array.Int64)),
-				}, nil
+			return resultFields, []arrow.Array{MulInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
 		case logicalplan.OpDiv:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					DivInt64s(mem, leftArray, rightArray.(*array.Int64)),
-				}, nil
+			return resultFields, []arrow.Array{DivInt64s(mem, leftArray, rightArray.(*array.Int64))}, nil
 		default:
 			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
 		}
 	case *array.Float64:
 		switch b.expr.Op {
 		case logicalplan.OpAdd:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					AddFloat64s(mem, leftArray, rightArray.(*array.Float64)),
-				}, nil
+			return resultFields, []arrow.Array{AddFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
 		case logicalplan.OpSub:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					SubFloat64s(mem, leftArray, rightArray.(*array.Float64)),
-				}, nil
+			return resultFields, []arrow.Array{SubFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
 		case logicalplan.OpMul:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					MulFloat64s(mem, leftArray, rightArray.(*array.Float64)),
-				}, nil
+			return resultFields, []arrow.Array{MulFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
 		case logicalplan.OpDiv:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					DivFloat64s(mem, leftArray, rightArray.(*array.Float64)),
-				}, nil
+			return resultFields, []arrow.Array{DivFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
 		default:
 			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
 		}
 	case *array.Int32:
 		switch b.expr.Op {
 		case logicalplan.OpAdd:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					AddInt32s(mem, leftArray, rightArray.(*array.Int32)),
-				}, nil
+			return resultFields, []arrow.Array{AddInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
 		case logicalplan.OpSub:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					SubInt32s(mem, leftArray, rightArray.(*array.Int32)),
-				}, nil
+			return resultFields, []arrow.Array{SubInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
 		case logicalplan.OpMul:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					MulInt32s(mem, leftArray, rightArray.(*array.Int32)),
-				}, nil
+			return resultFields, []arrow.Array{MulInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
 		case logicalplan.OpDiv:
-			return []arrow.Field{{
-					Name:     b.expr.Name(),
-					Type:     leftFields[0].Type,
-					Nullable: leftFields[0].Nullable,
-					Metadata: leftFields[0].Metadata,
-				}}, []arrow.Array{
-					DivInt32s(mem, leftArray, rightArray.(*array.Int32)),
-				}, nil
+			return resultFields, []arrow.Array{DivInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
 		default:
 			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
 		}
