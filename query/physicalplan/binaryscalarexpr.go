@@ -104,7 +104,11 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 }
 
 func ArrayScalarCompute(funcName string, left arrow.Array, right scalar.Scalar) (*Bitmap, error) {
-	equalsResult, err := compute.CallFunction(context.TODO(), funcName, nil, compute.NewDatum(left), compute.NewDatum(right))
+	leftData := compute.NewDatum(left)
+	defer leftData.Release()
+	rightData := compute.NewDatum(right)
+	defer rightData.Release()
+	equalsResult, err := compute.CallFunction(context.TODO(), funcName, nil, leftData, rightData)
 	if err != nil {
 		if errors.Unwrap(err).Error() == "not implemented" {
 			return nil, ErrUnsupportedBinaryOperation
