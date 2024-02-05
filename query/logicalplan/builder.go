@@ -1,6 +1,7 @@
 package logicalplan
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -138,47 +139,24 @@ func (b Builder) Aggregate(
 ) Builder {
 	resolvedAggExpr := make([]*AggregationFunction, 0, len(aggExpr))
 	projectExprs := make([]Expr, 0, len(aggExpr))
-	avgFound := false
+	needsPostProcessing := false
 
 	var err error
 	for _, agg := range aggExpr {
-		if agg.Func == AggFuncAvg {
-			avgFound = true
-			sum := &AggregationFunction{
-				Func: AggFuncSum,
-				Expr: agg.Expr,
-			}
-			count := &AggregationFunction{
-				Func: AggFuncCount,
-				Expr: agg.Expr,
-			}
-
-			var (
-				countExpr Expr = count
-				aggType   arrow.DataType
-			)
-			aggType, err = agg.Expr.DataType(b.plan)
-			// intentionally not handling the error here, as it will be handled
-			// in the build function.
-			if !arrow.TypeEqual(aggType, arrow.PrimitiveTypes.Int64) {
-				countExpr = Convert(countExpr, aggType)
-			}
-
-			div := (&BinaryExpr{
-				Left:  sum,
-				Op:    OpDiv,
-				Right: countExpr,
-			}).Alias(agg.String())
-
-			resolvedAggExpr = append(resolvedAggExpr, sum, count)
-			projectExprs = append(projectExprs, div)
-		} else {
-			resolvedAggExpr = append(resolvedAggExpr, agg)
-			projectExprs = append(projectExprs, agg)
+		resolvedAggregations, projections, changed, rerr := resolveAggregation(b.plan, agg)
+		if err != nil {
+			err = errors.Join(err, rerr)
 		}
+
+		if changed {
+			needsPostProcessing = true
+		}
+
+		resolvedAggExpr = append(resolvedAggExpr, resolvedAggregations...)
+		projectExprs = append(projectExprs, projections...)
 	}
 
-	if !avgFound {
+	if !needsPostProcessing {
 		return Builder{
 			err: err,
 			plan: &LogicalPlan{
@@ -205,6 +183,41 @@ func (b Builder) Aggregate(
 				Input: b.plan,
 			},
 		},
+	}
+}
+
+func resolveAggregation(plan *LogicalPlan, agg *AggregationFunction) ([]*AggregationFunction, []Expr, bool, error) {
+	switch agg.Func {
+	case AggFuncAvg:
+		sum := &AggregationFunction{
+			Func: AggFuncSum,
+			Expr: agg.Expr,
+		}
+		count := &AggregationFunction{
+			Func: AggFuncCount,
+			Expr: agg.Expr,
+		}
+
+		var (
+			countExpr Expr = count
+			aggType   arrow.DataType
+		)
+		aggType, err := agg.Expr.DataType(plan)
+		// intentionally not handling the error here, as it will be handled
+		// in the build function.
+		if !arrow.TypeEqual(aggType, arrow.PrimitiveTypes.Int64) {
+			countExpr = Convert(countExpr, aggType)
+		}
+
+		div := (&BinaryExpr{
+			Left:  sum,
+			Op:    OpDiv,
+			Right: countExpr,
+		}).Alias(agg.String())
+
+		return []*AggregationFunction{sum, count}, []Expr{div}, true, err
+	default:
+		return []*AggregationFunction{agg}, []Expr{agg}, false, nil
 	}
 }
 
