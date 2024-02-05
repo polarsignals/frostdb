@@ -1266,6 +1266,7 @@ func (db *DB) begin() (uint64, uint64, func()) {
 		if mark := db.highWatermark.Load(); mark+1 == txn {
 			// This is the next consecutive transaction; increase the watermark.
 			db.highWatermark.Store(txn)
+			return
 		}
 
 		// place completed transaction in the waiting pool
