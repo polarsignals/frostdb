@@ -512,6 +512,8 @@ func (p convertProjection) String() string {
 }
 
 func (p convertProjection) convert(mem memory.Allocator, c arrow.Array) (arrow.Array, error) {
+	defer c.Release()
+
 	switch c := c.(type) {
 	case *array.Int64:
 		switch p.expr.Type {
@@ -526,7 +528,6 @@ func (p convertProjection) convert(mem memory.Allocator, c arrow.Array) (arrow.A
 }
 
 func convertInt64ToFloat64(mem memory.Allocator, c *array.Int64) *array.Float64 {
-	defer c.Release()
 	res := array.NewFloat64Builder(mem)
 	defer res.Release()
 
