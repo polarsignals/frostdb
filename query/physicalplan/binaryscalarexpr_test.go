@@ -51,3 +51,19 @@ func TestBinaryScalarOperationNotImplemented(t *testing.T) {
 	_, err := BinaryScalarOperation(arr, s, logicalplan.OpAnd)
 	require.Equal(t, err, ErrUnsupportedBinaryOperation)
 }
+
+func Test_ArrayScalarCompute_Leak(t *testing.T) {
+	allocator := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer allocator.AssertSize(t, 0)
+
+	ab := array.NewInt64Builder(allocator)
+	defer ab.Release()
+
+	ab.AppendValues([]int64{1, 2, 3}, nil)
+	arr := ab.NewInt64Array()
+	defer arr.Release()
+
+	s := scalar.NewInt64Scalar(4)
+	_, err := ArrayScalarCompute("equal", arr, s)
+	require.NoError(t, err)
+}
