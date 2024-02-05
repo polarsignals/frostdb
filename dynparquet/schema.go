@@ -156,6 +156,7 @@ func (s *Schema) FindDynamicColumn(dynamicColumnName string) (ColumnDefinition, 
 	}
 
 	colDef := s.columns[idx]
+	// Note: This is different from the FindColumn function.
 	if !colDef.Dynamic {
 		return ColumnDefinition{}, false
 	}
@@ -171,6 +172,7 @@ func (s *Schema) FindColumn(column string) (ColumnDefinition, bool) {
 	}
 
 	colDef := s.columns[idx]
+	// Note: This is different from the FindDynamicColumn function.
 	if colDef.Dynamic {
 		return ColumnDefinition{}, false
 	}
