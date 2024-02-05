@@ -7,7 +7,6 @@ import (
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
-	"github.com/parquet-go/parquet-go"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -22,7 +21,6 @@ type astVisitor struct {
 	builder     query.Builder
 	dynColNames map[string]struct{}
 	err         error
-	schema      *parquet.Schema
 
 	exprStack []logicalplan.Expr
 }
@@ -32,7 +30,6 @@ var _ ast.Visitor = &astVisitor{}
 func newASTVisitor(
 	builder query.Builder,
 	dynColNames []string,
-	schema *parquet.Schema,
 ) *astVisitor {
 	dynMap := make(map[string]struct{})
 	for _, n := range dynColNames {
@@ -41,7 +38,6 @@ func newASTVisitor(
 	return &astVisitor{
 		builder:     builder,
 		dynColNames: dynMap,
-		schema:      schema,
 	}
 }
 

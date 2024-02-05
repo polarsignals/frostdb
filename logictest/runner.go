@@ -394,7 +394,6 @@ func (r *Runner) parseSQL(
 		r.db.ScanTable(r.activeTableName),
 		dynColNames,
 		sql,
-		r.activeTableParquetSchema,
 	)
 	if err != nil {
 		return sqlparse.ParseResult{}, err

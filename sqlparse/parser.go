@@ -3,7 +3,6 @@ package sqlparse
 import (
 	"fmt"
 
-	"github.com/parquet-go/parquet-go"
 	"github.com/pingcap/tidb/parser"
 
 	"github.com/polarsignals/frostdb/query"
@@ -32,7 +31,6 @@ func (p *Parser) ExperimentalParse(
 	builder query.Builder,
 	dynColNames []string,
 	sql string,
-	schema *parquet.Schema,
 ) (ParseResult, error) {
 	asts, _, err := p.p.Parse(sql, "", "")
 	if err != nil {
@@ -43,7 +41,7 @@ func (p *Parser) ExperimentalParse(
 		return ParseResult{}, fmt.Errorf("cannot handle multiple asts, found %d", len(asts))
 	}
 
-	v := newASTVisitor(builder, dynColNames, schema)
+	v := newASTVisitor(builder, dynColNames)
 	asts[0].Accept(v)
 	if v.err != nil {
 		return ParseResult{}, v.err
