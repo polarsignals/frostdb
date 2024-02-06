@@ -125,6 +125,15 @@ func (l *TxPool) insert(node, prev, next *TxNode) bool {
 	return success
 }
 
+// notifyWatermark notifies the TxPool that the watermark has been updated. This
+// triggers a sweep of the pool.
+func (l *TxPool) notifyWatermark() {
+	select {
+	case l.drain <- struct{}{}:
+	default:
+	}
+}
+
 func (l *TxPool) Iterate(iterate func(txn uint64) bool) {
 	for node := l.head.Load().next.Load(); node.tx != 0; node = getUnmarked(node) {
 		if isMarked(node) == nil && !iterate(node.tx) {
