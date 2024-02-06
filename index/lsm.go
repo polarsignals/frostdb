@@ -77,8 +77,8 @@ type LevelConfig struct {
 
 type Level interface {
 	Compact(parts []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error)
+	Snapshot(parts []parts.Part, writer func(parts.Part) error, dir string) error
 	MaxSize() int64
-	Snapshot(dir string) error
 	Reset()
 }
 
@@ -251,28 +251,55 @@ func (l *LSM) LevelSize(t SentinelType) int64 {
 	return l.sizes[t].Load()
 }
 
-// Snapshot will create a snapshot of the LSM. This will block until all compactions have completed.
-func (l *LSM) Snapshot(dir string) error {
+// Snapshot creates a snapshot of the index at the given transaction. It will call the writer function with the parts in the index that are in-memory.
+func (l *LSM) Snapshot(writer func(parts.Part) error, dir string) error {
 	l.compacting.Lock()
 	defer l.compacting.Unlock()
 
-	// call snapshot on all the levels.
-	for i, lvl := range l.levels {
-		if lvl == nil {
-			continue
+	var (
+		snapshotList []parts.Part
+		iterError    error
+	)
+	var snapshotLevel SentinelType
+	l.partList.Iterate(func(node *Node) bool {
+		if node.part == nil {
+			if node.sentinel == L0 { // First node in the list will be L0
+				snapshotLevel = L0
+				return true
+			}
+
+			switch snapshotLevel {
+			case L0: // L0 is always in-memory
+				for _, part := range snapshotList {
+					if err := writer(part); err != nil {
+						iterError = err
+						return false
+					}
+				}
+			default:
+				lvl := l.levels[snapshotLevel-1]
+				lvldir := filepath.Join(dir, fmt.Sprintf("%v", snapshotLevel))
+				if err := lvl.Snapshot(snapshotList, writer, lvldir); err != nil {
+					iterError = err
+					return false
+				}
+			}
+
+			snapshotLevel = node.sentinel
+			snapshotList = nil
+			return true
 		}
 
-		lvldir := filepath.Join(dir, fmt.Sprintf("L%v", i+1))
-		if err := os.MkdirAll(lvldir, dirPerms); err != nil {
-			return err
-		}
-
-		if err := lvl.Snapshot(lvldir); err != nil {
-			return err
-		}
+		snapshotList = append(snapshotList, node.part)
+		return true
+	})
+	if iterError != nil {
+		return iterError
 	}
 
-	return nil
+	lvl := l.levels[snapshotLevel-1]
+	lvldir := filepath.Join(dir, fmt.Sprintf("%v", snapshotLevel))
+	return lvl.Snapshot(snapshotList, writer, lvldir)
 }
 
 func validateLevels(levels []*LevelConfig) error {

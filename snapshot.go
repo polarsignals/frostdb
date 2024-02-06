@@ -67,8 +67,6 @@ const (
 	minReadVersion = snapshotVersion
 )
 
-var ErrSkipPart = fmt.Errorf("skip part")
-
 type snapshotMetrics struct {
 	snapshotsTotal            *prometheus.CounterVec
 	snapshotFileSizeBytes     prometheus.Gauge
@@ -406,43 +404,30 @@ func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline 
 				},
 			}
 
-			var ascendErr error
-			block.Index().Iterate(func(node *index.Node) bool {
+			if err := block.Index().Snapshot(func(p parts.Part) error {
 				granuleMeta := &snapshotpb.Granule{}
-				if node.Part() == nil {
-					return true
-				}
-				p := node.Part()
 				partMeta := &snapshotpb.Part{
 					StartOffset:     int64(offW.offset),
 					Tx:              p.TX(),
 					CompactionLevel: uint64(p.CompactionLevel()),
 				}
-				err := func() error {
-					if err := ctx.Err(); err != nil {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				schema := t.schema
+
+				if record := p.Record(); record != nil {
+					partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
+					recordWriter := ipc.NewWriter(
+						w,
+						ipc.WithSchema(record.Schema()),
+					)
+					defer recordWriter.Close()
+					if err := recordWriter.Write(record); err != nil {
 						return err
 					}
-					schema := t.schema
-
-					if record := p.Record(); record != nil {
-						partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
-						recordWriter := ipc.NewWriter(
-							w,
-							ipc.WithSchema(record.Schema()),
-						)
-						defer recordWriter.Close()
-						return recordWriter.Write(record)
-					}
-
-					// If file compaction is enabled we do not need to snapshot the parquet parts.
-					for _, cfg := range db.columnStore.indexConfig {
-						if cfg.Type == index.CompactionTypeParquetDisk {
-							return ErrSkipPart
-						}
-					}
-
+				} else {
 					partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
-
 					buf, err := p.AsSerializedBuffer(schema)
 					if err != nil {
 						return err
@@ -454,30 +439,18 @@ func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline 
 					); err != nil {
 						return err
 					}
-					return nil
-				}()
-				if err != nil {
-					if err == ErrSkipPart {
-						return true
-					}
-					ascendErr = err
-					return false
 				}
 
 				partMeta.EndOffset = int64(offW.offset)
 				granuleMeta.PartMetadata = append(granuleMeta.PartMetadata, partMeta)
 				tableMeta.GranuleMetadata = append(tableMeta.GranuleMetadata, granuleMeta) // TODO: we have one part per granule now
-				return true
-			})
-
-			// Snapshot the table index. Perform this after the parts have been written to the snapshot to prevent a scenario where
-			// we snapshot the index, but before we can write the L0 parts they get compacted to the new index files.
-			if err := block.index.Snapshot(snapshotIndexDir(db, tx, t.name, block.ulid.String())); err != nil {
+				return nil
+			}, snapshotIndexDir(db, tx, t.name, block.ulid.String())); err != nil {
 				return fmt.Errorf("failed to snapshot table %s index: %w", t.name, err)
 			}
 
 			metadata.TableMetadata = append(metadata.TableMetadata, tableMeta)
-			return ascendErr
+			return nil
 		}(); err != nil {
 			return err
 		}

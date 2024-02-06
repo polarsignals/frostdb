@@ -59,8 +59,13 @@ func NewFileCompaction(dir string, maxSize int64, compact Compaction, logger log
 
 func (f *FileCompaction) MaxSize() int64 { return f.maxSize }
 
-// Snapshot will create a new index file and all future compacitons are written to that index file.
-func (f *FileCompaction) Snapshot(dir string) error {
+// Snapshot takes a snapshot of the current level. It ignores the parts and just hard links the files into the snapshot directory.
+// It will rotate the active file if it has data in it rendering all snapshotted files as immutable.
+func (f *FileCompaction) Snapshot(_ []parts.Part, _ func(parts.Part) error, dir string) error {
+	if err := os.MkdirAll(dir, dirPerms); err != nil {
+		return err
+	}
+
 	for i, file := range f.indexFiles {
 		if i == len(f.indexFiles)-1 {
 			// Sync the last file if it has data in it.
@@ -297,9 +302,16 @@ type inMemoryLevel struct {
 	maxSize int64
 }
 
-func (l *inMemoryLevel) MaxSize() int64          { return l.maxSize }
-func (l *inMemoryLevel) Snapshot(_ string) error { return nil }
-func (l *inMemoryLevel) Reset()                  {}
+func (l *inMemoryLevel) MaxSize() int64 { return l.maxSize }
+func (l *inMemoryLevel) Snapshot(snapshot []parts.Part, writer func(parts.Part) error, _ string) error {
+	for _, part := range snapshot {
+		if err := writer(part); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (l *inMemoryLevel) Reset() {}
 func (l *inMemoryLevel) Compact(toCompact []parts.Part, options ...parts.Option) ([]parts.Part, int64, int64, error) {
 	if len(toCompact) == 0 {
 		return nil, 0, 0, fmt.Errorf("no parts to compact")
