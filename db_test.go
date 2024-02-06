@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2879,4 +2880,28 @@ func Test_DB_PersistentDiskCompaction_NonOverlappingCompaction(t *testing.T) {
 	}
 
 	validateRows(3)
+}
+
+func TestDBWatermarkBubbling(t *testing.T) {
+	c, err := New()
+	require.NoError(t, err)
+	defer c.Close()
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	const nTxns = 100
+	var wg sync.WaitGroup
+	wg.Add(nTxns)
+	for i := 0; i < nTxns; i++ {
+		_, _, commit := db.begin()
+		go func() {
+			defer wg.Done()
+			commit()
+		}()
+	}
+	wg.Wait()
+
+	require.Eventually(t, func() bool {
+		return db.HighWatermark() == nTxns
+	}, time.Second, 10*time.Millisecond)
 }
