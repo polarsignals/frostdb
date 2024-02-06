@@ -650,7 +650,13 @@ func (s *Schema) Columns() []ColumnDefinition {
 	return s.columns
 }
 
-func (s *Schema) SortingColumns() []ColumnDefinition {
+func (s *Schema) SortingColumns() []SortingColumn {
+	sCols := make([]SortingColumn, len(s.sortingColumns))
+	copy(sCols, s.sortingColumns)
+	return sCols
+}
+
+func (s *Schema) ColumnDefinitionsForSortingColumns() []ColumnDefinition {
 	sCols := make([]ColumnDefinition, len(s.sortingColumns))
 	for i, col := range s.sortingColumns {
 		sCols[i] = s.columns[s.columnIndexes[col.ColumnName()]]
