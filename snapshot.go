@@ -753,6 +753,9 @@ func restoreIndexFilesFromSnapshot(db *DB, table, snapshotDir, blockID string) e
 	// Restore the index files from the snapshot files.
 	return filepath.WalkDir(snapshotIndexDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil // There is no index directory for this table.
+			}
 			return fmt.Errorf("failed to walk snapshot index directory: %w", err)
 		}
 
