@@ -1468,7 +1468,7 @@ func (t *Table) writeRecordsToParquet(w io.Writer, records []arrow.Record, sortI
 // caller should fall back to normal compaction. On success, the caller is
 // responsible for releasing the returned records.
 func (t *Table) distinctRecordsForCompaction(compact []parts.Part) ([]arrow.Record, error) {
-	sortingCols := t.schema.SortingColumns()
+	sortingCols := t.schema.ColumnDefinitionsForSortingColumns()
 	columnExprs := make([]logicalplan.Expr, 0, len(sortingCols))
 	for _, col := range sortingCols {
 		var expr logicalplan.Expr

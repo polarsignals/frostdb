@@ -309,7 +309,7 @@ func Build(
 	if s != nil {
 		// TODO(asubiotto): There are cases in which the schema can be nil.
 		// Eradicate these.
-		oInfo.sortingCols = s.SortingColumns()
+		oInfo.sortingCols = s.ColumnDefinitionsForSortingColumns()
 	}
 
 	var visitErr error
