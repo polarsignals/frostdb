@@ -1,0 +1,15 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, stacktrace, timestamp, value, floatvalue)
+value1 stack1 1 2 1.1
+value1 stack1 3 4 1.1
+value1 stack2 5 6 1.1
+----
+
+exec
+select convert(value, float) * floatvalue
+----
+2.200000
+4.400000
+6.600000

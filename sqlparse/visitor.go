@@ -5,8 +5,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/test_driver"
 
@@ -25,7 +27,10 @@ type astVisitor struct {
 
 var _ ast.Visitor = &astVisitor{}
 
-func newASTVisitor(builder query.Builder, dynColNames []string) *astVisitor {
+func newASTVisitor(
+	builder query.Builder,
+	dynColNames []string,
+) *astVisitor {
 	dynMap := make(map[string]struct{})
 	for _, n := range dynColNames {
 		dynMap[n] = struct{}{}
@@ -51,20 +56,86 @@ func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
 		expr.Fields.Accept(v)
 		switch {
 		case expr.GroupBy != nil:
+			// This represents everything before the "group by" clause.
+			beforeGroupBy := v.exprStack
 			expr.GroupBy.Accept(v)
-			var agg []logicalplan.Expr
-			var groups []logicalplan.Expr
+			// This represents everything after the "group by" clause.
+			afterGroupBy := v.exprStack[len(beforeGroupBy):]
+			groups := afterGroupBy
 
-			for _, expr := range v.exprStack {
-				switch expr.(type) {
-				case *logicalplan.AliasExpr, *logicalplan.AggregationFunction:
-					agg = append(agg, expr)
-				default:
-					groups = append(groups, expr)
+			includedPreprojections := make(map[string]struct{})
+			preProjections := []logicalplan.Expr{}
+			postProjections := []logicalplan.Expr{}
+			aggregations := []*logicalplan.AggregationFunction{}
+
+			for _, expr := range beforeGroupBy {
+				// Walk the expression tree and separate out what projections
+				// need to be done before aggregations, and which can be done
+				// after. We don't support nested aggregations, so we can just
+				// find aggregation functions and put their expressions into
+				// the pre-projections. If we wanted to support nested
+				// aggregations, this would need to be more sophisticated.
+				aggCollector := &aggregationCollector{}
+				expr.Accept(aggCollector)
+
+				// If we have any aggregations nested in the AST like
+				// "sum(value) as value_sum_or_anything_else" then the actual
+				// query plan nesting looks something like:
+				// alias(value_sum_or_anything_else, sum(value))
+
+				if len(aggCollector.aggregations) > 0 {
+					// This is the expression that will be aggregated so we
+					// need to ensure that it is in the pre-projection.
+					for _, agg := range aggCollector.aggregations {
+						if _, ok := includedPreprojections[agg.Expr.Name()]; !ok {
+							preProjections = append(preProjections, agg.Expr)
+							// The same expression can be used in multiple
+							// aggregations, but we only need to project it
+							// once.
+							includedPreprojections[agg.Expr.Name()] = struct{}{}
+						}
+
+						aggregations = append(aggregations, agg)
+					}
+					postProjections = append(postProjections, expr)
+				} else {
+					preProjections = append(preProjections, expr)
+					if _, ok := expr.(*logicalplan.DynamicColumn); ok {
+						postProjections = append(postProjections, expr)
+					} else {
+						postProjections = append(postProjections, logicalplan.Col(expr.Name()))
+					}
 				}
 			}
-			v.builder = v.builder.Aggregate(agg, groups)
+
+			// We need to ensure that anything we group by is in the pre-projection.
+			for _, expr := range afterGroupBy {
+				found := false
+				for _, preExpr := range preProjections {
+					if expr.Name() == preExpr.Name() {
+						found = true
+						break
+					}
+				}
+				if !found {
+					preProjections = append(preProjections, expr)
+				}
+			}
+
+			// Insert a projection for any groups that need to be computed
+			// before they can be used for an aggregation, for example:
+			//
+			// SELECT sum(value), (timestamp/1000) as timestamp_bucket group by timestamp_bucket
+			v.builder = v.builder.Project(preProjections...)
+			v.builder = v.builder.Aggregate(aggregations, groups)
+
+			// Insert a projection for any groups that need to be computed
+			// before they can be used for an aggregation, for example:
+			//
+			// SELECT sum(value)/count(value) value_avg, (timestamp/1000) as timestamp_bucket group by timestamp_bucket
+			v.builder = v.builder.Project(postProjections...)
 		case expr.Distinct:
+			v.builder = v.builder.Project(v.exprStack...)
 			v.builder = v.builder.Distinct(v.exprStack...)
 		default:
 			v.builder = v.builder.Project(v.exprStack...)
@@ -72,6 +143,25 @@ func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
 		return n, true
 	}
 	return n, false
+}
+
+type aggregationCollector struct {
+	aggregations []*logicalplan.AggregationFunction
+}
+
+func (a *aggregationCollector) PreVisit(_ logicalplan.Expr) bool {
+	return true
+}
+
+func (a *aggregationCollector) Visit(e logicalplan.Expr) bool {
+	if agg, ok := e.(*logicalplan.AggregationFunction); ok {
+		a.aggregations = append(a.aggregations, agg)
+	}
+	return true
+}
+
+func (a *aggregationCollector) PostVisit(_ logicalplan.Expr) bool {
+	return true
 }
 
 func (v *astVisitor) Leave(n ast.Node) (nRes ast.Node, ok bool) {
@@ -144,8 +234,9 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			v.exprStack = append(v.exprStack, logicalplan.Or(leftExpr, rightExpr))
 			return nil
 		}
+
 		v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
-			Left:  logicalplan.Col(leftExpr.Name()),
+			Left:  leftExpr,
 			Op:    frostDBOp,
 			Right: rightExpr,
 		})
@@ -170,7 +261,16 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 	case *ast.SelectField:
 		if as := expr.AsName.String(); as != "" {
 			lastExpr := len(v.exprStack) - 1
-			v.exprStack[lastExpr] = v.exprStack[lastExpr].(*logicalplan.AggregationFunction).Alias(as) // TODO should probably just be an alias expr and not from an aggregate function
+			switch e := v.exprStack[lastExpr].(type) {
+			case *logicalplan.AggregationFunction:
+				v.exprStack[lastExpr] = e.Alias(as)
+			case *logicalplan.BinaryExpr:
+				v.exprStack[lastExpr] = e.Alias(as)
+			case *logicalplan.Column:
+				v.exprStack[lastExpr] = e.Alias(as)
+			default:
+				return fmt.Errorf("unhandled select field %s", as)
+			}
 		}
 	case *ast.PatternRegexpExpr:
 		rightExpr, newExprs := pop(v.exprStack)
@@ -186,7 +286,8 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 			e.Op = logicalplan.OpRegexNotMatch
 		}
 		v.exprStack = append(v.exprStack, e)
-	case *ast.FieldList, *ast.ColumnNameExpr, *ast.GroupByClause, *ast.ByItem, *ast.RowExpr,
+	case *ast.GroupByClause:
+	case *ast.FieldList, *ast.ColumnNameExpr, *ast.ByItem, *ast.RowExpr,
 		*ast.ParenthesesExpr:
 		// Deliberate pass-through nodes.
 	case *ast.FuncCallExpr:
@@ -206,6 +307,17 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		default:
 			return fmt.Errorf("unhandled func call: %s", expr.FnName.String())
 		}
+	case *ast.FuncCastExpr:
+		var t arrow.DataType
+		switch expr.Tp.GetType() {
+		case mysql.TypeFloat:
+			t = arrow.PrimitiveTypes.Float64
+		default:
+			return fmt.Errorf("unhandled cast type: %s", expr.Tp)
+		}
+		e, newExprs := pop(v.exprStack)
+		v.exprStack = newExprs
+		v.exprStack = append(v.exprStack, logicalplan.Convert(e, t))
 	default:
 		return fmt.Errorf("unhandled ast node %T", expr)
 	}

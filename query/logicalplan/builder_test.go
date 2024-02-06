@@ -15,10 +15,10 @@ func TestLogicalPlanBuilder(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
-		Project(Col("stacktrace")).
+		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
 		Build()
 
 	require.Nil(t, err)
@@ -27,15 +27,16 @@ func TestLogicalPlanBuilder(t *testing.T) {
 		Projection: &Projection{
 			Exprs: []Expr{
 				&Column{ColumnName: "stacktrace"},
+				&AliasExpr{
+					Expr:  &AggregationFunction{Func: AggFuncSum, Expr: &Column{ColumnName: "value"}},
+					Alias: "value_sum",
+				},
 			},
 		},
 		Input: &LogicalPlan{
 			Aggregation: &Aggregation{
 				GroupExprs: []Expr{&Column{ColumnName: "stacktrace"}},
-				AggExprs: []Expr{&AliasExpr{
-					Expr:  &AggregationFunction{Func: AggFuncSum, Expr: &Column{ColumnName: "value"}},
-					Alias: "value_sum",
-				}},
+				AggExprs:   []*AggregationFunction{{Func: AggFuncSum, Expr: &Column{ColumnName: "value"}}},
 			},
 			Input: &LogicalPlan{
 				Filter: &Filter{
@@ -68,9 +69,14 @@ func TestLogicalPlanBuilderWithoutProjection(t *testing.T) {
 			Exprs: []Expr{&Column{ColumnName: "labels.test"}},
 		},
 		Input: &LogicalPlan{
-			TableScan: &TableScan{
-				TableProvider: tableProvider,
-				TableName:     "table1",
+			Projection: &Projection{
+				Exprs: []Expr{&Column{ColumnName: "labels.test"}},
+			},
+			Input: &LogicalPlan{
+				TableScan: &TableScan{
+					TableProvider: tableProvider,
+					TableName:     "table1",
+				},
 			},
 		},
 	}, p)

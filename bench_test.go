@@ -74,7 +74,7 @@ func getLatest15MinInterval(ctx context.Context, b testing.TB, engine *query.Loc
 	var result arrow.Record
 	require.NoError(b, engine.ScanTable(tableName).
 		Aggregate(
-			[]logicalplan.Expr{
+			[]*logicalplan.AggregationFunction{
 				logicalplan.Max(logicalplan.Col("timestamp")),
 			},
 			nil,
@@ -294,7 +294,7 @@ func BenchmarkQuery(b *testing.B) {
 					logicalplan.And(fullFilter...),
 				).
 				Aggregate(
-					[]logicalplan.Expr{
+					[]*logicalplan.AggregationFunction{
 						logicalplan.Sum(logicalplan.Col("value")),
 					},
 					[]logicalplan.Expr{
@@ -320,7 +320,7 @@ func BenchmarkQuery(b *testing.B) {
 					logicalplan.And(fullFilter...),
 				).
 				Aggregate(
-					[]logicalplan.Expr{
+					[]*logicalplan.AggregationFunction{
 						logicalplan.Sum(logicalplan.Col("value")),
 					},
 					[]logicalplan.Expr{

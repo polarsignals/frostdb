@@ -27,7 +27,11 @@ type ParseResult struct {
 // queryEngine.ScanTable is provided as a starting point and no table needs to
 // be specified in the SQL statement. Additionally, the idea is to change to
 // creating logical plans directly (rather than through a builder).
-func (p *Parser) ExperimentalParse(builder query.Builder, dynColNames []string, sql string) (ParseResult, error) {
+func (p *Parser) ExperimentalParse(
+	builder query.Builder,
+	dynColNames []string,
+	sql string,
+) (ParseResult, error) {
 	asts, _, err := p.p.Parse(sql, "", "")
 	if err != nil {
 		return ParseResult{}, err

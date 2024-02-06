@@ -15,10 +15,10 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
-		Project(Col("stacktrace")).
+		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
 		Build()
 
 	optimizer := &PhysicalProjectionPushDown{}
@@ -32,7 +32,6 @@ func TestOptimizePhysicalProjectionPushDown(t *testing.T) {
 		// columns they access. The optimizer could potentially deduplicate or
 		// use a more efficient datastructure in the future.
 		PhysicalProjection: []Expr{
-			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "value"},
 			DynCol(hashedMatch),
@@ -60,7 +59,7 @@ func TestOptimizeDistinctPushDown(t *testing.T) {
 		},
 	},
 		// Distinct -> TableScan
-		p.Input.TableScan,
+		p.Input.Input.TableScan,
 	)
 }
 
@@ -70,10 +69,10 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
-		Project(Col("stacktrace")).
+		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
 		Build()
 
 	optimizer := &FilterPushDown{}
@@ -96,68 +95,45 @@ func TestOptimizeFilterPushDown(t *testing.T) {
 	)
 }
 
-func TestRemoveProjectionAtRoot(t *testing.T) {
-	p, _ := (&Builder{}).
-		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
-		Filter(Col("labels.test").Eq(Literal("abc"))).
-		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
-			[]Expr{Col("stacktrace")},
-		).
-		Project(Col("stacktrace")).
-		Build()
-
-	p = removeProjection(p)
-
-	require.True(t, p.Projection == nil)
-}
-
-func TestRemoveMiddleProjection(t *testing.T) {
-	p, _ := (&Builder{}).
-		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
-		Filter(Col("labels.test").Eq(Literal("abc"))).
-		Project(Col("stacktrace")).
-		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
-			[]Expr{Col("stacktrace")},
-		).
-		Build()
-
-	p = removeProjection(p)
-
-	require.True(t, p.Input.Projection == nil)
-}
-
-func TestRemoveLowestProjection(t *testing.T) {
-	p, _ := (&Builder{}).
-		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
-		Project(Col("stacktrace")).
-		Filter(Col("labels.test").Eq(Literal("abc"))).
-		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
-			[]Expr{Col("stacktrace")},
-		).
-		Build()
-
-	p = removeProjection(p)
-
-	require.True(t, p.Input.Input.Projection == nil)
-}
-
 func TestProjectionPushDown(t *testing.T) {
 	p, _ := (&Builder{}).
 		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
-		Project(Col("labels")).
 		Build()
 
-	p = (&ProjectionPushDown{}).Optimize(p)
+	p = (&PhysicalProjectionPushDown{}).Optimize(p)
 
-	require.True(t, p.Input.Input.Projection == nil)
+	require.Equal(t, []Expr{
+		Col("stacktrace"),
+		Col("value"),
+		DynCol("hashed"),
+		Col("labels.test"),
+	}, p.Input.Input.TableScan.PhysicalProjection)
+}
+
+func TestProjectionPushDownReset(t *testing.T) {
+	p, _ := (&Builder{}).
+		Scan(&mockTableProvider{schema: dynparquet.NewSampleSchema()}, "table1").
+		Filter(Col("labels.test").Eq(Literal("abc"))).
+		Aggregate(
+			[]*AggregationFunction{Sum(Col("value"))},
+			[]Expr{Col("stacktrace")},
+		).
+		Project(Col("test")).
+		Build()
+
+	p = (&PhysicalProjectionPushDown{}).Optimize(p)
+
+	require.Equal(t, []Expr{
+		Col("stacktrace"),
+		Col("value"),
+		DynCol("hashed"),
+		Col("labels.test"),
+	}, p.Input.Input.Input.TableScan.PhysicalProjection)
 }
 
 func TestProjectionPushDownOfDistinct(t *testing.T) {
@@ -166,9 +142,9 @@ func TestProjectionPushDownOfDistinct(t *testing.T) {
 		Distinct(DynCol("labels")).
 		Build()
 
-	p = (&ProjectionPushDown{}).Optimize(p)
+	p = (&PhysicalProjectionPushDown{}).Optimize(p)
 
-	require.True(t, p.Input.Projection != nil)
+	require.Equal(t, []Expr{DynCol("labels")}, p.Input.Input.TableScan.PhysicalProjection)
 }
 
 func TestAllOptimizers(t *testing.T) {
@@ -177,18 +153,13 @@ func TestAllOptimizers(t *testing.T) {
 		Scan(tableProvider, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
-			[]Expr{Sum(Col("value")).Alias("value_sum")},
+			[]*AggregationFunction{Sum(Col("value"))},
 			[]Expr{Col("stacktrace")},
 		).
 		Project(Col("stacktrace")).
 		Build()
 
-	optimizers := []Optimizer{
-		&PhysicalProjectionPushDown{},
-		&FilterPushDown{},
-		&DistinctPushDown{},
-		&ProjectionPushDown{},
-	}
+	optimizers := DefaultOptimizers()
 
 	for _, optimizer := range optimizers {
 		p = optimizer.Optimize(p)
@@ -202,7 +173,6 @@ func TestAllOptimizers(t *testing.T) {
 		// columns they access. The optimizer could potentially deduplicate or
 		// use a more efficient datastructure in the future.
 		PhysicalProjection: []Expr{
-			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "stacktrace"},
 			&Column{ColumnName: "value"},
 			DynCol(hashedMatch),

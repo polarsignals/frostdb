@@ -1,0 +1,9 @@
+createtable schema=default
+----
+
+# timestamps have to be in milliseconds for these tests
+
+exec
+explain select sum(value) as value_sum, ((timestamp / 1000) * 1000) as timestamp_bucket group by timestamp_bucket
+----
+TableScan [concurrent] - Projection (value, timestamp / 1000 * 1000 as timestamp_bucket) - HashAggregate (sum(value) by timestamp_bucket) - Synchronizer - HashAggregate (sum(value) by timestamp_bucket) - Projection (sum(value) as value_sum, timestamp_bucket)

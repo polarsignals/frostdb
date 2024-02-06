@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/memory"
@@ -71,9 +72,9 @@ func main() {
 	engine := query.NewEngine(memory.DefaultAllocator, database.TableProvider())
 
 	// snowfall statistics by city:
-	_ = engine.ScanTable("snowfall_table").
+	err := engine.ScanTable("snowfall_table").
 		Aggregate(
-			[]logicalplan.Expr{
+			[]*logicalplan.AggregationFunction{
 				logicalplan.Max(logicalplan.Col("snowfall")),
 				logicalplan.Min(logicalplan.Col("snowfall")),
 				logicalplan.Avg(logicalplan.Col("snowfall")),
@@ -85,11 +86,14 @@ func main() {
 			fmt.Println(r)
 			return nil
 		})
+	if err != nil {
+		log.Fatal("snowfall statistics by city:", err)
+	}
 
 	// Total snowfall on each day of week:
-	_ = engine.ScanTable("snowfall_table").
+	err = engine.ScanTable("snowfall_table").
 		Aggregate(
-			[]logicalplan.Expr{
+			[]*logicalplan.AggregationFunction{
 				logicalplan.Sum(logicalplan.Col("snowfall")),
 			},
 			[]logicalplan.Expr{logicalplan.Col("day")},
@@ -99,4 +103,7 @@ func main() {
 			fmt.Println(r)
 			return nil
 		})
+	if err != nil {
+		log.Fatal("total snowfall on each day of week:", err)
+	}
 }

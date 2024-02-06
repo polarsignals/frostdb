@@ -71,13 +71,13 @@ func (w *singlePassThroughWriter) Reset(_ io.Writer) {}
 // RecordToRow converts an arrow record with dynamic columns into a row using a dynamic parquet schema.
 func RecordToRow(schema *dynparquet.Schema, final *parquet.Schema, record arrow.Record, index int) (parquet.Row, error) {
 	w := &singlePassThroughWriter{}
-	if err := recordToRows(w, schema.IsDynamicColumn, record, index, index+1, final.Fields()); err != nil {
+	if err := recordToRows(w, schema.FindDynamicColumnForConcreteColumn, record, index, index+1, final.Fields()); err != nil {
 		return nil, err
 	}
 	return w.rows[0], nil
 }
 
-type dynamicColumnVerifier func(string) bool
+type dynamicColumnVerifier func(string) (dynparquet.ColumnDefinition, bool)
 
 // recordToRows converts a full arrow record to parquet rows which are written
 // to the parquet writer.
@@ -93,7 +93,7 @@ func recordToRows(w dynparquet.ParquetWriter, dcv dynamicColumnVerifier, record 
 		f := finalFields[i]
 		name := f.Name()
 		def := 0
-		if dcv(name) {
+		if _, ok := dcv(name); ok {
 			def = 1
 		}
 		idx := schema.FieldIndices(name)
@@ -380,7 +380,7 @@ func RecordsToFile(schema *dynparquet.Schema, w dynparquet.ParquetWriter, recs [
 	finalFields := ps.Schema.Fields()
 
 	for _, r := range recs {
-		if err := recordToRows(w, schema.IsDynamicColumn, r, 0, int(r.NumRows()), finalFields); err != nil {
+		if err := recordToRows(w, schema.FindDynamicColumnForConcreteColumn, r, 0, int(r.NumRows()), finalFields); err != nil {
 			return err
 		}
 	}

@@ -145,7 +145,7 @@ func TestSnapshot(t *testing.T) {
 			},
 		} {
 			if testCase.expMaxTimestamp != 0 {
-				max := []logicalplan.Expr{
+				max := []*logicalplan.AggregationFunction{
 					logicalplan.Max(logicalplan.Col("timestamp")),
 				}
 				require.NoError(
@@ -220,7 +220,7 @@ func TestSnapshot(t *testing.T) {
 			query.NewEngine(
 				memory.DefaultAllocator, snapshotDB.TableProvider(),
 			).ScanTable(tableName).Aggregate(
-				[]logicalplan.Expr{logicalplan.Max(logicalplan.Col("timestamp"))}, nil,
+				[]*logicalplan.AggregationFunction{logicalplan.Max(logicalplan.Col("timestamp"))}, nil,
 			).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 				require.Equal(
 					t, int(snapshotTx-highWatermarkAtStart), int(r.Column(0).(*array.Int64).Int64Values()[0]),
@@ -318,7 +318,7 @@ func TestSnapshotWithWAL(t *testing.T) {
 		t,
 		engine.ScanTable(dbAndTableName).
 			Aggregate(
-				[]logicalplan.Expr{logicalplan.Min(logicalplan.Col("timestamp"))},
+				[]*logicalplan.AggregationFunction{logicalplan.Min(logicalplan.Col("timestamp"))},
 				nil,
 			).Execute(ctx, func(_ context.Context, r arrow.Record) error {
 			// This check verifies that the snapshot data (i.e. the first
@@ -331,7 +331,7 @@ func TestSnapshotWithWAL(t *testing.T) {
 		t,
 		engine.ScanTable(dbAndTableName).
 			Aggregate(
-				[]logicalplan.Expr{logicalplan.Max(logicalplan.Col("timestamp"))},
+				[]*logicalplan.AggregationFunction{logicalplan.Max(logicalplan.Col("timestamp"))},
 				nil,
 			).Execute(ctx, func(_ context.Context, r arrow.Record) error {
 			// This check verifies that the write that is only represented in

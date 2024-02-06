@@ -774,7 +774,7 @@ func restoreIndexFilesFromSnapshot(db *DB, table, snapshotDir, blockID string) e
 
 		// Hard link the file back into the index directory.
 		if err := os.Link(path, filepath.Join(db.indexDir(), table, blockID, lvl, filename)); err != nil {
-			return err
+			return fmt.Errorf("hard link file: %w", err)
 		}
 
 		return nil

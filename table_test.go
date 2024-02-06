@@ -841,7 +841,7 @@ func Test_Insert_Repeated(t *testing.T) {
 			converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
 			defer converter.Close()
 
-			require.NoError(t, converter.Convert(ctx, buffer))
+			require.NoError(t, converter.Convert(ctx, buffer, table.Schema()))
 			record := converter.NewRecord()
 			defer record.Release()
 
@@ -866,7 +866,7 @@ func Test_Insert_Repeated(t *testing.T) {
 			engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
 			err = engine.ScanTable("test").
 				Aggregate(
-					[]logicalplan.Expr{logicalplan.Sum(logicalplan.Col("value"))},
+					[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 					[]logicalplan.Expr{logicalplan.Col("values")},
 				).
 				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
@@ -954,7 +954,7 @@ func Test_Compact_Repeated(t *testing.T) {
 	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
 	defer converter.Close()
 
-	require.NoError(t, converter.Convert(ctx, buffer))
+	require.NoError(t, converter.Convert(ctx, buffer, table.Schema()))
 	before := converter.NewRecord()
 	defer before.Release()
 
@@ -1160,7 +1160,7 @@ func Test_Issue685(t *testing.T) {
 	engine := query.NewEngine(memory.NewGoAllocator(), db.TableProvider())
 	err = engine.ScanTable("test").
 		Aggregate(
-			[]logicalplan.Expr{
+			[]*logicalplan.AggregationFunction{
 				logicalplan.Sum(logicalplan.Col("value.age")),
 			},
 			nil,

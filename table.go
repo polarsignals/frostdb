@@ -818,18 +818,18 @@ func (t *Table) Iterator(
 						return callback(ctx, r)
 					}
 
-					switch t := rg.(type) {
+					switch rg := rg.(type) {
 					case arrow.Record:
-						defer t.Release()
-						r := pqarrow.Project(t, iterOpts.PhysicalProjection)
+						defer rg.Release()
+						r := pqarrow.Project(rg, iterOpts.PhysicalProjection)
 						defer r.Release()
 						err := callback(ctx, r)
 						if err != nil {
 							return err
 						}
 					case index.ReleaseableRowGroup:
-						defer t.Release()
-						if err := converter.Convert(ctx, t); err != nil {
+						defer rg.Release()
+						if err := converter.Convert(ctx, rg, t.schema); err != nil {
 							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 						}
 						// This RowGroup had no relevant data. Ignore it.
@@ -848,7 +848,7 @@ func (t *Table) Iterator(
 							}
 						}
 					case dynparquet.DynamicRowGroup:
-						if err := converter.Convert(ctx, t); err != nil {
+						if err := converter.Convert(ctx, rg, t.schema); err != nil {
 							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 						}
 						// This RowGroup had no relevant data. Ignore it.

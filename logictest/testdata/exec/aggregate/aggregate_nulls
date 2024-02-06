@@ -10,25 +10,25 @@ null    value2  stack1  3   3
 # TODO query results should explicitly return null values
 # https://github.com/polarsignals/frostdb/issues/259
 exec
-select sum(value) as value_sum group by labels.label2
+select labels.label2, sum(value) as value_sum group by labels.label2
 ----
 value2  5
 null    1
 
 exec
-select max(value) as value_max group by labels.label2
+select labels.label2, max(value) as value_max group by labels.label2
 ----
 value2  3
 null    1
 
 exec
-select count(value) as value_count group by labels.label2
+select labels.label2, count(value) as value_count group by labels.label2
 ----
 value2  2
 null    1
 
 exec
-select sum(value) as value_sum, count(value) as value_count group by labels.label2
+select labels.label2, sum(value) as value_sum, count(value) as value_count group by labels.label2
 ----
 value2  5       2
 null    1       1

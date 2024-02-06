@@ -20,11 +20,11 @@ import (
 )
 
 // ParquetRowGroupToArrowSchema converts a parquet row group to an arrow schema.
-func ParquetRowGroupToArrowSchema(ctx context.Context, rg parquet.RowGroup, options logicalplan.IterOptions) (*arrow.Schema, error) {
-	return ParquetSchemaToArrowSchema(ctx, rg.Schema(), options)
+func ParquetRowGroupToArrowSchema(ctx context.Context, rg parquet.RowGroup, s *dynparquet.Schema, options logicalplan.IterOptions) (*arrow.Schema, error) {
+	return ParquetSchemaToArrowSchema(ctx, rg.Schema(), s, options)
 }
 
-func ParquetSchemaToArrowSchema(ctx context.Context, schema *parquet.Schema, options logicalplan.IterOptions) (*arrow.Schema, error) {
+func ParquetSchemaToArrowSchema(ctx context.Context, schema *parquet.Schema, s *dynparquet.Schema, options logicalplan.IterOptions) (*arrow.Schema, error) {
 	parquetFields := schema.Fields()
 
 	if len(options.DistinctColumns) == 1 && options.Filter == nil {
@@ -61,7 +61,15 @@ func ParquetSchemaToArrowSchema(ctx context.Context, schema *parquet.Schema, opt
 
 	for _, distinctExpr := range options.DistinctColumns {
 		if distinctExpr.Computed() {
-			dataType, err := distinctExpr.DataType(schema)
+			// Usually we would pass the logical query plan as the data type
+			// finder, but we're here because of an intended layering
+			// violation, which is pushing distinct queries down to the scan
+			// layer. In this case there are no other possible physical types
+			// other than the actual schema, so we can just implement a
+			// simplified version of the type finder that doesn't need to
+			// traverse the logical plan, since this is already the physical
+			// scan layer execution.
+			dataType, err := distinctExpr.DataType(&exprTypeFinder{s: s})
 			if err != nil {
 				return nil, err
 			}
@@ -74,6 +82,14 @@ func ParquetSchemaToArrowSchema(ctx context.Context, schema *parquet.Schema, opt
 	}
 
 	return arrow.NewSchema(fields, nil), nil
+}
+
+type exprTypeFinder struct {
+	s *dynparquet.Schema
+}
+
+func (e *exprTypeFinder) DataTypeForExpr(expr logicalplan.Expr) (arrow.DataType, error) {
+	return logicalplan.DataTypeForExprWithSchema(expr, e.s)
 }
 
 func parquetFieldToArrowField(prefix string, field parquet.Field, physicalProjections []logicalplan.Expr) (arrow.Field, error) {
@@ -234,8 +250,8 @@ func NewParquetConverter(
 	return c
 }
 
-func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup) error {
-	schema, err := ParquetRowGroupToArrowSchema(ctx, rg, c.iterOpts)
+func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *dynparquet.Schema) error {
+	schema, err := ParquetRowGroupToArrowSchema(ctx, rg, s, c.iterOpts)
 	if err != nil {
 		return err
 	}

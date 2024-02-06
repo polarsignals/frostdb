@@ -1,0 +1,138 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, timestamp, value)
+value1 1 2
+value1 3 4
+value1 5 6
+value1 11 0
+----
+
+exec
+select value * timestamp
+----
+2
+12
+30
+0
+
+exec
+select value * 2
+----
+4
+8
+12
+0
+
+exec
+select 2 * 3
+----
+6
+6
+6
+6
+
+exec
+select value * (2 * 3)
+----
+12
+24
+36
+0
+
+exec
+select value * (timestamp * 2)
+----
+4
+24
+60
+0
+
+exec
+select value * timestamp * 2
+----
+4
+24
+60
+0
+
+exec
+select value * timestamp + 2 - 1
+----
+3
+13
+31
+1
+
+exec
+select value * timestamp * (2 - 1)
+----
+2
+12
+30
+0
+
+exec
+select value, value * timestamp * (2 - 1)
+----
+2       2
+4       12
+6       30
+0       0
+
+exec
+select timestamp, value * timestamp * (2 - 1) where value > 2
+----
+3       12
+5       30
+
+exec
+select value, timestamp  * value * (2 - 1)  where value > 2
+----
+4       12
+6       30
+
+exec
+select value , value  * timestamp * (2 - 1) as result where value > 2
+----
+4       12
+6       30
+
+exec
+select value as result, value  * timestamp * (2 - 1)  where value > 2
+----
+4       12
+6       30
+
+exec
+select labels.label1, sum(value), count(value) group by labels.label1
+----
+value1  12      4
+
+exec
+select   max(value) - min(value) , sum(value) / count(value)  group by labels.label1
+----
+6       3
+
+exec
+select  labels.label1, max(value) - min(value) , sum(value) / count(value)  group by labels.label1
+----
+value1  6       3
+
+exec
+select  labels.label1, (max(value) - min(value)) /2  , sum(value) / count(value)  group by labels.label1
+----
+value1  3       3
+
+exec
+select  labels.label1, (max(value) - min(value)) /2  , sum(value) / count(value) , (sum(value) / count(value)) * 2 group by labels.label1
+----
+value1  3       3       6
+
+exec
+select timestamp / value
+----
+0
+0
+0
+null

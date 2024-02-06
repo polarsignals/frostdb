@@ -124,9 +124,10 @@ type Schema struct {
 	parquetSchemas *sync.Map
 }
 
-// IsDynamicColumn returns true if the passed in column name of the type
-// "labels.label1" is a dynamic column the schema recognizes.
-func (s *Schema) IsDynamicColumn(column string) bool {
+// FindDynamicColumnForConcreteColumn returns a column definition for the
+// column passed. So "labels.label1" would return the column definition for the
+// dynamic column "labels" if it exists.
+func (s *Schema) FindDynamicColumnForConcreteColumn(column string) (ColumnDefinition, bool) {
 	periodPosition := 0
 	foundPeriod := false
 	for i, c := range column {
@@ -135,15 +136,48 @@ func (s *Schema) IsDynamicColumn(column string) bool {
 		}
 		if foundPeriod {
 			// Can't have more than one period.
-			return false
+			return ColumnDefinition{}, false
 		}
 		foundPeriod = true
 		periodPosition = i
 	}
 	if !foundPeriod {
-		return false
+		return ColumnDefinition{}, false
 	}
-	return s.columns[s.columnIndexes[column[0:periodPosition]]].Dynamic
+
+	return s.FindDynamicColumn(column[:periodPosition])
+}
+
+// FindDynamicColumn returns a dynamic column definition for the column passed.
+func (s *Schema) FindDynamicColumn(dynamicColumnName string) (ColumnDefinition, bool) {
+	idx, ok := s.columnIndexes[dynamicColumnName]
+	if !ok {
+		return ColumnDefinition{}, false
+	}
+
+	colDef := s.columns[idx]
+	// Note: This is different from the FindColumn function.
+	if !colDef.Dynamic {
+		return ColumnDefinition{}, false
+	}
+
+	return colDef, true
+}
+
+// FindColumn returns a column definition for the column passed.
+func (s *Schema) FindColumn(column string) (ColumnDefinition, bool) {
+	idx, ok := s.columnIndexes[column]
+	if !ok {
+		return ColumnDefinition{}, false
+	}
+
+	colDef := s.columns[idx]
+	// Note: This is different from the FindDynamicColumn function.
+	if colDef.Dynamic {
+		return ColumnDefinition{}, false
+	}
+
+	return colDef, true
 }
 
 func findLeavesFromNode(node *schemav2pb.Node) []ColumnDefinition {

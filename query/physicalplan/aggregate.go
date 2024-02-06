@@ -30,40 +30,23 @@ func Aggregate(
 ) (PhysicalPlan, error) {
 	aggregations := make([]Aggregation, 0, len(agg.AggExprs))
 
+	// TODO(brancz): This is not correct, it doesn't handle aggregations
+	// correctly of previously projected columns like `sum(value + timestamp)`.
+	// Need to understand why we need to handle dynamic columns here
+	// differently and not just use the aggregation funciton's expression.
 	for _, expr := range agg.AggExprs {
-		var (
-			aggregation    Aggregation
-			aggFunc        logicalplan.AggFunc
-			aggFuncFound   bool
-			aggColumnFound bool
-		)
+		aggregation := Aggregation{}
 		expr.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
-			switch e := expr.(type) {
-			case *logicalplan.AggregationFunction:
-				aggFunc = e.Func
-				aggFuncFound = true
-			case *logicalplan.Column:
-				aggregation.expr = e
-				aggColumnFound = true
-			case *logicalplan.DynamicColumn:
-				aggregation.expr = e
+			if _, ok := expr.(*logicalplan.DynamicColumn); ok {
 				aggregation.dynamic = true
-				aggColumnFound = true
 			}
 
 			return true
 		}))
 
-		if !aggFuncFound {
-			return nil, errors.New("aggregation function not found")
-		}
-
-		if !aggColumnFound {
-			return nil, errors.New("aggregation column not found")
-		}
-
 		aggregation.resultName = expr.Name()
-		aggregation.function = aggFunc
+		aggregation.function = expr.Func
+		aggregation.expr = expr.Expr
 
 		aggregations = append(aggregations, aggregation)
 	}
@@ -247,7 +230,7 @@ func (a *HashAggregate) Draw() *Diagram {
 
 	var groupings []string
 	for _, grouping := range a.groupByColumnMatchers {
-		groupings = append(groupings, grouping.Name())
+		groupings = append(groupings, grouping.String())
 	}
 	details := fmt.Sprintf("HashAggregate (%s by %s)", strings.Join(names, ","), strings.Join(groupings, ","))
 	return &Diagram{Details: details, Child: child}
@@ -271,23 +254,6 @@ type uint64HashCombine struct {
 
 func (u *uint64HashCombine) hashCombine(rhs uint64) uint64 {
 	return hashCombine(u.value, rhs)
-}
-
-// durationHashCombine hashes a given timestamp by dividing it through a given duration.
-// timestamp | duration | hash
-// 0 		 | 2		| 0
-// 1 		 | 2		| 0
-// 2 		 | 2		| 1
-// 3 		 | 2		| 1
-// 4 		 | 2		| 2
-// 5 		 | 2		| 2
-// Essentially hashing timestamps into buckets of durations.
-type durationHashCombine struct {
-	milliseconds uint64
-}
-
-func (d *durationHashCombine) hashCombine(rhs uint64) uint64 {
-	return rhs / d.milliseconds // floors by default
 }
 
 func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
@@ -327,17 +293,9 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 					continue
 				}
 
-				switch v := matcher.(type) {
-				case *logicalplan.DurationExpr:
-					duration := v.Value()
-					groupByFieldHashes = append(groupByFieldHashes,
-						&durationHashCombine{milliseconds: uint64(duration.Milliseconds())},
-					)
-				default:
-					groupByFieldHashes = append(groupByFieldHashes,
-						&uint64HashCombine{value: scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name))},
-					)
-				}
+				groupByFieldHashes = append(groupByFieldHashes,
+					&uint64HashCombine{value: scalar.Hash(a.hashSeed, scalar.NewStringScalar(field.Name))},
+				)
 			}
 		}
 
@@ -398,11 +356,23 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 		}
 	}
 
-	if concreteAggregateFieldsFound != aggregate.concreteAggregations ||
+	// It's ok for the same aggregation to be found multiple times, optimizers
+	// should remove them but for correctness in the case where they don't we
+	// need to handle it, so concrete aggregates are allowed to be different
+	// from concrete aggregations.
+	if ((concreteAggregateFieldsFound == 0 || aggregate.concreteAggregations == 0) && (len(aggregate.dynamicAggregations) == 0)) ||
 		(len(aggregate.dynamicAggregations) > 0) && dynamicAggregateFieldsFound == 0 {
 		// To perform an aggregation ALL concrete columns must have been matched
 		// or at least one dynamic column if performing dynamic aggregations.
-		return errors.New("aggregate field not found, aggregations are not possible without it")
+		exprs := make([]string, len(aggregate.aggregations))
+		for i, col := range aggregate.aggregations {
+			exprs[i] = col.expr.String()
+		}
+
+		if a.finalStage {
+			return fmt.Errorf("aggregate field(s) not found %#v, final aggregations are not possible without it (%d concrete aggregation fields found; %d concrete aggregations)", exprs, concreteAggregateFieldsFound, aggregate.concreteAggregations)
+		}
+		return fmt.Errorf("aggregate field(s) not found %#v, aggregations are not possible without it (%d concrete aggregation fields found; %d concrete aggregations)", exprs, concreteAggregateFieldsFound, aggregate.concreteAggregations)
 	}
 
 	numRows := int(r.NumRows())

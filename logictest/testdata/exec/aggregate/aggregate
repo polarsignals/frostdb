@@ -14,78 +14,83 @@ value6  value2  null    value4  stack1  6   6   6.6
 ----
 
 exec
-select sum(value) as value_sum group by labels.label2
+select sum(value) as value_sum, labels.label2 group by labels.label2
 ----
-value2  21
+21      value2
 
 exec
-select sum(floatvalue) as float_value_sum group by labels.label2
+select labels.label2, sum(floatvalue) as float_value_sum group by labels.label2
 ----
 value2  23.100000
 
 exec
-select max(value) as value_max group by labels.label2
+select labels.label2, max(value) as value_max group by labels.label2
 ----
 value2  6
 
 exec
-select max(floatvalue) as value_max group by labels.label2
+select labels.label2, max(floatvalue) as value_max group by labels.label2
 ----
 value2  6.600000
 
 exec
-select min(floatvalue) as value_min group by labels.label2
+select labels.label2, min(floatvalue) as value_min group by labels.label2
 ----
 value2  1.100000
 
 exec
-select count(value) as value_count group by labels.label2
+select labels.label2, count(value) as value_count group by labels.label2
 ----
 value2  6
 
 exec
-select avg(value) as value_avg group by labels.label2
+select labels.label2, avg(value) group by labels.label2
 ----
 value2  3
 
 exec
-select avg(floatvalue) as value_avg group by labels.label2
+select labels.label2, avg(value) as value_avg group by labels.label2
+----
+value2  3
+
+exec
+select labels.label2, avg(floatvalue) as value_avg group by labels.label2
 ----
 value2  3.850000
 
 exec
-select avg(value) as value_avg group by labels.label4
+select labels.label4, avg(value) as value_avg group by labels.label4
 ----
 null    3
 value4  4
 
 exec
-select sum(value), count(value) group by stacktrace
+select stacktrace, sum(value), count(value) group by stacktrace
 ----
 stack1  21      6
 
 exec
-select sum(floatvalue), count(floatvalue) group by stacktrace
+select stacktrace, sum(floatvalue), count(floatvalue) group by stacktrace
 ----
 stack1  23.100000  6
 
 exec
-select sum(value) as value_sum, count(value) as value_count group by stacktrace
+select stacktrace, sum(value) as value_sum, count(value) as value_count group by stacktrace
 ----
 stack1  21      6
 
 exec
-select sum(value), count(value), min(value), max(value) group by labels.label2
+select labels.label2, sum(value), count(value), min(value), max(value) group by labels.label2
 ----
 value2  21      6       1       6
 
 exec
-select sum(floatvalue), count(floatvalue), min(floatvalue), max(floatvalue) group by labels.label2
+select labels.label2, sum(floatvalue), count(floatvalue), min(floatvalue), max(floatvalue) group by labels.label2
 ----
 value2  23.100000  6       1.100000  6.600000
 
 exec unordered
-select sum(value) as value_sum where timestamp >= 1 group by labels.label1
+select labels.label1, sum(value) as value_sum where timestamp >= 1 group by labels.label1
 ----
 value1  1
 value2  2
@@ -93,3 +98,13 @@ value3  3
 value4  4
 value5  5
 value6  6
+
+exec unordered
+select labels, sum(value) as value_sum group by labels
+----
+value1  value2  null    null    1
+value2  value2  value3  null    2
+value3  value2  null    value4  3
+value4  value2  null    null    4
+value5  value2  value3  null    5
+value6  value2  null    value4  6
