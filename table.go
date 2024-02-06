@@ -875,11 +875,8 @@ func (t *Table) Iterator(
 	}
 
 	errg.Go(func() error {
-		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.InMemoryOnly, rowGroups); err != nil {
-			return err
-		}
-		close(rowGroups)
-		return nil
+		defer close(rowGroups)
+		return t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.InMemoryOnly, rowGroups)
 	})
 
 	return errg.Wait()
