@@ -317,5 +317,5 @@ func (l *inMemoryLevel) Compact(toCompact []parts.Part, options ...parts.Option)
 	}
 
 	postCompactionSize := int64(b.Len())
-	return []parts.Part{parts.NewParquetPart(0, buf, options...)}, preCompactionSize, postCompactionSize, nil
+	return []parts.Part{parts.NewParquetPart(toCompact[0].TX(), buf, options...)}, preCompactionSize, postCompactionSize, nil
 }
