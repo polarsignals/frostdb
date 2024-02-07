@@ -3000,8 +3000,6 @@ func Test_DB_SnapshotNewerData(t *testing.T) {
 			})
 			db, err = c.DB(context.Background(), "test")
 			require.NoError(t, err)
-			table, err = db.GetTable("test")
-			require.NoError(t, err)
 
 			validateRows := func(expected int64) {
 				pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
