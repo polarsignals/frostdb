@@ -2905,3 +2905,117 @@ func TestDBWatermarkBubbling(t *testing.T) {
 		return db.HighWatermark() == nTxns
 	}, time.Second, 10*time.Millisecond)
 }
+
+// Test_DB_SnapshotNewerData verifies that newer data that is compacted doesn't cause duplicate or loss of data on replay.
+func Test_DB_SnapshotNewerData(t *testing.T) {
+	t.Parallel()
+
+	logger := newTestLogger(t)
+	tests := map[string]struct {
+		create func(dir string) *ColumnStore
+	}{
+		"memory": {
+			create: func(dir string) *ColumnStore {
+				c, err := New(
+					WithLogger(logger),
+					WithIndexConfig(DefaultIndexConfig()),
+					WithStoragePath(dir),
+					WithWAL(),
+					WithManualBlockRotation(),
+				)
+				require.NoError(t, err)
+				t.Cleanup(func() {
+					require.NoError(t, c.Close())
+				})
+				return c
+			},
+		},
+		"disk": {
+			create: func(dir string) *ColumnStore {
+				cfg := DefaultIndexConfig()
+				cfg[0].Type = index.CompactionTypeParquetDisk
+				cfg[1].Type = index.CompactionTypeParquetDisk
+				c, err := New(
+					WithLogger(logger),
+					WithIndexConfig(cfg),
+					WithStoragePath(dir),
+					WithWAL(),
+					WithManualBlockRotation(),
+				)
+				require.NoError(t, err)
+				t.Cleanup(func() {
+					require.NoError(t, c.Close())
+				})
+				return c
+			},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := NewTableConfig(
+				dynparquet.SampleDefinition(),
+			)
+
+			dir := t.TempDir()
+			c := test.create(dir)
+			db, err := c.DB(context.Background(), "test")
+			require.NoError(t, err)
+			table, err := db.Table("test", config)
+			require.NoError(t, err)
+
+			// Insert record to increase tx
+			ctx := context.Background()
+			for i := 0; i < 3; i++ {
+				samples := dynparquet.GenerateTestSamples(3)
+				r, err := samples.ToRecord()
+				require.NoError(t, err)
+				_, err = table.InsertRecord(ctx, r)
+				require.NoError(t, err)
+			}
+
+			// Get a snapshot tx
+			tx := db.beginRead()
+
+			// Insert another write, and force compaction
+			samples := dynparquet.GenerateTestSamples(3)
+			r, err := samples.ToRecord()
+			require.NoError(t, err)
+			_, err = table.InsertRecord(ctx, r)
+			require.NoError(t, err)
+			require.NoError(t, table.EnsureCompaction())
+
+			// Now perform the snapshot
+			require.NoError(t, db.snapshotAtTX(ctx, tx, db.offlineSnapshotWriter(tx)))
+			require.NoError(t, db.wal.Truncate(tx))
+			time.Sleep(1 * time.Second) // wal flushes every 50ms
+
+			// Close the database
+			require.NoError(t, c.Close())
+
+			// Recover from the snapshot
+			c = test.create(dir)
+			t.Cleanup(func() {
+				require.NoError(t, c.Close())
+			})
+			db, err = c.DB(context.Background(), "test")
+			require.NoError(t, err)
+
+			validateRows := func(expected int64) {
+				pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+				defer pool.AssertSize(t, 0)
+				rows := int64(0)
+				engine := query.NewEngine(pool, db.TableProvider())
+				err = engine.ScanTable("test").
+					Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+						rows += r.NumRows()
+						return nil
+					})
+				require.NoError(t, err)
+				require.Equal(t, expected, rows)
+			}
+
+			validateRows(12)
+		})
+	}
+}
