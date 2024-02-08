@@ -667,3 +667,18 @@ func (l *LSM) compact(ignoreSizes bool) error {
 
 	return nil
 }
+
+func (l *LSM) Remove(tx uint64) {
+	l.Lock() // TODO: this is a little heavy handed. We can't have read an incomplete tx so we shouldn't need it to release. We should be able to atomically remove.
+	defer l.Unlock()
+	var prev *Node
+	l.partList.Iterate(func(node *Node) bool {
+		if node.part != nil && node.part.TX() == tx {
+			node.part.Release()
+			node.part = nil
+			prev.next.Store(node.next.Load())
+		}
+		prev = node
+		return true
+	})
+}
