@@ -414,31 +414,15 @@ func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline 
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				schema := t.schema
 
 				if record := p.Record(); record != nil {
 					partMeta.Encoding = snapshotpb.Part_ENCODING_ARROW
-					recordWriter := ipc.NewWriter(
-						w,
-						ipc.WithSchema(record.Schema()),
-					)
-					defer recordWriter.Close()
-					if err := recordWriter.Write(record); err != nil {
-						return err
-					}
 				} else {
 					partMeta.Encoding = snapshotpb.Part_ENCODING_PARQUET
-					buf, err := p.AsSerializedBuffer(schema)
-					if err != nil {
-						return err
-					}
+				}
 
-					f := buf.ParquetFile()
-					if _, err := io.Copy(
-						w, io.NewSectionReader(f, 0, f.Size()),
-					); err != nil {
-						return err
-					}
+				if err := p.Write(w); err != nil {
+					return err
 				}
 
 				partMeta.EndOffset = int64(offW.offset)
