@@ -1456,9 +1456,9 @@ func TestDBRecover(t *testing.T) {
 			require.NoError(t, err)
 			snapshotTxns = append(snapshotTxns, tx)
 		}
-		expectedSnapshots := []uint64{2, 3}
+		expectedSnapshots := []uint64{3, 5}
 		if blockRotation {
-			expectedSnapshots = append(expectedSnapshots, 6)
+			expectedSnapshots = append(expectedSnapshots, 8)
 		}
 		require.Equal(t, expectedSnapshots, snapshotTxns)
 		return dir
@@ -2975,7 +2975,7 @@ func Test_DB_SnapshotNewerData(t *testing.T) {
 			}
 
 			// Get a snapshot tx
-			tx := db.beginRead()
+			tx, _, commit := db.begin()
 
 			// Insert another write, and force compaction
 			samples := dynparquet.GenerateTestSamples(3)
@@ -2986,7 +2986,18 @@ func Test_DB_SnapshotNewerData(t *testing.T) {
 			require.NoError(t, table.EnsureCompaction())
 
 			// Now perform the snapshot
+			db.Wait(tx - 1)
+			err = db.wal.Log(
+				tx,
+				&walpb.Record{
+					Entry: &walpb.Entry{
+						EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
+					},
+				},
+			)
+			require.NoError(t, err)
 			require.NoError(t, db.snapshotAtTX(ctx, tx, db.offlineSnapshotWriter(tx)))
+			commit()
 			require.NoError(t, db.wal.Truncate(tx))
 			time.Sleep(1 * time.Second) // wal flushes every 50ms
 
