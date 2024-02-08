@@ -25,6 +25,7 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	snapshotpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/snapshot/v1alpha1"
 	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
+	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/parts"
 )
@@ -135,14 +136,36 @@ func (db *DB) snapshot(ctx context.Context, async bool, onSuccess func()) {
 		return
 	}
 
-	tx := db.beginRead()
+	tx, _, commit := db.begin()
 	level.Debug(db.logger).Log(
 		"msg", "starting a new snapshot",
 		"tx", tx,
 	)
 	doSnapshot := func(writeSnapshot func(context.Context, io.Writer) error) {
+		db.Wait(tx - 1) // Wait for all transactions to complete before taking a snapshot.
 		start := time.Now()
 		defer db.snapshotInProgress.Store(false)
+		defer commit()
+		if db.columnStore.enableWAL {
+			// Appending a snapshot record to the WAL is necessary,
+			// since the WAL expects a 1:1 relationship between txn ids
+			// and record indexes. This is done before the actual snapshot so
+			// that a failure to snapshot still appends a record to the WAL,
+			// avoiding a WAL deadlock.
+			if err := db.wal.Log(
+				tx,
+				&walpb.Record{
+					Entry: &walpb.Entry{
+						EntryType: &walpb.Entry_Snapshot_{Snapshot: &walpb.Entry_Snapshot{Tx: tx}},
+					},
+				},
+			); err != nil {
+				level.Error(db.logger).Log(
+					"msg", "failed to append snapshot record to WAL", "err", err,
+				)
+				return
+			}
+		}
 		if err := db.snapshotAtTX(ctx, tx, writeSnapshot); err != nil {
 			level.Error(db.logger).Log(
 				"msg", "failed to snapshot database", "err", err,
