@@ -54,9 +54,9 @@ type LSM struct {
 	sizes         []atomic.Int64
 
 	// Options
-	logger  log.Logger
-	metrics *LSMMetrics
-	wait    func(uint64)
+	logger    log.Logger
+	metrics   *LSMMetrics
+	watermark func() uint64
 }
 
 // LSMMetrics are the metrics for an LSM index.
@@ -119,7 +119,7 @@ func NewLSMMetrics(reg prometheus.Registerer) *LSMMetrics {
 // NewLSM returns an LSM-like index of len(levels) levels.
 // wait is a function that will block until the given transaction has been committed; this is used only during compaction to ensure
 // that all the tx in the level up to the compaction tx have been committed before compacting.
-func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, wait func(uint64), options ...LSMOption) (*LSM, error) {
+func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, watermark func() uint64, options ...LSMOption) (*LSM, error) {
 	if err := validateLevels(levels); err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func NewLSM(dir string, schema *dynparquet.Schema, levels []*LevelConfig, wait f
 		sizes:         make([]atomic.Int64, len(levels)),
 		compacting:    sync.Mutex{},
 		logger:        log.NewNopLogger(),
-		wait:          wait,
+		watermark:     watermark,
 	}
 
 	for _, opt := range options {
@@ -252,7 +252,7 @@ func (l *LSM) LevelSize(t SentinelType) int64 {
 }
 
 // Snapshot creates a snapshot of the index at the given transaction. It will call the writer function with the parts in the index that are in-memory.
-func (l *LSM) Snapshot(writer func(parts.Part) error, dir string) error {
+func (l *LSM) Snapshot(tx uint64, writer func(parts.Part) error, dir string) error {
 	l.compacting.Lock()
 	defer l.compacting.Unlock()
 
@@ -290,7 +290,9 @@ func (l *LSM) Snapshot(writer func(parts.Part) error, dir string) error {
 			return true
 		}
 
-		snapshotList = append(snapshotList, node.part)
+		if node.part.TX() <= tx {
+			snapshotList = append(snapshotList, node.part)
+		}
 		return true
 	})
 	if iterError != nil {
@@ -538,14 +540,26 @@ func (l *LSM) merge(level SentinelType) error {
 
 	compact := l.findLevel(level)
 
-	// Wait for the watermark to reach the most recent transaction.
-	// This ensures a sorted list of transactions.
+	// Find a transaction that is <= the current watermark.
+	// This ensures a contiguous sorted list of transactions.
 	if level == L0 {
 		compact = compact.next.Load()
 		if compact == nil || compact.part == nil {
 			return nil // nothing to compact
 		}
-		l.wait(compact.part.TX())
+
+		// Find the first part that is <= the watermark and reset the compact list to that part.
+		wm := l.watermark()
+		compact.Iterate(func(node *Node) bool {
+			if node.part != nil && node.sentinel != L0 {
+				return false
+			}
+			if node.part.TX() <= wm {
+				compact = node
+				return false
+			}
+			return true
+		})
 	}
 
 	nodeList := []*Node{}
