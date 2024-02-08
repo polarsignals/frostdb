@@ -93,6 +93,21 @@ select labels, stacktrace, timestamp, value where labels.label3 regexp 'value.' 
 value2  value2  value3  null    stack1  2       2
 
 exec
+select labels, stacktrace, timestamp, value where labels.label3 regexp '.*alu.*'
+----
+value2  value2  value3  null    stack1  2       2
+
+exec
+select labels, stacktrace, timestamp, value where labels.label3 regexp '.*'
+----
+value2  value2  value3  null    stack1  2       2
+
+exec
+select labels, stacktrace, timestamp, value where labels.label3 not regexp '.*foo.*'
+----
+value2  value2  value3  null    stack1  2       2
+
+exec
 select labels, stacktrace, timestamp, value where labels.label1 regexp 'value.' and  labels.label2 = 'value2' and labels.label1 != 'value3'
 ----
 value1  value2  null    null    stack1  1       1

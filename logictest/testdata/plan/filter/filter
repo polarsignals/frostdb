@@ -1,0 +1,16 @@
+createtable schema=default
+----
+
+# Regexp matching with .* at the beginning and the end of the pattern
+# is optimized to use the Substr function instead of the Regexp function.
+exec
+explain select labels, stacktrace, timestamp, value where labels.label3 regexp '.*alu.*'
+----
+TableScan [concurrent] - PredicateFilter (Substr(labels.label3, alu)) - Projection (labels, stacktrace, timestamp, value) - Synchronizer
+
+# Regexp matching with .* at the beginning and the end of the pattern
+# is optimized to use the Substr function instead of the Regexp function.
+exec
+explain select labels, stacktrace, timestamp, value where labels.label3 not regexp '.*alu.*'
+----
+TableScan [concurrent] - PredicateFilter (!Substr(labels.label3, alu)) - Projection (labels, stacktrace, timestamp, value) - Synchronizer

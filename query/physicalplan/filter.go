@@ -1,10 +1,12 @@
 package physicalplan
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/RoaringBitmap/roaring"
 	"github.com/apache/arrow/go/v14/arrow"
@@ -91,16 +93,38 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 
 		switch expr.Op {
 		case logicalplan.OpRegexMatch:
-			regexp, err := regexp.Compile(string(rightScalar.(*scalar.String).Data()))
+			rightString := string(rightScalar.(*scalar.String).Data())
+
+			// This is a simple optimization to avoid using regex for simple substring matches.
+			if strings.HasPrefix(rightString, ".*") && strings.HasSuffix(rightString, ".*") {
+				return &SubstrFilter{
+					left:  leftColumnRef,
+					right: scalar.NewStringScalar(strings.Trim(rightString, ".*")),
+				}, nil
+			}
+
+			regexp, err := regexp.Compile(rightString)
 			if err != nil {
 				return nil, err
 			}
+
 			return &RegExpFilter{
 				left:  leftColumnRef,
 				right: regexp,
 			}, nil
 		case logicalplan.OpRegexNotMatch:
-			regexp, err := regexp.Compile(string(rightScalar.(*scalar.String).Data()))
+			rightString := string(rightScalar.(*scalar.String).Data())
+
+			// This is a simple optimization to avoid using regex for simple substring matches.
+			if strings.HasPrefix(rightString, ".*") && strings.HasSuffix(rightString, ".*") {
+				return &SubstrFilter{
+					left:     leftColumnRef,
+					right:    scalar.NewStringScalar(strings.Trim(rightString, ".*")),
+					notMatch: true,
+				}, nil
+			}
+
+			regexp, err := regexp.Compile(rightString)
 			if err != nil {
 				return nil, err
 			}
@@ -199,6 +223,73 @@ func (a *OrExpr) Eval(r arrow.Record) (*Bitmap, error) {
 
 func (a *OrExpr) String() string {
 	return "(" + a.Left.String() + " OR " + a.Right.String() + ")"
+}
+
+type SubstrFilter struct {
+	left     *ArrayRef
+	notMatch bool
+	right    *scalar.String
+}
+
+func (sf *SubstrFilter) Eval(r arrow.Record) (*Bitmap, error) {
+	rightData := sf.right.Data()
+	leftArray, exists, err := sf.left.ArrowArray(r)
+	if err != nil {
+		return nil, err
+	}
+
+	if !exists {
+		// TODO
+	}
+
+	bitmap := NewBitmap()
+
+	switch left := leftArray.(type) {
+	case *array.Binary:
+		for i := 0; i < left.Len(); i++ {
+			if left.IsNull(i) {
+				continue
+			}
+			contained := bytes.Contains(left.Value(i), rightData)
+			if (contained && !sf.notMatch) || (!contained && sf.notMatch) {
+				bitmap.Add(uint32(i))
+			}
+		}
+	case *array.String:
+		rightDataString := string(rightData)
+		for i := 0; i < left.Len(); i++ {
+			if left.IsNull(i) {
+				continue
+			}
+			contained := strings.Contains(left.Value(i), rightDataString)
+			if (contained && !sf.notMatch) || (!contained && sf.notMatch) {
+				bitmap.Add(uint32(i))
+			}
+		}
+	case *array.Dictionary:
+		switch dict := left.Dictionary().(type) {
+		case *array.Binary:
+			for i := 0; i < left.Len(); i++ {
+				if left.IsNull(i) {
+					continue
+				}
+				s := dict.Value(left.GetValueIndex(i))
+				contained := bytes.Contains(s, rightData)
+				if (contained && !sf.notMatch) || (!contained && sf.notMatch) {
+					bitmap.Add(uint32(i))
+				}
+			}
+		}
+	}
+
+	return bitmap, nil
+}
+
+func (sf *SubstrFilter) String() string {
+	if sf.notMatch {
+		return "!Substr(" + sf.left.String() + ", " + sf.right.String() + ")"
+	}
+	return "Substr(" + sf.left.String() + ", " + sf.right.String() + ")"
 }
 
 func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
