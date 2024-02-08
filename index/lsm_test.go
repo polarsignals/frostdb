@@ -96,7 +96,7 @@ func Test_LSM_Basic(t *testing.T) {
 		{Level: L1, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
 	},
-		func(uint64) {},
+		func() uint64 { return math.MaxUint64 },
 	)
 	require.NoError(t, err)
 
@@ -131,7 +131,7 @@ func Test_LSM_DuplicateSentinel(t *testing.T) {
 		{Level: L1, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
 	},
-		func(uint64) {},
+		func() uint64 { return math.MaxUint64 },
 	)
 	require.NoError(t, err)
 
@@ -155,7 +155,7 @@ func Test_LSM_Compaction(t *testing.T) {
 		{Level: L0, MaxSize: 1, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: L1, MaxSize: 1024 * 1024 * 1024},
 	},
-		func(uint64) {},
+		func() uint64 { return math.MaxUint64 },
 	)
 	require.NoError(t, err)
 
@@ -178,7 +178,7 @@ func Test_LSM_CascadeCompaction(t *testing.T) {
 		{Level: 3, MaxSize: 2281, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: 4, MaxSize: 2281},
 	},
-		func(uint64) {},
+		func() uint64 { return math.MaxUint64 },
 	)
 	require.NoError(t, err)
 
@@ -211,7 +211,7 @@ func Test_LSM_InOrderInsert(t *testing.T) {
 		{Level: L1, MaxSize: 1024 * 1024 * 1024, Type: CompactionTypeParquetMemory, Compact: compactParts},
 		{Level: L2, MaxSize: 1024 * 1024 * 1024},
 	},
-		func(uint64) {},
+		func() uint64 { return math.MaxUint64 },
 	)
 	require.NoError(t, err)
 

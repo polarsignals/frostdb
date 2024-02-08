@@ -427,7 +427,7 @@ func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline 
 				},
 			}
 
-			if err := block.Index().Snapshot(func(p parts.Part) error {
+			if err := block.Index().Snapshot(tx, func(p parts.Part) error {
 				granuleMeta := &snapshotpb.Granule{}
 				partMeta := &snapshotpb.Part{
 					StartOffset:     int64(offW.offset),
