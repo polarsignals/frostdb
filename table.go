@@ -629,7 +629,13 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 	t.metrics.blockRotated.Inc()
 	t.metrics.numParts.Set(float64(0))
 
-	t.pendingBlocks[block] = struct{}{}
+	if !skipPersist {
+		// If skipping persist, this block rotation is simply a block discard,
+		// so no need to add this block to pending blocks. Some callers rely
+		// on the fact that blocks are not available for reads as soon as
+		// RotateBlock returns with skipPersist=true.
+		t.pendingBlocks[block] = struct{}{}
+	}
 	// We don't check t.db.columnStore.manualBlockRotation here because this is
 	// the entry point for users to trigger a manual block rotation and they
 	// will specify through skipPersist if they want the block to be persisted.
