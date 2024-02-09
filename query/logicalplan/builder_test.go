@@ -81,3 +81,20 @@ func TestLogicalPlanBuilderWithoutProjection(t *testing.T) {
 		},
 	}, p)
 }
+
+func TestRenamedColumn(t *testing.T) {
+	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+	_, err := (&Builder{}).
+		Scan(tableProvider, "table1").
+		Project(
+			Col("value").Alias("other_value"),
+			Col("stacktrace"),
+		).
+		Aggregate(
+			[]*AggregationFunction{Sum(Col("other_value"))},
+			[]Expr{Col("stacktrace")},
+		).
+		Project(Col("stacktrace"), Sum(Col("other_value")).Alias("value_sum")).
+		Build()
+	require.NoError(t, err)
+}
