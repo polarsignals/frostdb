@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"unsafe"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
@@ -83,7 +84,7 @@ var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logicalplan.Op) (*Bitmap, error) {
 	if operator == logicalplan.OpContains {
 		switch arr := left.(type) {
-		case *array.Binary:
+		case *array.Binary, *array.String:
 			return ArrayScalarContains(left, right)
 		case *array.Dictionary:
 			return DictionaryArrayScalarContains(arr, right)
@@ -231,22 +232,32 @@ func DictionaryArrayScalarEqual(left *array.Dictionary, right scalar.Scalar) (*B
 }
 
 func ArrayScalarContains(arr arrow.Array, right scalar.Scalar) (*Bitmap, error) {
+	var r []byte
+	switch s := right.(type) {
+	case *scalar.Binary:
+		r = s.Data()
+	case *scalar.String:
+		r = s.Data()
+	}
+
 	res := NewBitmap()
 	switch a := arr.(type) {
 	case *array.Binary:
-		var r []byte
-		switch s := right.(type) {
-		case *scalar.Binary:
-			r = s.Data()
-		case *scalar.String:
-			r = s.Data()
-		}
-
 		for i := 0; i < a.Len(); i++ {
 			if a.IsNull(i) {
 				continue
 			}
 			if bytes.Contains(a.Value(i), r) {
+				res.Add(uint32(i))
+			}
+		}
+		return res, nil
+	case *array.String:
+		for i := 0; i < a.Len(); i++ {
+			if a.IsNull(i) {
+				continue
+			}
+			if bytes.Contains(unsafeStringToBytes(a.Value(i)), r) {
 				res.Add(uint32(i))
 			}
 		}
@@ -286,12 +297,15 @@ func DictionaryArrayScalarContains(left *array.Dictionary, right scalar.Scalar) 
 				res.Add(uint32(i))
 			}
 		case *array.String:
-			// TODO: Add unsafe type cast if necessary.
-			if bytes.Contains([]byte(dict.Value(left.GetValueIndex(i))), data) {
+			if bytes.Contains(unsafeStringToBytes(dict.Value(left.GetValueIndex(i))), data) {
 				res.Add(uint32(i))
 			}
 		}
 	}
 
 	return res, nil
+}
+
+func unsafeStringToBytes(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
