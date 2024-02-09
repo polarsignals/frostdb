@@ -81,6 +81,17 @@ func (e BinaryScalarExpr) String() string {
 var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 
 func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logicalplan.Op) (*Bitmap, error) {
+	if operator == logicalplan.OpContains {
+		switch arr := left.(type) {
+		case *array.Binary:
+			return ArrayScalarContains(left, right)
+		case *array.Dictionary:
+			return DictionaryArrayScalarContains(arr, right)
+		default:
+			panic("unsupported array type " + fmt.Sprintf("%T", arr))
+		}
+	}
+
 	// TODO: Figure out dictionary arrays and lists with compute next
 	leftType := left.DataType()
 	switch arr := left.(type) {
@@ -91,7 +102,6 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 		case logicalplan.OpNotEq:
 			return DictionaryArrayScalarNotEqual(arr, right)
 		case logicalplan.OpContains:
-			return DictionaryArrayScalarContains(arr, right)
 		default:
 			return nil, fmt.Errorf("unsupported operator: %v", operator)
 		}
@@ -218,6 +228,31 @@ func DictionaryArrayScalarEqual(left *array.Dictionary, right scalar.Scalar) (*B
 	}
 
 	return res, nil
+}
+
+func ArrayScalarContains(arr arrow.Array, right scalar.Scalar) (*Bitmap, error) {
+	res := NewBitmap()
+	switch a := arr.(type) {
+	case *array.Binary:
+		var r []byte
+		switch s := right.(type) {
+		case *scalar.Binary:
+			r = s.Data()
+		case *scalar.String:
+			r = s.Data()
+		}
+
+		for i := 0; i < a.Len(); i++ {
+			if a.IsNull(i) {
+				continue
+			}
+			if bytes.Contains(a.Value(i), r) {
+				res.Add(uint32(i))
+			}
+		}
+		return res, nil
+	}
+	return nil, fmt.Errorf("contains not implemented for %T", arr)
 }
 
 func DictionaryArrayScalarContains(left *array.Dictionary, right scalar.Scalar) (*Bitmap, error) {
