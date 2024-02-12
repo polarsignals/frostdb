@@ -139,7 +139,7 @@ func (b *DefaultObjstoreBucket) String() string {
 }
 
 func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, callback func(context.Context, any) error) error {
-	ctx, span := b.tracer.Start(ctx, "Source/RowGroupIterator")
+	ctx, span := b.tracer.Start(ctx, "Source/Scan")
 	span.SetAttributes(attribute.Int64("lastBlockTimestamp", int64(lastBlockTimestamp)))
 	defer span.End()
 
@@ -160,12 +160,13 @@ func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynp
 		return err
 	}
 
+	span.SetAttributes(attribute.Int("blocks", n))
 	level.Debug(b.logger).Log("msg", "read blocks", "n", n)
 	return errg.Wait()
 }
 
 func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName string, size int64) (*parquet.File, error) {
-	ctx, span := b.tracer.Start(ctx, "Source/IterateBucketBlocks/Iter/OpenFile")
+	ctx, span := b.tracer.Start(ctx, "Source/Scan/OpenFile")
 	defer span.End()
 	r, err := b.GetReaderAt(ctx, blockName)
 	if err != nil {
@@ -188,7 +189,7 @@ func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName str
 
 // ProcessFile will process a bucket block parquet file.
 func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string, lastBlockTimestamp uint64, filter expr.TrueNegativeFilter, callback func(context.Context, any) error) error {
-	ctx, span := b.tracer.Start(ctx, "Source/IterateBucketBlocks/Iter/ProcessFile")
+	ctx, span := b.tracer.Start(ctx, "Source/Scan/ProcessFile")
 	defer span.End()
 
 	blockUlid, err := ulid.Parse(filepath.Base(blockDir))
@@ -238,10 +239,6 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 }
 
 func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter expr.TrueNegativeFilter, callback func(context.Context, any) error) error {
-	_, span := b.tracer.Start(ctx, "Source/filterRowGroups")
-	defer span.End()
-	span.SetAttributes(attribute.Int("row_groups", buf.NumRowGroups()))
-
 	for i := 0; i < buf.NumRowGroups(); i++ {
 		rg := buf.DynamicRowGroup(i)
 		mayContainUsefulData, err := filter.Eval(rg)
