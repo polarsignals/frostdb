@@ -1,0 +1,7 @@
+createtable schema=default
+----
+
+exec
+explain select stacktrace, value where stacktrace LIKE 'ack'
+----
+TableScan [concurrent] - PredicateFilter (stacktrace |= ack) - Projection (stacktrace, value) - Synchronizer

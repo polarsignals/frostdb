@@ -421,6 +421,14 @@ func arrayToStringVals(a arrow.Array) ([]string, error) {
 			}
 			result[i] = strconv.Itoa(int(col.Value(i)))
 		}
+	case *array.Uint64:
+		for i := range result {
+			if col.IsNull(i) {
+				result[i] = nullString
+				continue
+			}
+			result[i] = strconv.FormatUint(col.Value(i), 10)
+		}
 	case *array.Float64:
 		for i := range result {
 			if col.IsNull(i) {

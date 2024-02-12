@@ -107,6 +107,43 @@ var schemas = map[string]*schemapb.Schema{
 			NullsFirst: true,
 		}},
 	},
+	"bytes": {
+		Name: "test",
+		Columns: []*schemapb.Column{{
+			Name: "labels",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:     schemapb.StorageLayout_TYPE_STRING,
+				Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
+				Nullable: true,
+			},
+			Dynamic: true,
+		}, {
+			Name: "timestamp",
+			StorageLayout: &schemapb.StorageLayout{
+				Type: schemapb.StorageLayout_TYPE_UINT64,
+			},
+			Dynamic: false,
+		}, {
+			Name: "value",
+			StorageLayout: &schemapb.StorageLayout{
+				Type:        schemapb.StorageLayout_TYPE_STRING,
+				Encoding:    schemapb.StorageLayout_ENCODING_DELTA_LENGTH_BYTE_ARRAY,
+				Compression: schemapb.StorageLayout_COMPRESSION_LZ4_RAW,
+			},
+			Dynamic: false,
+		}},
+		SortingColumns: []*schemapb.SortingColumn{{
+			Name:       "labels",
+			Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
+			NullsFirst: true,
+		}, {
+			Name:      "timestamp",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}, {
+			Name:      "value",
+			Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
+		}},
+	},
 }
 
 // TestLogic runs all the datadriven tests in the testdata directory. Refer to

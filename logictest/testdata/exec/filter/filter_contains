@@ -1,0 +1,19 @@
+createtable schema=bytes
+----
+
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, timestamp, value)
+value1  value2  null    null    1   foo
+value2  value2  value3  null    2   bar
+value3  value2  null    value4  3   baz
+----
+
+exec
+select labels, timestamp, value where timestamp = 2
+----
+value2  value2  value3  null    2       bar
+
+exec
+select labels, timestamp, value where value LIKE 'a'
+----
+value2  value2  value3  null    2       bar
+value3  value2  null    value4  3       baz
