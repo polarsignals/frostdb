@@ -1,7 +1,10 @@
 package parts
 
 import (
+	"io"
+
 	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/ipc"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow"
@@ -32,6 +35,15 @@ func NewArrowPart(tx uint64, record arrow.Record, size uint64, schema *dynparque
 	}
 
 	return p
+}
+
+func (p *arrowPart) Write(w io.Writer) error {
+	recordWriter := ipc.NewWriter(
+		w,
+		ipc.WithSchema(p.record.Schema()),
+	)
+	defer recordWriter.Close()
+	return recordWriter.Write(p.record)
 }
 
 func (p *arrowPart) Retain() { p.record.Retain() }

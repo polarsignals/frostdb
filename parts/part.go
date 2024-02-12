@@ -1,6 +1,7 @@
 package parts
 
 import (
+	"io"
 	"sort"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -23,6 +24,7 @@ type Part interface {
 	Least() (*dynparquet.DynamicRow, error)
 	Most() (*dynparquet.DynamicRow, error)
 	OverlapsWith(schema *dynparquet.Schema, otherPart Part) (bool, error)
+	Write(io.Writer) error
 }
 
 type basePart struct {

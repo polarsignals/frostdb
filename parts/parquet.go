@@ -2,6 +2,7 @@ package parts
 
 import (
 	"fmt"
+	"io"
 	"sync/atomic"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -29,6 +30,17 @@ func (p *parquetPart) Release() {
 	if ref <= 0 && p.release != nil {
 		p.release()
 	}
+}
+
+func (p *parquetPart) Write(w io.Writer) error {
+	buf, err := p.AsSerializedBuffer(nil)
+	if err != nil {
+		return err
+	}
+
+	f := buf.ParquetFile()
+	_, err = io.Copy(w, io.NewSectionReader(f, 0, f.Size()))
+	return err
 }
 
 func (p *parquetPart) SerializeBuffer(_ *dynparquet.Schema, _ dynparquet.ParquetWriter) error {
