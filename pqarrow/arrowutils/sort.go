@@ -184,8 +184,18 @@ func newMultiColSorter(
 	}
 	for i, col := range columns {
 		switch e := r.Column(col.Index).(type) {
+		case *array.Int16:
+			ms.comparisons[i] = newOrderedSorter[int16](e, cmp.Compare)
+		case *array.Int32:
+			ms.comparisons[i] = newOrderedSorter[int32](e, cmp.Compare)
 		case *array.Int64:
 			ms.comparisons[i] = newOrderedSorter[int64](e, cmp.Compare)
+		case *array.Uint16:
+			ms.comparisons[i] = newOrderedSorter[uint16](e, cmp.Compare)
+		case *array.Uint32:
+			ms.comparisons[i] = newOrderedSorter[uint32](e, cmp.Compare)
+		case *array.Uint64:
+			ms.comparisons[i] = newOrderedSorter[uint64](e, cmp.Compare)
 		case *array.Float64:
 			ms.comparisons[i] = newOrderedSorter[float64](e, cmp.Compare)
 		case *array.String:
