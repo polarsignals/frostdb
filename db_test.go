@@ -356,6 +356,10 @@ func Test_DB_WithStorage(t *testing.T) {
 
 	db, err = c.DB(context.Background(), t.Name())
 	require.NoError(t, err)
+
+	_, err = db.Table(t.Name(), config)
+	require.NoError(t, err)
+
 	engine = query.NewEngine(pool, db.TableProvider())
 	var onDisk arrow.Record
 	err = engine.ScanTable(t.Name()).
@@ -485,6 +489,9 @@ func Test_DB_ColdStart(t *testing.T) {
 
 			// connect to our test db
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
+			require.NoError(t, err)
+
+			_, err = db.Table(sanitize(t.Name()), config)
 			require.NoError(t, err)
 
 			pool := memory.NewGoAllocator()
@@ -746,6 +753,9 @@ func Test_DB_Filter_Block(t *testing.T) {
 
 			// connect to our test db
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
+			require.NoError(t, err)
+
+			_, err = db.Table(sanitize(t.Name()), config)
 			require.NoError(t, err)
 
 			engine := query.NewEngine(
@@ -1031,6 +1041,9 @@ func Test_DB_Block_Optimization(t *testing.T) {
 
 			// connect to our test db
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
+			require.NoError(t, err)
+
+			_, err = db.Table(sanitize(t.Name()), config)
 			require.NoError(t, err)
 
 			engine := query.NewEngine(
@@ -1944,6 +1957,9 @@ func Test_DB_EngineInMemory(t *testing.T) {
 	defer c.Close()
 
 	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	_, err = db.Table("test", config)
 	require.NoError(t, err)
 
 	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)

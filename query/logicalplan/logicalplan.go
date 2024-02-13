@@ -125,6 +125,12 @@ func (plan *LogicalPlan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
 
 		return t, nil
 	case plan.Projection != nil:
+		for _, e := range plan.Projection.Exprs {
+			if e.Name() == expr.Name() {
+				return e.DataType(plan.Input)
+			}
+		}
+
 		t, err := expr.DataType(plan.Input)
 		if err != nil {
 			return nil, fmt.Errorf("data type for expr %v within Projection: %w", expr, err)
@@ -255,10 +261,13 @@ func (scan *TableScan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
 	}
 
 	s := tp.Schema()
+	if s == nil {
+		return nil, fmt.Errorf("table %q has no schema", scan.TableName)
+	}
 
 	t, err := DataTypeForExprWithSchema(expr, s)
 	if err != nil {
-		return nil, fmt.Errorf("type for expr %q in table %q", expr, scan.TableName)
+		return nil, fmt.Errorf("type for expr %q in table %q: %w", expr, scan.TableName, err)
 	}
 
 	return t, nil
@@ -373,7 +382,7 @@ type Projection struct {
 }
 
 func (p *Projection) String() string {
-	return "Projection"
+	return "Projection (" + fmt.Sprint(p.Exprs) + ")"
 }
 
 type Aggregation struct {

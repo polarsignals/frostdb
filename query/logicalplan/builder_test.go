@@ -86,8 +86,9 @@ func TestRenamedColumn(t *testing.T) {
 	tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
 	_, err := (&Builder{}).
 		Scan(tableProvider, "table1").
+		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Project(
-			Col("value").Alias("other_value"),
+			Div(Mul(Col("value"), Literal(int64(2))), Literal(int64(2))).Alias("other_value"),
 			Col("stacktrace"),
 		).
 		Aggregate(

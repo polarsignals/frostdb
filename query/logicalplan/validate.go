@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/scalar"
 	"github.com/parquet-go/parquet-go/format"
 )
@@ -67,9 +68,9 @@ func Validate(plan *LogicalPlan) error {
 	if err == nil {
 		switch {
 		case plan.SchemaScan != nil:
-			err = nil
+			err = ValidateSchemaScan(plan)
 		case plan.TableScan != nil:
-			err = nil
+			err = ValidateTableScan(plan)
 		case plan.Filter != nil:
 			err = ValidateFilter(plan)
 		case plan.Distinct != nil:
@@ -143,6 +144,86 @@ func ValidateSingleFieldSet(plan *LogicalPlan) *PlanValidationError {
 	return nil
 }
 
+func ValidateSchemaScan(plan *LogicalPlan) *PlanValidationError {
+	if plan.SchemaScan.TableProvider == nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "table provider must not be nil",
+		}
+	}
+
+	if plan.SchemaScan.TableName == "" {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "table name must not be empty",
+		}
+	}
+
+	tableReader, err := plan.SchemaScan.TableProvider.GetTable(plan.SchemaScan.TableName)
+	if err != nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: fmt.Sprintf("failed to get table: %s", err),
+		}
+	}
+	if tableReader == nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "table not found",
+		}
+	}
+
+	schema := tableReader.Schema()
+	if schema == nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "table schema must not be nil",
+		}
+	}
+
+	return nil
+}
+
+func ValidateTableScan(plan *LogicalPlan) *PlanValidationError {
+	if plan.TableScan.TableProvider == nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "table provider must not be nil",
+		}
+	}
+
+	if plan.TableScan.TableName == "" {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "table name must not be empty",
+		}
+	}
+
+	tableReader, err := plan.TableScan.TableProvider.GetTable(plan.TableScan.TableName)
+	if err != nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: fmt.Sprintf("failed to get table: %s", err),
+		}
+	}
+	if tableReader == nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "table not found",
+		}
+	}
+
+	schema := tableReader.Schema()
+	if schema == nil {
+		return &PlanValidationError{
+			plan:    plan,
+			message: "table schema must not be nil",
+		}
+	}
+
+	return nil
+}
+
 // ValidateAggregation validates the logical plan's aggregation step.
 func ValidateAggregation(plan *LogicalPlan) *PlanValidationError {
 	// check that the expression is not nil
@@ -172,60 +253,28 @@ type Named interface {
 
 func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 	for _, expr := range plan.Aggregation.AggExprs {
-		// check that the aggregation expression has the required structure
-		colFinder := newTypeFinder((*Column)(nil))
-		expr.Accept(&colFinder)
-
-		dynColFinder := newTypeFinder((*DynamicColumn)(nil))
-		expr.Accept(&dynColFinder)
-
-		aggFuncFinder := newTypeFinder((*AggregationFunction)(nil))
-		expr.Accept(&aggFuncFinder)
-
-		if (colFinder.result == nil && dynColFinder.result == nil) || aggFuncFinder.result == nil {
+		t, err := expr.Expr.DataType(plan.Input)
+		if err != nil {
 			return &ExprValidationError{
-				message: "aggregation expression is invalid. must contain AggregationFunction and Column",
-				expr:    expr,
+				expr:    expr.Expr,
+				message: fmt.Errorf("get type of expression to aggregate: %w", err).Error(),
 			}
 		}
 
-		// check that column being aggregated on exists in the schema
-		schema := plan.InputSchema()
-		if schema == nil {
-			return nil // cannot check column type if there's no input schema
-		}
-
-		var named Named
-		named = colFinder.result
-		if named == nil {
-			named = dynColFinder.result
-		}
-
-		name, _, _ := strings.Cut(named.Name(), ".")
-		column, found := schema.ColumnByName(name)
-		if !found {
+		if t == nil {
 			return &ExprValidationError{
-				message: fmt.Sprintf("column not found: %s", named.Name()),
-				expr:    expr,
+				expr:    expr.Expr,
+				message: "invalid aggregation: expression type cannot be determined",
 			}
 		}
 
-		// check that the column type can be aggregated by the function type
-		columnType := column.StorageLayout.Type()
-		aggFuncExpr := aggFuncFinder.result.(*AggregationFunction)
-		logicalType := columnType.LogicalType()
-		if logicalType != nil && logicalType.UTF8 != nil {
-			switch aggFuncExpr.Func {
-			case AggFuncSum:
-				return &ExprValidationError{
-					message: "cannot sum text column",
-					expr:    expr,
-				}
-			case AggFuncMax:
-				return &ExprValidationError{
-					message: "cannot max text column",
-					expr:    expr,
-				}
+		switch t {
+		case arrow.PrimitiveTypes.Int64, arrow.PrimitiveTypes.Float64:
+			// valid
+		default:
+			return &ExprValidationError{
+				expr:    expr.Expr,
+				message: fmt.Errorf("invalid aggregation: expression type %s is not supported", t).Error(),
 			}
 		}
 	}

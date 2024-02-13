@@ -56,7 +56,7 @@ func TestInputSchemaGetter(t *testing.T) {
 	schema := dynparquet.NewSampleSchema()
 
 	// test we can get the table by traversing to find the TableScan
-	plan, _ := (&Builder{}).
+	plan, err := (&Builder{}).
 		Scan(&mockTableProvider{schema}, "table1").
 		Filter(Col("labels.test").Eq(Literal("abc"))).
 		Aggregate(
@@ -65,31 +65,8 @@ func TestInputSchemaGetter(t *testing.T) {
 		).
 		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
 		Build()
+	require.NoError(t, err)
 	require.Equal(t, schema, plan.InputSchema())
-
-	// test we can get the table by traversing to find SchemaScan
-	plan, _ = (&Builder{}).
-		ScanSchema(&mockTableProvider{schema}, "table1").
-		Filter(Col("labels.test").Eq(Literal("abc"))).
-		Aggregate(
-			[]*AggregationFunction{Sum(Col("value"))},
-			[]Expr{Col("stacktrace")},
-		).
-		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
-		Build()
-	require.Equal(t, schema, plan.InputSchema())
-
-	// test it returns null in case where we built a logical plan w/ no
-	// TableScan or SchemaScan
-	plan, _ = (&Builder{}).
-		Filter(Col("labels.test").Eq(Literal("abc"))).
-		Aggregate(
-			[]*AggregationFunction{Sum(Col("value"))},
-			[]Expr{Col("stacktrace")},
-		).
-		Project(Col("stacktrace"), Sum(Col("value")).Alias("value_sum")).
-		Build()
-	require.Nil(t, plan.InputSchema())
 }
 
 func Test_ExprClone(t *testing.T) {

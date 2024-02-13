@@ -82,7 +82,7 @@ func TestAggregationExprColumnMustExistInSchema(t *testing.T) {
 	require.True(t, strings.HasPrefix(planErr.message, "invalid aggregation"))
 	require.Len(t, planErr.children, 1)
 	exprErr := planErr.children[0]
-	require.True(t, strings.HasPrefix(exprErr.message, "column not found"))
+	require.Contains(t, exprErr.message, "column \"bad_column\" not found")
 }
 
 func TestAggregationCannotSumOrMaxTextColumn(t *testing.T) {
@@ -111,7 +111,7 @@ func TestAggregationCannotSumOrMaxTextColumn(t *testing.T) {
 		require.True(t, strings.HasPrefix(planErr.message, "invalid aggregation"))
 		require.Len(t, planErr.children, 1)
 		exprErr := planErr.children[0]
-		require.True(t, strings.HasPrefix(exprErr.message, testCase.errMsg))
+		require.Contains(t, exprErr.message, "expression type dictionary<values=binary, indices=uint32, ordered=false> is not supported")
 	}
 }
 
