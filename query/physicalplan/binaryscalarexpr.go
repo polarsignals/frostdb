@@ -82,12 +82,13 @@ func (e BinaryScalarExpr) String() string {
 var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 
 func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logicalplan.Op) (*Bitmap, error) {
-	if operator == logicalplan.OpContains {
+	switch operator {
+	case logicalplan.OpContains, logicalplan.OpNotContains:
 		switch arr := left.(type) {
 		case *array.Binary, *array.String:
-			return ArrayScalarContains(left, right)
+			return ArrayScalarContains(left, right, operator == logicalplan.OpNotContains)
 		case *array.Dictionary:
-			return DictionaryArrayScalarContains(arr, right)
+			return DictionaryArrayScalarContains(arr, right, operator == logicalplan.OpNotContains)
 		default:
 			panic("unsupported array type " + fmt.Sprintf("%T", arr))
 		}
@@ -102,7 +103,6 @@ func BinaryScalarOperation(left arrow.Array, right scalar.Scalar, operator logic
 			return DictionaryArrayScalarEqual(arr, right)
 		case logicalplan.OpNotEq:
 			return DictionaryArrayScalarNotEqual(arr, right)
-		case logicalplan.OpContains:
 		default:
 			return nil, fmt.Errorf("unsupported operator: %v", operator)
 		}
@@ -231,7 +231,7 @@ func DictionaryArrayScalarEqual(left *array.Dictionary, right scalar.Scalar) (*B
 	return res, nil
 }
 
-func ArrayScalarContains(arr arrow.Array, right scalar.Scalar) (*Bitmap, error) {
+func ArrayScalarContains(arr arrow.Array, right scalar.Scalar, not bool) (*Bitmap, error) {
 	var r []byte
 	switch s := right.(type) {
 	case *scalar.Binary:
@@ -247,7 +247,8 @@ func ArrayScalarContains(arr arrow.Array, right scalar.Scalar) (*Bitmap, error) 
 			if a.IsNull(i) {
 				continue
 			}
-			if bytes.Contains(a.Value(i), r) {
+			contains := bytes.Contains(a.Value(i), r)
+			if contains && !not || !contains && not {
 				res.Add(uint32(i))
 			}
 		}
@@ -257,7 +258,8 @@ func ArrayScalarContains(arr arrow.Array, right scalar.Scalar) (*Bitmap, error) 
 			if a.IsNull(i) {
 				continue
 			}
-			if bytes.Contains(unsafeStringToBytes(a.Value(i)), r) {
+			contains := bytes.Contains(unsafeStringToBytes(a.Value(i)), r)
+			if contains && !not || !contains && not {
 				res.Add(uint32(i))
 			}
 		}
@@ -266,7 +268,7 @@ func ArrayScalarContains(arr arrow.Array, right scalar.Scalar) (*Bitmap, error) 
 	return nil, fmt.Errorf("contains not implemented for %T", arr)
 }
 
-func DictionaryArrayScalarContains(left *array.Dictionary, right scalar.Scalar) (*Bitmap, error) {
+func DictionaryArrayScalarContains(left *array.Dictionary, right scalar.Scalar, not bool) (*Bitmap, error) {
 	res := NewBitmap()
 	var data []byte
 	switch r := right.(type) {
@@ -293,11 +295,13 @@ func DictionaryArrayScalarContains(left *array.Dictionary, right scalar.Scalar) 
 
 		switch dict := left.Dictionary().(type) {
 		case *array.Binary:
-			if bytes.Contains(dict.Value(left.GetValueIndex(i)), data) {
+			contains := bytes.Contains(dict.Value(left.GetValueIndex(i)), data)
+			if contains && !not || !contains && not {
 				res.Add(uint32(i))
 			}
 		case *array.String:
-			if bytes.Contains(unsafeStringToBytes(dict.Value(left.GetValueIndex(i))), data) {
+			contains := bytes.Contains(unsafeStringToBytes(dict.Value(left.GetValueIndex(i))), data)
+			if contains && !not || !contains && not {
 				res.Add(uint32(i))
 			}
 		}

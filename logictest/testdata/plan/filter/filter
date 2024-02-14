@@ -4,4 +4,14 @@ createtable schema=default
 exec
 explain select stacktrace, value where stacktrace LIKE 'ack'
 ----
-TableScan [concurrent] - PredicateFilter (stacktrace |= ack) - Projection (stacktrace, value) - Synchronizer
+TableScan [concurrent] - PredicateFilter (stacktrace contains ack) - Projection (stacktrace, value) - Synchronizer
+
+exec
+explain select stacktrace, value where stacktrace NOT LIKE 'ack'
+----
+TableScan [concurrent] - PredicateFilter (stacktrace not contains ack) - Projection (stacktrace, value) - Synchronizer
+
+exec
+explain select stacktrace, value where labels.label1 not like 'ue2' and stacktrace like 'ack'
+----
+TableScan [concurrent] - PredicateFilter ((labels.label1 not contains ue2 AND stacktrace contains ack)) - Projection (stacktrace, value) - Synchronizer

@@ -17,3 +17,8 @@ select labels, timestamp, value where value LIKE 'a'
 ----
 value2  value2  value3  null    2       bar
 value3  value2  null    value4  3       baz
+
+exec
+select labels, timestamp, value where value NOT LIKE 'a'
+----
+value1  value2  null    null    1       foo
