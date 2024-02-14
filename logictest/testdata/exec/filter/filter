@@ -158,12 +158,29 @@ select labels, timestamp, value where doesntexist <= 4
 ----
 
 exec
-select stacktrace, value where stacktrace LIKE 'ack'
+select stacktrace, value where stacktrace like 'ack'
 ----
 stack1  1
 stack1  2
 stack1  3
 
 exec
-select stacktrace, value where stacktrace LIKE 'ack2'
+select stacktrace, value where stacktrace like 'ack2'
 ----
+
+exec
+select stacktrace, value where stacktrace not like 'ack'
+----
+
+exec
+select stacktrace, value where stacktrace not like 'ack2'
+----
+stack1  1
+stack1  2
+stack1  3
+
+exec
+select stacktrace, value where labels.label1 not like 'ue2' and stacktrace like 'ack'
+----
+stack1  1
+stack1  3

@@ -29,6 +29,7 @@ const (
 	OpMul
 	OpDiv
 	OpContains
+	OpNotContains
 )
 
 func (o Op) String() string {
@@ -62,7 +63,9 @@ func (o Op) String() string {
 	case OpDiv:
 		return "/"
 	case OpContains:
-		return "|="
+		return "contains"
+	case OpNotContains:
+		return "not contains"
 	default:
 		panic("unknown operator")
 	}
@@ -95,7 +98,7 @@ func (o Op) ArrowString() string {
 	case OpDiv:
 		return "divide"
 	default:
-		panic("unknown operator")
+		panic("unknown arrow operator")
 	}
 }
 
@@ -419,6 +422,14 @@ func (c *Column) Contains(pattern string) *BinaryExpr {
 	return &BinaryExpr{
 		Left:  c,
 		Op:    OpContains,
+		Right: Literal(pattern),
+	}
+}
+
+func (c *Column) ContainsNot(pattern string) *BinaryExpr {
+	return &BinaryExpr{
+		Left:  c,
+		Op:    OpNotContains,
 		Right: Literal(pattern),
 	}
 }

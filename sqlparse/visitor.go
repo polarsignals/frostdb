@@ -293,9 +293,14 @@ func (v *astVisitor) leaveImpl(n ast.Node) error {
 		leftExpr, newExprs := pop(newExprs)
 		v.exprStack = newExprs
 
+		op := logicalplan.OpContains
+		if expr.Not {
+			op = logicalplan.OpNotContains
+		}
+
 		v.exprStack = append(v.exprStack, &logicalplan.BinaryExpr{
 			Left:  logicalplan.Col(leftExpr.Name()),
-			Op:    logicalplan.OpContains,
+			Op:    op,
 			Right: rightExpr,
 		})
 	case *ast.GroupByClause:
