@@ -584,7 +584,7 @@ func (b *OptInt32Builder) NewArray() arrow.Array {
 		0,
 	)
 	b.reset()
-	b.data = b.data[:0]
+	b.data = nil
 	return array.NewInt32Data(data)
 }
 
