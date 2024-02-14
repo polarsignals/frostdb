@@ -24,7 +24,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
-	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/query"
@@ -356,6 +355,10 @@ func Test_DB_WithStorage(t *testing.T) {
 
 	db, err = c.DB(context.Background(), t.Name())
 	require.NoError(t, err)
+
+	_, err = db.Table(t.Name(), config)
+	require.NoError(t, err)
+
 	engine = query.NewEngine(pool, db.TableProvider())
 	var onDisk arrow.Record
 	err = engine.ScanTable(t.Name()).
@@ -370,253 +373,6 @@ func Test_DB_WithStorage(t *testing.T) {
 	require.True(t, array.RecordEqual(inMemory, onDisk))
 	require.Equal(t, int64(1), onDisk.NumCols())
 	require.Equal(t, int64(2), onDisk.NumRows())
-}
-
-func Test_DB_ColdStart(t *testing.T) {
-	sanitize := func(name string) string {
-		return strings.Replace(name, "/", "-", -1)
-	}
-
-	config := NewTableConfig(
-		dynparquet.SampleDefinition(),
-	)
-
-	bucket := objstore.NewInMemBucket()
-	sinksource := NewDefaultObjstoreBucket(bucket)
-	logger := newTestLogger(t)
-
-	tests := map[string]struct {
-		newColumnstore func(t *testing.T) *ColumnStore
-	}{
-		"cold start with storage": {
-			newColumnstore: func(t *testing.T) *ColumnStore {
-				c, err := New(
-					WithLogger(logger),
-					WithReadWriteStorage(sinksource),
-				)
-				require.NoError(t, err)
-				return c
-			},
-		},
-		"cold start with storage and wal": {
-			newColumnstore: func(t *testing.T) *ColumnStore {
-				c, err := New(
-					WithLogger(logger),
-					WithReadWriteStorage(sinksource),
-					WithWAL(),
-					WithStoragePath(t.TempDir()),
-				)
-				require.NoError(t, err)
-				return c
-			},
-		},
-	}
-
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			c := test.newColumnstore(t)
-			db, err := c.DB(context.Background(), sanitize(t.Name()))
-			require.NoError(t, err)
-			table, err := db.Table(sanitize(t.Name()), config)
-			require.NoError(t, err)
-			t.Cleanup(func() {
-				os.RemoveAll(sanitize(t.Name()))
-			})
-
-			samples := dynparquet.Samples{
-				{
-					ExampleType: "test",
-					Labels: map[string]string{
-						"label1": "value1",
-						"label2": "value2",
-					},
-					Stacktrace: []uuid.UUID{
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-					},
-					Timestamp: 1,
-					Value:     1,
-				},
-				{
-					ExampleType: "test",
-					Labels: map[string]string{
-						"label1": "value1",
-						"label2": "value2",
-					},
-					Stacktrace: []uuid.UUID{
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-					},
-					Timestamp: 2,
-					Value:     2,
-				},
-				{
-					ExampleType: "test",
-					Labels: map[string]string{
-						"label1": "value1",
-						"label2": "value2",
-					},
-					Stacktrace: []uuid.UUID{
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
-					},
-					Timestamp: 3,
-					Value:     3,
-				},
-			}
-
-			r, err := samples.ToRecord()
-			require.NoError(t, err)
-
-			ctx := context.Background()
-			_, err = table.InsertRecord(ctx, r)
-			require.NoError(t, err)
-
-			// Gracefully close the db to persist blocks
-			c.Close()
-
-			// Open a new database pointed to the same bucket storage
-			c, err = New(
-				WithLogger(logger),
-				WithReadWriteStorage(sinksource),
-			)
-			require.NoError(t, err)
-			defer c.Close()
-
-			// connect to our test db
-			db, err = c.DB(context.Background(), sanitize(t.Name()))
-			require.NoError(t, err)
-
-			pool := memory.NewGoAllocator()
-			engine := query.NewEngine(pool, db.TableProvider())
-			require.NoError(t, engine.ScanTable(sanitize(t.Name())).Execute(
-				context.Background(), func(ctx context.Context, r arrow.Record) error {
-					require.Equal(t, int64(6), r.NumCols())
-					require.Equal(t, int64(3), r.NumRows())
-					return nil
-				},
-			))
-		})
-	}
-}
-
-func Test_DB_ColdStart_MissingColumn(t *testing.T) {
-	schemaDef := &schemapb.Schema{
-		Name: "test",
-		Columns: []*schemapb.Column{
-			{
-				Name: "example_type",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				},
-				Dynamic: false,
-			},
-			{
-				Name: "labels",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Nullable: true,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				},
-				Dynamic: true,
-			},
-			{
-				Name: "pprof_labels",
-				StorageLayout: &schemapb.StorageLayout{
-					Type:     schemapb.StorageLayout_TYPE_STRING,
-					Nullable: true,
-					Encoding: schemapb.StorageLayout_ENCODING_RLE_DICTIONARY,
-				},
-				Dynamic: true,
-			},
-		},
-		SortingColumns: []*schemapb.SortingColumn{
-			{
-				Name:      "example_type",
-				Direction: schemapb.SortingColumn_DIRECTION_ASCENDING,
-			},
-			{
-				Name:       "labels",
-				Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
-				NullsFirst: true,
-			},
-			{
-				Name:       "pprof_labels",
-				Direction:  schemapb.SortingColumn_DIRECTION_ASCENDING,
-				NullsFirst: true,
-			},
-		},
-	}
-
-	config := NewTableConfig(schemaDef)
-
-	bucket := objstore.NewInMemBucket()
-
-	sinksource := NewDefaultObjstoreBucket(bucket)
-	logger := newTestLogger(t)
-
-	c, err := New(
-		WithLogger(logger),
-		WithReadWriteStorage(sinksource),
-	)
-	require.NoError(t, err)
-
-	db, err := c.DB(context.Background(), t.Name())
-	require.NoError(t, err)
-	table, err := db.Table(t.Name(), config)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(t.Name())
-	})
-
-	schema := arrow.NewSchema([]arrow.Field{
-		{Name: "example_type", Type: arrow.BinaryTypes.Binary},
-		{Name: "labels.label1", Type: arrow.BinaryTypes.Binary},
-		{Name: "labels.label2", Type: arrow.BinaryTypes.Binary},
-	}, nil)
-	bldr := array.NewRecordBuilder(memory.DefaultAllocator, schema)
-	defer bldr.Release()
-
-	bldr.Field(0).(*array.BinaryBuilder).Append([]byte("test"))
-	bldr.Field(1).(*array.BinaryBuilder).Append([]byte("value1"))
-	bldr.Field(2).(*array.BinaryBuilder).Append([]byte("value1"))
-
-	r := bldr.NewRecord()
-	defer r.Release()
-
-	ctx := context.Background()
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
-
-	// Gracefully close the db to persist blocks
-	c.Close()
-
-	// Open a new database pointed to the same bucket storage
-	c, err = New(
-		WithLogger(logger),
-		WithReadWriteStorage(sinksource),
-	)
-	require.NoError(t, err)
-	defer c.Close()
-
-	// connect to our test db
-	db, err = c.DB(context.Background(), t.Name())
-	require.NoError(t, err)
-
-	// fetch new table
-	table, err = db.Table(t.Name(), config)
-	require.NoError(t, err)
-
-	bldr.Field(0).(*array.BinaryBuilder).Append([]byte("test"))
-	bldr.Field(1).(*array.BinaryBuilder).Append([]byte("value2"))
-	bldr.Field(2).(*array.BinaryBuilder).Append([]byte("value2"))
-
-	r = bldr.NewRecord()
-	defer r.Release()
-
-	_, err = table.InsertRecord(ctx, r)
-	require.NoError(t, err)
 }
 
 func Test_DB_Filter_Block(t *testing.T) {
@@ -746,6 +502,9 @@ func Test_DB_Filter_Block(t *testing.T) {
 
 			// connect to our test db
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
+			require.NoError(t, err)
+
+			_, err = db.Table(sanitize(t.Name()), config)
 			require.NoError(t, err)
 
 			engine := query.NewEngine(
@@ -1031,6 +790,9 @@ func Test_DB_Block_Optimization(t *testing.T) {
 
 			// connect to our test db
 			db, err = c.DB(context.Background(), sanitize(t.Name()))
+			require.NoError(t, err)
+
+			_, err = db.Table(sanitize(t.Name()), config)
 			require.NoError(t, err)
 
 			engine := query.NewEngine(
@@ -1944,6 +1706,9 @@ func Test_DB_EngineInMemory(t *testing.T) {
 	defer c.Close()
 
 	db, err = c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	_, err = db.Table("test", config)
 	require.NoError(t, err)
 
 	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
