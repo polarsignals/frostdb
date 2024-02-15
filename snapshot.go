@@ -346,18 +346,18 @@ func (w *offsetWriter) checksum() uint32 {
 
 func (db *DB) snapshotWriter(tx uint64) func(context.Context, io.Writer) error {
 	return func(ctx context.Context, w io.Writer) error {
-		return WriteSnapshot(ctx, tx, db, w, false)
+		return WriteSnapshot(ctx, tx, db, w)
 	}
 }
 
 // offlineSnapshotWriter is used when a database is closing after all the tables have closed.
 func (db *DB) offlineSnapshotWriter(tx uint64) func(context.Context, io.Writer) error {
 	return func(ctx context.Context, w io.Writer) error {
-		return WriteSnapshot(ctx, tx, db, w, true)
+		return WriteSnapshot(ctx, tx, db, w)
 	}
 }
 
-func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline bool) error {
+func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer) error {
 	offW := newOffsetWriter(w)
 	w = offW
 	var tables []*Table
@@ -376,18 +376,11 @@ func WriteSnapshot(ctx context.Context, tx uint64, db *DB, w io.Writer, offline 
 		if err := func() error {
 			// Obtain a write block to prevent racing with
 			// compaction/persistence.
-			var block *TableBlock
-			if offline {
-				block = t.ActiveBlock()
-			} else {
-				var done func()
-				var err error
-				block, done, err = t.ActiveWriteBlock()
-				if err != nil {
-					return err
-				}
-				defer done()
+			block, done, err := t.ActiveWriteBlock()
+			if err != nil {
+				return err
 			}
+			defer done()
 			blockUlid, err := block.ulid.MarshalBinary()
 			if err != nil {
 				return err
