@@ -1221,6 +1221,9 @@ func (t *Table) collectRowGroups(
 		if err := block.index.Scan(ctx, "", t.schema, filterExpr, tx, func(ctx context.Context, v any) error {
 			select {
 			case <-ctx.Done():
+				if rg, ok := v.(index.ReleaseableRowGroup); ok {
+					rg.Release()
+				}
 				return ctx.Err()
 			case rowGroups <- v:
 				return nil
@@ -1240,6 +1243,9 @@ func (t *Table) collectRowGroups(
 		if err := source.Scan(ctx, filepath.Join(t.db.name, t.name), t.schema, filterExpr, lastBlockTimestamp, func(ctx context.Context, v any) error {
 			select {
 			case <-ctx.Done():
+				if rg, ok := v.(index.ReleaseableRowGroup); ok {
+					rg.Release()
+				}
 				return ctx.Err()
 			case rowGroups <- v:
 				return nil
