@@ -189,8 +189,8 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, writeSnapshot func(co
 			return nil
 		}(); err != nil {
 			err = fmt.Errorf("failed to write snapshot for tx %d: %w", tx, err)
-			if removeErr := os.Remove(fileName); removeErr != nil {
-				err = fmt.Errorf("%w: failed to remove snapshot file: %v", err, removeErr)
+			if removeErr := os.RemoveAll(snapshotsDir); removeErr != nil {
+				err = fmt.Errorf("%w: failed to remove snapshot directory: %v", err, removeErr)
 			}
 			return err
 		}
