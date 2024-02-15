@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"runtime"
 	"sync"
@@ -1171,4 +1172,49 @@ func Test_Issue685(t *testing.T) {
 			return nil
 		})
 	require.NoError(t, err)
+}
+
+func Test_Issue741_Deadlock(t *testing.T) {
+	logger := newTestLogger(t)
+	dir := t.TempDir()
+	c, err := New(
+		WithIndexConfig([]*index.LevelConfig{
+			{Level: index.L0, MaxSize: 1 * TiB, Type: index.CompactionTypeParquetDisk},
+			{Level: index.L1, MaxSize: 1 * TiB},
+		}),
+		WithLogger(logger),
+		WithStoragePath(dir),
+		WithWAL(),
+		WithManualBlockRotation(),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, c.Close())
+	})
+
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+
+	table, err := db.Table("test", NewTableConfig(dynparquet.SampleDefinition()))
+	require.NoError(t, err)
+
+	// Insert a record
+	r, err := dynparquet.GenerateTestSamples(1).ToRecord()
+	require.NoError(t, err)
+	ctx := context.Background()
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	// Compact the table to create a Parquet file backed record
+	require.NoError(t, table.EnsureCompaction())
+
+	// Simulate a query that is canceled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.Error(t, table.Iterator(ctx, math.MaxUint64, memory.NewGoAllocator(), []logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+		return nil
+	}}))
+
+	// This releases all the parts and waits for all reads to finish accessing the parts. This was causing a deadlock.
+	table.active.index.Close()
 }
