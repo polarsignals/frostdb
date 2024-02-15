@@ -59,26 +59,36 @@ func ParquetSchemaToArrowSchema(ctx context.Context, schema *parquet.Schema, s *
 		}
 	}
 
-	for _, distinctExpr := range options.DistinctColumns {
-		if distinctExpr.Computed() {
-			// Usually we would pass the logical query plan as the data type
-			// finder, but we're here because of an intended layering
-			// violation, which is pushing distinct queries down to the scan
-			// layer. In this case there are no other possible physical types
-			// other than the actual schema, so we can just implement a
-			// simplified version of the type finder that doesn't need to
-			// traverse the logical plan, since this is already the physical
-			// scan layer execution.
-			dataType, err := distinctExpr.DataType(&exprTypeFinder{s: s})
-			if err != nil {
-				return nil, err
+	if len(options.DistinctColumns) > 0 {
+		for _, distinctExpr := range options.DistinctColumns {
+			if distinctExpr.Computed() {
+				// Usually we would pass the logical query plan as the data type
+				// finder, but we're here because of an intended layering
+				// violation, which is pushing distinct queries down to the scan
+				// layer. In this case there are no other possible physical types
+				// other than the actual schema, so we can just implement a
+				// simplified version of the type finder that doesn't need to
+				// traverse the logical plan, since this is already the physical
+				// scan layer execution.
+				dataType, err := distinctExpr.DataType(&exprTypeFinder{s: s})
+				if err != nil {
+					return nil, err
+				}
+				fields = append(fields, arrow.Field{
+					Name:     distinctExpr.Name(),
+					Type:     dataType,
+					Nullable: true, // TODO: This should be determined by the expression and underlying column(s).
+				})
 			}
-			fields = append(fields, arrow.Field{
-				Name:     distinctExpr.Name(),
-				Type:     dataType,
-				Nullable: true, // TODO: This should be determined by the expression and underlying column(s).
-			})
 		}
+
+		// Need to sort as the distinct columns are just appended, but we need
+		// the schema to be sorted. If we didn't sort them here, then
+		// subsequent schemas would be in a different order as
+		// `mergeArrowSchemas` sorts fields by name.
+		sort.Slice(fields, func(i, j int) bool {
+			return fields[i].Name < fields[j].Name
+		})
 	}
 
 	return arrow.NewSchema(fields, nil), nil
