@@ -984,8 +984,22 @@ func (db *DB) Close(options ...CloseOption) error {
 	for _, opt := range options {
 		opt(opts)
 	}
-	level.Info(db.logger).Log("msg", "closing DB")
+
 	shouldPersist := len(db.sinks) > 0 && !db.columnStore.manualBlockRotation
+	if !shouldPersist && db.columnStore.snapshotTriggerSize != 0 && !opts.clearStorage {
+		start := time.Now()
+		db.snapshot(context.Background(), false, func() {
+			level.Info(db.logger).Log("msg", "snapshot on close completed", "duration", time.Since(start))
+			if err := db.reclaimDiskSpace(context.Background(), nil); err != nil {
+				level.Error(db.logger).Log(
+					"msg", "failed to reclaim disk space after snapshot",
+					"err", err,
+				)
+			}
+		})
+	}
+
+	level.Info(db.logger).Log("msg", "closing DB")
 	for _, table := range db.tables {
 		table.close()
 		if shouldPersist {
@@ -999,19 +1013,6 @@ func (db *DB) Close(options ...CloseOption) error {
 		}
 	}
 	level.Info(db.logger).Log("msg", "closed all tables")
-
-	if !shouldPersist && db.columnStore.snapshotTriggerSize != 0 && !opts.clearStorage {
-		start := time.Now()
-		db.snapshot(context.Background(), false, func() {
-			level.Info(db.logger).Log("msg", "snapshot on close completed", "duration", time.Since(start))
-			if err := db.reclaimDiskSpace(context.Background(), nil); err != nil {
-				level.Error(db.logger).Log(
-					"msg", "failed to reclaim disk space after snapshot",
-					"err", err,
-				)
-			}
-		})
-	}
 
 	if err := db.closeInternal(); err != nil {
 		return err
