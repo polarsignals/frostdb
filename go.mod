@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/RoaringBitmap/roaring v0.9.4
-	github.com/apache/arrow/go/v14 v14.0.0-20230829105931-29819425f428
+	github.com/apache/arrow/go/v15 v15.0.0
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/cockroachdb/datadriven v1.0.2
 	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140
@@ -74,8 +74,3 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// Remove when the following PRs are available in a release.
-// - https://github.com/apache/arrow/pull/38729
-// - https://github.com/apache/arrow/pull/38919
-replace github.com/apache/arrow/go/v14 => github.com/asubiotto/arrow/go/v14 v14.0.0-20231129090719-b321865d34e9
