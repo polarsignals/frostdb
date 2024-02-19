@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/apache/arrow/go/v14/arrow/ipc"
-	"github.com/apache/arrow/go/v14/arrow/util"
+	"github.com/apache/arrow/go/v15/arrow/ipc"
+	"github.com/apache/arrow/go/v15/arrow/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"

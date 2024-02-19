@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/apache/arrow/go/v15/arrow/memory"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/dynparquet"

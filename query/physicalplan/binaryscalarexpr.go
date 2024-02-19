@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v14/arrow"
-	"github.com/apache/arrow/go/v14/arrow/array"
-	"github.com/apache/arrow/go/v14/arrow/compute"
-	"github.com/apache/arrow/go/v14/arrow/scalar"
+	"github.com/apache/arrow/go/v15/arrow"
+	"github.com/apache/arrow/go/v15/arrow/array"
+	"github.com/apache/arrow/go/v15/arrow/compute"
+	"github.com/apache/arrow/go/v15/arrow/scalar"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
