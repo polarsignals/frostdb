@@ -342,7 +342,8 @@ func BenchmarkQuery(b *testing.B) {
 	// BenchmarkFilter benchmarks performing a simple filter. This is useful to get an idea of our scan speed (minus the
 	// execution engine).
 	b.Run("Filter", func(b *testing.B) {
-		table, err := db.Table(tableName, nil)
+		schema := dynparquet.SampleDefinition()
+		table, err := db.Table(tableName, NewTableConfig(schema))
 		require.NoError(b, err)
 		size := table.ActiveBlock().Size()
 		for i := 0; i < b.N; i++ {

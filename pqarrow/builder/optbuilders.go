@@ -179,7 +179,7 @@ func (b *OptBinaryBuilder) NewArray() arrow.Array {
 	)
 	b.reset()
 	b.offsets = b.offsets[:0]
-	b.data = b.data[:0]
+	b.data = nil
 
 	return array.NewBinaryData(data)
 }
@@ -340,7 +340,7 @@ func (b *OptInt64Builder) NewArray() arrow.Array {
 		0,
 	)
 	b.reset()
-	b.data = b.data[:0]
+	b.data = nil
 	return array.NewInt64Data(data)
 }
 
@@ -459,7 +459,7 @@ func (b *OptBooleanBuilder) NewArray() arrow.Array {
 		0,
 	)
 	b.reset()
-	b.data = b.data[:0]
+	b.data = nil
 	array := array.NewBooleanData(data)
 	return array
 }
@@ -584,7 +584,7 @@ func (b *OptInt32Builder) NewArray() arrow.Array {
 		0,
 	)
 	b.reset()
-	b.data = b.data[:0]
+	b.data = nil
 	return array.NewInt32Data(data)
 }
 

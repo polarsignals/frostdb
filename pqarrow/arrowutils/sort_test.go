@@ -1,7 +1,8 @@
-package arrowutils_test
+package arrowutils
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -9,8 +10,6 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/compute"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/stretchr/testify/require"
-
-	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 )
 
 func TestSortRecord(t *testing.T) {
@@ -30,14 +29,14 @@ func TestSortRecord(t *testing.T) {
 		{
 			Name:    "No Nows",
 			Samples: Samples{},
-			Columns: []arrowutils.SortingColumn{{Index: 0}},
+			Columns: []SortingColumn{{Index: 0}},
 		},
 		{
 			Name: "One Row",
 			Samples: Samples{
 				{},
 			},
-			Columns: []arrowutils.SortingColumn{
+			Columns: []SortingColumn{
 				{
 					Index: 0,
 				},
@@ -51,7 +50,7 @@ func TestSortRecord(t *testing.T) {
 				{Int: 2},
 				{Int: 1},
 			},
-			Columns: []arrowutils.SortingColumn{
+			Columns: []SortingColumn{
 				{Index: 0},
 			},
 			Indices: []int32{2, 1, 0},
@@ -64,8 +63,8 @@ func TestSortRecord(t *testing.T) {
 				{Int: 3},
 			},
 
-			Columns: []arrowutils.SortingColumn{
-				{Index: 0, Direction: arrowutils.Descending},
+			Columns: []SortingColumn{
+				{Index: 0, Direction: Descending},
 			},
 			Indices: []int32{2, 1, 0},
 		},
@@ -76,7 +75,7 @@ func TestSortRecord(t *testing.T) {
 				{Double: 2},
 				{Double: 1},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 1}},
+			Columns: []SortingColumn{{Index: 1}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -86,7 +85,7 @@ func TestSortRecord(t *testing.T) {
 				{Double: 2},
 				{Double: 3},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 1, Direction: arrowutils.Descending}},
+			Columns: []SortingColumn{{Index: 1, Direction: Descending}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -96,7 +95,7 @@ func TestSortRecord(t *testing.T) {
 				{String: "2"},
 				{String: "1"},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 2}},
+			Columns: []SortingColumn{{Index: 2}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -106,7 +105,7 @@ func TestSortRecord(t *testing.T) {
 				{String: "2"},
 				{String: "3"},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 2, Direction: arrowutils.Descending}},
+			Columns: []SortingColumn{{Index: 2, Direction: Descending}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -116,7 +115,7 @@ func TestSortRecord(t *testing.T) {
 				{Dict: "2"},
 				{Dict: "1"},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 3}},
+			Columns: []SortingColumn{{Index: 3}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -126,7 +125,7 @@ func TestSortRecord(t *testing.T) {
 				{Dict: "2"},
 				{Dict: "3"},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 3, Direction: arrowutils.Descending}},
+			Columns: []SortingColumn{{Index: 3, Direction: Descending}},
 			Indices: []int32{2, 1, 0},
 		},
 		{
@@ -136,7 +135,7 @@ func TestSortRecord(t *testing.T) {
 				{},
 				{Nullable: null(1)},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 4}},
+			Columns: []SortingColumn{{Index: 4}},
 			Indices: []int32{2, 0, 1},
 		},
 		{
@@ -146,7 +145,7 @@ func TestSortRecord(t *testing.T) {
 				{},
 				{Nullable: null(1)},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 4, NullsFirst: true}},
+			Columns: []SortingColumn{{Index: 4, NullsFirst: true}},
 			Indices: []int32{0, 1, 2},
 		},
 		{
@@ -156,7 +155,7 @@ func TestSortRecord(t *testing.T) {
 				{},
 				{Nullable: null(1)},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 4, Direction: arrowutils.Descending}},
+			Columns: []SortingColumn{{Index: 4, Direction: Descending}},
 			Indices: []int32{2, 0, 1},
 		},
 		{
@@ -166,7 +165,7 @@ func TestSortRecord(t *testing.T) {
 				{},
 				{Nullable: null(1)},
 			},
-			Columns: []arrowutils.SortingColumn{{Index: 4, Direction: arrowutils.Descending, NullsFirst: true}},
+			Columns: []SortingColumn{{Index: 4, Direction: Descending, NullsFirst: true}},
 			Indices: []int32{0, 1, 2},
 		},
 		{
@@ -177,7 +176,7 @@ func TestSortRecord(t *testing.T) {
 				{String: "3", Int: 2},
 				{String: "4", Int: 1},
 			},
-			Columns: []arrowutils.SortingColumn{
+			Columns: []SortingColumn{
 				{Index: 0},
 				{Index: 2},
 			},
@@ -191,9 +190,9 @@ func TestSortRecord(t *testing.T) {
 				{String: "3", Int: 2},
 				{String: "4", Int: 1},
 			},
-			Columns: []arrowutils.SortingColumn{
-				{Index: 0, Direction: arrowutils.Ascending},
-				{Index: 2, Direction: arrowutils.Descending},
+			Columns: []SortingColumn{
+				{Index: 0, Direction: Ascending},
+				{Index: 2, Direction: Descending},
 			},
 			Indices: []int32{3, 2, 1, 0},
 		},
@@ -204,6 +203,40 @@ func TestSortRecord(t *testing.T) {
 			sortAndCompare(t, kase)
 		})
 	}
+}
+
+func TestSortRecordBuilderReuse(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+
+	schema := arrow.NewSchema([]arrow.Field{{Name: "int64", Type: arrow.PrimitiveTypes.Int64}}, nil)
+
+	b1 := array.NewInt64Builder(mem)
+	b1.AppendValues([]int64{3, 2, 1}, nil)
+	arr1 := b1.NewArray()
+	r1 := array.NewRecord(schema, []arrow.Array{arr1}, 3)
+
+	ms, err := newMultiColSorter(r1, []SortingColumn{{Index: 0}})
+	require.Nil(t, err)
+	sort.Sort(ms)
+	sortedArr1 := ms.indices.NewArray().(*array.Int32)
+	require.Equal(t, []int32{2, 1, 0}, sortedArr1.Int32Values())
+	ms.Release() // usually defer
+
+	b2 := array.NewInt64Builder(mem)
+	b2.AppendValues([]int64{2, 1}, nil)
+	arr2 := b2.NewArray()
+	r2 := array.NewRecord(schema, []arrow.Array{arr2}, 2)
+
+	ms, err = newMultiColSorter(r2, []SortingColumn{{Index: 0}})
+	require.Nil(t, err)
+	sort.Sort(ms)
+	sortedArr2 := ms.indices.NewArray().(*array.Int32)
+	require.Equal(t, []int32{1, 0}, sortedArr2.Int32Values())
+	ms.Release() // usually defer
+
+	// This failed before the fix because the builder's data was reused.
+	require.Equal(t, []int32{2, 1, 0}, sortedArr1.Int32Values())
+	require.Equal(t, []int32{1, 0}, sortedArr2.Int32Values())
 }
 
 func TestReorderRecord(t *testing.T) {
@@ -225,7 +258,7 @@ func TestReorderRecord(t *testing.T) {
 		indices := array.NewInt32Builder(mem)
 		indices.AppendValues([]int32{2, 1, 0}, nil)
 		by := indices.NewInt32Array()
-		result, err := arrowutils.Take(
+		result, err := Take(
 			compute.WithAllocator(context.Background(), mem), r, by)
 		require.Nil(t, err)
 		defer result.Release()
@@ -258,7 +291,7 @@ func TestReorderRecord(t *testing.T) {
 		indices := array.NewInt32Builder(mem)
 		indices.AppendValues([]int32{2, 1, 0}, nil)
 		by := indices.NewInt32Array()
-		result, err := arrowutils.Take(
+		result, err := Take(
 			compute.WithAllocator(context.Background(), mem), r, by)
 		require.Nil(t, err)
 		defer result.Release()
@@ -337,7 +370,7 @@ func (s Samples) Record() arrow.Record {
 type SortCase struct {
 	Name    string
 	Samples Samples
-	Columns []arrowutils.SortingColumn
+	Columns []SortingColumn
 	Indices []int32
 	Error   string
 }
@@ -345,7 +378,7 @@ type SortCase struct {
 func sortAndCompare(t *testing.T, kase SortCase) {
 	t.Helper()
 
-	got, err := arrowutils.SortRecord(kase.Samples.Record(), kase.Columns)
+	got, err := SortRecord(kase.Samples.Record(), kase.Columns)
 	if kase.Error != "" {
 		require.NotNil(t, err, kase.Error)
 		return
