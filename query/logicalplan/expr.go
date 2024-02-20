@@ -828,13 +828,9 @@ func (e *IsNullExpr) Clone() Expr {
 }
 
 func (e *IsNullExpr) DataType(l ExprTypeFinder) (arrow.DataType, error) {
-	typ, err := e.Expr.DataType(l)
+	_, err := e.Expr.DataType(l)
 	if err != nil {
 		return nil, err
-	}
-
-	if !arrow.TypeEqual(typ, arrow.FixedWidthTypes.Boolean) {
-		return nil, fmt.Errorf("not expression can only be applied to boolean expressions, got %s", typ)
 	}
 
 	return arrow.FixedWidthTypes.Boolean, nil

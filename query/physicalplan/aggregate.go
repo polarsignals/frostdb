@@ -613,7 +613,8 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 		groupByArrays = append(groupByArrays, aggregateArray)
 
 		aggregateFields = append(aggregateFields, arrow.Field{
-			Name: aggregation.resultName, Type: aggregateArray.DataType(),
+			Name: aggregation.resultName,
+			Type: aggregateArray.DataType(),
 		})
 	}
 
@@ -633,7 +634,7 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 
 type AndAggregation struct{}
 
-var ErrUnsupportedAndType = errors.New("unsupported type for is unique aggregation, expected bool")
+var ErrUnsupportedAndType = errors.New("unsupported type for is and aggregation, expected bool")
 
 func (a *AndAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
 	if len(arrs) == 0 {
@@ -645,7 +646,7 @@ func (a *AndAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (a
 	case arrow.BOOL:
 		return AndArrays(pool, arrs), nil
 	default:
-		return nil, fmt.Errorf("isUnique array of %s: %w", typ, ErrUnsupportedIsUniqueType)
+		return nil, fmt.Errorf("and array of %s: %w", typ, ErrUnsupportedAndType)
 	}
 }
 
@@ -704,12 +705,17 @@ func uniqueInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
 		}
 	}
 
-	return res.NewArray()
+	arr := res.NewArray()
+	return arr
 }
 
 func int64ArrayHasUniqueValue(arr *array.Int64) (int64, bool, bool) {
 	if arr.Len() == 0 {
 		return 0, false, false
+	}
+
+	if !arr.IsValid(0) {
+		return 0, false, true
 	}
 
 	val := arr.Value(0)

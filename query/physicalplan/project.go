@@ -519,7 +519,7 @@ func (p isNullProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arro
 
 	return []arrow.Field{{
 		Name:     p.expr.String(),
-		Type:     fields[0].Type,
+		Type:     arrow.FixedWidthTypes.Boolean,
 		Nullable: fields[0].Nullable,
 		Metadata: fields[0].Metadata,
 	}}, []arrow.Array{b.NewBooleanArray()}, nil
