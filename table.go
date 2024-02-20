@@ -882,7 +882,7 @@ func (t *Table) Iterator(
 
 	errg.Go(func() error {
 		defer close(rowGroups)
-		return t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.InMemoryOnly, rowGroups)
+		return t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.ReadMode, rowGroups)
 	})
 
 	return errg.Wait()
@@ -1003,7 +1003,7 @@ func (t *Table) SchemaIterator(
 	}
 
 	errg.Go(func() error {
-		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.InMemoryOnly, rowGroups); err != nil {
+		if err := t.collectRowGroups(ctx, tx, iterOpts.Filter, iterOpts.ReadMode, rowGroups); err != nil {
 			return err
 		}
 		close(rowGroups)
@@ -1201,7 +1201,7 @@ func (t *Table) collectRowGroups(
 	ctx context.Context,
 	tx uint64,
 	filterExpr logicalplan.Expr,
-	skipSources bool,
+	readMode logicalplan.ReadMode,
 	rowGroups chan<- any,
 ) error {
 	ctx, span := t.tracer.Start(ctx, "Table/collectRowGroups")
@@ -1211,29 +1211,33 @@ func (t *Table) collectRowGroups(
 	// to avoid to iterate on them again while reading the block file
 	// we keep the last block timestamp to be read from the bucket and pass it to the IterateBucketBlocks() function
 	// so that every block with a timestamp >= lastReadBlockTimestamp is discarded while being read.
-	memoryBlocks, lastBlockTimestamp := t.memoryBlocks()
-	defer func() {
-		for _, block := range memoryBlocks {
-			block.pendingReadersWg.Done()
-		}
-	}()
-	for _, block := range memoryBlocks {
-		if err := block.index.Scan(ctx, "", t.schema, filterExpr, tx, func(ctx context.Context, v any) error {
-			select {
-			case <-ctx.Done():
-				if rg, ok := v.(index.ReleaseableRowGroup); ok {
-					rg.Release()
-				}
-				return ctx.Err()
-			case rowGroups <- v:
-				return nil
+	var lastBlockTimestamp uint64
+	if readMode != logicalplan.ReadModeDataSourcesOnly {
+		memoryBlocks, lbt := t.memoryBlocks()
+		lastBlockTimestamp = lbt
+		defer func() {
+			for _, block := range memoryBlocks {
+				block.pendingReadersWg.Done()
 			}
-		}); err != nil {
-			return err
+		}()
+		for _, block := range memoryBlocks {
+			if err := block.index.Scan(ctx, "", t.schema, filterExpr, tx, func(ctx context.Context, v any) error {
+				select {
+				case <-ctx.Done():
+					if rg, ok := v.(index.ReleaseableRowGroup); ok {
+						rg.Release()
+					}
+					return ctx.Err()
+				case rowGroups <- v:
+					return nil
+				}
+			}); err != nil {
+				return err
+			}
 		}
 	}
 
-	if skipSources {
+	if readMode == logicalplan.ReadModeInMemoryOnly {
 		return nil
 	}
 

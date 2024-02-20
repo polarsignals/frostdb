@@ -134,10 +134,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		logicalplan.WithProjection(s.options.Projection...),
 		logicalplan.WithFilter(s.options.Filter),
 		logicalplan.WithDistinctColumns(s.options.Distinct...),
-	}
-
-	if s.options.SkipSources {
-		opts = append(opts, logicalplan.WithInMemoryOnly())
+		logicalplan.WithReadMode(s.options.ReadMode),
 	}
 
 	errg, _ := errgroup.WithContext(ctx)
@@ -197,10 +194,7 @@ func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		logicalplan.WithProjection(s.options.Projection...),
 		logicalplan.WithFilter(s.options.Filter),
 		logicalplan.WithDistinctColumns(s.options.Distinct...),
-	}
-
-	if s.options.SkipSources {
-		opts = append(opts, logicalplan.WithInMemoryOnly())
+		logicalplan.WithReadMode(s.options.ReadMode),
 	}
 
 	errg, _ := errgroup.WithContext(ctx)
@@ -260,14 +254,14 @@ func (p *noopOperator) Draw() *Diagram {
 type execOptions struct {
 	orderedAggregations bool
 	overrideInput       []PhysicalPlan
-	skipSources         bool
+	readMode            logicalplan.ReadMode
 }
 
 type Option func(o *execOptions)
 
-func WithInMemoryOnly() Option {
+func WithReadMode(m logicalplan.ReadMode) Option {
 	return func(o *execOptions) {
-		o.skipSources = true
+		o.readMode = m
 	}
 }
 
@@ -324,7 +318,7 @@ func Build(
 			for i := range plans {
 				plans[i] = &noopOperator{}
 			}
-			plan.SchemaScan.SkipSources = execOpts.skipSources
+			plan.SchemaScan.ReadMode = execOpts.readMode
 			outputPlan.scan = &SchemaScan{
 				tracer:  tracer,
 				options: plan.SchemaScan,
@@ -339,7 +333,7 @@ func Build(
 			for i := range plans {
 				plans[i] = &noopOperator{}
 			}
-			plan.TableScan.SkipSources = execOpts.skipSources
+			plan.TableScan.ReadMode = execOpts.readMode
 			outputPlan.scan = &TableScan{
 				tracer:  tracer,
 				options: plan.TableScan,

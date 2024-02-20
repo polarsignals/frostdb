@@ -36,14 +36,14 @@ type IterOptions struct {
 	Projection         []Expr
 	Filter             Expr
 	DistinctColumns    []Expr
-	InMemoryOnly       bool
+	ReadMode           ReadMode
 }
 
 type Option func(opts *IterOptions)
 
-func WithInMemoryOnly() Option {
+func WithReadMode(m ReadMode) Option {
 	return func(opts *IterOptions) {
-		opts.InMemoryOnly = true
+		opts.ReadMode = m
 	}
 }
 
@@ -250,8 +250,8 @@ type TableScan struct {
 	// Projection is the list of columns that are to be projected.
 	Projection []Expr
 
-	// SkipSources indicates to skip scanning the tables sources.
-	SkipSources bool
+	// ReadMode indicates the mode to use when reading.
+	ReadMode ReadMode
 }
 
 func (scan *TableScan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
@@ -322,6 +322,18 @@ func (scan *TableScan) String() string {
 		" Distinct: " + fmt.Sprint(scan.Distinct)
 }
 
+type ReadMode int
+
+const (
+	// ReadModeDefault is the default read mode. Reads from in-memory and object
+	// storage.
+	ReadModeDefault ReadMode = iota
+	// ReadModeInMemoryOnly reads from in-memory storage only.
+	ReadModeInMemoryOnly
+	// ReadModeDataSourcesOnly reads from data sources only.
+	ReadModeDataSourcesOnly
+)
+
 type SchemaScan struct {
 	TableProvider TableProvider
 	TableName     string
@@ -340,8 +352,8 @@ type SchemaScan struct {
 	// Projection is the list of columns that are to be projected.
 	Projection []Expr
 
-	// SkipSources indicates to skip scanning the tables sources.
-	SkipSources bool
+	// ReadMode indicates the mode to use when reading.
+	ReadMode ReadMode
 }
 
 func (s *SchemaScan) String() string {
