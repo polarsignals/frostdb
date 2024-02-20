@@ -16,6 +16,8 @@ import (
 
 func TestUniqueAggregation(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer mem.AssertSize(t, 0)
+
 	schema, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
 		Name: "test",
 		Columns: []*schemapb.Column{{
@@ -44,12 +46,15 @@ func TestUniqueAggregation(t *testing.T) {
 	rb.Field(0).(*array.Int64Builder).AppendValues([]int64{1, 2, 3}, nil)
 	rb.Field(1).(*array.Int64Builder).AppendValues([]int64{1, 1, 3}, nil)
 
+	r := rb.NewRecord()
+	defer r.Release()
+
 	ran := false
 	err = NewEngine(mem, &FakeTableProvider{
 		Tables: map[string]logicalplan.TableReader{
 			"test": &FakeTableReader{
 				FrostdbSchema: schema,
-				Records:       []arrow.Record{rb.NewRecord()},
+				Records:       []arrow.Record{r},
 			},
 		},
 	}).ScanTable("test").
@@ -71,6 +76,8 @@ func TestUniqueAggregation(t *testing.T) {
 
 func TestAndAggregation(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer mem.AssertSize(t, 0)
+
 	schema, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
 		Name: "test",
 		Columns: []*schemapb.Column{{
@@ -99,12 +106,15 @@ func TestAndAggregation(t *testing.T) {
 	rb.Field(0).(*array.BooleanBuilder).AppendValues([]bool{true, false, true, true}, nil)
 	rb.Field(1).(*array.Int64Builder).AppendValues([]int64{1, 1, 3, 3}, nil)
 
+	r := rb.NewRecord()
+	defer r.Release()
+
 	ran := false
 	err = NewEngine(mem, &FakeTableProvider{
 		Tables: map[string]logicalplan.TableReader{
 			"test": &FakeTableReader{
 				FrostdbSchema: schema,
-				Records:       []arrow.Record{rb.NewRecord()},
+				Records:       []arrow.Record{r},
 			},
 		},
 	}).ScanTable("test").
@@ -125,6 +135,8 @@ func TestAndAggregation(t *testing.T) {
 
 func TestIfProjection(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer mem.AssertSize(t, 0)
+
 	schema, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
 		Name: "test",
 		Columns: []*schemapb.Column{{
@@ -153,12 +165,15 @@ func TestIfProjection(t *testing.T) {
 	rb.Field(0).(*array.Int64Builder).AppendValues([]int64{1, 2, 3}, nil)
 	rb.Field(1).(*array.Int64Builder).AppendValues([]int64{1, 1, 3}, nil)
 
+	r := rb.NewRecord()
+	defer r.Release()
+
 	ran := false
 	err = NewEngine(mem, &FakeTableProvider{
 		Tables: map[string]logicalplan.TableReader{
 			"test": &FakeTableReader{
 				FrostdbSchema: schema,
-				Records:       []arrow.Record{rb.NewRecord()},
+				Records:       []arrow.Record{r},
 			},
 		},
 	}).ScanTable("test").
@@ -176,6 +191,8 @@ func TestIfProjection(t *testing.T) {
 
 func TestIsNullProjection(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer mem.AssertSize(t, 0)
+
 	schema, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
 		Name: "test",
 		Columns: []*schemapb.Column{{
@@ -195,12 +212,15 @@ func TestIsNullProjection(t *testing.T) {
 
 	rb.Field(0).(*array.Int64Builder).AppendValues([]int64{1, 2, 3}, []bool{true, true, false})
 
+	r := rb.NewRecord()
+	defer r.Release()
+
 	ran := false
 	err = NewEngine(mem, &FakeTableProvider{
 		Tables: map[string]logicalplan.TableReader{
 			"test": &FakeTableReader{
 				FrostdbSchema: schema,
-				Records:       []arrow.Record{rb.NewRecord()},
+				Records:       []arrow.Record{r},
 			},
 		},
 	}).ScanTable("test").
