@@ -485,6 +485,132 @@ func (p convertProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arr
 	}}, []arrow.Array{c}, nil
 }
 
+type isNullProjection struct {
+	expr *logicalplan.IsNullExpr
+	p    columnProjection
+}
+
+func (p isNullProjection) Name() string {
+	return p.expr.String()
+}
+
+func (p isNullProjection) String() string {
+	return p.expr.String()
+}
+
+func (p isNullProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	fields, cols, err := p.p.Project(mem, ar)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(fields) != 1 || len(fields) != len(cols) {
+		return nil, nil, fmt.Errorf("invalid projection for isNull: expected 1 field and array, got %d fields %d arrays", len(fields), len(cols))
+	}
+
+	b := array.NewBooleanBuilder(mem)
+	defer b.Release()
+
+	b.Resize(cols[0].Len())
+
+	for i := 0; i < cols[0].Len(); i++ {
+		b.Append(cols[0].IsNull(i))
+	}
+
+	return []arrow.Field{{
+		Name:     p.expr.String(),
+		Type:     arrow.FixedWidthTypes.Boolean,
+		Nullable: fields[0].Nullable,
+		Metadata: fields[0].Metadata,
+	}}, []arrow.Array{b.NewBooleanArray()}, nil
+}
+
+type ifExprProjection struct {
+	expr *logicalplan.IfExpr
+
+	cond columnProjection
+	then columnProjection
+	els  columnProjection
+}
+
+func (p ifExprProjection) Name() string {
+	return p.expr.Name()
+}
+
+func (p ifExprProjection) String() string {
+	return p.expr.Name()
+}
+
+func (p ifExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arrow.Field, []arrow.Array, error) {
+	f, thenCols, err := p.then.Project(mem, ar)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, elseCols, err := p.els.Project(mem, ar)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, condCols, err := p.cond.Project(mem, ar)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(thenCols) != 1 || len(elseCols) != 1 || len(condCols) != 1 {
+		return nil, nil, fmt.Errorf("invalid projection for if: all columns must be non-empty and of equal length")
+	}
+
+	condCol := condCols[0]
+	thenCol := thenCols[0]
+	elseCol := elseCols[0]
+
+	condArr, ok := condCol.(*array.Boolean)
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid projection for if: condition column must be of type boolean")
+	}
+
+	if condArr.Len() != thenCol.Len() || condArr.Len() != elseCol.Len() {
+		return nil, nil, fmt.Errorf("invalid projection for if: condition, then and else columns must be of equal length")
+	}
+
+	if !arrow.TypeEqual(thenCols[0].DataType(), elseCols[0].DataType()) {
+		return nil, nil, fmt.Errorf("invalid projection for if: then and else columns must be of the same type")
+	}
+
+	var res arrow.Array
+	switch thenCols[0].(type) {
+	case *array.Int64:
+		res = conditionalAddInt64(mem, condArr, thenCol.(*array.Int64), elseCol.(*array.Int64))
+	default:
+		return nil, nil, fmt.Errorf("unsupported if expression type: %s %T", thenCols[0].DataType(), thenCols[0])
+	}
+
+	return []arrow.Field{{
+		Name:     p.expr.Name(),
+		Type:     res.DataType(),
+		Nullable: f[0].Nullable,
+		Metadata: f[0].Metadata,
+	}}, []arrow.Array{res}, nil
+}
+
+func conditionalAddInt64(mem memory.Allocator, cond *array.Boolean, a, b *array.Int64) *array.Int64 {
+	res := array.NewInt64Builder(mem)
+	defer res.Release()
+
+	res.Resize(cond.Len())
+
+	for i := 0; i < cond.Len(); i++ {
+		if cond.IsValid(i) && cond.Value(i) {
+			res.Append(a.Value(i))
+		} else {
+			res.Append(b.Value(i))
+		}
+	}
+
+	return res.NewInt64Array()
+}
+
 type literalProjection struct {
 	value scalar.Scalar
 }
@@ -609,6 +735,38 @@ func projectionFromExpr(expr logicalplan.Expr) (columnProjection, error) {
 		default:
 			return nil, fmt.Errorf("unknown binary expression: %s", e.String())
 		}
+	case *logicalplan.IfExpr:
+		cond, err := projectionFromExpr(e.Cond)
+		if err != nil {
+			return nil, fmt.Errorf("condition projection for if projection: %w", err)
+		}
+
+		then, err := projectionFromExpr(e.Then)
+		if err != nil {
+			return nil, fmt.Errorf("then projection for if projection: %w", err)
+		}
+
+		els, err := projectionFromExpr(e.Else)
+		if err != nil {
+			return nil, fmt.Errorf("else projection for if projection: %w", err)
+		}
+
+		return ifExprProjection{
+			expr: e,
+			cond: cond,
+			then: then,
+			els:  els,
+		}, nil
+	case *logicalplan.IsNullExpr:
+		p, err := projectionFromExpr(e.Expr)
+		if err != nil {
+			return nil, fmt.Errorf("projection for is null projection: %w", err)
+		}
+
+		return isNullProjection{
+			expr: e,
+			p:    p,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type for projection: %T", expr)
 	}

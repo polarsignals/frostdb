@@ -724,6 +724,8 @@ const (
 	AggFuncMax
 	AggFuncCount
 	AggFuncAvg
+	AggFuncUnique
+	AggFuncAnd
 )
 
 func (f AggFunc) String() string {
@@ -738,6 +740,10 @@ func (f AggFunc) String() string {
 		return "count"
 	case AggFuncAvg:
 		return "avg"
+	case AggFuncUnique:
+		return "unique"
+	case AggFuncAnd:
+		return "and"
 	default:
 		panic("unknown aggregation function")
 	}
@@ -771,11 +777,224 @@ func Count(expr Expr) *AggregationFunction {
 	}
 }
 
+func Unique(expr Expr) *AggregationFunction {
+	return &AggregationFunction{
+		Func: AggFuncUnique,
+		Expr: expr,
+	}
+}
+
+func AndAgg(expr Expr) *AggregationFunction {
+	return &AggregationFunction{
+		Func: AggFuncAnd,
+		Expr: expr,
+	}
+}
+
 func Avg(expr Expr) *AggregationFunction {
 	return &AggregationFunction{
 		Func: AggFuncAvg,
 		Expr: expr,
 	}
+}
+
+func IsNull(expr Expr) *IsNullExpr {
+	return &IsNullExpr{
+		Expr: expr,
+	}
+}
+
+type IsNullExpr struct {
+	Expr Expr
+}
+
+func (e *IsNullExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return e == nil
+	}
+
+	if isNull, ok := other.(*IsNullExpr); ok {
+		return e.Expr.Equal(isNull.Expr)
+	}
+
+	return false
+}
+
+func (e *IsNullExpr) Clone() Expr {
+	return &IsNullExpr{
+		Expr: e.Expr.Clone(),
+	}
+}
+
+func (e *IsNullExpr) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	_, err := e.Expr.DataType(l)
+	if err != nil {
+		return nil, err
+	}
+
+	return arrow.FixedWidthTypes.Boolean, nil
+}
+
+func (e *IsNullExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(e)
+	if !continu {
+		return false
+	}
+
+	continu = e.Expr.Accept(visitor)
+	if !continu {
+		return false
+	}
+
+	continu = visitor.Visit(e)
+	if !continu {
+		return false
+	}
+
+	return visitor.PostVisit(e)
+}
+
+func (e *IsNullExpr) Computed() bool {
+	return true
+}
+
+func (e *IsNullExpr) Name() string {
+	return "isnull(" + e.Expr.Name() + ")"
+}
+
+func (e *IsNullExpr) String() string { return e.Name() }
+
+func (e *IsNullExpr) ColumnsUsedExprs() []Expr {
+	return e.Expr.ColumnsUsedExprs()
+}
+
+func (e *IsNullExpr) MatchColumn(columnName string) bool {
+	return e.Name() == columnName
+}
+
+func (e *IsNullExpr) MatchPath(path string) bool {
+	return strings.HasPrefix(e.Name(), path)
+}
+
+func If(cond, then, els Expr) *IfExpr {
+	return &IfExpr{
+		Cond: cond,
+		Then: then,
+		Else: els,
+	}
+}
+
+type IfExpr struct {
+	Cond Expr
+	Then Expr
+	Else Expr
+}
+
+func (e *IfExpr) Equal(other Expr) bool {
+	if other == nil {
+		// if both are nil, they are equal
+		return e == nil
+	}
+
+	if ife, ok := other.(*IfExpr); ok {
+		return e.Cond.Equal(ife.Cond) && e.Then.Equal(ife.Then) && e.Else.Equal(ife.Else)
+	}
+
+	return false
+}
+
+func (e *IfExpr) Clone() Expr {
+	return &IfExpr{
+		Cond: e.Cond.Clone(),
+		Then: e.Then.Clone(),
+		Else: e.Else.Clone(),
+	}
+}
+
+func (e *IfExpr) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	condType, err := e.Cond.DataType(l)
+	if err != nil {
+		return nil, err
+	}
+
+	if !arrow.TypeEqual(condType, arrow.FixedWidthTypes.Boolean) {
+		return nil, fmt.Errorf("condition expression must be of type bool, got %s", condType)
+	}
+
+	thenType, err := e.Then.DataType(l)
+	if err != nil {
+		return nil, err
+	}
+
+	elseType, err := e.Else.DataType(l)
+	if err != nil {
+		return nil, err
+	}
+
+	if !arrow.TypeEqual(thenType, elseType) {
+		return nil, fmt.Errorf("then and else expression must have the same type, got %s and %s", thenType, elseType)
+	}
+
+	return thenType, nil
+}
+
+func (e *IfExpr) Accept(visitor Visitor) bool {
+	continu := visitor.PreVisit(e)
+	if !continu {
+		return false
+	}
+
+	continu = e.Cond.Accept(visitor)
+	if !continu {
+		return false
+	}
+
+	continu = e.Then.Accept(visitor)
+	if !continu {
+		return false
+	}
+
+	continu = e.Else.Accept(visitor)
+	if !continu {
+		return false
+	}
+
+	continu = visitor.Visit(e)
+	if !continu {
+		return false
+	}
+
+	return visitor.PostVisit(e)
+}
+
+func (e *IfExpr) Alias(name string) *AliasExpr {
+	return &AliasExpr{
+		Expr:  e,
+		Alias: name,
+	}
+}
+
+func (e *IfExpr) Computed() bool {
+	return true
+}
+
+func (e *IfExpr) Name() string {
+	return "if(" + e.Cond.Name() + ") { " + e.Then.Name() + " } else { " + e.Else.Name() + "}"
+}
+
+func (e *IfExpr) String() string { return e.Name() }
+
+func (e *IfExpr) ColumnsUsedExprs() []Expr {
+	return append(append(e.Cond.ColumnsUsedExprs(), e.Then.ColumnsUsedExprs()...), e.Else.ColumnsUsedExprs()...)
+}
+
+func (e *IfExpr) MatchColumn(columnName string) bool {
+	return e.Cond.MatchColumn(columnName) || e.Then.MatchColumn(columnName) || e.Else.MatchColumn(columnName)
+}
+
+func (e *IfExpr) MatchPath(path string) bool {
+	return e.Cond.MatchPath(path) || e.Then.MatchPath(path) || e.Else.MatchPath(path)
 }
 
 type AliasExpr struct {
@@ -975,7 +1194,19 @@ func (n *NotExpr) Equal(other Expr) bool {
 	return false
 }
 
-func (n *NotExpr) DataType(ExprTypeFinder) (arrow.DataType, error) { return nil, nil }
+func (n *NotExpr) DataType(l ExprTypeFinder) (arrow.DataType, error) {
+	typ, err := n.Expr.DataType(l)
+	if err != nil {
+		return nil, err
+	}
+
+	if !arrow.TypeEqual(typ, arrow.FixedWidthTypes.Boolean) {
+		return nil, fmt.Errorf("not expression can only be applied to boolean expressions, got %s", typ)
+	}
+
+	return arrow.FixedWidthTypes.Boolean, nil
+}
+
 func (n *NotExpr) Accept(visitor Visitor) bool {
 	continu := visitor.PreVisit(n)
 	if !continu {

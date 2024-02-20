@@ -91,6 +91,10 @@ func chooseAggregationFunction(
 		return &MaxAggregation{}, nil
 	case logicalplan.AggFuncCount:
 		return &CountAggregation{}, nil
+	case logicalplan.AggFuncUnique:
+		return &UniqueAggregation{}, nil
+	case logicalplan.AggFuncAnd:
+		return &AndAggregation{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported aggregation function: %s", aggFunc.String())
 	}
@@ -609,7 +613,8 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 		groupByArrays = append(groupByArrays, aggregateArray)
 
 		aggregateFields = append(aggregateFields, arrow.Field{
-			Name: aggregation.resultName, Type: aggregateArray.DataType(),
+			Name: aggregation.resultName,
+			Type: aggregateArray.DataType(),
 		})
 	}
 
@@ -625,6 +630,105 @@ func (a *HashAggregate) finishAggregate(ctx context.Context, aggIdx int, aggrega
 	}
 
 	return nil
+}
+
+type AndAggregation struct{}
+
+var ErrUnsupportedAndType = errors.New("unsupported type for is and aggregation, expected bool")
+
+func (a *AndAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	if len(arrs) == 0 {
+		return array.NewBooleanBuilder(pool).NewArray(), nil
+	}
+
+	typ := arrs[0].DataType().ID()
+	switch typ {
+	case arrow.BOOL:
+		return AndArrays(pool, arrs), nil
+	default:
+		return nil, fmt.Errorf("and array of %s: %w", typ, ErrUnsupportedAndType)
+	}
+}
+
+func AndArrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
+	b := array.NewBooleanBuilder(pool)
+	defer b.Release()
+
+	for _, arr := range arrs {
+		if arr.Len() == 0 {
+			b.AppendNull()
+		}
+
+		arr := arr.(*array.Boolean)
+
+		val := true
+		for i := 0; i < arr.Len(); i++ {
+			if arr.IsValid(i) {
+				val = val && arr.Value(i)
+			}
+		}
+
+		b.Append(val)
+	}
+
+	return b.NewArray()
+}
+
+type UniqueAggregation struct{}
+
+var ErrUnsupportedIsUniqueType = errors.New("unsupported type for is unique aggregation, expected int64")
+
+func (a *UniqueAggregation) Aggregate(pool memory.Allocator, arrs []arrow.Array) (arrow.Array, error) {
+	if len(arrs) == 0 {
+		return array.NewInt64Builder(pool).NewArray(), nil
+	}
+
+	typ := arrs[0].DataType().ID()
+	switch typ {
+	case arrow.INT64:
+		return uniqueInt64arrays(pool, arrs), nil
+	default:
+		return nil, fmt.Errorf("isUnique array of %s: %w", typ, ErrUnsupportedIsUniqueType)
+	}
+}
+
+func uniqueInt64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
+	res := array.NewInt64Builder(pool)
+	defer res.Release()
+
+	for _, arr := range arrs {
+		uniqueVal, isUnique, hasValues := int64ArrayHasUniqueValue(arr.(*array.Int64))
+		if !hasValues || !isUnique {
+			res.AppendNull()
+		} else {
+			res.Append(uniqueVal)
+		}
+	}
+
+	arr := res.NewArray()
+	return arr
+}
+
+func int64ArrayHasUniqueValue(arr *array.Int64) (int64, bool, bool) {
+	if arr.Len() == 0 {
+		return 0, false, false
+	}
+
+	if !arr.IsValid(0) {
+		return 0, false, true
+	}
+
+	val := arr.Value(0)
+	for i := 1; i < arr.Len(); i++ {
+		if !arr.IsValid(i) {
+			return 0, false, true
+		}
+		if val != arr.Value(i) {
+			return 0, false, true
+		}
+	}
+
+	return val, true, true
 }
 
 type SumAggregation struct{}

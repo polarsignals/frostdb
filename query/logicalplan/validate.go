@@ -268,13 +268,23 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 			}
 		}
 
-		switch t {
-		case arrow.PrimitiveTypes.Int64, arrow.PrimitiveTypes.Float64:
-			// valid
-		default:
-			return &ExprValidationError{
-				expr:    expr.Expr,
-				message: fmt.Errorf("invalid aggregation: expression type %s is not supported", t).Error(),
+		switch expr.Func {
+		case AggFuncSum, AggFuncMin, AggFuncMax, AggFuncCount, AggFuncAvg, AggFuncUnique:
+			switch t {
+			case arrow.PrimitiveTypes.Int64, arrow.PrimitiveTypes.Float64:
+				// valid
+			default:
+				return &ExprValidationError{
+					expr:    expr.Expr,
+					message: fmt.Errorf("invalid aggregation: expression type %s is not supported", t).Error(),
+				}
+			}
+		case AggFuncAnd:
+			if t != arrow.FixedWidthTypes.Boolean {
+				return &ExprValidationError{
+					expr:    expr.Expr,
+					message: fmt.Errorf("invalid aggregation: and aggregations can only aggregate bool type expressions, not %s", t).Error(),
+				}
 			}
 		}
 	}
