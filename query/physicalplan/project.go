@@ -503,6 +503,11 @@ func (p isNullProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arro
 	if err != nil {
 		return nil, nil, err
 	}
+	defer func() {
+		for _, arr := range cols {
+			arr.Release()
+		}
+	}()
 
 	if len(fields) != 1 || len(fields) != len(cols) {
 		return nil, nil, fmt.Errorf("invalid projection for isNull: expected 1 field and array, got %d fields %d arrays", len(fields), len(cols))
@@ -546,16 +551,31 @@ func (p ifExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arro
 	if err != nil {
 		return nil, nil, err
 	}
+	defer func() {
+		for _, arr := range thenCols {
+			arr.Release()
+		}
+	}()
 
 	_, elseCols, err := p.els.Project(mem, ar)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer func() {
+		for _, arr := range elseCols {
+			arr.Release()
+		}
+	}()
 
 	_, condCols, err := p.cond.Project(mem, ar)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer func() {
+		for _, arr := range condCols {
+			arr.Release()
+		}
+	}()
 
 	if len(thenCols) != 1 || len(elseCols) != 1 || len(condCols) != 1 {
 		return nil, nil, fmt.Errorf("invalid projection for if: all columns must be non-empty and of equal length")
