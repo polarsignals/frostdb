@@ -202,7 +202,7 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 				typ = arrow.ListOf(typ)
 				fr.build = newFieldBuild(typ, mem, name, true)
 			}
-		case reflect.Int64, reflect.Float64, reflect.Bool, reflect.String:
+		case reflect.Int64, reflect.Float64, reflect.Bool, reflect.String, reflect.Uint64:
 			typ, styp = baseType(fty, dictionary)
 			fr.typ = styp
 			fr.nullable = nullable
@@ -510,6 +510,9 @@ func baseType(fty reflect.Type, dictionary bool) (typ arrow.DataType, sty schema
 	case reflect.String:
 		typ = arrow.BinaryTypes.String
 		sty = schemapb.StorageLayout_TYPE_STRING
+	case reflect.Uint64:
+		typ = arrow.PrimitiveTypes.Uint64
+		sty = schemapb.StorageLayout_TYPE_UINT64
 	default:
 		panic("frostdb/dynschema: " + fty.String() + " is npt supported")
 	}
@@ -556,6 +559,18 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 				v = v.Elem()
 			}
 			e.Append(v.Int())
+			return nil
+		}
+	case *array.Uint64Builder:
+		f.buildFunc = func(v reflect.Value) error {
+			if nullable {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				v = v.Elem()
+			}
+			e.Append(v.Uint())
 			return nil
 		}
 	case *array.Int64DictionaryBuilder:
