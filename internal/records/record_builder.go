@@ -668,6 +668,16 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 					return nil
 				})
 			}
+		case *array.Int64DictionaryBuilder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyInt(v, build.Append)
+			}
 		case *array.Uint64Builder:
 			f.buildFunc = func(v reflect.Value) error {
 				if v.IsNil() {
@@ -681,17 +691,6 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 					return nil
 				})
 			}
-		case *array.Int64DictionaryBuilder:
-			f.buildFunc = func(v reflect.Value) error {
-				if v.IsNil() {
-					e.AppendNull()
-					return nil
-				}
-				e.Append(true)
-				build.Reserve(v.Len())
-				return applyInt(v, build.Append)
-			}
-
 		case *array.Float64Builder:
 			f.buildFunc = func(v reflect.Value) error {
 				if v.IsNil() {
