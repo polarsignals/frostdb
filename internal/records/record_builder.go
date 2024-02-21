@@ -561,6 +561,17 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 			e.Append(v.Int())
 			return nil
 		}
+	case *array.Int64DictionaryBuilder:
+		f.buildFunc = func(v reflect.Value) error {
+			if nullable {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				v = v.Elem()
+			}
+			return e.Append(v.Int())
+		}
 	case *array.Uint64Builder:
 		f.buildFunc = func(v reflect.Value) error {
 			if nullable {
@@ -572,17 +583,6 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 			}
 			e.Append(v.Uint())
 			return nil
-		}
-	case *array.Int64DictionaryBuilder:
-		f.buildFunc = func(v reflect.Value) error {
-			if nullable {
-				if v.IsNil() {
-					e.AppendNull()
-					return nil
-				}
-				v = v.Elem()
-			}
-			return e.Append(v.Int())
 		}
 	case *array.Uint64DictionaryBuilder:
 		f.buildFunc = func(v reflect.Value) error {
