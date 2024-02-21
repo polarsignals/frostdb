@@ -15,6 +15,7 @@ func DefaultOptimizers() []Optimizer {
 		},
 		&FilterPushDown{},
 		&DistinctPushDown{},
+		&AggFuncPushDown{},
 	}
 }
 
@@ -152,5 +153,41 @@ func (p *DistinctPushDown) optimize(plan *LogicalPlan, distinctColumns []Expr) {
 
 	if plan.Input != nil {
 		p.optimize(plan.Input, distinctColumns)
+	}
+}
+
+// AggFuncPushDown optimizer tries to push down an aggregation function operator
+// to the table provider. This can be done in the case of some aggregation
+// functions on global aggregations (i.e. no group by) without filters.
+// The storage engine can make smarter decisions than just returning all the
+// data, such as in the case of max functions, memoizing the max value seen
+// so far and only scanning row groups that contain a value greater than the
+// memoized value. It modifies the plan in place.
+type AggFuncPushDown struct{}
+
+func (p *AggFuncPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
+	p.optimize(plan, nil)
+	return plan
+}
+
+func (p *AggFuncPushDown) optimize(plan *LogicalPlan, filterExpr Expr) {
+	switch {
+	case plan.TableScan != nil:
+		if filterExpr != nil {
+			plan.TableScan.Filter = filterExpr
+		}
+	case plan.Aggregation != nil:
+		if len(plan.Aggregation.GroupExprs) == 0 && len(plan.Aggregation.AggExprs) == 1 {
+			// TODO(asubiotto): Should we make this less specific?
+			filterExpr = plan.Aggregation.AggExprs[0]
+		}
+	default:
+		// If we find anything other than a table scan after a global
+		// aggregation, bail out by setting the filterExpr to nil.
+		filterExpr = nil
+	}
+
+	if plan.Input != nil {
+		p.optimize(plan.Input, filterExpr)
 	}
 }

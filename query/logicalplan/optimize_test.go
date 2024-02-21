@@ -194,3 +194,77 @@ func TestAllOptimizers(t *testing.T) {
 		p.Input.Input.Input.TableScan,
 	)
 }
+
+func TestAggFuncPushDown(t *testing.T) {
+	t.Run("GlobalAgg", func(t *testing.T) {
+		tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+		p, err := (&Builder{}).
+			Scan(tableProvider, "table1").
+			Aggregate(
+				[]*AggregationFunction{Max(Col("value"))},
+				nil,
+			).
+			Build()
+		require.NoError(t, err)
+
+		p = (&AggFuncPushDown{}).Optimize(p)
+		// Aggregation should still happen.
+		require.NotNil(t, p.Aggregation)
+		require.Equal(t,
+			&TableScan{
+				TableName:     "table1",
+				TableProvider: tableProvider,
+				Filter: &AggregationFunction{
+					Func: AggFuncMax,
+					Expr: &Column{ColumnName: "value"},
+				},
+			},
+			p.Input.TableScan,
+		)
+	})
+	t.Run("DontPushWithGroupExprs", func(t *testing.T) {
+		tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+		p, err := (&Builder{}).
+			Scan(tableProvider, "table1").
+			Aggregate(
+				[]*AggregationFunction{Max(Col("value"))},
+				[]Expr{Col("stacktrace")},
+			).
+			Build()
+		require.NoError(t, err)
+
+		p = (&AggFuncPushDown{}).Optimize(p)
+		// Aggregation should still happen.
+		require.NotNil(t, p.Aggregation)
+		require.Equal(t,
+			&TableScan{
+				TableName:     "table1",
+				TableProvider: tableProvider,
+			},
+			p.Input.TableScan,
+		)
+	})
+	t.Run("DontPushWithFilter", func(t *testing.T) {
+		tableProvider := &mockTableProvider{schema: dynparquet.NewSampleSchema()}
+		p, err := (&Builder{}).
+			Scan(tableProvider, "table1").
+			Filter(Col("labels.test").Eq(Literal("abc"))).
+			Aggregate(
+				[]*AggregationFunction{Max(Col("value"))},
+				nil,
+			).
+			Build()
+		require.NoError(t, err)
+
+		p = (&AggFuncPushDown{}).Optimize(p)
+		// Aggregation should still happen.
+		require.NotNil(t, p.Aggregation)
+		require.Equal(t,
+			&TableScan{
+				TableName:     "table1",
+				TableProvider: tableProvider,
+			},
+			p.Input.Input.TableScan,
+		)
+	})
+}
