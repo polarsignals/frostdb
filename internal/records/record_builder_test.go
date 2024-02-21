@@ -53,6 +53,7 @@ func TestBuild(t *testing.T) {
 			Bool       []bool
 			String     []string
 			StringDict []string `frostdb:",rle_dict"`
+			Uint64     []uint64
 		}
 		b := records.NewBuild[Repeated](memory.DefaultAllocator)
 		defer b.Release()
@@ -100,6 +101,14 @@ func TestBuild(t *testing.T) {
         "nullable": true,
         "repeated": true
       }
+    },
+ 	{
+      "name": "uint64",
+      "storageLayout": {
+        "type": "TYPE_UINT64",
+        "nullable": true,
+        "repeated": true
+      }
     }
   ]
 }`
@@ -115,6 +124,7 @@ func TestBuild(t *testing.T) {
 				Bool:       []bool{true, true},
 				String:     []string{"a", "b"},
 				StringDict: []string{"a", "b"},
+				Uint64:     []uint64{1, 2},
 			},
 			Repeated{
 				Int:        []int64{1, 2},
@@ -122,12 +132,13 @@ func TestBuild(t *testing.T) {
 				Bool:       []bool{true, true},
 				String:     []string{"a", "b"},
 				StringDict: []string{"c", "d"},
+				Uint64:     []uint64{1, 2},
 			},
 		)
 		require.Nil(t, err)
-		want := `[{"bool":null,"float":null,"int":null,"string":null,"string_dict":null}
-,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["a","b"]}
-,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["c","d"]}
+		want := `[{"bool":null,"float":null,"int":null,"string":null,"string_dict":null, "uint64":null}
+,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["a","b"],"uint64":[1, 2]}
+,{"bool":[true,true],"float":[1,2],"int":[1,2],"string":["a","b"],"string_dict":["c","d"],"uint64":[1, 2]}
 ]`
 		r := b.NewRecord()
 		data, _ := r.MarshalJSON()

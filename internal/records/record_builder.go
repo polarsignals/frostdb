@@ -584,6 +584,17 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 			}
 			return e.Append(v.Int())
 		}
+	case *array.Uint64DictionaryBuilder:
+		f.buildFunc = func(v reflect.Value) error {
+			if nullable {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				v = v.Elem()
+			}
+			return e.Append(v.Uint())
+		}
 	case *array.Float64Builder:
 		f.buildFunc = func(v reflect.Value) error {
 			if nullable {
@@ -653,6 +664,19 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 				e.Append(true)
 				build.Reserve(v.Len())
 				return applyInt(v, func(i int64) error {
+					build.Append(i)
+					return nil
+				})
+			}
+		case *array.Uint64Builder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyUInt(v, func(i uint64) error {
 					build.Append(i)
 					return nil
 				})
@@ -756,6 +780,12 @@ func applyBool(v reflect.Value, apply func(bool) error) error {
 func applyInt(v reflect.Value, apply func(int64) error) error {
 	return listApply[int64](v, func(v reflect.Value) int64 {
 		return v.Int()
+	}, apply)
+}
+
+func applyUInt(v reflect.Value, apply func(uint64) error) error {
+	return listApply[uint64](v, func(v reflect.Value) uint64 {
+		return v.Uint()
 	}, apply)
 }
 
