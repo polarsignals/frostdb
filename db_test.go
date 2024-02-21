@@ -1713,7 +1713,7 @@ func Test_DB_EngineInMemory(t *testing.T) {
 
 	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	defer pool.AssertSize(t, 0)
-	engine := query.NewEngine(pool, db.TableProvider(), query.WithPhysicalplanOptions(physicalplan.WithInMemoryOnly()))
+	engine := query.NewEngine(pool, db.TableProvider(), query.WithPhysicalplanOptions(physicalplan.WithReadMode(logicalplan.ReadModeInMemoryOnly)))
 	err = engine.ScanTable("test").
 		Aggregate(
 			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
