@@ -824,6 +824,16 @@ func (p *Projection) Close() {
 }
 
 func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
+	ar, err := p.Project(ctx, r)
+	if err != nil {
+		return err
+	}
+	defer ar.Release()
+
+	return p.next.Callback(ctx, ar)
+}
+
+func (p *Projection) Project(_ context.Context, r arrow.Record) (arrow.Record, error) {
 	// Generates high volume of spans. Comment out if needed during development.
 	// ctx, span := p.tracer.Start(ctx, "Projection/Callback")
 	// defer span.End()
@@ -834,7 +844,7 @@ func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
 	for _, proj := range p.colProjections {
 		f, a, err := proj.Project(p.pool, r)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if a == nil {
 			continue
@@ -854,11 +864,12 @@ func (p *Projection) Callback(ctx context.Context, r arrow.Record) error {
 		resArrays,
 		rows,
 	)
-	defer ar.Release()
+
 	for _, arr := range resArrays {
 		arr.Release()
 	}
-	return p.next.Callback(ctx, ar)
+
+	return ar, nil
 }
 
 func (p *Projection) Finish(ctx context.Context) error {
