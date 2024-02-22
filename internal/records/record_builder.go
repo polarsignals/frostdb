@@ -202,7 +202,7 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 				typ = arrow.ListOf(typ)
 				fr.build = newFieldBuild(typ, mem, name, true)
 			}
-		case reflect.Int64, reflect.Float64, reflect.Bool, reflect.String:
+		case reflect.Int64, reflect.Float64, reflect.Bool, reflect.String, reflect.Uint64:
 			typ, styp = baseType(fty, dictionary)
 			fr.typ = styp
 			fr.nullable = nullable
@@ -510,6 +510,9 @@ func baseType(fty reflect.Type, dictionary bool) (typ arrow.DataType, sty schema
 	case reflect.String:
 		typ = arrow.BinaryTypes.String
 		sty = schemapb.StorageLayout_TYPE_STRING
+	case reflect.Uint64:
+		typ = arrow.PrimitiveTypes.Uint64
+		sty = schemapb.StorageLayout_TYPE_UINT64
 	default:
 		panic("frostdb/dynschema: " + fty.String() + " is npt supported")
 	}
@@ -568,6 +571,29 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 				v = v.Elem()
 			}
 			return e.Append(v.Int())
+		}
+	case *array.Uint64Builder:
+		f.buildFunc = func(v reflect.Value) error {
+			if nullable {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				v = v.Elem()
+			}
+			e.Append(v.Uint())
+			return nil
+		}
+	case *array.Uint64DictionaryBuilder:
+		f.buildFunc = func(v reflect.Value) error {
+			if nullable {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				v = v.Elem()
+			}
+			return e.Append(v.Uint())
 		}
 	case *array.Float64Builder:
 		f.buildFunc = func(v reflect.Value) error {
@@ -652,7 +678,19 @@ func newFieldBuild(dt arrow.DataType, mem memory.Allocator, name string, nullabl
 				build.Reserve(v.Len())
 				return applyInt(v, build.Append)
 			}
-
+		case *array.Uint64Builder:
+			f.buildFunc = func(v reflect.Value) error {
+				if v.IsNil() {
+					e.AppendNull()
+					return nil
+				}
+				e.Append(true)
+				build.Reserve(v.Len())
+				return applyUInt(v, func(i uint64) error {
+					build.Append(i)
+					return nil
+				})
+			}
 		case *array.Float64Builder:
 			f.buildFunc = func(v reflect.Value) error {
 				if v.IsNil() {
@@ -741,6 +779,12 @@ func applyBool(v reflect.Value, apply func(bool) error) error {
 func applyInt(v reflect.Value, apply func(int64) error) error {
 	return listApply[int64](v, func(v reflect.Value) int64 {
 		return v.Int()
+	}, apply)
+}
+
+func applyUInt(v reflect.Value, apply func(uint64) error) error {
+	return listApply[uint64](v, func(v reflect.Value) uint64 {
+		return v.Uint()
 	}, apply)
 }
 
