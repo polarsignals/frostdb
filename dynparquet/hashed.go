@@ -91,6 +91,8 @@ func HashArray(arr arrow.Array) []uint64 {
 		return hashBinaryArray(ar)
 	case *array.Int64:
 		return hashInt64Array(ar)
+	case *array.Uint64:
+		return hashUint64Array(ar)
 	case *array.Boolean:
 		return hashBooleanArray(ar)
 	case *array.Dictionary:
@@ -254,6 +256,16 @@ func hashInt64Array(arr *array.Int64) []uint64 {
 	for i := 0; i < arr.Len(); i++ {
 		if !arr.IsNull(i) {
 			res[i] = uint64(arr.Value(i))
+		}
+	}
+	return res
+}
+
+func hashUint64Array(arr *array.Uint64) []uint64 {
+	res := make([]uint64, arr.Len())
+	for i := 0; i < arr.Len(); i++ {
+		if !arr.IsNull(i) {
+			res[i] = arr.Value(i)
 		}
 	}
 	return res

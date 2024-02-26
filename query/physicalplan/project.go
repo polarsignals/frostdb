@@ -122,19 +122,6 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 		default:
 			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
 		}
-	case *array.Float64:
-		switch b.expr.Op {
-		case logicalplan.OpAdd:
-			return resultFields, []arrow.Array{AddFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
-		case logicalplan.OpSub:
-			return resultFields, []arrow.Array{SubFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
-		case logicalplan.OpMul:
-			return resultFields, []arrow.Array{MulFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
-		case logicalplan.OpDiv:
-			return resultFields, []arrow.Array{DivFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
-		default:
-			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
-		}
 	case *array.Int32:
 		switch b.expr.Op {
 		case logicalplan.OpAdd:
@@ -145,6 +132,32 @@ func (b binaryExprProjection) Project(mem memory.Allocator, ar arrow.Record) ([]
 			return resultFields, []arrow.Array{MulInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
 		case logicalplan.OpDiv:
 			return resultFields, []arrow.Array{DivInt32s(mem, leftArray, rightArray.(*array.Int32))}, nil
+		default:
+			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
+		}
+	case *array.Uint64:
+		switch b.expr.Op {
+		case logicalplan.OpAdd:
+			return resultFields, []arrow.Array{AddUint64s(mem, leftArray, rightArray.(*array.Uint64))}, nil
+		case logicalplan.OpSub:
+			return resultFields, []arrow.Array{SubUint64s(mem, leftArray, rightArray.(*array.Uint64))}, nil
+		case logicalplan.OpMul:
+			return resultFields, []arrow.Array{MulUint64s(mem, leftArray, rightArray.(*array.Uint64))}, nil
+		case logicalplan.OpDiv:
+			return resultFields, []arrow.Array{DivUint64s(mem, leftArray, rightArray.(*array.Uint64))}, nil
+		default:
+			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
+		}
+	case *array.Float64:
+		switch b.expr.Op {
+		case logicalplan.OpAdd:
+			return resultFields, []arrow.Array{AddFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+		case logicalplan.OpSub:
+			return resultFields, []arrow.Array{SubFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+		case logicalplan.OpMul:
+			return resultFields, []arrow.Array{MulFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
+		case logicalplan.OpDiv:
+			return resultFields, []arrow.Array{DivFloat64s(mem, leftArray, rightArray.(*array.Float64))}, nil
 		default:
 			return nil, nil, fmt.Errorf("unsupported binary expression: %s", b.expr.String())
 		}
@@ -322,6 +335,63 @@ func DivInt32s(mem memory.Allocator, left, right *array.Int32) *array.Int32 {
 	}
 
 	return res.NewInt32Array()
+}
+
+func AddUint64s(mem memory.Allocator, left, right *array.Uint64) *array.Uint64 {
+	res := array.NewUint64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) + right.Value(i))
+	}
+
+	return res.NewUint64Array()
+}
+
+func SubUint64s(mem memory.Allocator, left, right *array.Uint64) *array.Uint64 {
+	res := array.NewUint64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) - right.Value(i))
+	}
+
+	return res.NewUint64Array()
+}
+
+func MulUint64s(mem memory.Allocator, left, right *array.Uint64) *array.Uint64 {
+	res := array.NewUint64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		res.Append(left.Value(i) * right.Value(i))
+	}
+
+	return res.NewUint64Array()
+}
+
+func DivUint64s(mem memory.Allocator, left, right *array.Uint64) *array.Uint64 {
+	res := array.NewUint64Builder(mem)
+	defer res.Release()
+
+	res.Resize(left.Len())
+
+	for i := 0; i < left.Len(); i++ {
+		rightValue := right.Value(i)
+		if right.Value(i) == 0 {
+			res.AppendNull()
+		} else {
+			res.Append(left.Value(i) / rightValue)
+		}
+	}
+
+	return res.NewUint64Array()
 }
 
 type boolExprProjection struct {

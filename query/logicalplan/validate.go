@@ -271,7 +271,10 @@ func ValidateAggregationExpr(plan *LogicalPlan) *ExprValidationError {
 		switch expr.Func {
 		case AggFuncSum, AggFuncMin, AggFuncMax, AggFuncCount, AggFuncAvg, AggFuncUnique:
 			switch t {
-			case arrow.PrimitiveTypes.Int64, arrow.PrimitiveTypes.Float64:
+			case
+				arrow.PrimitiveTypes.Int64,
+				arrow.PrimitiveTypes.Uint64,
+				arrow.PrimitiveTypes.Float64:
 				// valid
 			default:
 				return &ExprValidationError{
