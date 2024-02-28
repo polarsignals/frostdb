@@ -163,11 +163,22 @@ func (db *DB) snapshotAtTX(ctx context.Context, tx uint64, writeSnapshot func(co
 	start := time.Now()
 	if err := func() error {
 		snapshotsDir := SnapshotDir(db, tx)
+		fileName := filepath.Join(snapshotsDir, snapshotFileName(tx))
+		_, err := os.Stat(fileName)
+		if err == nil { // Snapshot file already exists
+			if db.validateSnapshotTxn(ctx, tx) == nil {
+				return nil // valid snapshot already exists at tx no need to re-snapshot
+			}
+
+			// Snapshot exists but is invalid. Remove it.
+			if err := os.RemoveAll(SnapshotDir(db, tx)); err != nil {
+				return fmt.Errorf("failed to remove invalid snapshot %v: %w", tx, err)
+			}
+		}
 		if err := os.MkdirAll(snapshotsDir, dirPerms); err != nil {
 			return err
 		}
 
-		fileName := filepath.Join(snapshotsDir, snapshotFileName(tx))
 		f, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, filePerms)
 		if err != nil {
 			return err
@@ -277,6 +288,33 @@ func LoadSnapshot(ctx context.Context, db *DB, tx uint64, r io.ReaderAt, size in
 	}
 	db.resetToTxn(watermark, wal)
 	return watermark, nil
+}
+
+func (db *DB) validateSnapshotTxn(ctx context.Context, tx uint64) error {
+	dir := db.snapshotsDir()
+
+	return db.snapshotsDo(ctx, dir, func(parsedTx uint64, entry os.DirEntry) (bool, error) {
+		if parsedTx != tx { // We're only trying to validate a single tx
+			return true, nil
+		}
+
+		return false, func() error {
+			f, err := os.Open(filepath.Join(dir, entry.Name(), snapshotFileName(parsedTx)))
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			info, err := f.Stat()
+			if err != nil {
+				return err
+			}
+			// readFooter validates the checksum.
+			if _, err := readFooter(f, info.Size()); err != nil {
+				return err
+			}
+			return nil
+		}()
+	})
 }
 
 func (db *DB) getLatestValidSnapshotTxn(ctx context.Context) (uint64, error) {
