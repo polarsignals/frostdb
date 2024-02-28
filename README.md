@@ -23,7 +23,7 @@ Read the announcement blog post to learn about what made us create it: https://w
 Columnar data stores have become incredibly popular for analytics. Structuring data in columns instead of rows leverages the architecture of modern hardware, allowing for efficient processing of data.
 A columnar data store might be right for you if you have workloads where you write a lot of data and need to perform analytics on that data.
 
-FrostDB is similar to many other in-memory columnar databases such as [DuckDB](https://duckdb.org/) or [InfluxDB IOx](https://github.com/influxdata/influxdb_iox). 
+FrostDB is similar to many other embeddable columnar databases such as [DuckDB](https://duckdb.org/)
 
 FrostDB may be a better fit for you if:
 - Are developing a Go program
