@@ -3,6 +3,7 @@ package physicalplan
 import (
 	"testing"
 
+	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,4 +47,35 @@ func Test_BuildIndexRanges(t *testing.T) {
 			require.Equal(t, test.expected, buildIndexRanges(test.indicies))
 		})
 	}
+}
+
+type mockExpression struct {
+	evalFn func(arrow.Record) (*Bitmap, error)
+}
+
+var _ BooleanExpression = mockExpression{}
+
+func (e mockExpression) Eval(record arrow.Record) (*Bitmap, error) {
+	return e.evalFn(record)
+}
+
+func (e mockExpression) String() string {
+	return ""
+}
+
+func TestAndExprShortCircuits(t *testing.T) {
+	left := mockExpression{evalFn: func(_ arrow.Record) (*Bitmap, error) {
+		return NewBitmap(), nil
+	}}
+	right := mockExpression{evalFn: func(_ arrow.Record) (*Bitmap, error) {
+		t.Fatal("right should not be evaluated")
+		return nil, nil
+	}}
+	andExpr := AndExpr{
+		Left:  left,
+		Right: right,
+	}
+	result, err := andExpr.Eval(nil)
+	require.NoError(t, err)
+	require.True(t, result.IsEmpty())
 }
