@@ -50,7 +50,10 @@ func rowgroup(file string, rg int) error {
 	fields := rowgroup.Schema().Fields()
 
 	for i, chunk := range rowgroup.ColumnChunks() {
-		index := chunk.ColumnIndex()
+		index, err := chunk.ColumnIndex()
+		if err != nil {
+			return err
+		}
 		for j := 0; j < index.NumPages(); j++ {
 			t.Row(
 				fields[i%len(fields)].Name(),

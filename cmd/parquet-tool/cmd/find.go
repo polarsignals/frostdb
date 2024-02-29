@@ -118,7 +118,10 @@ func find(file, column string, t *table.Table) error {
 			}
 
 			// Check the min max values of each column
-			index := rg.ColumnChunks()[j].ColumnIndex()
+			index, err := rg.ColumnChunks()[j].ColumnIndex()
+			if err != nil {
+				return err
+			}
 			for k := 0; k < index.NumPages(); k++ {
 				if compare(index.MinValue(k), v) <= 0 &&
 					compare(index.MaxValue(k), v) >= 0 {
