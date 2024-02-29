@@ -175,6 +175,10 @@ func (a *AndExpr) Eval(r arrow.Record) (*Bitmap, error) {
 		return nil, err
 	}
 
+	if left.IsEmpty() {
+		return left, nil
+	}
+
 	right, err := a.Right.Eval(r)
 	if err != nil {
 		return nil, err
