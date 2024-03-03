@@ -6,6 +6,8 @@ import (
 	"io"
 	"path/filepath"
 
+	"go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
@@ -91,7 +93,7 @@ func StorageWithLogger(logger log.Logger) DefaultObjstoreBucketOption {
 func NewDefaultBucket(b storage.Bucket, options ...DefaultObjstoreBucketOption) *DefaultObjstoreBucket {
 	d := &DefaultObjstoreBucket{
 		Bucket:           b,
-		tracer:           trace.NewNoopTracerProvider().Tracer(""),
+		tracer:           noop.NewTracerProvider().Tracer(""),
 		logger:           log.NewNopLogger(),
 		blockReaderLimit: DefaultBlockReaderLimit,
 	}
@@ -106,7 +108,7 @@ func NewDefaultBucket(b storage.Bucket, options ...DefaultObjstoreBucketOption) 
 func NewDefaultObjstoreBucket(b objstore.Bucket, options ...DefaultObjstoreBucketOption) *DefaultObjstoreBucket {
 	d := &DefaultObjstoreBucket{
 		Bucket:           storage.NewBucketReaderAt(b),
-		tracer:           trace.NewNoopTracerProvider().Tracer(""),
+		tracer:           noop.NewTracerProvider().Tracer(""),
 		logger:           log.NewNopLogger(),
 		blockReaderLimit: DefaultBlockReaderLimit,
 	}

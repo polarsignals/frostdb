@@ -547,6 +547,10 @@ type ErrorBucket struct {
 	close  func() error
 }
 
+func (e *ErrorBucket) IsAccessDeniedErr(err error) bool {
+	return err != nil
+}
+
 func (e *ErrorBucket) Iter(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error {
 	if e.iter != nil {
 		return e.iter(ctx, dir, f, options...)

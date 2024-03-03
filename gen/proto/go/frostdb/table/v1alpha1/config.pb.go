@@ -7,12 +7,13 @@
 package tablev1alpha1
 
 import (
+	reflect "reflect"
+	sync "sync"
+
 	v1alpha1 "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	v1alpha2 "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha2"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	reflect "reflect"
-	sync "sync"
 )
 
 const (

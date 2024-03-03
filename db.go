@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/apache/arrow/go/v15/arrow/ipc"
 	"github.com/apache/arrow/go/v15/arrow/util"
 	"github.com/go-kit/log"
@@ -96,7 +98,7 @@ func New(
 		dbReplaysInProgress: make(map[string]chan struct{}),
 		reg:                 prometheus.NewRegistry(),
 		logger:              log.NewNopLogger(),
-		tracer:              trace.NewNoopTracerProvider().Tracer(""),
+		tracer:              noop.NewTracerProvider().Tracer(""),
 		indexConfig:         DefaultIndexConfig(),
 		indexDegree:         2,
 		splitSize:           2,

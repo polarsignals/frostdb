@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/apache/arrow/go/v15/arrow/memory"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -78,7 +79,7 @@ func TestBuildPhysicalPlan(t *testing.T) {
 	_, err := Build(
 		context.Background(),
 		memory.DefaultAllocator,
-		trace.NewNoopTracerProvider().Tracer(""),
+		noop.NewTracerProvider().Tracer(""),
 		dynparquet.NewSampleSchema(),
 		p,
 	)

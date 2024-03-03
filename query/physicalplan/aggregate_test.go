@@ -7,11 +7,12 @@ import (
 	"math/rand"
 	"testing"
 
+	"go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/apache/arrow/go/v15/arrow/array"
 	"github.com/apache/arrow/go/v15/arrow/memory"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
@@ -33,7 +34,7 @@ func Test_Aggregate_ArrayOverflow(t *testing.T) {
 
 	agg := NewHashAggregate(
 		allocator,
-		trace.NewNoopTracerProvider().Tracer(""),
+		noop.NewTracerProvider().Tracer(""),
 		[]Aggregation{
 			{
 				expr:       logicalplan.Col("value"),
