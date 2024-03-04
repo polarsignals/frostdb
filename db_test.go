@@ -2853,8 +2853,6 @@ func Test_DB_SnapshotDuplicate(t *testing.T) {
 	require.NoError(t, err)
 	db, err = c.DB(context.Background(), "test")
 	require.NoError(t, err)
-	table, err = db.Table("test", config)
-	require.NoError(t, err)
 
 	validateRows := func(expected int64) {
 		pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
@@ -2942,8 +2940,6 @@ func Test_DB_SnapshotDuplicate_Corrupted(t *testing.T) {
 	})
 	require.NoError(t, err)
 	db, err = c.DB(context.Background(), "test")
-	require.NoError(t, err)
-	table, err = db.Table("test", config)
 	require.NoError(t, err)
 
 	validateRows := func(expected int64) {
