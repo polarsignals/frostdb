@@ -15,7 +15,6 @@ import (
 
 // This example demonstrates how to use FrostDB's to aggregate data
 func main() {
-
 	// Create a new column store
 	columnstore, _ := frostdb.New()
 	defer columnstore.Close()
@@ -52,15 +51,15 @@ func main() {
 
 	_, _ = table.Write(context.Background(),
 		WeatherRecord{Day: "Mon", Snowfall: 20, City: montreal},
-		WeatherRecord{Day: "Tue", Snowfall: 00, City: montreal},
+		WeatherRecord{Day: "Tue", Snowfall: 0o0, City: montreal},
 		WeatherRecord{Day: "Wed", Snowfall: 30, City: montreal},
 		WeatherRecord{Day: "Thu", Snowfall: 25.1, City: montreal},
 		WeatherRecord{Day: "Fri", Snowfall: 10, City: montreal},
 		WeatherRecord{Day: "Mon", Snowfall: 15, City: toronto},
 		WeatherRecord{Day: "Tue", Snowfall: 25, City: toronto},
 		WeatherRecord{Day: "Wed", Snowfall: 30, City: toronto},
-		WeatherRecord{Day: "Thu", Snowfall: 00, City: toronto},
-		WeatherRecord{Day: "Fri", Snowfall: 05, City: toronto},
+		WeatherRecord{Day: "Thu", Snowfall: 0o0, City: toronto},
+		WeatherRecord{Day: "Fri", Snowfall: 0o5, City: toronto},
 		WeatherRecord{Day: "Mon", Snowfall: 40.8, City: minneapolis},
 		WeatherRecord{Day: "Tue", Snowfall: 15, City: minneapolis},
 		WeatherRecord{Day: "Wed", Snowfall: 32.3, City: minneapolis},

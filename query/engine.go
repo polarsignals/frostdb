@@ -3,6 +3,8 @@ package query
 import (
 	"context"
 
+	"go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/apache/arrow/go/v15/arrow/memory"
 	"go.opentelemetry.io/otel/trace"
@@ -48,7 +50,7 @@ func NewEngine(
 ) *LocalEngine {
 	e := &LocalEngine{
 		pool:          pool,
-		tracer:        trace.NewNoopTracerProvider().Tracer(""),
+		tracer:        noop.NewTracerProvider().Tracer(""),
 		tableProvider: tableProvider,
 	}
 
