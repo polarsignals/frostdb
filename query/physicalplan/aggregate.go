@@ -269,12 +269,55 @@ func (a *HashAggregate) Callback(_ context.Context, r arrow.Record) error {
 	return nil
 }
 
+// unifyGroupByFieldsDictionary returns a unified dictionary for each of the arrays that are grouped by.
+func (a *HashAggregate) unifyGroupByFieldsDictionary() map[string]arrow.Array {
+	unifiers := map[string]array.DictionaryUnifier{}
+	for _, r := range a.toAggregate {
+		for i := 0; i < r.Schema().NumFields(); i++ {
+			field := r.Schema().Field(i)
+			for _, matcher := range a.groupByColumnMatchers {
+				if matcher.MatchColumn(field.Name) {
+					if field.Type.ID() == arrow.DICTIONARY {
+						unifier, ok := unifiers[field.Name]
+						if !ok {
+							var err error
+							unifier, err = array.NewDictionaryUnifier(a.pool, arrow.BinaryTypes.String) // TODO don't hardcode this
+							if err != nil {
+								fmt.Println("error creating dictionary unifier", err) // TODO REMOVE ME
+								return nil
+							}
+							unifiers[field.Name] = unifier
+						}
+
+						if err := unifier.Unify(r.Column(i).(*array.Dictionary).Dictionary()); err != nil {
+							fmt.Println("error unifying", err) // TODO REMOVE ME
+							return nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	unified := map[string]arrow.Array{}
+	for name, unifier := range unifiers {
+		var err error
+		_, unified[name], err = unifier.GetResult()
+		if err != nil {
+			return nil
+		}
+	}
+	return unified
+}
+
 func (a *HashAggregate) Aggregate(ctx context.Context) error {
 	defer func() {
 		for _, r := range a.toAggregate {
 			r.Release()
 		}
 	}()
+
+	unified := a.unifyGroupByFieldsDictionary()
 	for _, r := range a.toAggregate {
 
 		// aggregate is the current aggregation
@@ -435,7 +478,7 @@ func (a *HashAggregate) Aggregate(ctx context.Context) error {
 				aggregate.rowCount++
 
 				// insert new row into columns grouped by and create new aggregate array to append to.
-				if err := a.updateGroupByCols(i, groupByArrays, groupByFields); err != nil {
+				if err := a.updateGroupByCols(i, groupByArrays, groupByFields, unified); err != nil {
 					if !errors.Is(err, builder.ErrMaxSizeReached) {
 						return err
 					}
@@ -474,7 +517,7 @@ func (a *HashAggregate) Aggregate(ctx context.Context) error {
 					a.hashToAggregate[hash] = tuple
 					aggregate.rowCount++
 
-					if err := a.updateGroupByCols(i, groupByArrays, groupByFields); err != nil {
+					if err := a.updateGroupByCols(i, groupByArrays, groupByFields, unified); err != nil {
 						return err
 					}
 				}
@@ -502,7 +545,7 @@ func (a *HashAggregate) Aggregate(ctx context.Context) error {
 	return nil
 }
 
-func (a *HashAggregate) updateGroupByCols(row int, groupByArrays []arrow.Array, groupByFields []arrow.Field) error {
+func (a *HashAggregate) updateGroupByCols(row int, groupByArrays []arrow.Array, groupByFields []arrow.Field, dicts map[string]arrow.Array) error {
 	// aggregate is the current aggregation
 	aggregate := a.aggregates[len(a.aggregates)-1]
 
@@ -511,7 +554,15 @@ func (a *HashAggregate) updateGroupByCols(row int, groupByArrays []arrow.Array, 
 
 		groupByCol, found := aggregate.groupByCols[fieldName]
 		if !found {
-			groupByCol = builder.NewBuilder(a.pool, groupByFields[i].Type)
+			// Check if we have a unified dictionary for this field
+			if dict, ok := dicts[fieldName]; ok {
+				dictionary := arr.(*array.Dictionary)
+				dictType := &arrow.DictionaryType{IndexType: dictionary.Indices().DataType(), ValueType: dictionary.Dictionary().DataType()} // TODO don't hardcode the types
+				groupByCol = array.NewDictionaryBuilderWithDict(a.pool, dictType, dict)
+			} else {
+				groupByCol = builder.NewBuilder(a.pool, groupByFields[i].Type)
+			}
+
 			aggregate.groupByCols[fieldName] = groupByCol
 			aggregate.colOrdering = append(aggregate.colOrdering, fieldName)
 		}
