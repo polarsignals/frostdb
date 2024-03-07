@@ -7,3 +7,6 @@ gen/proto:
 
 lint:
 	golangci-lint --timeout=5m run --fix
+
+upgrade-dependencies:
+	go get -u .
