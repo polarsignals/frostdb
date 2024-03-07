@@ -1,9 +1,11 @@
 package physicalplan
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/apache/arrow/go/v15/arrow"
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,6 +59,10 @@ var _ BooleanExpression = mockExpression{}
 
 func (e mockExpression) Eval(record arrow.Record) (*Bitmap, error) {
 	return e.evalFn(record)
+}
+
+func (e mockExpression) EvalParquet(_ parquet.RowGroup, _ [][]parquet.Value) (*Bitmap, [][]parquet.Value, error) {
+	return nil, nil, fmt.Errorf("not implemented")
 }
 
 func (e mockExpression) String() string {

@@ -6,12 +6,18 @@ import (
 
 	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/apache/arrow/go/v15/arrow/array"
+	"github.com/parquet-go/parquet-go"
 )
 
 type RegExpFilter struct {
 	left     *ArrayRef
 	notMatch bool
 	right    *regexp.Regexp
+}
+
+func (f *RegExpFilter) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*Bitmap, [][]parquet.Value, error) {
+	// TODO THOR
+	return nil, nil, fmt.Errorf("RegExpFilter.EvalParquet: not implemented")
 }
 
 func (f *RegExpFilter) Eval(r arrow.Record) (*Bitmap, error) {
