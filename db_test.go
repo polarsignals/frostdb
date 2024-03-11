@@ -30,6 +30,7 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/query/physicalplan"
 	"github.com/polarsignals/frostdb/recovery"
+	"github.com/polarsignals/frostdb/storage"
 )
 
 func TestDBWithWALAndBucket(t *testing.T) {
@@ -2961,4 +2962,87 @@ func Test_DB_SnapshotDuplicate_Corrupted(t *testing.T) {
 	}
 
 	validateRows(10)
+}
+
+func Test_Iceberg(t *testing.T) {
+	t.Parallel()
+
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+	logger := newTestLogger(t)
+	bucket := objstore.NewInMemBucket()
+	iceberg, err := storage.NewIceberg("/", bucket)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	c, err := New(
+		WithLogger(logger),
+		WithStoragePath(dir),
+		WithWAL(),
+		WithManualBlockRotation(),
+		WithReadWriteStorage(iceberg),
+	)
+	t.Cleanup(func() {
+		require.NoError(t, c.Close())
+	})
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	samples := dynparquet.GenerateTestSamples(10)
+	r, err := samples.ToRecord()
+	require.NoError(t, err)
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	validateRows := func(expected int64) {
+		pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+		defer pool.AssertSize(t, 0)
+		rows := int64(0)
+		engine := query.NewEngine(pool, db.TableProvider())
+		err = engine.ScanTable("test").
+			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+				rows += r.NumRows()
+				return nil
+			})
+		require.NoError(t, err)
+		require.Equal(t, expected, rows)
+	}
+
+	validateRows(10)
+
+	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+	require.Eventually(t, func() bool {
+		info, err := bucket.Attributes(ctx, filepath.Join("test", "test", "metadata", "v1.metadata.json"))
+		if err != nil {
+			return false
+		}
+		return info.Size > 0
+	}, 30*time.Second, 100*time.Millisecond)
+
+	validateRows(10)
+
+	// Insert sampels with a different schema
+	samples = dynparquet.NewTestSamples()
+	r, err = samples.ToRecord()
+	require.NoError(t, err)
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+
+	validateRows(13)
+
+	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+	require.Eventually(t, func() bool {
+		info, err := bucket.Attributes(ctx, filepath.Join("test", "test", "metadata", "v2.metadata.json"))
+		if err != nil {
+			return false
+		}
+		return info.Size > 0
+	}, 30*time.Second, 100*time.Millisecond)
+
+	validateRows(13)
 }
