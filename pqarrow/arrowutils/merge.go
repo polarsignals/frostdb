@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/apache/arrow/go/v15/arrow/array"
@@ -22,7 +23,7 @@ import (
 func MergeRecords(
 	mem memory.Allocator,
 	records []arrow.Record,
-	orderByCols []int,
+	orderByCols []SortingColumn,
 	limit uint64,
 ) (arrow.Record, error) {
 	h := cursorHeap{
@@ -73,7 +74,7 @@ type cursor struct {
 
 type cursorHeap struct {
 	cursors     []cursor
-	orderByCols []int
+	orderByCols []SortingColumn
 }
 
 func (h cursorHeap) Len() int {
@@ -81,67 +82,93 @@ func (h cursorHeap) Len() int {
 }
 
 func (h cursorHeap) Less(i, j int) bool {
+	for idx := range h.orderByCols {
+		c1 := h.cursors[i]
+		c2 := h.cursors[j]
+		sc := h.orderByCols[idx]
+		col1 := c1.r.Column(sc.Index)
+		col2 := c2.r.Column(sc.Index)
+		if cmp, ok := nullComparison(col1.IsNull(c1.curIdx), col2.IsNull(c2.curIdx)); ok {
+			if h.orderByCols[idx].NullsFirst {
+				return cmp == -1
+			}
+			if !h.orderByCols[idx].NullsFirst {
+				return cmp == 1
+			}
+		}
+
+		cmp := h.compare(idx, i, j)
+		if cmp != 0 {
+			// Use direction to reorder the comparison. Direction determines if the list
+			// is in ascending or descending.
+			//
+			// For instance if comparison between i,j value is -1 and direction is -1
+			// this will resolve to true hence the list will be in ascending order. Same
+			// principle applies for descending.
+			return cmp == h.orderByCols[idx].Direction.comparison()
+		}
+		// Try comparing the next column
+	}
+
+	return false
+}
+
+func (h cursorHeap) compare(idx, i, j int) int {
 	c1 := h.cursors[i]
 	c2 := h.cursors[j]
-	for _, i := range h.orderByCols {
-		col1 := c1.r.Column(i)
-		col2 := c2.r.Column(i)
-		if cmp, ok := nullComparison(col1.IsNull(c1.curIdx), col2.IsNull(c2.curIdx)); ok {
-			if cmp == 0 {
-				continue
-			}
-			return cmp < 0
+	sc := h.orderByCols[idx]
+	switch arr1 := c1.r.Column(sc.Index).(type) {
+	case *array.Binary:
+		arr2 := c2.r.Column(sc.Index).(*array.Binary)
+		return bytes.Compare(arr1.Value(c1.curIdx), arr2.Value(c2.curIdx))
+	case *array.String:
+		arr2 := c2.r.Column(sc.Index).(*array.String)
+		return strings.Compare(arr1.Value(c1.curIdx), arr2.Value(c2.curIdx))
+	case *array.Int64:
+		arr2 := c2.r.Column(sc.Index).(*array.Int64)
+		v1 := arr1.Value(c1.curIdx)
+		v2 := arr2.Value(c2.curIdx)
+		if v1 == v2 {
+			return 0
 		}
-		switch arr1 := c1.r.Column(i).(type) {
+		if v1 < v2 {
+			return -1
+		}
+		return 1
+	case *array.Int32:
+		arr2 := c2.r.Column(sc.Index).(*array.Int32)
+		v1 := arr1.Value(c1.curIdx)
+		v2 := arr2.Value(c2.curIdx)
+		if v1 == v2 {
+			return 0
+		}
+		if v1 < v2 {
+			return -1
+		}
+		return 1
+	case *array.Uint64:
+		arr2 := c2.r.Column(sc.Index).(*array.Uint64)
+		v1 := arr1.Value(c1.curIdx)
+		v2 := arr2.Value(c2.curIdx)
+		if v1 == v2 {
+			return 0
+		}
+		if v1 < v2 {
+			return -1
+		}
+		return 1
+	case *array.Dictionary:
+		switch dict := arr1.Dictionary().(type) {
 		case *array.Binary:
-			arr2 := c2.r.Column(i).(*array.Binary)
-			cmp := bytes.Compare(arr1.Value(c1.curIdx), arr2.Value(c2.curIdx))
-			if cmp == 0 {
-				continue
-			}
-			return cmp < 0
-		case *array.Int64:
-			arr2 := c2.r.Column(i).(*array.Int64)
-			v1 := arr1.Value(c1.curIdx)
-			v2 := arr2.Value(c2.curIdx)
-			if v1 == v2 {
-				continue
-			}
-			return v1 < v2
-		case *array.Int32:
-			arr2 := c2.r.Column(i).(*array.Int32)
-			v1 := arr1.Value(c1.curIdx)
-			v2 := arr2.Value(c2.curIdx)
-			if v1 == v2 {
-				continue
-			}
-			return v1 < v2
-		case *array.Uint64:
-			arr2 := c2.r.Column(i).(*array.Uint64)
-			v1 := arr1.Value(c1.curIdx)
-			v2 := arr2.Value(c2.curIdx)
-			if v1 == v2 {
-				continue
-			}
-			return v1 < v2
-		case *array.Dictionary:
-			switch dict := arr1.Dictionary().(type) {
-			case *array.Binary:
-				arr2 := c2.r.Column(i).(*array.Dictionary)
-				dict2 := arr2.Dictionary().(*array.Binary)
-				cmp := bytes.Compare(dict.Value(arr1.GetValueIndex(c1.curIdx)), dict2.Value(arr2.GetValueIndex(c2.curIdx)))
-				if cmp == 0 {
-					continue
-				}
-				return cmp < 0
-			default:
-				panic(fmt.Sprintf("unsupported dictionary type for record merging %T", dict))
-			}
+			arr2 := c2.r.Column(sc.Index).(*array.Dictionary)
+			dict2 := arr2.Dictionary().(*array.Binary)
+			return bytes.Compare(dict.Value(arr1.GetValueIndex(c1.curIdx)), dict2.Value(arr2.GetValueIndex(c2.curIdx)))
 		default:
-			panic(fmt.Sprintf("unsupported type for record merging %T", arr1))
+			panic(fmt.Sprintf("unsupported dictionary type for record merging %T", dict))
 		}
+	default:
+		panic(fmt.Sprintf("unsupported type for record merging %T", arr1))
 	}
-	return false
 }
 
 func (h cursorHeap) Swap(i, j int) {

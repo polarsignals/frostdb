@@ -24,7 +24,8 @@ import (
 type OrderedSynchronizer struct {
 	pool         memory.Allocator
 	orderByExprs []logicalplan.Expr
-	orderByCols  []int
+	// orderByCols  []int
+	orderByCols []arrowutils.SortingColumn
 
 	sync struct {
 		mtx        sync.Mutex
@@ -197,7 +198,7 @@ func (o *OrderedSynchronizer) ensureSameSchema(records []arrow.Record) error {
 
 	o.orderByCols = o.orderByCols[:0]
 	for i := range newFields {
-		o.orderByCols = append(o.orderByCols, i)
+		o.orderByCols = append(o.orderByCols, arrowutils.SortingColumn{Index: i})
 	}
 
 	for _, field := range leftoverCols {
