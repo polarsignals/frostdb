@@ -24,6 +24,7 @@ type LogicalPlan struct {
 	Distinct    *Distinct
 	Projection  *Projection
 	Aggregation *Aggregation
+	Limit       *Limit
 }
 
 // Callback is a function that is called throughout a chain of operators
@@ -404,4 +405,12 @@ type Aggregation struct {
 
 func (a *Aggregation) String() string {
 	return "Aggregation " + fmt.Sprint(a.AggExprs) + " Group: " + fmt.Sprint(a.GroupExprs)
+}
+
+type Limit struct {
+	Expr Expr
+}
+
+func (l *Limit) String() string {
+	return "Limit" + " Expr: " + fmt.Sprint(l.Expr)
 }

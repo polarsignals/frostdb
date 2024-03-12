@@ -119,6 +119,9 @@ func ValidateSingleFieldSet(plan *LogicalPlan) *PlanValidationError {
 	if plan.Aggregation != nil {
 		fieldsSet = append(fieldsSet, 5)
 	}
+	if plan.Limit != nil {
+		fieldsSet = append(fieldsSet, 6)
+	}
 
 	if len(fieldsSet) != 1 {
 		fieldsFound := make([]string, 0)

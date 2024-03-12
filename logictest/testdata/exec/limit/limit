@@ -1,0 +1,39 @@
+createtable schema=default
+----
+
+insert cols=(labels.label1, labels.label2, labels.label3, labels.label4, labels.label5)
+value1  value1  null    null    value1
+value2  value2  value3  null    value1
+value3  value1  null    value4  value1
+----
+
+exec
+select labels.label3 limit 0
+----
+
+exec
+select labels.label1 limit 4 # no need to limit
+----
+value1
+value2
+value3
+
+exec
+select labels.label2 limit 3 # no need to limit - exact 3 rows are the limit
+----
+value1
+value2
+value1
+
+exec
+select labels.label3 limit 2
+----
+null
+value3
+
+exec
+select labels.label1, labels.label2 limit 5
+----
+value1  value1
+value2  value2
+value3  value1

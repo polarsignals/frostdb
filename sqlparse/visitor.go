@@ -134,6 +134,18 @@ func (v *astVisitor) Enter(n ast.Node) (nRes ast.Node, skipChildren bool) {
 			//
 			// SELECT sum(value)/count(value) value_avg, (timestamp/1000) as timestamp_bucket group by timestamp_bucket
 			v.builder = v.builder.Project(postProjections...)
+
+			// Finally we check if the result should be limited.
+			if expr.Limit != nil {
+				expr.Limit.Count.Accept(v)
+				lastExpr, _ := pop(v.exprStack)
+				v.builder = v.builder.Limit(lastExpr)
+			}
+		case expr.Limit != nil:
+			expr.Limit.Count.Accept(v)
+			lastExpr, newExprs := pop(v.exprStack)
+			v.builder = v.builder.Project(newExprs...)
+			v.builder = v.builder.Limit(lastExpr)
 		case expr.Distinct:
 			v.builder = v.builder.Project(v.exprStack...)
 			v.builder = v.builder.Distinct(v.exprStack...)

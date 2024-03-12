@@ -82,3 +82,9 @@ exec
 explain select labels.label1, (max(value) - min(value)) / 2, sum(value) / count(value), (sum(value) / count(value)) * 2 group by labels.label1
 ----
 TableScan [concurrent] - Projection (labels.label1, value) - HashAggregate (max(value),min(value),sum(value),count(value),sum(value),count(value) by labels.label1) - Synchronizer - HashAggregate (max(value),min(value),sum(value),count(value),sum(value),count(value) by labels.label1) - Projection (labels.label1, max(value) - min(value) / 2, sum(value) / count(value), sum(value) / count(value) * 2)
+
+# Make sure that the limit happens after the aggregation is done.
+exec
+explain select sum(value) as value_sum group by (example_type, labels.label1) limit 2
+----
+TableScan [concurrent] - Projection (value, example_type, labels.label1) - HashAggregate (sum(value) by example_type,labels.label1) - Synchronizer - HashAggregate (sum(value) by example_type,labels.label1) - Projection (sum(value) as value_sum) - Limit(2)

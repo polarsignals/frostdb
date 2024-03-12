@@ -108,3 +108,17 @@ value3  value2  null    value4  3
 value4  value2  null    null    4
 value5  value2  value3  null    5
 value6  value2  null    value4  6
+
+# Limit but there are fewer rows
+exec
+select sum(value) as value_sum, labels.label3 group by labels.label3 limit 3
+----
+14      null
+7       value3
+
+# Actually limit to 1 row
+exec
+select sum(value) as value_sum, labels.label3 group by labels.label3 limit 1
+----
+14      null
+

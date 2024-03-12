@@ -379,6 +379,36 @@ func Build(
 				prev = prev[0:1]
 				prev[0] = d
 			}
+		case plan.Limit != nil:
+			var sync *Synchronizer
+			if len(prev) > 1 {
+				// These limit operators need to be synchronized.
+				sync = Synchronize(len(prev))
+			}
+			for i := 0; i < len(prev); i++ {
+				d, err := Limit(pool, tracer, plan.Limit.Expr)
+				if err != nil {
+					visitErr = err
+					return false
+				}
+				prev[i].SetNext(d)
+				prev[i] = d
+				if sync != nil {
+					d.SetNext(sync)
+				}
+			}
+			if sync != nil {
+				// Plan a limit operator to run a limit on all the
+				// synchronized limits.
+				d, err := Limit(pool, tracer, plan.Limit.Expr)
+				if err != nil {
+					visitErr = err
+					return false
+				}
+				sync.SetNext(d)
+				prev = prev[0:1]
+				prev[0] = d
+			}
 		case plan.Filter != nil:
 			// Create a filter for each previous plan.
 			// Can be multiple filters or just a single

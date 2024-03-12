@@ -104,11 +104,11 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 		col := r.Column(i)
 		if d, ok := col.(*array.Dictionary); ok {
 			g.Go(func() error {
-				return takeDictColumn(ctx, d, i, resArr, indices)
+				return TakeDictColumn(ctx, d, i, resArr, indices)
 			})
 		} else {
 			g.Go(func() error {
-				return takeColumn(ctx, col, i, resArr, indices)
+				return TakeColumn(ctx, col, i, resArr, indices)
 			})
 		}
 	}
@@ -119,7 +119,7 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 	return array.NewRecord(r.Schema(), resArr, int64(indices.Len())), nil
 }
 
-func takeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, indices *array.Int32) error {
+func TakeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, indices *array.Int32) error {
 	r, err := compute.TakeArray(ctx, a, indices)
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ func takeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, 
 	return nil
 }
 
-func takeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arrow.Array, indices *array.Int32) error {
+func TakeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arrow.Array, indices *array.Int32) error {
 	var add func(b *array.BinaryDictionaryBuilder, idx int) error
 	switch e := a.Dictionary().(type) {
 	case *array.String:
