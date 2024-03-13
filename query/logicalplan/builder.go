@@ -133,6 +133,22 @@ func (b Builder) Distinct(
 	}
 }
 
+func (b Builder) Limit(expr Expr) Builder {
+	if expr == nil {
+		return b
+	}
+
+	return Builder{
+		err: b.err,
+		plan: &LogicalPlan{
+			Input: b.plan,
+			Limit: &Limit{
+				Expr: expr,
+			},
+		},
+	}
+}
+
 func (b Builder) Aggregate(
 	aggExpr []*AggregationFunction,
 	groupExprs []Expr,

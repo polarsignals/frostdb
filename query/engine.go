@@ -18,6 +18,7 @@ type Builder interface {
 	Filter(expr logicalplan.Expr) Builder
 	Distinct(expr ...logicalplan.Expr) Builder
 	Project(projections ...logicalplan.Expr) Builder
+	Limit(expr logicalplan.Expr) Builder
 	Execute(ctx context.Context, callback func(ctx context.Context, r arrow.Record) error) error
 	Explain(ctx context.Context) (string, error)
 }
@@ -127,6 +128,17 @@ func (b LocalQueryBuilder) Project(
 		pool:        b.pool,
 		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Project(projections...),
+		execOpts:    b.execOpts,
+	}
+}
+
+func (b LocalQueryBuilder) Limit(
+	expr logicalplan.Expr,
+) Builder {
+	return LocalQueryBuilder{
+		pool:        b.pool,
+		tracer:      b.tracer,
+		planBuilder: b.planBuilder.Limit(expr),
 		execOpts:    b.execOpts,
 	}
 }

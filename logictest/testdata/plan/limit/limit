@@ -1,0 +1,12 @@
+createtable schema=default
+----
+
+exec
+explain select labels.label1
+----
+TableScan [concurrent] - Projection (labels.label1) - Synchronizer
+
+exec
+explain select labels.label1 limit 1
+----
+TableScan [concurrent] - Projection (labels.label1) - Limit(1) - Synchronizer - Limit(1)

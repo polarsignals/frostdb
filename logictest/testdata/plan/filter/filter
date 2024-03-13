@@ -15,3 +15,8 @@ exec
 explain select stacktrace, value where labels.label1 not like 'ue2' and stacktrace like 'ack'
 ----
 TableScan [concurrent] - PredicateFilter ((labels.label1 not contains ue2 AND stacktrace contains ack)) - Projection (stacktrace, value) - Synchronizer
+
+exec
+explain select stacktrace, value where stacktrace LIKE 'ack' limit 1
+----
+TableScan [concurrent] - PredicateFilter (stacktrace contains ack) - Projection (stacktrace, value) - Limit(1) - Synchronizer - Limit(1)
