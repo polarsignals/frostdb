@@ -212,7 +212,7 @@ func GetGroupsAndOrderedSetRanges(
 // If the returned boolean is false, the comparison should be disregarded.
 func nullComparison(leftNull, rightNull bool) (int, bool) {
 	if !leftNull && !rightNull {
-		// Both are null, this implies that the null comparison should be
+		// Both are not null, this implies that the null comparison should be
 		// disregarded.
 		return 0, false
 	}

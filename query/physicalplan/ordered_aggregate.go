@@ -482,9 +482,9 @@ func (a *OrderedAggregate) Finish(ctx context.Context) error {
 		}
 	} else {
 		// The aggregation results must be merged.
-		orderByCols := make([]int, len(a.groupColOrdering))
+		orderByCols := make([]arrowutils.SortingColumn, len(a.groupColOrdering))
 		for i := range orderByCols {
-			orderByCols[i] = i
+			orderByCols[i] = arrowutils.SortingColumn{Index: i}
 		}
 		mergedRecord, err := arrowutils.MergeRecords(a.pool, records, orderByCols, 0)
 		if err != nil {
