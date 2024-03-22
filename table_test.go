@@ -507,7 +507,7 @@ func Test_RecordToRow(t *testing.T) {
 	require.NoError(t, err)
 	defer dynschema.PutPooledParquetSchema(ps)
 
-	row, err := pqarrow.RecordToRow(dynschema, ps.Schema, record, 0)
+	row, err := pqarrow.RecordToRow(ps.Schema, record, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[<null> hello world <null> 10 20]", fmt.Sprintf("%v", row))
 }

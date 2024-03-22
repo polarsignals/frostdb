@@ -69,7 +69,7 @@ func (w *singlePassThroughWriter) Close() error { return nil }
 func (w *singlePassThroughWriter) Reset(_ io.Writer) {}
 
 // RecordToRow converts an arrow record with dynamic columns into a row using a dynamic parquet schema.
-func RecordToRow(schema *dynparquet.Schema, final *parquet.Schema, record arrow.Record, index int) (parquet.Row, error) {
+func RecordToRow(final *parquet.Schema, record arrow.Record, index int) (parquet.Row, error) {
 	w := &singlePassThroughWriter{}
 	if err := recordToRows(w, record, index, index+1, final.Fields()); err != nil {
 		return nil, err
@@ -338,12 +338,12 @@ func RecordDynamicCols(record arrow.Record) (columns map[string][]string) {
 	return
 }
 
-func RecordToDynamicRow(dynSchema *dynparquet.Schema, pqSchema *parquet.Schema, record arrow.Record, dyncols map[string][]string, index int) (*dynparquet.DynamicRow, error) {
+func RecordToDynamicRow(pqSchema *parquet.Schema, record arrow.Record, dyncols map[string][]string, index int) (*dynparquet.DynamicRow, error) {
 	if index >= int(record.NumRows()) {
 		return nil, io.EOF
 	}
 
-	row, err := RecordToRow(dynSchema, pqSchema, record, index)
+	row, err := RecordToRow(pqSchema, record, index)
 	if err != nil {
 		return nil, err
 	}
