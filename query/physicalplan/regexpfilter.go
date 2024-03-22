@@ -16,8 +16,33 @@ type RegExpFilter struct {
 }
 
 func (f *RegExpFilter) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*Bitmap, [][]parquet.Value, error) {
-	// TODO THOR
-	return nil, nil, fmt.Errorf("RegExpFilter.EvalParquet: not implemented")
+	leftData, index, exists := f.left.ColumnChunk(rg)
+
+	res := NewBitmap()
+	if !exists {
+		emptyMatch := f.right.Match(nil)
+		if (f.notMatch && !emptyMatch) || (!f.notMatch && emptyMatch) {
+			for i := uint32(0); i < uint32(rg.NumRows()); i++ {
+				res.Add(i)
+			}
+			return res, nil, nil
+		}
+		return res, nil, nil
+	}
+
+	col, err := forEachParquetValue(leftData, func(i int, v parquet.Value) error {
+		match := f.right.MatchString(v.String())
+		if (f.notMatch && !match) || (!f.notMatch && match) {
+			res.Add(uint32(i))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	in[index] = col
+	return res, in, nil
 }
 
 func (f *RegExpFilter) Eval(r arrow.Record) (*Bitmap, error) {

@@ -176,7 +176,7 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 }
 
 // ParquetValueCompareArrowScalar compares a parquet.Value to a scalar.Scalar
-// It returns 0 if they are equal, -1 if the parquet.Value is less than the scalar.Scalar, and 1 if the parquet.Value is greater than the scalar.Scalar
+// It returns 0 if they are equal, -1 if the parquet.Value is less than the scalar.Scalar, and 1 if the parquet.Value is greater than the scalar.Scalar.
 func ParquetValueCompareArrowScalar(v parquet.Value, s scalar.Scalar) int {
 	switch v.Kind() {
 	case parquet.Boolean:
