@@ -282,3 +282,38 @@ func BenchmarkRecordDynamicCols(b *testing.B) {
 		_ = RecordDynamicCols(r)
 	}
 }
+
+func Test_Uint64RecordToRow(t *testing.T) {
+	alloc := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer alloc.AssertSize(t, 0)
+	build := array.NewRecordBuilder(alloc,
+		arrow.NewSchema([]arrow.Field{
+			{
+				Name: "value",
+				Type: arrow.PrimitiveTypes.Uint64,
+			},
+		}, nil),
+	)
+	defer build.Release()
+	build.Field(0).(*array.Uint64Builder).AppendValues([]uint64{0, 1, 2, 3}, nil)
+	r := build.NewRecord()
+	defer r.Release()
+
+	// Build with required
+	parquetFields := parquet.Group{}
+	parquetFields["value"] = parquet.Required(parquet.Int(64))
+	schema := parquet.NewSchema("test", parquetFields)
+
+	row, err := RecordToRow(schema, r, 2)
+	require.NoError(t, err)
+
+	require.Equal(t, "[2]", fmt.Sprintf("%v", row))
+
+	// Build with optional
+	parquetFields = parquet.Group{}
+	parquetFields["value"] = parquet.Optional(parquet.Int(64))
+	schema = parquet.NewSchema("test", parquetFields)
+
+	row, err = RecordToRow(schema, r, 2)
+	require.NoError(t, err)
+}
