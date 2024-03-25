@@ -1,0 +1,47 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "schedule": [
+    "on monday and wednesday"
+  ],
+  "updateNotScheduled": false,
+  "packageRules": [
+    {
+      "description": "One week stability period for Buf packages",
+      "matchFileNames": ["buf.gen.yaml"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Group buf packages",
+      "matchPackageNames": ["bufbuild/buf", "bufbuild/buf-setup-action"],
+      "minimumReleaseAge": "7 days",
+      "groupName": "buf"
+    },
+    {
+      "description": "Group grpc-gateway packages",
+      "matchSourceUrls": ["https://github.com/grpc-ecosystem/grpc-gateway"],
+      "groupName": "grpc-gateway"
+    },
+    {
+      "description": "Group grpc-health-probe packages",
+      "matchSourceUrls": [
+        "https://github.com/grpc-ecosystem/grpc-health-probe"
+      ],
+      "groupName": "grpc-health-probe"
+    },
+    {
+      "description": "Group protobuf-go packages",
+      "matchSourceUrls": ["https://github.com/protocolbuffers/protobuf-go"],
+      "groupName": "protobuf-go"
+    },
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update Buf plugins",
+      "fileMatch": ["(^|/)buf\\.gen\\.yaml$"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>.+?) depName=(?<depName>.+?)(?: (?:packageName)=(?<packageName>.+?))?(?: versioning=(?<versioning>.+?))?\\s*-?\\s*plugin: ('|\")?.*:(?<currentValue>.+?)('|\")?\\s"
+      ]
+    }
+  ]
+}
