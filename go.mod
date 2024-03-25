@@ -17,7 +17,7 @@ require (
 	github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9
 	github.com/prometheus/client_golang v1.19.0
 	github.com/stretchr/testify v1.9.0
-	github.com/thanos-io/objstore v0.0.0-20240228103415-c3ccc5d61957
+	github.com/thanos-io/objstore v0.0.0-20240309075357-e8336a5fd5f3
 	go.opentelemetry.io/otel v1.24.0
 	go.opentelemetry.io/otel/trace v1.24.0
 	go.uber.org/goleak v1.2.0
