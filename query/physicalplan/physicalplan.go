@@ -171,11 +171,15 @@ type SchemaScan struct {
 }
 
 func (s *SchemaScan) Draw() *Diagram {
-	// var children []*Diagram
-	// for _, plan := range s.plans {
-	//	children = append(children, plan.Draw())
-	// }
-	return &Diagram{Details: "SchemaScan"}
+	details := "SchemaScan"
+	var child *Diagram
+	if children := len(s.plans); children > 0 {
+		child = s.plans[0].Draw()
+		if children > 1 {
+			details += " [concurrent]"
+		}
+	}
+	return &Diagram{Details: details, Child: child}
 }
 
 func (s *SchemaScan) Execute(ctx context.Context, pool memory.Allocator) error {
