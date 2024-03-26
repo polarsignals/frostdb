@@ -17,6 +17,7 @@ import (
 	"github.com/polarsignals/frostdb/pqarrow/convert"
 	"github.com/polarsignals/frostdb/pqarrow/writer"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/query/physicalplan"
 )
 
 // ParquetRowGroupToArrowSchema converts a parquet row group to an arrow schema.
@@ -212,9 +213,10 @@ type ParquetConverter struct {
 
 	// Output fields, for each outputSchema.Field(i) there will always be a
 	// corresponding builder.Field(i).
-	outputSchema *arrow.Schema
-	iterOpts     logicalplan.IterOptions
-	builder      *builder.RecordBuilder
+	outputSchema   *arrow.Schema
+	iterOpts       logicalplan.IterOptions
+	rowGroupFilter physicalplan.BooleanExpression
+	builder        *builder.RecordBuilder
 
 	// writers are wrappers over a subset of builder.Fields().
 	writers []MultiColumnWriter
@@ -227,6 +229,8 @@ type ParquetConverter struct {
 	// scratchValues is an array of parquet.Values that is reused during
 	// decoding to avoid allocations.
 	scratchValues []parquet.Value
+	// scratchPreReadValues is an array of parquet.Values that is reused during Parquet filtering
+	scratchPreReadValues [][]parquet.Value
 }
 
 func NewParquetConverter(
@@ -240,7 +244,15 @@ func NewParquetConverter(
 		distinctColInfos: make([]*distinctColInfo, len(iterOpts.DistinctColumns)),
 	}
 
-	if iterOpts.Filter == nil && len(iterOpts.DistinctColumns) != 0 {
+	if iterOpts.Filter != nil {
+		var err error
+		c.rowGroupFilter, err = physicalplan.BooleanExpr(iterOpts.Filter)
+		if err != nil {
+			// This should never happen, as the filter has already been
+			// validated.
+			panic(fmt.Sprintf("programming error: %v", err))
+		}
+	} else if len(iterOpts.DistinctColumns) != 0 {
 		simpleDistinctExprs := true
 		for _, distinctColumn := range iterOpts.DistinctColumns {
 			if _, ok := distinctColumn.(*logicalplan.DynamicColumn); ok ||
@@ -330,6 +342,21 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 		// If we get here, we couldn't use the fast path.
 	}
 
+	// Instead of converting every row in a row group we can apply the filter
+	// to the Parquet rows that we've read into memory, and then convert only
+	// the rows that pass the filter. This saves on during Arrow record building.
+	var bm *physicalplan.Bitmap
+	if len(c.scratchPreReadValues) < len(parquetColumns) {
+		c.scratchPreReadValues = make([][]parquet.Value, len(parquetColumns))
+	}
+
+	if c.rowGroupFilter != nil {
+		bm, c.scratchPreReadValues, err = c.rowGroupFilter.EvalParquet(rg, c.scratchPreReadValues)
+		if err != nil {
+			return fmt.Errorf("physical filter of Parquet rows: %w", err)
+		}
+	}
+
 	for _, w := range c.writers {
 		for _, col := range w.colIdx {
 			select {
@@ -341,6 +368,8 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 					parquetColumns[col],
 					false,
 					w.writer,
+					bm,
+					c.scratchPreReadValues[col]...,
 				); err != nil {
 					return fmt.Errorf("convert parquet column to arrow array: %w", err)
 				}
@@ -621,6 +650,7 @@ func (c *ParquetConverter) writeDistinctSingleColumn(
 			columnChunk,
 			true,
 			info.w,
+			nil,
 		); err != nil {
 			return false, err
 		}
@@ -712,6 +742,8 @@ func (c *ParquetConverter) writeColumnToArray(
 	columnChunk parquet.ColumnChunk,
 	dictionaryOnly bool,
 	w writer.ValueWriter,
+	bitmap *physicalplan.Bitmap,
+	preReadValues ...parquet.Value, // Pre-read values if this column was filtered.
 ) error {
 	repeated := n.Repeated()
 	if !repeated && dictionaryOnly {
@@ -772,6 +804,7 @@ func (c *ParquetConverter) writeColumnToArray(
 
 	pages := columnChunk.Pages()
 	defer pages.Close()
+	offset := 0
 	for {
 		p, err := pages.ReadPage()
 		if err != nil {
@@ -783,13 +816,13 @@ func (c *ParquetConverter) writeColumnToArray(
 		dict := p.Dictionary()
 
 		switch {
-		case !repeated && dictionaryOnly && dict != nil && p.NumNulls() == 0:
+		case bitmap == nil && !repeated && dictionaryOnly && dict != nil && p.NumNulls() == 0:
 			// If we are only writing the dictionary, we don't need to read
 			// the values.
 			if err := w.WritePage(dict.Page()); err != nil {
 				return fmt.Errorf("write dictionary page: %w", err)
 			}
-		case !repeated && p.NumNulls() == 0 && dict == nil:
+		case bitmap == nil && !repeated && p.NumNulls() == 0 && dict == nil:
 			// If the column has no nulls, we can read all values at once
 			// consecutively without worrying about null values.
 			if err := w.WritePage(p); err != nil {
@@ -802,14 +835,30 @@ func (c *ParquetConverter) writeColumnToArray(
 				c.scratchValues = c.scratchValues[:n]
 			}
 
-			// We're reading all values in the page so we always expect an io.EOF.
-			reader := p.Values()
-			if _, err := reader.ReadValues(c.scratchValues); err != nil && err != io.EOF {
-				return fmt.Errorf("read values: %w", err)
+			values := c.scratchValues
+			// If values were already read due to the push down of a physical filter. They may be provided to this function to avoid
+			// re-reading them during Arrow conversion.
+			if len(preReadValues) != 0 {
+				values = preReadValues
+			} else {
+				reader := p.Values()
+				if _, err := reader.ReadValues(values); err != nil && err != io.EOF {
+					return fmt.Errorf("read values: %w", err)
+				}
 			}
 
-			w.Write(c.scratchValues)
+			if bitmap != nil && bitmap.GetCardinality() > 0 {
+				for _, i := range bitmap.ToArray() {
+					if offset <= int(i) && int(i) < offset+int(p.NumValues()) {
+						index := int(i) - offset
+						w.Write([]parquet.Value{values[index]})
+					}
+				}
+			} else {
+				w.Write(values)
+			}
 		}
+		offset += int(p.NumValues())
 	}
 
 	return nil
