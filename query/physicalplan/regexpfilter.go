@@ -30,7 +30,11 @@ func (f *RegExpFilter) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*
 		return res, nil, nil
 	}
 
-	col, err := forEachParquetValue(leftData, func(i int, v parquet.Value) error {
+	// Reuse the input slice if it's already been allocated
+	if len(in[index]) < int(leftData.NumValues()) {
+		in[index] = make([]parquet.Value, leftData.NumValues())
+	}
+	col, err := forEachParquetValue(leftData, in[index], func(i int, v parquet.Value) error {
 		match := f.right.MatchString(v.String())
 		if (f.notMatch && !match) || (!f.notMatch && match) {
 			res.Add(uint32(i))

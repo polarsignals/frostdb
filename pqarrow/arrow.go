@@ -229,6 +229,8 @@ type ParquetConverter struct {
 	// scratchValues is an array of parquet.Values that is reused during
 	// decoding to avoid allocations.
 	scratchValues []parquet.Value
+	// scratchPreReadValues is an array of parquet.Values that is reused during Parquet filtering
+	scratchPreReadValues [][]parquet.Value
 }
 
 func NewParquetConverter(
@@ -344,9 +346,12 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 	// to the Parquet rows that we've read into memory, and then convert only
 	// the rows that pass the filter. This saves on during Arrow record building.
 	var bm *physicalplan.Bitmap
-	columnData := make([][]parquet.Value, len(rg.ColumnChunks()))
+	if len(c.scratchPreReadValues) < len(parquetColumns) {
+		c.scratchPreReadValues = make([][]parquet.Value, len(parquetColumns))
+	}
+
 	if c.rowGroupFilter != nil {
-		bm, columnData, err = c.rowGroupFilter.EvalParquet(rg, columnData)
+		bm, c.scratchPreReadValues, err = c.rowGroupFilter.EvalParquet(rg, c.scratchPreReadValues)
 		if err != nil {
 			return fmt.Errorf("physical filter of Parquet rows: %w", err)
 		}
@@ -364,7 +369,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 					false,
 					w.writer,
 					bm,
-					columnData[col]...,
+					c.scratchPreReadValues[col]...,
 				); err != nil {
 					return fmt.Errorf("convert parquet column to arrow array: %w", err)
 				}
