@@ -3,7 +3,7 @@ module github.com/polarsignals/frostdb/cmd/parquet-tool
 go 1.21
 
 require (
-	github.com/apache/arrow/go/v15 v15.0.0
+	github.com/apache/arrow/go/v15 v15.0.2
 	github.com/charmbracelet/lipgloss v0.9.1
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-kit/log v0.2.1
