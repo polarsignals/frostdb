@@ -316,4 +316,6 @@ func Test_Uint64RecordToRow(t *testing.T) {
 
 	row, err = RecordToRow(schema, r, 2)
 	require.NoError(t, err)
+
+	require.Equal(t, "[2]", fmt.Sprintf("%v", row))
 }
