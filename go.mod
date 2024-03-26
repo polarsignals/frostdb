@@ -12,7 +12,7 @@ require (
 	github.com/go-kit/log v0.2.1
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid v1.3.1
-	github.com/parquet-go/parquet-go v0.20.0
+	github.com/parquet-go/parquet-go v0.20.1
 	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9
 	github.com/prometheus/client_golang v1.19.0
