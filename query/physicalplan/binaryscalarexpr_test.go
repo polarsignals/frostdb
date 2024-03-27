@@ -131,31 +131,41 @@ func Test_ArrayScalarCompute_Leak(t *testing.T) {
 
 func Test_BinaryScalarExpr_EvalParquet(t *testing.T) {
 
-	e := BinaryScalarExpr{
-		Left: &ArrayRef{
-			ColumnName: "a",
+	tests := map[string]struct {
+		expr BinaryScalarExpr
+	}{
+		"eq null": {
+			expr: BinaryScalarExpr{
+				Left: &ArrayRef{
+					ColumnName: "a",
+				},
+				Op:    logicalplan.OpEq,
+				Right: scalar.ScalarNull,
+			},
 		},
-		Op:    logicalplan.OpEq,
-		Right: scalar.ScalarNull,
 	}
 
-	// TODO create Parquet file...
-	b := &bytes.Buffer{}
-	type simple struct {
-		A int64 `parquet:"name=a, type=INT64"`
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+
+			b := &bytes.Buffer{}
+			w := parquet.NewWriter(b, parquet.NewSchema("test", parquet.Group{
+				"a": parquet.Optional(parquet.Int(64)),
+			}))
+			_, err := w.WriteRows([]parquet.Row{
+				{
+					parquet.ValueOf(int64(33)).Level(0, 1, 0),
+				},
+			})
+			require.NoError(t, err)
+			require.NoError(t, w.Close())
+
+			f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
+			require.NoError(t, err)
+
+			in := make([][]parquet.Value, 1)
+			_, _, err = test.expr.EvalParquet(f.RowGroups()[0], in)
+			require.NoError(t, err)
+		})
 	}
-	w := parquet.NewGenericWriter[simple](b)
-	_, err := w.Write([]simple{
-		{A: 1},
-		{},
-	})
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
-	f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
-	require.NoError(t, err)
-
-	in := make([][]parquet.Value, 1)
-	_, _, err = e.EvalParquet(f.RowGroups()[0], in)
-	require.NoError(t, err)
 }
