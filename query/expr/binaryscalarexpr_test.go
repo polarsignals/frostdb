@@ -3,6 +3,7 @@ package expr
 import (
 	"testing"
 
+	"github.com/apache/arrow/go/v15/arrow/scalar"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
@@ -199,11 +200,11 @@ func TestBinaryScalarOperation(t *testing.T) {
 				},
 				numValues: numValues,
 			}
-			var v parquet.Value
+			var v scalar.Scalar
 			if tc.right == -1 {
-				v = parquet.ValueOf(nil)
+				v = &scalar.Null{}
 			} else {
-				v = parquet.ValueOf(tc.right)
+				v = scalar.NewInt64Scalar(int64(tc.right))
 			}
 			res, err := BinaryScalarOperation(fakeChunk, v, tc.op)
 			require.NoError(t, err)
