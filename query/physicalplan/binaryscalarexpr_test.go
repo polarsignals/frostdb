@@ -143,6 +143,15 @@ func Test_BinaryScalarExpr_EvalParquet(t *testing.T) {
 				Right: scalar.ScalarNull,
 			},
 		},
+		"neq null": {
+			expr: BinaryScalarExpr{
+				Left: &ArrayRef{
+					ColumnName: "a",
+				},
+				Op:    logicalplan.OpNotEq,
+				Right: scalar.ScalarNull,
+			},
+		},
 	}
 
 	for name, test := range tests {
