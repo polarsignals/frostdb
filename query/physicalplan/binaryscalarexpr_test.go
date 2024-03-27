@@ -130,7 +130,6 @@ func Test_ArrayScalarCompute_Leak(t *testing.T) {
 }
 
 func Test_BinaryScalarExpr_EvalParquet(t *testing.T) {
-
 	tests := map[string]struct {
 		expr BinaryScalarExpr
 	}{
@@ -156,7 +155,6 @@ func Test_BinaryScalarExpr_EvalParquet(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-
 			b := &bytes.Buffer{}
 			w := parquet.NewWriter(b, parquet.NewSchema("test", parquet.Group{
 				"a": parquet.Optional(parquet.Int(64)),
