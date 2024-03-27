@@ -25,9 +25,9 @@ func (f *RegExpFilter) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*
 			for i := uint32(0); i < uint32(rg.NumRows()); i++ {
 				res.Add(i)
 			}
-			return res, nil, nil
+			return res, in, nil
 		}
-		return res, nil, nil
+		return res, in, nil
 	}
 
 	// Reuse the input slice if it's already been allocated
