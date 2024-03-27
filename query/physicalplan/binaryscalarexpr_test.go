@@ -1,12 +1,14 @@
 package physicalplan
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/apache/arrow/go/v15/arrow/array"
 	"github.com/apache/arrow/go/v15/arrow/memory"
 	"github.com/apache/arrow/go/v15/arrow/scalar"
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -124,5 +126,36 @@ func Test_ArrayScalarCompute_Leak(t *testing.T) {
 
 	s := scalar.NewInt64Scalar(4)
 	_, err := ArrayScalarCompute("equal", arr, s)
+	require.NoError(t, err)
+}
+
+func Test_BinaryScalarExpr_EvalParquet(t *testing.T) {
+
+	e := BinaryScalarExpr{
+		Left: &ArrayRef{
+			ColumnName: "a",
+		},
+		Op:    logicalplan.OpEq,
+		Right: scalar.ScalarNull,
+	}
+
+	// TODO create Parquet file...
+	b := &bytes.Buffer{}
+	type simple struct {
+		A int64 `parquet:"name=a, type=INT64"`
+	}
+	w := parquet.NewGenericWriter[simple](b)
+	_, err := w.Write([]simple{
+		{A: 1},
+		{},
+	})
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
+	require.NoError(t, err)
+
+	in := make([][]parquet.Value, 1)
+	_, _, err = e.EvalParquet(f.RowGroups()[0], in)
 	require.NoError(t, err)
 }
