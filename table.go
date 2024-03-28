@@ -877,7 +877,7 @@ func (t *Table) Iterator(
 					}
 				}
 			}
-		}, t.logger))
+		}))
 	}
 
 	errg.Go(func() error {
