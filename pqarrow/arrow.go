@@ -802,16 +802,6 @@ func (c *ParquetConverter) writeColumnToArray(
 		}
 	}
 
-	// If values were already read due to the push down of a physical filter. They may be provided to this function to avoid
-	// re-reading them during Arrow conversion.
-	if bitmap != nil && bitmap.GetCardinality() > 0 && len(preReadValues) != 0 {
-		bitmap.Iterate(func(x uint32) bool {
-			w.Write([]parquet.Value{preReadValues[x]})
-			return true
-		})
-		return nil
-	}
-
 	pages := columnChunk.Pages()
 	defer pages.Close()
 	offset := 0
@@ -845,21 +835,27 @@ func (c *ParquetConverter) writeColumnToArray(
 				c.scratchValues = c.scratchValues[:n]
 			}
 
-			reader := p.Values()
-			if _, err := reader.ReadValues(c.scratchValues); err != nil && err != io.EOF {
-				return fmt.Errorf("read values: %w", err)
+			values := c.scratchValues
+			// If values were already read due to the push down of a physical filter. They may be provided to this function to avoid
+			// re-reading them during Arrow conversion.
+			if len(preReadValues) != 0 {
+				values = preReadValues
+			} else {
+				reader := p.Values()
+				if _, err := reader.ReadValues(values); err != nil && err != io.EOF {
+					return fmt.Errorf("read values: %w", err)
+				}
 			}
 
 			if bitmap != nil && bitmap.GetCardinality() > 0 {
-				bitmap.Iterate(func(x uint32) bool {
-					// Check if the value falls within the range of the page.
-					if int(x) >= offset && int(x) < offset+int(p.NumValues()) {
-						w.Write([]parquet.Value{c.scratchValues[int(x)-offset]})
+				for _, i := range bitmap.ToArray() {
+					if offset <= int(i) && int(i) < offset+int(p.NumValues()) {
+						index := int(i) - offset
+						w.Write([]parquet.Value{values[index]})
 					}
-					return true
-				})
+				}
 			} else {
-				w.Write(c.scratchValues)
+				w.Write(values)
 			}
 		}
 		offset += int(p.NumValues())
