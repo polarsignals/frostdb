@@ -9,7 +9,7 @@ require (
 	github.com/go-kit/log v0.2.1
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/parquet-go/parquet-go v0.20.1
-	github.com/polarsignals/frostdb v0.0.0-20240326092251-3284d87397f5
+	github.com/polarsignals/frostdb v0.0.0-20240328153836-adbaaba5d01d
 	github.com/prometheus/client_golang v1.19.0
 	github.com/spf13/cobra v1.8.0
 )
