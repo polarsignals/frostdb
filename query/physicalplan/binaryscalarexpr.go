@@ -107,9 +107,6 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 		}
 
 		col, err := forEachParquetValue(left, scratch, func(i int, value parquet.Value) error {
-			if value.IsNull() {
-				return nil
-			}
 			contains := bytes.Contains(value.Bytes(), r)
 			if contains && operator == logicalplan.OpContains || !contains && operator == logicalplan.OpNotContains {
 				bm.AddInt(i)
@@ -119,15 +116,6 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 		return bm, col, err
 	case logicalplan.OpEq:
 		col, err := forEachParquetValue(left, scratch, func(i int, value parquet.Value) error {
-			if !right.IsValid() {
-				if value.IsNull() {
-					bm.AddInt(i)
-				}
-				return nil
-			}
-			if value.IsNull() {
-				return nil
-			}
 			if ParquetValueCompareArrowScalar(value, right) == 0 {
 				bm.AddInt(i)
 			}
@@ -136,15 +124,6 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 		return bm, col, err
 	case logicalplan.OpNotEq:
 		col, err := forEachParquetValue(left, scratch, func(i int, value parquet.Value) error {
-			if !right.IsValid() {
-				if !value.IsNull() {
-					bm.AddInt(i)
-				}
-				return nil
-			}
-			if value.IsNull() {
-				return nil
-			}
 			if ParquetValueCompareArrowScalar(value, right) != 0 {
 				bm.AddInt(i)
 			}
@@ -153,9 +132,6 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 		return bm, col, err
 	case logicalplan.OpLt:
 		col, err := forEachParquetValue(left, scratch, func(i int, value parquet.Value) error {
-			if value.IsNull() {
-				return nil
-			}
 			if ParquetValueCompareArrowScalar(value, right) < 0 {
 				bm.AddInt(i)
 			}
@@ -164,9 +140,6 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 		return bm, col, err
 	case logicalplan.OpLtEq:
 		col, err := forEachParquetValue(left, scratch, func(i int, value parquet.Value) error {
-			if value.IsNull() {
-				return nil
-			}
 			if ParquetValueCompareArrowScalar(value, right) <= 0 {
 				bm.AddInt(i)
 			}
@@ -175,9 +148,6 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 		return bm, col, err
 	case logicalplan.OpGt:
 		col, err := forEachParquetValue(left, scratch, func(i int, value parquet.Value) error {
-			if value.IsNull() {
-				return nil
-			}
 			if ParquetValueCompareArrowScalar(value, right) > 0 {
 				bm.AddInt(i)
 			}
@@ -186,9 +156,6 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 		return bm, col, err
 	case logicalplan.OpGtEq:
 		col, err := forEachParquetValue(left, scratch, func(i int, value parquet.Value) error {
-			if value.IsNull() {
-				return nil
-			}
 			if ParquetValueCompareArrowScalar(value, right) >= 0 {
 				bm.AddInt(i)
 			}
@@ -197,9 +164,6 @@ func BinaryScalarParquetOperation(left parquet.ColumnChunk, right scalar.Scalar,
 		return bm, col, err
 	case logicalplan.OpRegexMatch, logicalplan.OpRegexNotMatch:
 		col, err := forEachParquetValue(left, scratch, func(i int, value parquet.Value) error {
-			if value.IsNull() {
-				return nil
-			}
 			match, err := regexp.MatchString(right.String(), value.String())
 			if err != nil {
 				return err
@@ -293,6 +257,9 @@ func forEachParquetValue(chunk parquet.ColumnChunk, vals []parquet.Value, f func
 
 	// Callback for each value in the vals slice
 	for i, v := range vals {
+		if v.IsNull() {
+			continue
+		}
 		if err := f(i, v); err != nil {
 			return nil, err
 		}

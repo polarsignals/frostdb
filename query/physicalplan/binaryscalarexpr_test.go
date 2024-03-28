@@ -1,14 +1,12 @@
 package physicalplan
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/apache/arrow/go/v15/arrow/array"
 	"github.com/apache/arrow/go/v15/arrow/memory"
 	"github.com/apache/arrow/go/v15/arrow/scalar"
-	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -127,52 +125,4 @@ func Test_ArrayScalarCompute_Leak(t *testing.T) {
 	s := scalar.NewInt64Scalar(4)
 	_, err := ArrayScalarCompute("equal", arr, s)
 	require.NoError(t, err)
-}
-
-func Test_BinaryScalarExpr_EvalParquet(t *testing.T) {
-	tests := map[string]struct {
-		expr BinaryScalarExpr
-	}{
-		"eq null": {
-			expr: BinaryScalarExpr{
-				Left: &ArrayRef{
-					ColumnName: "a",
-				},
-				Op:    logicalplan.OpEq,
-				Right: scalar.ScalarNull,
-			},
-		},
-		"neq null": {
-			expr: BinaryScalarExpr{
-				Left: &ArrayRef{
-					ColumnName: "a",
-				},
-				Op:    logicalplan.OpNotEq,
-				Right: scalar.ScalarNull,
-			},
-		},
-	}
-
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			b := &bytes.Buffer{}
-			w := parquet.NewWriter(b, parquet.NewSchema("test", parquet.Group{
-				"a": parquet.Optional(parquet.Int(64)),
-			}))
-			_, err := w.WriteRows([]parquet.Row{
-				{
-					parquet.ValueOf(int64(33)).Level(0, 1, 0),
-				},
-			})
-			require.NoError(t, err)
-			require.NoError(t, w.Close())
-
-			f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
-			require.NoError(t, err)
-
-			in := make([][]parquet.Value, 1)
-			_, _, err = test.expr.EvalParquet(f.RowGroups()[0], in)
-			require.NoError(t, err)
-		})
-	}
 }
