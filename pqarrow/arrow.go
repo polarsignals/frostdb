@@ -858,7 +858,6 @@ func (c *ParquetConverter) writeColumnToArray(
 					}
 					return true
 				})
-
 			} else {
 				w.Write(c.scratchValues)
 			}
