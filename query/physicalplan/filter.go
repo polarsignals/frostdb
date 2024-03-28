@@ -178,7 +178,7 @@ func (a *AndExpr) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*Bitma
 	}
 
 	if left.IsEmpty() {
-		return left, lout, nil
+		return left, nil, nil
 	}
 
 	right, rout, err := a.Right.EvalParquet(rg, lout)

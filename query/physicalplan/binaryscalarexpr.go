@@ -61,24 +61,24 @@ func (e BinaryScalarExpr) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value)
 				switch t := e.Right.(type) {
 				case *scalar.Binary:
 					if t.String() != "" { // treat empty string equivalent to nil
-						return res, in, nil
+						return res, nil, nil
 					}
 				case *scalar.String:
 					if t.String() != "" { // treat empty string equivalent to nil
-						return res, in, nil
+						return res, nil, nil
 					}
 				}
 			}
 		case logicalplan.OpNotEq: // missing column; looking for != nil
 			if !e.Right.IsValid() {
-				return res, in, nil
+				return res, nil, nil
 			}
 		case logicalplan.OpLt, logicalplan.OpLtEq, logicalplan.OpGt, logicalplan.OpGtEq:
-			return res, in, nil
+			return res, nil, nil
 		}
 
 		res.AddRange(0, uint64(rg.NumRows()))
-		return res, in, nil
+		return res, nil, nil
 	}
 
 	// Reuse the input slice if it's already been allocated
