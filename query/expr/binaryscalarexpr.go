@@ -1,11 +1,16 @@
 package expr
 
 import (
+	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 
+	"github.com/apache/arrow/go/v15/arrow"
+	"github.com/apache/arrow/go/v15/arrow/scalar"
 	"github.com/parquet-go/parquet-go"
 
+	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -36,7 +41,7 @@ func findColumnIndex(s *parquet.Schema, columnName string) int {
 type BinaryScalarExpr struct {
 	Left  *ColumnRef
 	Op    logicalplan.Op
-	Right parquet.Value
+	Right scalar.Scalar
 }
 
 func (e BinaryScalarExpr) Eval(p Particulate) (bool, error) {
@@ -49,7 +54,7 @@ func (e BinaryScalarExpr) Eval(p Particulate) (bool, error) {
 	// existant columns or null values. I'm pretty sure this is completely
 	// wrong and needs per operation, per type specific behavior.
 	if !exists {
-		if e.Right.IsNull() {
+		if !e.Right.IsValid() {
 			switch e.Op {
 			case logicalplan.OpEq:
 				return true, nil
@@ -58,8 +63,7 @@ func (e BinaryScalarExpr) Eval(p Particulate) (bool, error) {
 			}
 		}
 
-		// only handling string for now.
-		if e.Right.Kind() == parquet.ByteArray || e.Right.Kind() == parquet.FixedLenByteArray {
+		if arrow.IsBaseBinary(e.Right.DataType().ID()) {
 			switch {
 			case e.Op == logicalplan.OpEq && e.Right.String() == "":
 				return true, nil
@@ -80,15 +84,30 @@ var ErrUnsupportedBinaryOperation = errors.New("unsupported binary operation")
 // operator may be satisfied by at least one value in the column chunk. If it
 // returns false, it means that the operator will definitely not be satisfied
 // by any value in the column chunk.
-func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operator logicalplan.Op) (bool, error) {
+func BinaryScalarOperation(left parquet.ColumnChunk, right scalar.Scalar, operator logicalplan.Op) (bool, error) {
 	leftColumnIndex, err := left.ColumnIndex()
 	if err != nil {
 		return true, err
 	}
 	numNulls := NullCount(leftColumnIndex)
 	fullOfNulls := numNulls == left.NumValues()
+	leftColumnMax := Max(leftColumnIndex)
+	leftColumnMin := Min(leftColumnIndex)
+
+	// Because parquet doesn't support some types that arrow does, we need to
+	// convert the parquet min/max values to arrow scalars to be able to compare,
+	// using the right scalar as the type reference.
+	leftColumnMaxScalar, err := pqarrow.ParquetValueToArrowScalar(leftColumnMax, right.DataType())
+	if err != nil {
+		return false, err
+	}
+	leftColumnMinScalar, err := pqarrow.ParquetValueToArrowScalar(leftColumnMin, right.DataType())
+	if err != nil {
+		return false, err
+	}
+
 	if operator == logicalplan.OpEq {
-		if right.IsNull() {
+		if !right.IsValid() {
 			return numNulls > 0, nil
 		}
 		if fullOfNulls {
@@ -100,10 +119,14 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 		bloomFilter := left.BloomFilter()
 		if bloomFilter == nil {
 			// If there is no bloom filter then we cannot make a statement about true negative, instead check the min max values of the column chunk
-			return compare(right, Max(leftColumnIndex)) <= 0 && compare(right, Min(leftColumnIndex)) >= 0, nil
+			return compareArrowScalars(right, leftColumnMaxScalar) <= 0 && compareArrowScalars(right, leftColumnMinScalar) >= 0, nil
 		}
 
-		ok, err := bloomFilter.Check(right)
+		rightParquet, err := pqarrow.ArrowScalarToParquetValue(right)
+		if err != nil {
+			return false, err
+		}
+		ok, err := bloomFilter.Check(rightParquet)
 		if err != nil {
 			return true, err
 		}
@@ -121,7 +144,7 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 	// chunks in these cases since NULL is not comparable to anything else, but
 	// play it safe (delegate to execution engine) for now since we shouldn't
 	// have many of these cases.
-	if right.IsNull() {
+	if !right.IsValid() {
 		return true, nil
 	}
 
@@ -133,41 +156,41 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 
 	switch operator {
 	case logicalplan.OpLtEq:
-		min := Min(leftColumnIndex)
-		if min.IsNull() {
+		min := leftColumnMinScalar
+		if !min.IsValid() {
 			// If min is null, we don't know what the non-null min value is, so
 			// we need to let the execution engine scan this column chunk
 			// further.
 			return true, nil
 		}
-		return compare(min, right) <= 0, nil
+		return compareArrowScalars(min, right) <= 0, nil
 	case logicalplan.OpLt:
-		min := Min(leftColumnIndex)
-		if min.IsNull() {
+		min := leftColumnMinScalar
+		if !min.IsValid() {
 			// If min is null, we don't know what the non-null min value is, so
 			// we need to let the execution engine scan this column chunk
 			// further.
 			return true, nil
 		}
-		return compare(min, right) < 0, nil
+		return compareArrowScalars(min, right) < 0, nil
 	case logicalplan.OpGt:
-		max := Max(leftColumnIndex)
-		if max.IsNull() {
+		max := leftColumnMaxScalar
+		if !max.IsValid() {
 			// If max is null, we don't know what the non-null max value is, so
 			// we need to let the execution engine scan this column chunk
 			// further.
 			return true, nil
 		}
-		return compare(max, right) > 0, nil
+		return compareArrowScalars(max, right) > 0, nil
 	case logicalplan.OpGtEq:
-		max := Max(leftColumnIndex)
-		if max.IsNull() {
+		max := leftColumnMaxScalar
+		if !max.IsValid() {
 			// If max is null, we don't know what the non-null max value is, so
 			// we need to let the execution engine scan this column chunk
 			// further.
 			return true, nil
 		}
-		return compare(max, right) >= 0, nil
+		return compareArrowScalars(max, right) >= 0, nil
 	default:
 		return true, nil
 	}
@@ -183,7 +206,7 @@ func Min(columnIndex parquet.ColumnIndex) parquet.Value {
 			continue
 		}
 
-		if compare(min, v) == 1 {
+		if compareParquetValues(min, v) == 1 {
 			min = v
 		}
 	}
@@ -209,7 +232,7 @@ func Max(columnIndex parquet.ColumnIndex) parquet.Value {
 			continue
 		}
 
-		if compare(max, v) == -1 {
+		if compareParquetValues(max, v) == -1 {
 			max = v
 		}
 	}
@@ -217,8 +240,7 @@ func Max(columnIndex parquet.ColumnIndex) parquet.Value {
 	return max
 }
 
-// compares two parquet values. 0 if they are equal, -1 if v1 < v2, 1 if v1 > v2.
-func compare(v1, v2 parquet.Value) int {
+func compareParquetValues(v1, v2 parquet.Value) int {
 	switch v1.Kind() {
 	case parquet.Int32:
 		return parquet.Int32Type.Compare(v1, v2)
@@ -234,5 +256,59 @@ func compare(v1, v2 parquet.Value) int {
 		return parquet.BooleanType.Compare(v1, v2)
 	default:
 		panic(fmt.Sprintf("unsupported value comparison: %v", v1.Kind()))
+	}
+}
+
+// compares two parquet values. 0 if they are equal, -1 if v1 < v2, 1 if v1 > v2.
+// TODO(metalmatze): Move upstream into arrow to go/arrow/scalar/compareArrowScalar.go
+func compareArrowScalars(v1, v2 scalar.Scalar) int {
+	if scalar.Equals(v1, v2) {
+		return 0
+	}
+
+	if !arrow.TypeEqual(v1.DataType(), v2.DataType()) {
+		// this should never happen and if it does, it's a bug in your code.
+		// check the types before calling this function.
+		panic("unsupported scalar value comparison: different data types")
+	}
+
+	switch v1.DataType().ID() {
+	case arrow.INT8:
+		return cmp.Compare[int8](v1.(*scalar.Int8).Value, v2.(*scalar.Int8).Value)
+	case arrow.INT16:
+		return cmp.Compare[int16](v1.(*scalar.Int16).Value, v2.(*scalar.Int16).Value)
+	case arrow.INT32:
+		return cmp.Compare[int32](v1.(*scalar.Int32).Value, v2.(*scalar.Int32).Value)
+	case arrow.INT64:
+		return cmp.Compare[int64](v1.(*scalar.Int64).Value, v2.(*scalar.Int64).Value)
+	case arrow.UINT8:
+		return cmp.Compare[uint8](v1.(*scalar.Uint8).Value, v2.(*scalar.Uint8).Value)
+	case arrow.UINT16:
+		return cmp.Compare[uint16](v1.(*scalar.Uint16).Value, v2.(*scalar.Uint16).Value)
+	case arrow.UINT32:
+		return cmp.Compare[uint32](v1.(*scalar.Uint32).Value, v2.(*scalar.Uint32).Value)
+	case arrow.UINT64:
+		return cmp.Compare[uint64](v1.(*scalar.Uint64).Value, v2.(*scalar.Uint64).Value)
+	case arrow.FLOAT32:
+		return cmp.Compare[float32](v1.(*scalar.Float32).Value, v2.(*scalar.Float32).Value)
+	case arrow.FLOAT64:
+		return cmp.Compare[float64](v1.(*scalar.Float64).Value, v2.(*scalar.Float64).Value)
+	case arrow.STRING:
+		return bytes.Compare(v1.(*scalar.String).Value.Bytes(), v2.(*scalar.String).Value.Bytes())
+	case arrow.BINARY:
+		return bytes.Compare(v1.(*scalar.Binary).Value.Bytes(), v2.(*scalar.Binary).Value.Bytes())
+	case arrow.BOOL:
+		bv1 := v1.(*scalar.Boolean).Value
+		bv2 := v2.(*scalar.Boolean).Value
+		switch {
+		case !bv1 && bv2:
+			return -1
+		case bv1 && !bv2:
+			return +1
+		default:
+			return 0
+		}
+	default:
+		panic(fmt.Sprintf("unsupported scalar value comparison: %v", v1.DataType()))
 	}
 }

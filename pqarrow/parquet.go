@@ -15,6 +15,29 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 )
 
+func ParquetValueToArrowScalar(v parquet.Value, dataType arrow.DataType) (scalar.Scalar, error) {
+	switch dataType {
+	case arrow.PrimitiveTypes.Int8:
+		return scalar.NewInt8Scalar(int8(v.Int32())), nil
+	case arrow.PrimitiveTypes.Uint8:
+		return scalar.NewUint8Scalar(uint8(v.Uint32())), nil
+	case arrow.PrimitiveTypes.Int16:
+		return scalar.NewInt16Scalar(int16(v.Int32())), nil
+	case arrow.PrimitiveTypes.Uint16:
+		return scalar.NewUint16Scalar(uint16(v.Uint32())), nil
+	case arrow.PrimitiveTypes.Int32:
+		return scalar.NewInt32Scalar(v.Int32()), nil
+	case arrow.PrimitiveTypes.Uint32:
+		return scalar.NewUint32Scalar(v.Uint32()), nil
+	case arrow.PrimitiveTypes.Int64:
+		return scalar.NewInt64Scalar(v.Int64()), nil
+	case arrow.PrimitiveTypes.Uint64:
+		return scalar.NewUint64Scalar(v.Uint64()), nil
+	default:
+		return nil, fmt.Errorf("unsupported scalar type %s", dataType)
+	}
+}
+
 func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 	switch s := sc.(type) {
 	case *scalar.String:
@@ -22,8 +45,6 @@ func ArrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 	case *scalar.Int64:
 		return parquet.ValueOf(s.Value), nil
 	case *scalar.Int32:
-		return parquet.ValueOf(s.Value), nil
-	case *scalar.Uint64:
 		return parquet.ValueOf(s.Value), nil
 	case *scalar.FixedSizeBinary:
 		width := s.Type.(*arrow.FixedSizeBinaryType).ByteWidth

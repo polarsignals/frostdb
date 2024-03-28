@@ -7,9 +7,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/apache/arrow/go/v15/arrow/scalar"
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/polarsignals/frostdb/pqarrow"
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
@@ -75,13 +75,13 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (TrueNegativeFilter, error)
 		}
 
 		var (
-			rightValue parquet.Value
+			rightValue scalar.Scalar
 			err        error
 		)
 		expr.Right.Accept(PreExprVisitorFunc(func(expr logicalplan.Expr) bool {
 			switch e := expr.(type) {
 			case *logicalplan.LiteralExpr:
-				rightValue, err = pqarrow.ArrowScalarToParquetValue(e.Value)
+				rightValue = e.Value
 				return false
 			}
 			return true
@@ -186,7 +186,7 @@ func (a *MaxAgg) Eval(p Particulate) (bool, error) {
 		atomicMax := columnPointer.(*atomic.Pointer[parquet.Value])
 
 		v := Max(index)
-		for globalMax := atomicMax.Load(); globalMax == nil || compare(v, *globalMax) > 0; globalMax = atomicMax.Load() {
+		for globalMax := atomicMax.Load(); globalMax == nil || compareParquetValues(v, *globalMax) > 0; globalMax = atomicMax.Load() {
 			if atomicMax.CompareAndSwap(globalMax, &v) {
 				// At least one column exceeded the current max so this chunk
 				// satisfies the filter. Note that we do not break out of
