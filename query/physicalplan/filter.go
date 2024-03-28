@@ -11,7 +11,6 @@ import (
 	"github.com/apache/arrow/go/v15/arrow/array"
 	"github.com/apache/arrow/go/v15/arrow/memory"
 	"github.com/apache/arrow/go/v15/arrow/scalar"
-	"github.com/parquet-go/parquet-go"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -41,7 +40,6 @@ func NewBitmap() *Bitmap {
 
 type BooleanExpression interface {
 	Eval(r arrow.Record) (*Bitmap, error)
-	EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*Bitmap, [][]parquet.Value, error)
 	String() string
 }
 
@@ -132,12 +130,12 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Right: rightScalar,
 		}, nil
 	case logicalplan.OpAnd:
-		left, err := BooleanExpr(expr.Left)
+		left, err := booleanExpr(expr.Left)
 		if err != nil {
 			return nil, fmt.Errorf("left bool expr: %w", err)
 		}
 
-		right, err := BooleanExpr(expr.Right)
+		right, err := booleanExpr(expr.Right)
 		if err != nil {
 			return nil, fmt.Errorf("right bool expr: %w", err)
 		}
@@ -147,12 +145,12 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 			Right: right,
 		}, nil
 	case logicalplan.OpOr:
-		left, err := BooleanExpr(expr.Left)
+		left, err := booleanExpr(expr.Left)
 		if err != nil {
 			return nil, fmt.Errorf("left bool expr: %w", err)
 		}
 
-		right, err := BooleanExpr(expr.Right)
+		right, err := booleanExpr(expr.Right)
 		if err != nil {
 			return nil, fmt.Errorf("right bool expr: %w", err)
 		}
@@ -169,26 +167,6 @@ func binaryBooleanExpr(expr *logicalplan.BinaryExpr) (BooleanExpression, error) 
 type AndExpr struct {
 	Left  BooleanExpression
 	Right BooleanExpression
-}
-
-func (a *AndExpr) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*Bitmap, [][]parquet.Value, error) {
-	left, lout, err := a.Left.EvalParquet(rg, in)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if left.IsEmpty() {
-		return left, nil, nil
-	}
-
-	right, rout, err := a.Right.EvalParquet(rg, lout)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// This stores the result in place to avoid allocations.
-	left.And(right)
-	return left, rout, nil
 }
 
 func (a *AndExpr) Eval(r arrow.Record) (*Bitmap, error) {
@@ -220,22 +198,6 @@ type OrExpr struct {
 	Right BooleanExpression
 }
 
-func (a *OrExpr) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*Bitmap, [][]parquet.Value, error) {
-	left, lout, err := a.Left.EvalParquet(rg, in)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	right, rout, err := a.Right.EvalParquet(rg, lout)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// This stores the result in place to avoid allocations.
-	left.Or(right)
-	return left, rout, nil
-}
-
 func (a *OrExpr) Eval(r arrow.Record) (*Bitmap, error) {
 	left, err := a.Left.Eval(r)
 	if err != nil {
@@ -256,22 +218,17 @@ func (a *OrExpr) String() string {
 	return "(" + a.Left.String() + " OR " + a.Right.String() + ")"
 }
 
-func BooleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
+func booleanExpr(expr logicalplan.Expr) (BooleanExpression, error) {
 	switch e := expr.(type) {
 	case *logicalplan.BinaryExpr:
 		return binaryBooleanExpr(e)
-	case *logicalplan.AggregationFunction:
-		// This happens in the case of an aggregation function with no group by clause.
-		// It gets pushed down into the filter layer, but this isn't supported as a physical
-		// boolean expression yet.
-		return nil, nil
 	default:
 		return nil, ErrUnsupportedBooleanExpression
 	}
 }
 
 func Filter(pool memory.Allocator, tracer trace.Tracer, filterExpr logicalplan.Expr) (*PredicateFilter, error) {
-	expr, err := BooleanExpr(filterExpr)
+	expr, err := booleanExpr(filterExpr)
 	if err != nil {
 		return nil, fmt.Errorf("create bool expr: %w", err)
 	}
