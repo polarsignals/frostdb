@@ -44,6 +44,7 @@ message Entry {
     bytes block_id = 2;
   }
 
+  // The snapshot entry.
   message Snapshot {
     // The tx the snapshot was taken at.
     uint64 tx = 1;

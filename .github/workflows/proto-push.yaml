@@ -1,0 +1,72 @@
+name: proto-push
+
+on:
+  push:
+    branches:
+    - main
+    - release-*
+  merge_group:
+    branches:
+    - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skip-check:
+    name: Skip check
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_skip: ${{ steps.skip-check.outputs.should_skip }}
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - id: skip-check
+        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
+        with:
+          do_not_skip: '["schedule", "workflow_dispatch"]'
+          paths: |-
+            [
+              ".github/workflows/proto-push.yaml",
+              ".go-version",
+              "buf.gen.yaml",
+              "buf.work.yaml",
+              "proto/**"
+            ]
+          skip_after_successful_duplicate: false
+
+  build:
+    name: Proto Push
+    needs: skip-check
+    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - uses: bufbuild/buf-setup-action@382440cdb8ec7bc25a68d7b4711163d95f7cc3aa # v1.28.1
+
+      - name: version
+        run: buf --version
+
+      - name: Format
+        run: buf format --diff --exit-code
+
+      - uses: bufbuild/buf-lint-action@044d13acb1f155179c606aaa2e53aea304d22058 # v1.1.0
+        with:
+          input: 'proto'
+
+      - uses: bufbuild/buf-breaking-action@a074e988ee34efcd4927079e79c611f428354c01 # v1.1.3
+        with:
+          input: 'proto'
+          # The 'main' branch of the GitHub repository that defines the module.
+          against: 'https://github.com/${GITHUB_REPOSITORY}.git#branch=main,ref=HEAD~1,subdir=proto'
+
+      - uses: bufbuild/buf-push-action@a654ff18effe4641ebea4a4ce242c49800728459 # v1.2.0
+        with:
+          input: 'proto'
+          buf_token: ${{ secrets.BUF_TOKEN }}

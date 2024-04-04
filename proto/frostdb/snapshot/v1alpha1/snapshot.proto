@@ -8,35 +8,58 @@ import "frostdb/table/v1alpha1/config.proto";
 // data about the rest of the file.
 message FooterData {
   reserved 2; // Previously used for transaction metadata.
+  // table_metadata is a list of all tables in the snapshot.
   repeated Table table_metadata = 1;
 }
 
+// Table encodes metadata about a table in a snapshot.
 message Table {
+  // name of the table.
   string name = 1;
+  // config is the configuration of the table.
   frostdb.table.v1alpha1.TableConfig config = 2;
+  // TableBlock
   message TableBlock {
+    // ulid is the unique identifier of the block.
     bytes ulid = 1;
+    // size is the size of the block in bytes.
     int64 size = 2;
+    // min_tx is the minimum transaction id in the block.
     uint64 min_tx = 3;
+    // prev_tx is the transaction id of the previous block.
     uint64 prev_tx = 4;
   }
+  // active_block is the active block of the table.
   TableBlock active_block = 3;
+  // granule_metadata is a list of all granules in the table.
   repeated Granule granule_metadata = 4;
 }
 
+// Granule encodes metadata about a granule in a table.
 message Granule {
+  // part_metadata is a list of all parts in the granule.
   repeated Part part_metadata = 1;
 }
 
+// Part encodes metadata about a part in a granule.
 message Part {
+  // start_offset is the start offset of the part.
   int64 start_offset = 1;
+  // end_offset is the end offset of the part.
   int64 end_offset = 2;
+  // tx is the transaction id of the part.
   uint64 tx = 3;
+  // compaction_level is the compaction level of the part.
   uint64 compaction_level = 4;
+  // Encoding is a enum of possible encodings of the part.
   enum Encoding {
-    ENCODING_UNKNOWN = 0;
+    // ENCODING_UNSPECIFIED is an unknown encoding.
+    ENCODING_UNSPECIFIED = 0;
+    // ENCODING_PARQUET is a parquet encoding.
     ENCODING_PARQUET = 1;
+    // ENCODING_ARROW is an arrow encoding.
     ENCODING_ARROW = 2;
   }
+  // encoding is the actual encoding of the part.
   Encoding encoding = 5;
 }

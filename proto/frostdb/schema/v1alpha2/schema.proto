@@ -67,6 +67,7 @@ message Schema {
 
 // Node is a node in a schema tree.
 message Node {
+  // type can either be a leaf or a group.
   oneof type {
     // Leaf node of the schema.
     Leaf leaf = 1;
