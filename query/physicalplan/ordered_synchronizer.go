@@ -24,8 +24,7 @@ import (
 type OrderedSynchronizer struct {
 	pool         memory.Allocator
 	orderByExprs []logicalplan.Expr
-	// orderByCols  []int
-	orderByCols []arrowutils.SortingColumn
+	orderByCols  []arrowutils.SortingColumn
 
 	sync struct {
 		mtx        sync.Mutex

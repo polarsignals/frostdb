@@ -1,0 +1,307 @@
+syntax = "proto3";
+
+package frostdb.storage.v1alpha1;
+
+// FrostDBService is a service that allows clients to execute queries as logicalplan
+// against an instance of FrostDB.
+service FrostDBService {
+  // Query executes the query plan contained in the request and returns back
+  // the results as arrow records in IPC format.
+  rpc Query(QueryRequest) returns (stream QueryResponse) {}
+}
+
+// QueryRequest is the message sent to the Query gRPC endpoint.
+message QueryRequest {
+  // PlanRoot is the root of the query plan (i.e. a scan node).
+  PlanNode plan_root = 1;
+  // description describes the query.
+  string description = 2;
+}
+
+// QueryResponse is the message received from the Query gRPC endpoint.
+message QueryResponse {
+  // The resulting arrow record as bytes.
+  bytes record = 1;
+}
+
+// PlanNode describes a query plan.
+message PlanNode {
+  // Next is the next PlanNode in the plan, i.e. the node that this node should
+  // push data to.
+  PlanNode next = 1;
+  // Spec is this PlanNode's spec.
+  PlanNodeSpec spec = 2;
+}
+
+// PlanNodeSpec is a PlanNode's information. This is a message that wraps oneof
+// to ensure forward compatibility:
+// https://developers.google.com/protocol-buffers/docs/proto3#backwards-compatibility_issues
+message PlanNodeSpec {
+  // Spec is this PlanNode's information.
+  oneof spec {
+    // TableScan is specified if this PlanNode represents a table scan.
+    TableScan table_scan = 1;
+    // SchemaScan is specified if this PlanNode represents a table scan.
+    SchemaScan schema_scan = 2;
+    // Filter is specified if this PlanNode represents a filter.
+    Filter filter = 3;
+    // Projections is specified if this PlanNode represents a projection.
+    Projection projection = 4;
+    // Distinct is specified if this PlanNode represents a distinct.
+    Distinct distinct = 5;
+    // Aggregation is specified if this PlanNode represents an aggregation.
+    Aggregation aggregation = 6;
+    // Limit is specified if this PlanNode represents a limit.
+    Limit limit = 7;
+  }
+}
+
+// TableScan describes scanning a table to obtain rows.
+message TableScan {
+  // Base specifies the fields shared with SchemaScan.
+  ScanBase base = 1;
+}
+
+// SchemaScan describes scanning a table to obtain the schema.
+message SchemaScan {
+  // Base specifies the fields shared with TableScan.
+  ScanBase base = 1;
+}
+
+// ScanBase is a collection of fields shared by scans.
+message ScanBase {
+  // Database is the name of the database to scan.
+  string database = 1;
+  // Table is the name of the table to scan.
+  string table = 2;
+}
+
+// Filter describes a filter.
+message Filter {
+  // Expr is the filter expression.
+  Expr expr = 1;
+}
+
+// Distinct describes a distinct node.
+message Distinct {
+  // Exprs are the expressions to distinct by.
+  repeated Expr exprs = 1;
+}
+
+// Projection describes a projection node.
+message Projection {
+  // Exprs are the expressions to project.
+  repeated Expr exprs = 1;
+}
+
+// Limit describes a limit node.
+message Limit {
+  // Expr is the expression to limit by.
+  Expr expr = 1;
+}
+
+// Aggregation describes an aggregation node.
+message Aggregation {
+  // GroupExprs are the expressions to group by.
+  repeated Expr group_exprs = 1;
+  // AggExprs are the aggregation functions applied to values of each group.
+  repeated Expr agg_exprs = 2;
+}
+
+// Expr is the base type for all expressions.
+message Expr {
+  // def is the definition of the expression.
+  ExprDef def = 1;
+}
+
+// ExprDefinition is a definition of an expression. It is intentionally only a
+// single field that is a oneof to maintain forward compatibility when changing
+// fields in each of the oneofs. This message should never have any other
+// fields for forward compatibility.
+message ExprDef {
+  // content is the content of the expression definition.
+  oneof content {
+    // BinaryExpr is a binary expression.
+    BinaryExpr binary_expr = 1;
+    // Column is a column expression.
+    Column column = 2;
+    // Literal is a literal expression.
+    Literal literal = 3;
+    // DynamicColumn is a dynamic column expression.
+    DynamicColumn dynamic_column = 4;
+    // AggregationFunction is an aggregation function expression.
+    AggregationFunction aggregation_function = 5;
+    // Alias is an alias expression.
+    Alias alias = 6;
+    // DurationExpr is a duration expression to group by.
+    DurationExpr duration = 7;
+    // ConvertExpr is an expression to convert a column from one type to another.
+    ConvertExpr convert = 8;
+    // IfExpr is an if expression.
+    IfExpr if = 9;
+  }
+}
+
+// Op describes a binary operator.
+enum Op {
+  // OP_UNKNOWN_UNSPECIFIED is the default value. It should not be used.
+  OP_UNKNOWN_UNSPECIFIED = 0;
+  // OP_EQ is the equality operator (`==`).
+  OP_EQ = 1;
+  // OP_NOT_EQ is the not-equality operator (`!=`).
+  OP_NOT_EQ = 2;
+  // OP_LT is the less-than operator (`<`).
+  OP_LT = 3;
+  // OP_LT_EQ is the less-than-or-equal operator (`<=`).
+  OP_LT_EQ = 4;
+  // OP_GT is the greater-than operator (`>`).
+  OP_GT = 5;
+  // OP_GT_EQ is the greater-than-or-equal operator (`>=`).
+  OP_GT_EQ = 6;
+  // OP_REGEX_MATCH is the regular expression match operator (`=~`).
+  OP_REGEX_MATCH = 7;
+  // OP_REGEX_NOT_MATCH is the regular expression not-match operator (`!~`).
+  OP_REGEX_NOT_MATCH = 8;
+  // OP_AND is the logical and operator (`&&`).
+  OP_AND = 9;
+  // OP_OR is the logical or operator (`||`).
+  OP_OR = 10;
+  // OP_ADD is the arithmetric addition (`+`).
+  OP_ADD = 11;
+  // OP_SUB is the arithmetric subtraction (`-`).
+  OP_SUB = 12;
+  // OP_MUL is the arithmetric multiplication (`*`).
+  OP_MUL = 13;
+  // OP_DIV is the arithmetric division (`/`).
+  OP_DIV = 14;
+  // OP_CONTAINS performs substring matches.
+  OP_CONTAINS = 15;
+  // OP_NOT_CONTAINS performs substring matches.
+  OP_NOT_CONTAINS = 16;
+}
+
+// BinaryExpression is a binary expression.
+message BinaryExpr {
+  // left is the left operand.
+  Expr left = 1;
+  // right is the right operand.
+  Expr right = 2;
+  // op is the operator.
+  Op op = 3;
+}
+
+// IfExpr represents an if expression.
+message IfExpr {
+  // the condition
+  Expr condition = 1;
+  // the true branch
+  Expr then = 2;
+  // the false branch
+  Expr else = 3;
+}
+
+// ConvertExpr is an expression to convert an expression to another type.
+message ConvertExpr {
+  // the expression to convert
+  Expr expr = 1;
+  // the type to convert to
+  Type type = 2;
+}
+
+// Apache Arrow type.
+enum Type {
+  // The default value, this must not occur.
+  TYPE_UNKNOWN_UNSPECIFIED = 0;
+  // Float64
+  TYPE_FLOAT64 = 1;
+}
+
+// Column is an explicit column in a table.
+message Column {
+  // name is the name of the column.
+  string name = 1;
+}
+
+// Literal is a literal value.
+message Literal {
+  // content is the content of the literal.
+  LiteralContent content = 1;
+}
+
+// LiteralContent is the content of a literal.
+message LiteralContent {
+  // value is the value of the literal.
+  oneof value {
+    // null whether the value is the null value.
+    Null null_value = 1;
+    // bool_value is the bool value.
+    bool bool_value = 2;
+    // int32_value is the int32 value.
+    int32 int32_value = 3;
+    // uint32_value is the uint32 value.
+    uint32 uint32_value = 4;
+    // int64_value is the int64 value.
+    int64 int64_value = 5;
+    // uint64_value is the uint64 value.
+    uint64 uint64_value = 6;
+    // float_value is the float value.
+    float float_value = 7;
+    // double_value is the double value.
+    double double_value = 8;
+    // binary_value is the binary value.
+    bytes binary_value = 9;
+    // string_value is the string value.
+    string string_value = 10;
+  }
+}
+
+// Null is the null value.
+message Null {}
+
+// Alias is an alias for an expression.
+message Alias {
+  // name is the name of the alias.
+  string name = 1;
+  // expr is the expression to alias.
+  Expr expr = 2;
+}
+
+// DynamicColumn is a dynamic column.
+message DynamicColumn {
+  // name is the name of the dynamic column.
+  string name = 1;
+}
+
+// AggregationFunction is an aggregation function.
+message AggregationFunction {
+  // Type is the type of aggregation function.
+  enum Type {
+    // UNKNOWN_UNSPECIFIED is the default value. It should not be used.
+    TYPE_UNKNOWN_UNSPECIFIED = 0;
+    // SUM is the sum aggregation function.
+    TYPE_SUM = 1;
+    // MIN is the min aggregation function.
+    TYPE_MIN = 2;
+    // MAX is the max aggregation function.
+    TYPE_MAX = 3;
+    // COUNT is the count aggregation function.
+    TYPE_COUNT = 4;
+    // AVG is the avg aggregation function.
+    TYPE_AVG = 5;
+    // UNIQUE is the unique aggregation function.
+    TYPE_UNIQUE = 6;
+    // AND is the and aggregation function.
+    TYPE_AND = 7;
+  }
+
+  // type is the type of aggregation function.
+  Type type = 1;
+  // expr is the expression to aggregate.
+  Expr expr = 2;
+}
+
+// DurationExpr is a duration expressed in milliseconds.
+message DurationExpr {
+  // milliseconds is the duration in milliseconds.
+  int64 milliseconds = 1;
+}
