@@ -1,0 +1,52 @@
+name: proto-gen
+
+on:
+  pull_request:
+  merge_group:
+    branches:
+    - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skip-check:
+    name: Skip check
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_skip: ${{ steps.skip-check.outputs.should_skip }}
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - id: skip-check
+        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
+        with:
+          do_not_skip: '["schedule", "workflow_dispatch"]'
+          paths: |-
+            [
+              ".github/workflows/proto-gen.yaml",
+              ".go-version",
+              "buf.gen.yaml",
+              "buf.work.yaml",
+              "proto/**"
+            ]
+          skip_after_successful_duplicate: false
+
+  build:
+    name: Proto Generate
+    needs: skip-check
+    if: ${{ needs.skip-check.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - uses: bufbuild/buf-setup-action@382440cdb8ec7bc25a68d7b4711163d95f7cc3aa # v1.28.1
+
+      - name: Generate
+        run:
+          buf generate && git diff --exit-code
