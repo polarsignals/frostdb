@@ -342,6 +342,8 @@ type Node struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
+	// type can either be a leaf or a group.
+	//
 	// Types that are assignable to Type:
 	//
 	//	*Node_Leaf

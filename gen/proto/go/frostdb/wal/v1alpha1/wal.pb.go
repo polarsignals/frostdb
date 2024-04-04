@@ -380,6 +380,7 @@ func (x *Entry_TableBlockPersisted) GetBlockId() []byte {
 	return nil
 }
 
+// The snapshot entry.
 type Entry_Snapshot struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
