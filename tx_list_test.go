@@ -1,19 +1,13 @@
 package frostdb
 
 import (
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-type Uint64Slice []uint64
-
-func (x Uint64Slice) Len() int           { return len(x) }
-func (x Uint64Slice) Less(i, j int) bool { return x[i] < x[j] }
-func (x Uint64Slice) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
 
 func Test_TXList_Mark(t *testing.T) {
 	node := &TxNode{
@@ -42,14 +36,14 @@ func Test_TXList_Basic(t *testing.T) {
 		p.Insert(tx)
 	}
 
-	found := make(Uint64Slice, 0, len(txs))
+	found := make([]uint64, 0, len(txs))
 	p.Iterate(func(tx uint64) bool {
 		found = append(found, tx)
 		return true
 	})
 
 	p.Stop() // stop the sweeper
-	require.True(t, sort.IsSorted(found))
+	require.True(t, slices.IsSorted(found))
 	require.Equal(t, 8, len(found))
 }
 
@@ -76,12 +70,12 @@ func Test_TXList_Async(t *testing.T) {
 
 	wg.Wait()
 
-	found := make(Uint64Slice, 0, writers*n)
+	found := make([]uint64, 0, writers*n)
 	p.Iterate(func(tx uint64) bool {
 		found = append(found, tx)
 		return true
 	})
-	require.True(t, sort.IsSorted(found))
+	require.True(t, slices.IsSorted(found))
 	require.Equal(t, n*writers, len(found))
 
 	p.Insert(1) // insert the missing tx to drain the pool
