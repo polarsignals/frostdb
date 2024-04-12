@@ -6,10 +6,11 @@ package snapshotv1alpha1
 
 import (
 	fmt "fmt"
+	io "io"
+
 	protohelpers "github.com/planetscale/vtprotobuf/protohelpers"
 	v1alpha1 "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	io "io"
 )
 
 const (
@@ -487,6 +488,7 @@ func (m *FooterData) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
+
 func (m *Table_TableBlock) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -518,7 +520,7 @@ func (m *Table_TableBlock) UnmarshalVT(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Ulid", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field ulid", wireType)
 			}
 			var byteLen int
 			for shift := uint(0); ; shift += 7 {
@@ -629,6 +631,7 @@ func (m *Table_TableBlock) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
+
 func (m *Table) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -818,6 +821,7 @@ func (m *Table) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
+
 func (m *Granule) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -903,6 +907,7 @@ func (m *Granule) UnmarshalVT(dAtA []byte) error {
 	}
 	return nil
 }
+
 func (m *Part) UnmarshalVT(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
