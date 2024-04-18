@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 
 	"github.com/parquet-go/parquet-go"
-	"github.com/polarsignals/frostdb/dynparquet"
-	"github.com/polarsignals/frostdb/query/expr"
-	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/iceberg-go"
 	"github.com/polarsignals/iceberg-go/catalog"
 	"github.com/polarsignals/iceberg-go/table"
 	"github.com/thanos-io/objstore"
+
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query/expr"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 /*
@@ -71,7 +72,7 @@ func (i *Iceberg) String() string {
 // Scan will load the latest Iceberg table. It will filter out any manifests that do not contain useful data.
 // Then it will read the manifests that may contain useful data. It will then filter out the data file that dot not contain useful data.
 // Finally it has a set of data files that may contain useful data. It will then read the data files and apply the filter to each row group in the data file.
-func (i *Iceberg) Scan(ctx context.Context, prefix string, schema *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, callback func(context.Context, any) error) error {
+func (i *Iceberg) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, _ uint64, callback func(context.Context, any) error) error {
 	t, err := i.catalog.LoadTable(ctx, []string{i.bucketURI, prefix}, iceberg.Properties{})
 	if err != nil {
 		if errors.Is(catalog.ErrorTableNotFound, err) {
@@ -142,7 +143,6 @@ func (i *Iceberg) Scan(ctx context.Context, prefix string, schema *dynparquet.Sc
 					}
 				}
 			}
-
 		}
 	}
 
@@ -194,7 +194,7 @@ func (i *Iceberg) Upload(ctx context.Context, name string, r io.Reader) error {
 	return w.Close(ctx)
 }
 
-func (i *Iceberg) Delete(ctx context.Context, name string) error {
+func (i *Iceberg) Delete(_ context.Context, _ string) error {
 	// Noop
 	// NOTE: Deletes are used in DataSinks when an upload fails for any reason. Because an Iceberg table is not updated
 	// until a full upload is successfull there is no risk of partial data being left in the table, or a corrupted file being read.
@@ -294,6 +294,7 @@ func (v *virtualColumnIndex) MinValue(int) parquet.Value {
 		return parquet.ByteArrayValue(v.lowerBounds)
 	}
 }
+
 func (v *virtualColumnIndex) MaxValue(int) parquet.Value {
 	switch v.pType.Kind() {
 	case parquet.Int64:
@@ -305,5 +306,6 @@ func (v *virtualColumnIndex) MaxValue(int) parquet.Value {
 		return parquet.ByteArrayValue(v.upperBounds)
 	}
 }
+
 func (v *virtualColumnIndex) IsAscending() bool  { return true }
 func (v *virtualColumnIndex) IsDescending() bool { return false }
