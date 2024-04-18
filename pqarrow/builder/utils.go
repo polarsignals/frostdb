@@ -162,10 +162,14 @@ func AppendGoValue(cb ColumnBuilder, v any) error {
 	switch b := cb.(type) {
 	case *OptBinaryBuilder:
 		return b.Append(v.([]byte))
-	case *OptInt64Builder:
-		b.Append(v.(int64))
 	case *OptBooleanBuilder:
 		b.AppendSingle(v.(bool))
+	case *OptFloat64Builder:
+		b.Append(v.(float64))
+	case *OptInt32Builder:
+		b.Append(v.(int32))
+	case *OptInt64Builder:
+		b.Append(v.(int64))
 	case *array.Int64Builder:
 		b.Append(v.(int64))
 	case *array.Int32Builder:
