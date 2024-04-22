@@ -4,7 +4,6 @@ go 1.21
 
 require (
 	github.com/RoaringBitmap/roaring v1.9.3
-	github.com/apache/arrow/go/v15 v15.0.2
 	github.com/apache/arrow/go/v16 v16.0.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cockroachdb/datadriven v1.0.2
@@ -82,7 +81,6 @@ require (
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/tools v0.20.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
-	gonum.org/v1/gonum v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/arrow/go/v15/arrow"
-	"github.com/apache/arrow/go/v15/arrow/ipc"
+	"github.com/apache/arrow/go/v16/arrow"
+	"github.com/apache/arrow/go/v16/arrow/ipc"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/polarsignals/wal"

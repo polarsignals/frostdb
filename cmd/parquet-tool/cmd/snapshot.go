@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/apache/arrow/go/v15/arrow/ipc"
+	"github.com/apache/arrow/go/v16/arrow/ipc"
 	"github.com/spf13/cobra"
 
 	"github.com/polarsignals/frostdb/dynparquet"
