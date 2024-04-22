@@ -9,7 +9,7 @@ require (
 	github.com/go-kit/log v0.2.1
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/parquet-go/parquet-go v0.20.1
-	github.com/polarsignals/frostdb v0.0.0-20240422161053-bbe850c694aa
+	github.com/polarsignals/frostdb v0.0.0-20240422175033-44d6bc5deb6f
 	github.com/prometheus/client_golang v1.19.0
 	github.com/spf13/cobra v1.8.0
 )
@@ -51,7 +51,7 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.etcd.io/bbolt v1.3.7 // indirect
-	golang.org/x/exp v0.0.0-20240409090435-93d18d7e34b8 // indirect
+	golang.org/x/exp v0.0.0-20240416160154-fe59bbe5cc7f // indirect
 	golang.org/x/mod v0.17.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.19.0 // indirect
