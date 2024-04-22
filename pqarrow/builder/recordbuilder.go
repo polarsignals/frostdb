@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/apache/arrow/go/v15/arrow"
-	"github.com/apache/arrow/go/v15/arrow/array"
-	"github.com/apache/arrow/go/v15/arrow/memory"
+	"github.com/apache/arrow/go/v16/arrow"
+	"github.com/apache/arrow/go/v16/arrow/array"
+	"github.com/apache/arrow/go/v16/arrow/memory"
 )
 
 // The code in this file is based heavily on Apache arrow's array.RecordBuilder,
