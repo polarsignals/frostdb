@@ -18,6 +18,7 @@ import (
 	"github.com/apache/arrow/go/v15/arrow/memory"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
+	"github.com/polarsignals/iceberg-go/catalog"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
 	"golang.org/x/sync/errgroup"
@@ -31,7 +32,6 @@ import (
 	"github.com/polarsignals/frostdb/query/physicalplan"
 	"github.com/polarsignals/frostdb/recovery"
 	"github.com/polarsignals/frostdb/storage"
-	"github.com/polarsignals/iceberg-go/catalog"
 )
 
 func TestDBWithWALAndBucket(t *testing.T) {
