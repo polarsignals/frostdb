@@ -3022,7 +3022,7 @@ func Test_Iceberg(t *testing.T) {
 			return false
 		}
 		return info.Size > 0
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 3*time.Second, 10*time.Millisecond)
 
 	validateRows(10)
 
@@ -3042,7 +3042,7 @@ func Test_Iceberg(t *testing.T) {
 			return false
 		}
 		return info.Size > 0
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 3*time.Second, 10*time.Millisecond)
 
 	validateRows(13)
 }
