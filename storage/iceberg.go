@@ -22,11 +22,6 @@ import (
 /*
 	Iceberg is an Apache Iceberg backed DataSink/DataSource.
 
-	This uses the Hadoop Distributed File System (HDFS) as the underlying catalog implementation.
-	However the objstore.Bucket implementation does not support the atomic rename operations required by the HDFS catalog.
-	This means that it is unsafe for the same table to be written to concurrently as a concurrent write may go missing.
-	In practice this is not a problem with FrostDB as writes don't happen concurrently to tables.
-
 	The Iceberg layout is as follows:
 	<warehouse>/<database>/<table>/<table_version_number>.metadata.json   // Metadata file
 	<warehouse>/<database>/<table>/data/<ulid>.parquet			          // data files
@@ -57,9 +52,9 @@ type Iceberg struct {
 
 // NewIceberg creates a new Iceberg DataSink/DataSource.
 // You must provide the URI of the warehouse and the objstore.Bucket that points to that warehouse.
-func NewIceberg(uri string, bucket objstore.Bucket) (*Iceberg, error) {
+func NewIceberg(uri string, ctlg catalog.Catalog, bucket objstore.Bucket) (*Iceberg, error) {
 	return &Iceberg{
-		catalog:   catalog.NewHDFS(uri, bucket),
+		catalog:   ctlg,
 		bucketURI: uri,
 		bucket:    catalog.NewIcebucket(uri, bucket),
 	}, nil

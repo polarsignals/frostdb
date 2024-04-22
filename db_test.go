@@ -31,6 +31,7 @@ import (
 	"github.com/polarsignals/frostdb/query/physicalplan"
 	"github.com/polarsignals/frostdb/recovery"
 	"github.com/polarsignals/frostdb/storage"
+	"github.com/polarsignals/iceberg-go/catalog"
 )
 
 func TestDBWithWALAndBucket(t *testing.T) {
@@ -2972,7 +2973,7 @@ func Test_Iceberg(t *testing.T) {
 	)
 	logger := newTestLogger(t)
 	bucket := objstore.NewInMemBucket()
-	iceberg, err := storage.NewIceberg("/", bucket)
+	iceberg, err := storage.NewIceberg("/", catalog.NewHDFS("/", bucket), bucket)
 	require.NoError(t, err)
 
 	dir := t.TempDir()
