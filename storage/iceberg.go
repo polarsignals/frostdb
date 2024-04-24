@@ -27,13 +27,13 @@ import (
 	<warehouse>/<database>/<table>/data/<ulid>.parquet			          // data files
 	<warehouse>/<database>/<table>/metadata/snap.<ulid>.avro	          // Manifest list file (snapshot)
 	<warehouse>/<database>/<table>/metadata/<ulid>.avro		              // Manifest file
-	<warehouse>/<database>/<table>/metadata/version-hint.text		      // Version hint file
+	<warehouse>/<database>/<table>/metadata/version-hint.text		      // Version hint file (if hdfs catalog used)
 
 	On Upload a new snapshot is created and the data file is added to a manifest (or a new manifest is created depending on settings).
 	This manifest is then added to the existing manifest list, and a new version of the metadata file is created.
 
 	Once the new metadata file is written the version hint file is updated with the latest version number of the table.
-	This version-hint file is used to determine the latest version of the table.
+	This version-hint file is used to determine the latest version of the table. (HDFS catalog only)
 
 	On Scan the latest snapshot is loaded and the manifest list is read.
 	If the manifests are partitioned; the manifests are filtered out based on the given filter against the partition data.
@@ -48,16 +48,34 @@ type Iceberg struct {
 	catalog   catalog.Catalog
 	bucketURI string // bucketURI is the URI of the bucket i.e gs://<bucket-name>, s3://<bucket-name> etc.
 	bucket    objstore.Bucket
+
+	// configuration options
+	partitionSpec iceberg.PartitionSpec
 }
+
+// IcebergOption is a function that configures an Iceberg DataSink/DataSource.
+type IcebergOption func(*Iceberg)
 
 // NewIceberg creates a new Iceberg DataSink/DataSource.
 // You must provide the URI of the warehouse and the objstore.Bucket that points to that warehouse.
-func NewIceberg(uri string, ctlg catalog.Catalog, bucket objstore.Bucket) (*Iceberg, error) {
-	return &Iceberg{
+func NewIceberg(uri string, ctlg catalog.Catalog, bucket objstore.Bucket, options ...IcebergOption) (*Iceberg, error) {
+	berg := &Iceberg{
 		catalog:   ctlg,
 		bucketURI: uri,
 		bucket:    catalog.NewIcebucket(uri, bucket),
-	}, nil
+	}
+
+	for _, opt := range options {
+		opt(berg)
+	}
+
+	return berg, nil
+}
+
+func WithIcebergPartitionSpec(spec iceberg.PartitionSpec) IcebergOption {
+	return func(i *Iceberg) {
+		i.partitionSpec = spec
+	}
 }
 
 func (i *Iceberg) String() string {
@@ -89,14 +107,21 @@ func (i *Iceberg) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema,
 	}
 
 	for _, manifest := range list {
-		// TODO(thor): manifests can be filtered by partition data
-		entries, err := manifest.FetchEntries(i.bucket, false)
+		ok, err := manifestMayContainUsefulData(t.Metadata().PartitionSpec(), t.Schema(), manifest, fltr)
+		if err != nil {
+			return fmt.Errorf("failed to filter manifest: %w", err)
+		}
+		if !ok {
+			continue
+		}
+
+		entries, schema, err := manifest.FetchEntries(i.bucket, false)
 		if err != nil {
 			return err
 		}
 
 		for _, e := range entries {
-			ok, err := manifestEntryMayContainUsefulData(icebergSchemaToParquetSchema(t.Schema()), e, fltr)
+			ok, err := manifestEntryMayContainUsefulData(icebergSchemaToParquetSchema(schema), e, fltr)
 			if err != nil {
 				return fmt.Errorf("failed to filter entry: %w", err)
 			}
@@ -168,7 +193,9 @@ func (i *Iceberg) Upload(ctx context.Context, name string, r io.Reader) error {
 		}
 
 		// Table doesn't exist, create it
-		t, err = i.catalog.CreateTable(ctx, tablePath, iceberg.NewSchema(0), iceberg.Properties{})
+		t, err = i.catalog.CreateTable(ctx, tablePath, iceberg.NewSchema(0), iceberg.Properties{},
+			catalog.WithPartitionSpec(i.partitionSpec),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to create table: %w", err)
 		}
@@ -196,22 +223,81 @@ func (i *Iceberg) Delete(_ context.Context, _ string) error {
 	return nil
 }
 
+func icebergTypeToParquetNode(t iceberg.Type) parquet.Node {
+	switch t.Type() {
+	case "long":
+		return parquet.Int(64)
+	case "binary":
+		return parquet.String()
+	case "boolean":
+		return parquet.Leaf(parquet.BooleanType)
+	case "int":
+		return parquet.Int(32)
+	case "float":
+		return parquet.Leaf(parquet.FloatType)
+	case "double":
+		return parquet.Leaf(parquet.DoubleType)
+	case "string":
+		return parquet.String()
+	default:
+		panic(fmt.Sprintf("unsupported type: %s", t.Type()))
+	}
+}
+
 func icebergSchemaToParquetSchema(schema *iceberg.Schema) *parquet.Schema {
 	g := parquet.Group{}
 	for _, f := range schema.Fields() {
-		switch f.Type.Type() {
-		case "long":
-			g[f.Name] = parquet.Int(64)
-		case "binary":
-			g[f.Name] = parquet.String()
-		}
+		g[f.Name] = icebergTypeToParquetNode(f.Type)
 	}
 	return parquet.NewSchema("iceberg", g)
+}
+
+func manifestMayContainUsefulData(partition iceberg.PartitionSpec, schema *iceberg.Schema, manifest iceberg.ManifestFile, filter expr.TrueNegativeFilter) (bool, error) {
+	if partition.IsUnpartitioned() {
+		return true, nil
+	}
+	// TODO add eval configuration option to ignore nulls
+	return filter.Eval(manifestToParticulate(partition, schema, manifest))
 }
 
 func manifestEntryMayContainUsefulData(schema *parquet.Schema, entry iceberg.ManifestEntry, filter expr.TrueNegativeFilter) (bool, error) {
 	return filter.Eval(dataFileToParticulate(schema, entry.DataFile()))
 }
+
+func manifestToParticulate(partition iceberg.PartitionSpec, schema *iceberg.Schema, m iceberg.ManifestFile) expr.Particulate {
+	// Convert the partition spec to a parquet schema
+	g := parquet.Group{}
+	virtualColumnChunks := make([]parquet.ColumnChunk, 0, partition.NumFields())
+	for i := 0; i < partition.NumFields(); i++ {
+		field := partition.Field(i)
+		summary := m.Partitions()[i]
+		node := icebergTypeToParquetNode(schema.Field(field.SourceID).Type)
+		g[field.Name] = node
+		virtualColumnChunks = append(virtualColumnChunks, &virtualColumnChunk{
+			pType:       node.Type(),
+			nulls:       0, // TODO future optimization?
+			column:      i,
+			lowerBounds: *summary.LowerBound,
+			upperBounds: *summary.UpperBound,
+			//numValues:   m.ExistingRows() + m.AddedRows(), // TODO: these are 0 in the manifest
+			numValues: 1,
+		})
+	}
+
+	return &manifestParticulate{
+		schema:       parquet.NewSchema("iceberg-partition", g),
+		columnChunks: virtualColumnChunks,
+	}
+}
+
+type manifestParticulate struct {
+	columnChunks []parquet.ColumnChunk
+	schema       *parquet.Schema
+}
+
+func (m *manifestParticulate) Schema() *parquet.Schema { return m.schema }
+
+func (m *manifestParticulate) ColumnChunks() []parquet.ColumnChunk { return m.columnChunks }
 
 func dataFileToParticulate(schema *parquet.Schema, d iceberg.DataFile) expr.Particulate {
 	return &dataFileParticulate{
