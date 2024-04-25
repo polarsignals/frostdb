@@ -3095,6 +3095,7 @@ func Test_Iceberg(t *testing.T) {
 }
 
 type TestBucket struct {
+	sync.Mutex
 	record map[string]struct{}
 	objstore.Bucket
 }
@@ -3104,6 +3105,8 @@ func (b *TestBucket) Reset() {
 }
 
 func (b *TestBucket) GetRange(ctx context.Context, path string, offset, length int64) (io.ReadCloser, error) {
+	b.Lock()
 	b.record[path] = struct{}{}
+	b.Unlock()
 	return b.Bucket.GetRange(ctx, path, offset, length)
 }
