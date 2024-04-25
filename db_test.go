@@ -18,6 +18,7 @@ import (
 	"github.com/apache/arrow/go/v16/arrow/memory"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
+	"github.com/polarsignals/iceberg-go"
 	"github.com/polarsignals/iceberg-go/catalog"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
@@ -2972,8 +2973,16 @@ func Test_Iceberg(t *testing.T) {
 		dynparquet.SampleDefinition(),
 	)
 	logger := newTestLogger(t)
-	bucket := objstore.NewInMemBucket()
-	iceberg, err := storage.NewIceberg("/", catalog.NewHDFS("/", bucket), bucket)
+	bucket := &TestBucket{Bucket: objstore.NewInMemBucket(), record: make(map[string]struct{})}
+	iceberg, err := storage.NewIceberg("/", catalog.NewHDFS("/", bucket), bucket,
+		storage.WithIcebergPartitionSpec(
+			iceberg.NewPartitionSpec( // Partition the table by timestamp.
+				iceberg.PartitionField{
+					Name:      "timestamp",
+					Transform: iceberg.IdentityTransform{},
+				},
+			),
+		))
 	require.NoError(t, err)
 
 	dir := t.TempDir()
@@ -3046,4 +3055,58 @@ func Test_Iceberg(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond)
 
 	validateRows(13)
+
+	// Reset the test bucket
+	bucket.Reset()
+
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	rows := int64(0)
+	engine := query.NewEngine(pool, db.TableProvider())
+	err = engine.ScanTable("test").Filter(
+		logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(2))),
+	).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, int64(7), rows)
+
+	// We expect the Iceberg table to only access a single Parquet file.
+	require.Len(t, bucket.record, 1)
+	bucket.Reset()
+
+	// query by a column that isn't part of the partition key
+	rows = 0
+	err = engine.ScanTable("test").Filter(
+		logicalplan.And(
+			logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(2))),
+			logicalplan.Col("value").Gt(logicalplan.Literal(int64(5))),
+		),
+	).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Len(t, bucket.record, 1)
+	require.Equal(t, int64(4), rows)
+}
+
+type TestBucket struct {
+	sync.Mutex
+	record map[string]struct{}
+	objstore.Bucket
+}
+
+func (b *TestBucket) Reset() {
+	b.record = make(map[string]struct{})
+}
+
+func (b *TestBucket) GetRange(ctx context.Context, path string, offset, length int64) (io.ReadCloser, error) {
+	b.Lock()
+	b.record[path] = struct{}{}
+	b.Unlock()
+	return b.Bucket.GetRange(ctx, path, offset, length)
 }

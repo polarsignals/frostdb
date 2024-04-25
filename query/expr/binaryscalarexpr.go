@@ -39,10 +39,14 @@ type BinaryScalarExpr struct {
 	Right parquet.Value
 }
 
-func (e BinaryScalarExpr) Eval(p Particulate) (bool, error) {
+func (e BinaryScalarExpr) Eval(p Particulate, ignoreMissingCol bool) (bool, error) {
 	leftData, exists, err := e.Left.Column(p)
 	if err != nil {
 		return false, err
+	}
+
+	if !exists && ignoreMissingCol {
+		return true, nil
 	}
 
 	// TODO: This needs a bunch of test cases to validate edge cases like non

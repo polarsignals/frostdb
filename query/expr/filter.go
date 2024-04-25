@@ -37,12 +37,12 @@ type Particulate interface {
 
 type TrueNegativeFilter interface {
 	// Eval should be safe to call concurrently.
-	Eval(Particulate) (bool, error)
+	Eval(p Particulate, ignoreMissingCols bool) (bool, error)
 }
 
 type AlwaysTrueFilter struct{}
 
-func (f *AlwaysTrueFilter) Eval(_ Particulate) (bool, error) {
+func (f *AlwaysTrueFilter) Eval(_ Particulate, _ bool) (bool, error) {
 	return true, nil
 }
 
@@ -163,7 +163,7 @@ type MaxAgg struct {
 	dynamic    bool
 }
 
-func (a *MaxAgg) Eval(p Particulate) (bool, error) {
+func (a *MaxAgg) Eval(p Particulate, _ bool) (bool, error) {
 	processFurther := false
 	for i, f := range p.Schema().Fields() {
 		if (a.dynamic && !strings.HasPrefix(f.Name(), a.columnName+".")) || (!a.dynamic && f.Name() != a.columnName) {
@@ -210,8 +210,8 @@ type AndExpr struct {
 	Right TrueNegativeFilter
 }
 
-func (a *AndExpr) Eval(p Particulate) (bool, error) {
-	left, err := a.Left.Eval(p)
+func (a *AndExpr) Eval(p Particulate, ignoreMissingCols bool) (bool, error) {
+	left, err := a.Left.Eval(p, ignoreMissingCols)
 	if err != nil {
 		return false, err
 	}
@@ -219,7 +219,7 @@ func (a *AndExpr) Eval(p Particulate) (bool, error) {
 		return false, nil
 	}
 
-	right, err := a.Right.Eval(p)
+	right, err := a.Right.Eval(p, ignoreMissingCols)
 	if err != nil {
 		return false, err
 	}
@@ -231,8 +231,8 @@ type OrExpr struct {
 	Right TrueNegativeFilter
 }
 
-func (a *OrExpr) Eval(p Particulate) (bool, error) {
-	left, err := a.Left.Eval(p)
+func (a *OrExpr) Eval(p Particulate, ignoreMissingCols bool) (bool, error) {
+	left, err := a.Left.Eval(p, ignoreMissingCols)
 	if err != nil {
 		return false, err
 	}
@@ -240,7 +240,7 @@ func (a *OrExpr) Eval(p Particulate) (bool, error) {
 		return true, nil
 	}
 
-	right, err := a.Right.Eval(p)
+	right, err := a.Right.Eval(p, ignoreMissingCols)
 	if err != nil {
 		return false, err
 	}

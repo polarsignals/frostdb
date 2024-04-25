@@ -200,7 +200,7 @@ func TestMaxAgg(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for i, v := range tc.values {
-				got, err := tc.agg.Eval(v.p)
+				got, err := tc.agg.Eval(v.p, false)
 				require.NoError(t, err)
 				require.Equal(t, v.expected, got, "index %d mismatch", i)
 			}
