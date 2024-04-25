@@ -432,7 +432,7 @@ func (l *LSM) Scan(ctx context.Context, _ string, _ *dynparquet.Schema, filter l
 
 		for i := 0; i < buf.NumRowGroups(); i++ {
 			rg := buf.DynamicRowGroup(i)
-			mayContainUsefulData, err := booleanFilter.Eval(rg)
+			mayContainUsefulData, err := booleanFilter.Eval(rg, false)
 			if err != nil {
 				iterError = err
 				return false

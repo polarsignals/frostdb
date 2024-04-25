@@ -243,7 +243,7 @@ func (b *DefaultObjstoreBucket) ProcessFile(ctx context.Context, blockDir string
 func (b *DefaultObjstoreBucket) filterRowGroups(ctx context.Context, buf *dynparquet.SerializedBuffer, filter expr.TrueNegativeFilter, callback func(context.Context, any) error) error {
 	for i := 0; i < buf.NumRowGroups(); i++ {
 		rg := buf.DynamicRowGroup(i)
-		mayContainUsefulData, err := filter.Eval(rg)
+		mayContainUsefulData, err := filter.Eval(rg, false)
 		if err != nil {
 			return err
 		}

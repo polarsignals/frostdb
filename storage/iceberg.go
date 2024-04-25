@@ -153,7 +153,7 @@ func (i *Iceberg) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema,
 
 			for i := 0; i < buf.NumRowGroups(); i++ {
 				rg := buf.DynamicRowGroup(i)
-				mayContainUsefulData, err := fltr.Eval(rg)
+				mayContainUsefulData, err := fltr.Eval(rg, false)
 				if err != nil {
 					return err
 				}
@@ -256,12 +256,12 @@ func manifestMayContainUsefulData(partition iceberg.PartitionSpec, schema *icebe
 	if partition.IsUnpartitioned() {
 		return true, nil
 	}
-	// TODO add eval configuration option to ignore nulls
-	return filter.Eval(manifestToParticulate(partition, schema, manifest))
+	// Ignore missing columns as the partition spec only contains the columns that are partitioned
+	return filter.Eval(manifestToParticulate(partition, schema, manifest), true)
 }
 
 func manifestEntryMayContainUsefulData(schema *parquet.Schema, entry iceberg.ManifestEntry, filter expr.TrueNegativeFilter) (bool, error) {
-	return filter.Eval(dataFileToParticulate(schema, entry.DataFile()))
+	return filter.Eval(dataFileToParticulate(schema, entry.DataFile()), false)
 }
 
 func manifestToParticulate(partition iceberg.PartitionSpec, schema *iceberg.Schema, m iceberg.ManifestFile) expr.Particulate {
