@@ -279,8 +279,7 @@ func manifestToParticulate(partition iceberg.PartitionSpec, schema *iceberg.Sche
 			column:      i,
 			lowerBounds: *summary.LowerBound,
 			upperBounds: *summary.UpperBound,
-			//numValues:   m.ExistingRows() + m.AddedRows(), // TODO: these are 0 in the manifest
-			numValues: 1,
+			numValues:   1, // m.ExistingRows() + m.AddedRows() // TODO: future optimization?
 		})
 	}
 
