@@ -3075,6 +3075,23 @@ func Test_Iceberg(t *testing.T) {
 
 	// We expect the Iceberg table to only access a single Parquet file.
 	require.Len(t, bucket.record, 1)
+	bucket.Reset()
+
+	// query by a column that isn't part of the partition key
+	rows = 0
+	err = engine.ScanTable("test").Filter(
+		logicalplan.And(
+			logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(2))),
+			logicalplan.Col("value").Gt(logicalplan.Literal(int64(5))),
+		),
+	).
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Len(t, bucket.record, 1)
+	require.Equal(t, int64(4), rows)
 }
 
 type TestBucket struct {
