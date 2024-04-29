@@ -33,6 +33,12 @@
       "matchSourceUrls": ["https://github.com/protocolbuffers/protobuf-go"],
       "groupName": "protobuf-go"
     },
+    {
+      "description": "Don't upgrade avro",
+      "matchSourceUrls": ["https://github.com/hamba/avro/v2"],
+      "matchCurrentVersion": "<=2.19.0",
+      "groupName": "avro"
+    }
   ],
   "customManagers": [
     {
