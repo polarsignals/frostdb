@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/polarsignals/iceberg-go"
@@ -42,6 +43,14 @@ import (
 	Remaining data files are then read and the filter is applied to each row group in the data file.
 
 */
+
+var defaultWriterOptions = []table.WriterOption{
+	table.WithManifestSizeBytes(8 * 1024 * 1024), // 8MiB manifest size
+	table.WithMergeSchema(),
+	table.WithExpireSnapshotsOlderThan(6 * time.Hour), // 6 hours of snapshots
+	table.WithMetadataDeleteAfterCommit(),
+	table.WithMetadataPreviousVersionsMax(3), // Keep 3 previous versions of the metadata
+}
 
 // Iceberg is an Apache Iceberg backed DataSink/DataSource.
 type Iceberg struct {
@@ -201,10 +210,7 @@ func (i *Iceberg) Upload(ctx context.Context, name string, r io.Reader) error {
 		}
 	}
 
-	w, err := t.SnapshotWriter(
-		table.WithMergeSchema(),
-		table.WithManifestSizeBytes(8*1024*1024), // 8MiB manifest size
-	)
+	w, err := t.SnapshotWriter(defaultWriterOptions...)
 	if err != nil {
 		return err
 	}
