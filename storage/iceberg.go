@@ -100,7 +100,7 @@ func (i *Iceberg) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema,
 		if errors.Is(catalog.ErrorTableNotFound, err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("failed to load table: %w", err)
 	}
 
 	// Get the latest snapshot
@@ -126,7 +126,7 @@ func (i *Iceberg) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema,
 
 		entries, schema, err := manifest.FetchEntries(i.bucket, false)
 		if err != nil {
-			return err
+			return fmt.Errorf("fetch entries: %w", err)
 		}
 
 		for _, e := range entries {
