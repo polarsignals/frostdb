@@ -49,7 +49,7 @@ require (
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/hamba/avro/v2 v2.20.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.17.7 // indirect
+	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
@@ -88,4 +88,4 @@ require (
 )
 
 // Avro has a regression in parsing map[string]any in v2.20.0 and higher. Issue to track this regression: https://github.com/hamba/avro/issues/386
-replace github.com/hamba/avro/v2 => github.com/hamba/avro/v2 v2.19.0
+replace github.com/hamba/avro/v2 => github.com/hamba/avro/v2 v2.21.0
