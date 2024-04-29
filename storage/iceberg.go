@@ -126,7 +126,7 @@ func (i *Iceberg) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema,
 
 		entries, schema, err := manifest.FetchEntries(i.bucket, false)
 		if err != nil {
-			return fmt.Errorf("fetch entries: %w", err)
+			return fmt.Errorf("fetch entries %s: %w", manifest.FilePath(), err)
 		}
 
 		for _, e := range entries {
