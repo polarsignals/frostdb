@@ -15,7 +15,7 @@ require (
 	github.com/parquet-go/parquet-go v0.20.1
 	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/planetscale/vtprotobuf v0.6.0
-	github.com/polarsignals/iceberg-go v0.0.0-20240425142915-8b8ebf99abbd
+	github.com/polarsignals/iceberg-go v0.0.0-20240430181803-e13d8391680a
 	github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9
 	github.com/prometheus/client_golang v1.19.0
 	github.com/stretchr/testify v1.9.0
@@ -83,7 +83,6 @@ require (
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
