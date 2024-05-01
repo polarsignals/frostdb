@@ -81,6 +81,8 @@ github.com/polarsignals/frostdb v0.0.0-20240422175033-44d6bc5deb6f h1:xw2DBhzdz3
 github.com/polarsignals/frostdb v0.0.0-20240422175033-44d6bc5deb6f/go.mod h1:VYg5obSoG93TBBF8AFkNzG1txtzyWBIiB/t2JY8DiCY=
 github.com/polarsignals/frostdb v0.0.0-20240422193019-ddfc5534c809 h1:9IHOjvAsyt5CjfzQDItMLlOujPxGNn1MDAu1IyZ90FE=
 github.com/polarsignals/frostdb v0.0.0-20240422193019-ddfc5534c809/go.mod h1:YHgVYKw5Ynnw8/dMdFz8LL9SPjMXXPxm5X2Yzd5a/rA=
+github.com/polarsignals/frostdb v0.0.0-20240430195717-66c061270bd4 h1:dNsxQ31csku3q8BxokH/roKk3rFmXw+OaNdpEzp5Sh0=
+github.com/polarsignals/frostdb v0.0.0-20240430195717-66c061270bd4/go.mod h1:D2suZMhhyckme88GLE13l56E7FW5bQemOLrTI38sXAc=
 github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9 h1:SwUso/MRikI7aLlEelX4k6N107fT4uTAzmtyMTfjr44=
 github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9/go.mod h1:EVDHAAe+7GQ33A1/x+/gE+sBPN4toQ0XG5RoLD49xr8=
 github.com/prometheus/client_golang v1.19.0 h1:ygXvpU1AoN1MhdzckN+PyD9QJOSD4x7kmXYlnfbA6JU=
