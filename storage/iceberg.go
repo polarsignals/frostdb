@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/oklog/ulid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/polarsignals/iceberg-go"
 	"github.com/polarsignals/iceberg-go/catalog"
@@ -395,3 +397,48 @@ func (v *virtualColumnIndex) MaxValue(int) parquet.Value {
 
 func (v *virtualColumnIndex) IsAscending() bool  { return true }
 func (v *virtualColumnIndex) IsDescending() bool { return false }
+
+func (i *Iceberg) Maintenance(ctx context.Context, prefix string, age uint64) error {
+	t, err := i.catalog.LoadTable(ctx, []string{i.bucketURI, prefix}, iceberg.Properties{})
+	if err != nil {
+		if errors.Is(catalog.ErrorTableNotFound, err) {
+			return nil
+		}
+		return fmt.Errorf("failed to load table: %w", err)
+	}
+
+	// Get the latest snapshot
+	snapshot := t.CurrentSnapshot()
+	list, err := snapshot.Manifests(i.bucket)
+	if err != nil {
+		return fmt.Errorf("error reading manifest list: %w", err)
+	}
+
+	dataFiles := []string{}
+	for _, manifest := range list {
+		entries, _, err := manifest.FetchEntries(i.bucket, false)
+		if err != nil {
+			return fmt.Errorf("fetch entries %s: %w", manifest.FilePath(), err)
+		}
+
+		for _, e := range entries {
+			name := strings.TrimSuffix(filepath.Base(e.DataFile().FilePath()), ".parquet") // Expected to find filepath in a format of .../<ulid>.parquet
+			id, err := ulid.Parse(name)
+			if err != nil {
+				return fmt.Errorf("failed to parse ulid: %w", err)
+			}
+
+			// Delete data file if it is older than the given age
+			if ulid.Time(id.Time()).Before(time.UnixMilli(int64(age))) {
+				dataFiles = append(dataFiles, e.DataFile().FilePath())
+			}
+		}
+	}
+
+	// Delete the data files from the table.
+	if err := t.DeleteDataFiles(ctx, dataFiles); err != nil {
+		return fmt.Errorf("failed to delete data files: %w", err)
+	}
+
+	return nil
+}
