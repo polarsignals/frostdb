@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/polarsignals/iceberg-go"
@@ -64,6 +66,7 @@ type Iceberg struct {
 	catalog   catalog.Catalog
 	bucketURI string // bucketURI is the URI of the bucket i.e gs://<bucket-name>, s3://<bucket-name> etc.
 	bucket    objstore.Bucket
+	logger    log.Logger
 
 	// configuration options
 	partitionSpec       iceberg.PartitionSpec
@@ -88,6 +91,7 @@ func NewIceberg(uri string, ctlg catalog.Catalog, bucket objstore.Bucket, option
 		bucketURI:       uri,
 		bucket:          catalog.NewIcebucket(uri, bucket),
 		orphanedFileAge: DefaultOrphanedFileAge,
+		logger:          log.NewNopLogger(),
 	}
 
 	for _, opt := range options {
@@ -106,7 +110,7 @@ func NewIceberg(uri string, ctlg catalog.Catalog, bucket objstore.Bucket, option
 				select {
 				case <-ticker.C:
 					if err := berg.Maintenance(ctx); err != nil {
-						// TODO log error
+						level.Error(berg.logger).Log("msg", "iceberg maintenance failure", "err", err)
 					}
 				case <-ctx.Done():
 					return
@@ -155,7 +159,7 @@ func (i *Iceberg) Maintenance(ctx context.Context) error {
 				if err := w.DeleteDataFile(ctx, func(d iceberg.DataFile) bool {
 					id, err := ulid.Parse(strings.TrimSuffix(filepath.Base(d.FilePath()), ".parquet"))
 					if err != nil {
-						// TODO log error
+						level.Error(i.logger).Log("msg", "failed to parse ulid", "err", err)
 						return false
 					}
 
@@ -207,6 +211,12 @@ func WithDataFileExpiry(maxAge time.Duration) IcebergOption {
 func WithMaintenanceSchedule(schedule time.Duration) IcebergOption {
 	return func(i *Iceberg) {
 		i.maintenanceSchedule = schedule
+	}
+}
+
+func WithLogger(l log.Logger) IcebergOption {
+	return func(i *Iceberg) {
+		i.logger = l
 	}
 }
 
