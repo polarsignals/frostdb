@@ -47,6 +47,10 @@ import (
 
 */
 
+const (
+	DefaultOrphanedFileAge = 24 * time.Hour
+)
+
 var defaultWriterOptions = []table.WriterOption{
 	table.WithManifestSizeBytes(8 * 1024 * 1024), // 8MiB manifest size
 	table.WithMergeSchema(),
@@ -64,6 +68,7 @@ type Iceberg struct {
 	// configuration options
 	partitionSpec       iceberg.PartitionSpec
 	maxDataFileAge      time.Duration
+	orphanedFileAge     time.Duration
 	maintenanceSchedule time.Duration
 
 	// mainteneance goroutine lifecycle controls
@@ -79,9 +84,10 @@ type IcebergOption func(*Iceberg)
 // You must provide the URI of the warehouse and the objstore.Bucket that points to that warehouse.
 func NewIceberg(uri string, ctlg catalog.Catalog, bucket objstore.Bucket, options ...IcebergOption) (*Iceberg, error) {
 	berg := &Iceberg{
-		catalog:   ctlg,
-		bucketURI: uri,
-		bucket:    catalog.NewIcebucket(uri, bucket),
+		catalog:         ctlg,
+		bucketURI:       uri,
+		bucket:          catalog.NewIcebucket(uri, bucket),
+		orphanedFileAge: DefaultOrphanedFileAge,
 	}
 
 	for _, opt := range options {
@@ -127,13 +133,14 @@ func (i *Iceberg) Maintenance(ctx context.Context) error {
 	}
 
 	for _, db := range dbs {
-		tables, err := i.catalog.ListTables(ctx, db)
+		tables, err := i.catalog.ListTables(ctx, []string{filepath.Join(append([]string{i.bucketURI}, db...)...)}) // FIXME: this is clunky
 		if err != nil {
 			return err
 		}
 
 		for _, tbl := range tables {
-			t, err := i.catalog.LoadTable(ctx, tbl, iceberg.Properties{})
+			tablePath := filepath.Join(i.bucketURI, db[0], tbl[0]) // FIXME this is clunky; Iceberg should just return the fully qualified path
+			t, err := i.catalog.LoadTable(ctx, []string{tablePath}, iceberg.Properties{})
 			if err != nil {
 				return err
 			}
@@ -160,10 +167,16 @@ func (i *Iceberg) Maintenance(ctx context.Context) error {
 				if err := w.Close(ctx); err != nil {
 					return err
 				}
+
+				// Reload the table we just modified
+				t, err = i.catalog.LoadTable(ctx, []string{tablePath}, iceberg.Properties{})
+				if err != nil {
+					return err
+				}
 			}
 
-			// Delete orphaned files that are more than 24hrs old
-			if err := table.DeleteOrphanFiles(ctx, t, 24*time.Hour); err != nil {
+			// Delete orphaned files that are more than the max orphaned file age
+			if err := table.DeleteOrphanFiles(ctx, t, i.orphanedFileAge); err != nil {
 				return err
 			}
 		}
