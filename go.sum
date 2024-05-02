@@ -113,8 +113,8 @@ github.com/planetscale/vtprotobuf v0.6.0 h1:nBeETjudeJ5ZgBHUz1fVHvbqUKnYOXNhsIEa
 github.com/planetscale/vtprotobuf v0.6.0/go.mod h1:t/avpk3KcrXxUnYOhZhMXJlSEyie6gQbtLq5NM3loB8=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/polarsignals/iceberg-go v0.0.0-20240501184911-9fb1ab5314ab h1:pcpLKvzKIYjna+fXLCCOQUlLwmJquO+Tz9m0CaPiMAM=
-github.com/polarsignals/iceberg-go v0.0.0-20240501184911-9fb1ab5314ab/go.mod h1:5T9ChEZjRNhAGGLwH1cqzDA7wXB84SmU+WkXQr/ZAjo=
+github.com/polarsignals/iceberg-go v0.0.0-20240502190318-726d90d0ca65 h1:MqQO3P1G4IoRThNEHpFM3qEp3fN3YcyLEF5gOCAQr1U=
+github.com/polarsignals/iceberg-go v0.0.0-20240502190318-726d90d0ca65/go.mod h1:5T9ChEZjRNhAGGLwH1cqzDA7wXB84SmU+WkXQr/ZAjo=
 github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9 h1:SwUso/MRikI7aLlEelX4k6N107fT4uTAzmtyMTfjr44=
 github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9/go.mod h1:EVDHAAe+7GQ33A1/x+/gE+sBPN4toQ0XG5RoLD49xr8=
 github.com/prometheus/client_golang v1.19.0 h1:ygXvpU1AoN1MhdzckN+PyD9QJOSD4x7kmXYlnfbA6JU=
