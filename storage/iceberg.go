@@ -7,8 +7,13 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
+	"github.com/oklog/ulid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/polarsignals/iceberg-go"
 	"github.com/polarsignals/iceberg-go/catalog"
@@ -44,6 +49,10 @@ import (
 
 */
 
+const (
+	DefaultOrphanedFileAge = 24 * time.Hour
+)
+
 var defaultWriterOptions = []table.WriterOption{
 	table.WithManifestSizeBytes(8 * 1024 * 1024), // 8MiB manifest size
 	table.WithMergeSchema(),
@@ -57,9 +66,18 @@ type Iceberg struct {
 	catalog   catalog.Catalog
 	bucketURI string // bucketURI is the URI of the bucket i.e gs://<bucket-name>, s3://<bucket-name> etc.
 	bucket    objstore.Bucket
+	logger    log.Logger
 
 	// configuration options
-	partitionSpec iceberg.PartitionSpec
+	partitionSpec       iceberg.PartitionSpec
+	maxDataFileAge      time.Duration
+	orphanedFileAge     time.Duration
+	maintenanceSchedule time.Duration
+
+	// mainteneance goroutine lifecycle controls
+	maintenanceCtx  context.Context
+	maintenanceDone context.CancelFunc
+	maintenanceWg   sync.WaitGroup
 }
 
 // IcebergOption is a function that configures an Iceberg DataSink/DataSource.
@@ -69,21 +87,136 @@ type IcebergOption func(*Iceberg)
 // You must provide the URI of the warehouse and the objstore.Bucket that points to that warehouse.
 func NewIceberg(uri string, ctlg catalog.Catalog, bucket objstore.Bucket, options ...IcebergOption) (*Iceberg, error) {
 	berg := &Iceberg{
-		catalog:   ctlg,
-		bucketURI: uri,
-		bucket:    catalog.NewIcebucket(uri, bucket),
+		catalog:         ctlg,
+		bucketURI:       uri,
+		bucket:          catalog.NewIcebucket(uri, bucket),
+		orphanedFileAge: DefaultOrphanedFileAge,
+		logger:          log.NewNopLogger(),
 	}
 
 	for _, opt := range options {
 		opt(berg)
 	}
 
+	// Start a maintenance goroutine if a schedule is set
+	if berg.maintenanceSchedule > 0 {
+		berg.maintenanceCtx, berg.maintenanceDone = context.WithCancel(context.Background())
+		berg.maintenanceWg.Add(1)
+		go func(ctx context.Context) {
+			defer berg.maintenanceWg.Done()
+			ticker := time.NewTicker(berg.maintenanceSchedule)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if err := berg.Maintenance(ctx); err != nil {
+						level.Error(berg.logger).Log("msg", "iceberg maintenance failure", "err", err)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(berg.maintenanceCtx)
+	}
+
 	return berg, nil
 }
 
+func (i *Iceberg) Close() error {
+	if i.maintenanceDone != nil {
+		i.maintenanceDone()
+		i.maintenanceWg.Wait()
+	}
+	return nil
+}
+
+func (i *Iceberg) Maintenance(ctx context.Context) error {
+	dbs, err := i.catalog.ListNamespaces(ctx, []string{i.bucketURI})
+	if err != nil {
+		return err
+	}
+
+	for _, db := range dbs {
+		tables, err := i.catalog.ListTables(ctx, []string{filepath.Join(append([]string{i.bucketURI}, db...)...)}) // FIXME: this is clunky
+		if err != nil {
+			return err
+		}
+
+		for _, tbl := range tables {
+			tablePath := filepath.Join(i.bucketURI, db[0], tbl[0]) // FIXME this is clunky; Iceberg should just return the fully qualified path
+			t, err := i.catalog.LoadTable(ctx, []string{tablePath}, iceberg.Properties{})
+			if err != nil {
+				return err
+			}
+
+			if i.maxDataFileAge > 0 {
+				w, err := t.SnapshotWriter(defaultWriterOptions...)
+				if err != nil {
+					return err
+				}
+
+				// Delete all data files in a table that are older than the max age
+				if err := w.DeleteDataFile(ctx, func(d iceberg.DataFile) bool {
+					id, err := ulid.Parse(strings.TrimSuffix(filepath.Base(d.FilePath()), ".parquet"))
+					if err != nil {
+						level.Error(i.logger).Log("msg", "failed to parse ulid", "err", err)
+						return false
+					}
+
+					return time.Since(ulid.Time(id.Time())) > i.maxDataFileAge
+				}); err != nil {
+					return err
+				}
+
+				if err := w.Close(ctx); err != nil {
+					return err
+				}
+
+				// Reload the table we just modified
+				t, err = i.catalog.LoadTable(ctx, []string{tablePath}, iceberg.Properties{})
+				if err != nil {
+					return err
+				}
+			}
+
+			// Delete orphaned files that are more than the max orphaned file age
+			if err := table.DeleteOrphanFiles(ctx, t, i.orphanedFileAge); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// WithIcebergPartitionSpec sets the partition spec for the Iceberg table. This is useful for pruning manifests during scans.
+// note that at this time the Iceberg storage engine does not write data in a partition fashion. So this is only useful for setting the upper/lower bounds
+// of columns in the manifest data.
 func WithIcebergPartitionSpec(spec iceberg.PartitionSpec) IcebergOption {
 	return func(i *Iceberg) {
 		i.partitionSpec = spec
+	}
+}
+
+// WithDataFileExpiry will a maxiumum age for data files. Data files older than the max age will be deleted from the table periodically according to the maintenance schedule.
+func WithDataFileExpiry(maxAge time.Duration) IcebergOption {
+	return func(i *Iceberg) {
+		i.maxDataFileAge = maxAge
+	}
+}
+
+// WithMaintenanceSchedule sets the schedule for the maintenance of the Iceberg table.
+// This will spawn a goroutine that will periodically expire data files if WithDataFileExpiry is set.
+// And will delete orphanded files from the table.
+func WithMaintenanceSchedule(schedule time.Duration) IcebergOption {
+	return func(i *Iceberg) {
+		i.maintenanceSchedule = schedule
+	}
+}
+
+func WithLogger(l log.Logger) IcebergOption {
+	return func(i *Iceberg) {
+		i.logger = l
 	}
 }
 
