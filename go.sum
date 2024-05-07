@@ -144,6 +144,8 @@ github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsT
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/thanos-io/objstore v0.0.0-20240418104850-a1e58aa3bed5 h1:2LxFD4FZCACq/LCNQ7vrMeg8LYrRG8+CtybhkQN+UjI=
 github.com/thanos-io/objstore v0.0.0-20240418104850-a1e58aa3bed5/go.mod h1:CuSIQu7lCntygNhEGKdLZLaoA8FtpAiC+454oLTXeUY=
+github.com/thanos-io/objstore v0.0.0-20240506104147-63052b4c4867 h1:1lC5qkSwtPVgvF6JJ39QrudgiGBcBIjXx/qqGg/ZhDo=
+github.com/thanos-io/objstore v0.0.0-20240506104147-63052b4c4867/go.mod h1:CuSIQu7lCntygNhEGKdLZLaoA8FtpAiC+454oLTXeUY=
 github.com/zeebo/assert v1.3.0 h1:g7C04CbJuIDKNPFHmsk4hwZDO5O+kntRxzaUoNXj+IQ=
 github.com/zeebo/assert v1.3.0/go.mod h1:Pq9JiuJQpG8JLJdtkwrJESF0Foym2/D9XMU5ciN/wJ0=
 github.com/zeebo/xxh3 v1.0.2 h1:xZmwmqxHZA8AI603jOQ0tMqmBr9lPeFwGg6d+xy9DC0=
