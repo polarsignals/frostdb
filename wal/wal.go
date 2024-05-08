@@ -104,6 +104,8 @@ type FileWAL struct {
 	cancel       func()
 	shutdownCh   chan struct{}
 	closeTimeout time.Duration
+
+	newLogStoreWrapper func(wal.LogStore) wal.LogStore
 }
 
 type logRequest struct {
@@ -137,10 +139,19 @@ func (q *logRequestQueue) Pop() any {
 	return x
 }
 
+type TestingOption func(*FileWAL)
+
+func WithTestingLogStoreWrapper(newLogStoreWrapper func(wal.LogStore) wal.LogStore) TestingOption {
+	return func(w *FileWAL) {
+		w.newLogStoreWrapper = newLogStoreWrapper
+	}
+}
+
 func Open(
 	logger log.Logger,
 	reg prometheus.Registerer,
 	path string,
+	opts ...TestingOption,
 ) (*FileWAL, error) {
 	if err := os.MkdirAll(path, dirPerms); err != nil {
 		return nil, err
@@ -207,6 +218,13 @@ func Open(
 	}
 
 	w.protected.nextTx = lastIndex + 1
+
+	for _, o := range opts {
+		o(w)
+	}
+	if w.newLogStoreWrapper != nil {
+		w.log = w.newLogStoreWrapper(w.log)
+	}
 
 	return w, nil
 }

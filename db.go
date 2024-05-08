@@ -79,6 +79,7 @@ type ColumnStore struct {
 	// testingOptions are options only used for testing purposes.
 	testingOptions struct {
 		disableReclaimDiskSpaceOnSnapshot bool
+		walTestingOptions                 []wal.TestingOption
 	}
 }
 
@@ -543,7 +544,7 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 					delete(s.dbReplaysInProgress, name)
 				}()
 				var err error
-				db.wal, err = db.openWAL(ctx)
+				db.wal, err = db.openWAL(ctx, s.testingOptions.walTestingOptions...)
 				return err
 			}(); err != nil {
 				return err
@@ -645,11 +646,12 @@ func (s *ColumnStore) DropDB(name string) error {
 	return os.Remove(filepath.Join(s.DatabasesDir(), name))
 }
 
-func (db *DB) openWAL(ctx context.Context) (WAL, error) {
+func (db *DB) openWAL(ctx context.Context, opts ...wal.TestingOption) (WAL, error) {
 	wal, err := wal.Open(
 		db.logger,
 		db.reg,
 		db.walDir(),
+		opts...,
 	)
 	if err != nil {
 		return nil, err
