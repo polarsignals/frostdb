@@ -6,12 +6,47 @@ import (
 
 	"github.com/apache/arrow/go/v16/arrow"
 	"github.com/apache/arrow/go/v16/arrow/array"
+	"github.com/parquet-go/parquet-go"
 )
 
 type RegExpFilter struct {
 	left     *ArrayRef
 	notMatch bool
 	right    *regexp.Regexp
+}
+
+func (f *RegExpFilter) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value) (*Bitmap, [][]parquet.Value, error) {
+	leftData, index, exists := f.left.ColumnChunk(rg)
+
+	res := NewBitmap()
+	if !exists {
+		emptyMatch := f.right.Match(nil)
+		if (f.notMatch && !emptyMatch) || (!f.notMatch && emptyMatch) {
+			for i := uint32(0); i < uint32(rg.NumRows()); i++ {
+				res.Add(i)
+			}
+			return res, in, nil
+		}
+		return res, in, nil
+	}
+
+	// Reuse the input slice if it's already been allocated
+	if len(in[index]) < int(leftData.NumValues()) {
+		in[index] = make([]parquet.Value, leftData.NumValues())
+	}
+	col, err := forEachParquetValue(leftData, in[index], func(i int, v parquet.Value) error {
+		match := f.right.MatchString(v.String())
+		if (f.notMatch && !match) || (!f.notMatch && match) {
+			res.Add(uint32(i))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	in[index] = col
+	return res, in, nil
 }
 
 func (f *RegExpFilter) Eval(r arrow.Record) (*Bitmap, error) {
