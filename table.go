@@ -506,7 +506,7 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 
 	// Persist the block
 	var err error
-	if !skipPersist {
+	if !skipPersist && block.index.Size() != 0 {
 		err = block.Persist()
 	}
 	t.dropPendingBlock(block)
