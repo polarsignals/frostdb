@@ -3110,3 +3110,46 @@ func (b *TestBucket) GetRange(ctx context.Context, path string, offset, length i
 	b.Unlock()
 	return b.Bucket.GetRange(ctx, path, offset, length)
 }
+
+// Test_DB_EmptyPersist ensures that we don't write an empty block when the db is shutdown and there is no data.
+func Test_DB_EmptyPersist(t *testing.T) {
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+
+	logger := newTestLogger(t)
+	assertBucket := &AssertBucket{
+		Bucket: objstore.NewInMemBucket(),
+		uploadFunc: func(ctx context.Context, path string, r io.Reader) error {
+			t.Fatal("unexpected upload")
+			return nil
+		},
+	}
+
+	sinksource := NewDefaultObjstoreBucket(assertBucket)
+
+	c, err := New(
+		WithLogger(logger),
+		WithReadWriteStorage(sinksource),
+	)
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	_, err = db.Table("test", config)
+	require.NoError(t, err)
+
+	require.NoError(t, c.Close())
+}
+
+type AssertBucket struct {
+	objstore.Bucket
+
+	uploadFunc func(ctx context.Context, path string, r io.Reader) error
+}
+
+func (a *AssertBucket) Upload(ctx context.Context, path string, r io.Reader) error {
+	if a.uploadFunc != nil {
+		return a.uploadFunc(ctx, path, r)
+	}
+	return a.Bucket.Upload(ctx, path, r)
+}
