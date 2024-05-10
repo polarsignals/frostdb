@@ -254,29 +254,29 @@ func (p *noopOperator) Draw() *Diagram {
 	return p.next.Draw()
 }
 
-type execOptions struct {
+type ExecOptions struct {
 	orderedAggregations bool
 	overrideInput       []PhysicalPlan
 	readMode            logicalplan.ReadMode
 	concurrency         int
 }
 
-func NewExecOptions() execOptions {
-	return execOptions{
+func NewExecOptions() ExecOptions {
+	return ExecOptions{
 		concurrency: defaultConcurrency,
 	}
 }
 
-type Option func(o *execOptions)
+type Option func(o *ExecOptions)
 
 func WithReadMode(m logicalplan.ReadMode) Option {
-	return func(o *execOptions) {
+	return func(o *ExecOptions) {
 		o.readMode = m
 	}
 }
 
 func WithOrderedAggregations() Option {
-	return func(o *execOptions) {
+	return func(o *ExecOptions) {
 		o.orderedAggregations = true
 	}
 }
@@ -284,13 +284,13 @@ func WithOrderedAggregations() Option {
 // WithOverrideInput can be used to provide an input stage on top of which the
 // Build function can build the physical plan.
 func WithOverrideInput(input []PhysicalPlan) Option {
-	return func(o *execOptions) {
+	return func(o *ExecOptions) {
 		o.overrideInput = input
 	}
 }
 
 func WithConcurrency(concurrency int) Option {
-	return func(o *execOptions) {
+	return func(o *ExecOptions) {
 		o.concurrency = concurrency
 	}
 }
@@ -511,7 +511,7 @@ func Build(
 }
 
 func shouldPlanOrderedAggregate(
-	execOpts execOptions, oInfo *planOrderingInfo, agg *logicalplan.Aggregation,
+	execOpts ExecOptions, oInfo *planOrderingInfo, agg *logicalplan.Aggregation,
 ) (bool, error) {
 	if !execOpts.orderedAggregations {
 		// Ordered aggregations disabled.
