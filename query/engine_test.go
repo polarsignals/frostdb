@@ -12,66 +12,83 @@ import (
 	"github.com/polarsignals/frostdb/dynparquet"
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 	"github.com/polarsignals/frostdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/query/physicalplan"
 )
 
 func TestUniqueAggregation(t *testing.T) {
-	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
-	defer mem.AssertSize(t, 0)
-
-	schema, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
-		Name: "test",
-		Columns: []*schemapb.Column{{
-			Name: "example",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-		}, {
-			Name: "timestamp",
-			StorageLayout: &schemapb.StorageLayout{
-				Type: schemapb.StorageLayout_TYPE_INT64,
-			},
-		}},
-	})
-	require.NoError(t, err)
-
-	rb := array.NewRecordBuilder(mem, arrow.NewSchema([]arrow.Field{{
-		Name: "example",
-		Type: arrow.PrimitiveTypes.Int64,
-	}, {
-		Name: "timestamp",
-		Type: arrow.PrimitiveTypes.Int64,
-	}}, nil))
-	defer rb.Release()
-
-	rb.Field(0).(*array.Int64Builder).AppendValues([]int64{1, 2, 3}, nil)
-	rb.Field(1).(*array.Int64Builder).AppendValues([]int64{1, 1, 3}, nil)
-
-	r := rb.NewRecord()
-	defer r.Release()
-
-	ran := false
-	err = NewEngine(mem, &FakeTableProvider{
-		Tables: map[string]logicalplan.TableReader{
-			"test": &FakeTableReader{
-				FrostdbSchema: schema,
-				Records:       []arrow.Record{r},
+	tests := map[string]struct {
+		execOptions []physicalplan.Option
+	}{
+		"no concurrency": {
+			execOptions: []physicalplan.Option{
+				physicalplan.WithConcurrency(1),
 			},
 		},
-	}).ScanTable("test").
-		Aggregate(
-			[]*logicalplan.AggregationFunction{logicalplan.Unique(logicalplan.Col("example"))},
-			[]logicalplan.Expr{logicalplan.Col("timestamp")},
-		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
-			require.Equal(t, []int64{1, 3}, r.Column(0).(*array.Int64).Int64Values())
-			require.True(t, r.Column(1).(*array.Int64).IsNull(0))
-			require.True(t, r.Column(1).(*array.Int64).IsValid(1))
-			require.Equal(t, int64(3), r.Column(1).(*array.Int64).Value(1))
-			ran = true
-			return nil
+		"default": {
+			execOptions: []physicalplan.Option{},
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+			defer mem.AssertSize(t, 0)
+
+			schema, err := dynparquet.SchemaFromDefinition(&schemapb.Schema{
+				Name: "test",
+				Columns: []*schemapb.Column{{
+					Name: "example",
+					StorageLayout: &schemapb.StorageLayout{
+						Type: schemapb.StorageLayout_TYPE_INT64,
+					},
+				}, {
+					Name: "timestamp",
+					StorageLayout: &schemapb.StorageLayout{
+						Type: schemapb.StorageLayout_TYPE_INT64,
+					},
+				}},
+			})
+			require.NoError(t, err)
+
+			rb := array.NewRecordBuilder(mem, arrow.NewSchema([]arrow.Field{{
+				Name: "example",
+				Type: arrow.PrimitiveTypes.Int64,
+			}, {
+				Name: "timestamp",
+				Type: arrow.PrimitiveTypes.Int64,
+			}}, nil))
+			defer rb.Release()
+
+			rb.Field(0).(*array.Int64Builder).AppendValues([]int64{1, 2, 3}, nil)
+			rb.Field(1).(*array.Int64Builder).AppendValues([]int64{1, 1, 3}, nil)
+
+			r := rb.NewRecord()
+			defer r.Release()
+
+			ran := false
+			err = NewEngine(mem, &FakeTableProvider{
+				Tables: map[string]logicalplan.TableReader{
+					"test": &FakeTableReader{
+						FrostdbSchema: schema,
+						Records:       []arrow.Record{r},
+					},
+				},
+			}, WithPhysicalplanOptions(test.execOptions...)).ScanTable("test").
+				Aggregate(
+					[]*logicalplan.AggregationFunction{logicalplan.Unique(logicalplan.Col("example"))},
+					[]logicalplan.Expr{logicalplan.Col("timestamp")},
+				).
+				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+					require.Equal(t, []int64{1, 3}, r.Column(0).(*array.Int64).Int64Values())
+					require.True(t, r.Column(1).(*array.Int64).IsNull(0))
+					require.True(t, r.Column(1).(*array.Int64).IsValid(1))
+					require.Equal(t, int64(3), r.Column(1).(*array.Int64).Value(1))
+					ran = true
+					return nil
+				})
+			require.NoError(t, err)
+			require.True(t, ran)
 		})
-	require.NoError(t, err)
-	require.True(t, ran)
+	}
 }
 
 func TestAndAggregation(t *testing.T) {

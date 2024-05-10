@@ -17,8 +17,7 @@ import (
 	"github.com/polarsignals/frostdb/recovery"
 )
 
-// TODO: Make this smarter.
-var concurrencyHardcoded = runtime.GOMAXPROCS(0)
+var defaultConcurrency = runtime.GOMAXPROCS(0)
 
 type PhysicalPlan interface {
 	Callback(ctx context.Context, r arrow.Record) error
@@ -255,22 +254,29 @@ func (p *noopOperator) Draw() *Diagram {
 	return p.next.Draw()
 }
 
-type execOptions struct {
+type ExecOptions struct {
 	orderedAggregations bool
 	overrideInput       []PhysicalPlan
 	readMode            logicalplan.ReadMode
+	concurrency         int
 }
 
-type Option func(o *execOptions)
+func NewExecOptions() ExecOptions {
+	return ExecOptions{
+		concurrency: defaultConcurrency,
+	}
+}
+
+type Option func(o *ExecOptions)
 
 func WithReadMode(m logicalplan.ReadMode) Option {
-	return func(o *execOptions) {
+	return func(o *ExecOptions) {
 		o.readMode = m
 	}
 }
 
 func WithOrderedAggregations() Option {
-	return func(o *execOptions) {
+	return func(o *ExecOptions) {
 		o.orderedAggregations = true
 	}
 }
@@ -278,8 +284,14 @@ func WithOrderedAggregations() Option {
 // WithOverrideInput can be used to provide an input stage on top of which the
 // Build function can build the physical plan.
 func WithOverrideInput(input []PhysicalPlan) Option {
-	return func(o *execOptions) {
+	return func(o *ExecOptions) {
 		o.overrideInput = input
+	}
+}
+
+func WithConcurrency(concurrency int) Option {
+	return func(o *ExecOptions) {
+		o.concurrency = concurrency
 	}
 }
 
@@ -294,7 +306,7 @@ func Build(
 	_, span := tracer.Start(ctx, "PhysicalPlan/Build")
 	defer span.End()
 
-	execOpts := execOptions{}
+	execOpts := NewExecOptions()
 	for _, o := range options {
 		o(&execOpts)
 	}
@@ -318,7 +330,7 @@ func Build(
 			// Create noop operators since we don't know what to push the scan
 			// results to. In a following node visit, these noops will have
 			// SetNext called on them and push to the correct operator.
-			plans := make([]PhysicalPlan, concurrencyHardcoded)
+			plans := make([]PhysicalPlan, execOpts.concurrency)
 			for i := range plans {
 				plans[i] = &noopOperator{}
 			}
@@ -333,7 +345,7 @@ func Build(
 			// Create noop operators since we don't know what to push the scan
 			// results to. In a following node visit, these noops will have
 			// SetNext called on them and push to the correct operator.
-			plans := make([]PhysicalPlan, concurrencyHardcoded)
+			plans := make([]PhysicalPlan, execOpts.concurrency)
 			for i := range plans {
 				plans[i] = &noopOperator{}
 			}
@@ -435,13 +447,12 @@ func Build(
 				ordered = false
 			}
 			var sync PhysicalPlan
-			if len(prev) > 1 {
-				// These aggregate operators need to be synchronized.
-				if ordered && len(plan.Aggregation.GroupExprs) > 0 {
-					sync = NewOrderedSynchronizer(pool, len(prev), plan.Aggregation.GroupExprs)
-				} else {
-					sync = Synchronize(len(prev))
-				}
+			// These aggregate operators need to be synchronized.
+			// NOTE: that in the case of concurrency 1 we still add a syncronizer because the Aggregation operator expects a final aggregation to be performed.
+			if ordered && len(plan.Aggregation.GroupExprs) > 0 {
+				sync = NewOrderedSynchronizer(pool, len(prev), plan.Aggregation.GroupExprs)
+			} else {
+				sync = Synchronize(len(prev))
 			}
 			seed := maphash.MakeSeed()
 			for i := 0; i < len(prev); i++ {
@@ -500,7 +511,7 @@ func Build(
 }
 
 func shouldPlanOrderedAggregate(
-	execOpts execOptions, oInfo *planOrderingInfo, agg *logicalplan.Aggregation,
+	execOpts ExecOptions, oInfo *planOrderingInfo, agg *logicalplan.Aggregation,
 ) (bool, error) {
 	if !execOpts.orderedAggregations {
 		// Ordered aggregations disabled.
