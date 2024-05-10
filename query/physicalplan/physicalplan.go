@@ -447,13 +447,12 @@ func Build(
 				ordered = false
 			}
 			var sync PhysicalPlan
-			if len(prev) > 1 {
-				// These aggregate operators need to be synchronized.
-				if ordered && len(plan.Aggregation.GroupExprs) > 0 {
-					sync = NewOrderedSynchronizer(pool, len(prev), plan.Aggregation.GroupExprs)
-				} else {
-					sync = Synchronize(len(prev))
-				}
+			// These aggregate operators need to be synchronized.
+			// NOTE: that in the case of concurrency 1 we still add a syncronizer because the Aggregation operator expects a final aggregation to be performed.
+			if ordered && len(plan.Aggregation.GroupExprs) > 0 {
+				sync = NewOrderedSynchronizer(pool, len(prev), plan.Aggregation.GroupExprs)
+			} else {
+				sync = Synchronize(len(prev))
 			}
 			seed := maphash.MakeSeed()
 			for i := 0; i < len(prev); i++ {
