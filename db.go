@@ -732,18 +732,18 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
-	persistedTables := map[string]uint64{}
+	persistedTables := make(map[string]uint64)
 	var lastTx uint64
 
 	start := time.Now()
-	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx, func(_ uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
-			persistedTables[e.TableBlockPersisted.TableName] = tx
-			if tx > snapshotTx {
+			persistedTables[e.TableBlockPersisted.TableName] = e.TableBlockPersisted.NextTx
+			if e.TableBlockPersisted.NextTx > snapshotTx {
 				// The loaded snapshot has data in a table that has been
 				// persisted. Delete all data in this table, since it has
 				// already been persisted.
@@ -799,9 +799,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				return err
 			}
 
-			if lastPersistedTx, ok := persistedTables[entry.TableName]; ok && tx < lastPersistedTx {
+			if nextNonPersistedTxn, ok := persistedTables[entry.TableName]; ok && tx <= nextNonPersistedTxn {
 				// This block has already been successfully persisted, so we can
-				// skip it.
+				// skip it. Note that if this new table block is the active
+				// block after persistence tx == nextNonPersistedTxn.
 				return nil
 			}
 
@@ -853,7 +854,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				"tx", tx,
 			)
 			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(table.active, db.columnStore.manualBlockRotation, false)
+			go table.writeBlock(table.active, tx, db.columnStore.manualBlockRotation, false)
 
 			protoEqual := false
 			switch schema.(type) {
@@ -1008,12 +1009,13 @@ func (db *DB) Close(options ...CloseOption) error {
 		table.close()
 		if shouldPersist {
 			// Write the blocks but no snapshots since they are long-running
-			// jobs.
+			// jobs. Use db.tx.Load as the block's max txn since the table was
+			// closed above, so no writes are in flight at this stage.
 			// TODO(asubiotto): Maybe we should snapshot in any case since it
 			// should be faster to write to local disk than upload to object
 			// storage. This would avoid a slow WAL replay on startup if we
 			// don't manage to persist in time.
-			table.writeBlock(table.ActiveBlock(), false, false)
+			table.writeBlock(table.ActiveBlock(), db.tx.Load(), false, false)
 		}
 	}
 	level.Info(db.logger).Log("msg", "closed all tables")

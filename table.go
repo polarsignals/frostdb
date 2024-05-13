@@ -496,7 +496,7 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	}
 }
 
-func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
+func (t *Table) writeBlock(block *TableBlock, nextTxn uint64, skipPersist, snapshotDB bool) {
 	level.Debug(t.logger).Log("msg", "syncing block")
 	block.pendingWritersWg.Wait()
 
@@ -532,6 +532,10 @@ func (t *Table) writeBlock(block *TableBlock, skipPersist, snapshotDB bool) {
 					TableBlockPersisted: &walpb.Entry_TableBlockPersisted{
 						TableName: t.name,
 						BlockId:   buf,
+						// NOTE: nextTxn is used here instead of tx, since some
+						// writes could have happened between block rotation
+						// and the txn beginning above.
+						NextTx: nextTxn,
 					},
 				},
 			},
@@ -640,7 +644,7 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 	// We don't check t.db.columnStore.manualBlockRotation here because this is
 	// the entry point for users to trigger a manual block rotation and they
 	// will specify through skipPersist if they want the block to be persisted.
-	go t.writeBlock(block, skipPersist, true)
+	go t.writeBlock(block, tx, skipPersist, true)
 
 	return nil
 }
