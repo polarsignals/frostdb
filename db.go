@@ -721,7 +721,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				"snapshot_tx", snapshotTx,
 			)
 		}
-		if err := wal.Truncate(snapshotTx); err != nil {
+		// snapshotTx can correspond to a write at that txn that is contained in
+		// the snapshot. We want the first entry of the WAL to be the subsequent
+		// txn to not replay duplicate writes.
+		if err := wal.Truncate(snapshotTx + 1); err != nil {
 			level.Info(db.logger).Log(
 				"msg", "failed to truncate WAL after loading snapshot",
 				"err", err,
@@ -736,7 +739,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	var lastTx uint64
 
 	start := time.Now()
-	if err := wal.Replay(snapshotTx, func(_ uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx+1, func(_ uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -776,7 +779,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	// WAL (i.e. entries that occupy space on disk but are useless).
 	performSnapshot := false
 
-	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx+1, func(tx uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -1075,7 +1078,11 @@ func (db *DB) reclaimDiskSpace(ctx context.Context, wal WAL) error {
 	if wal == nil {
 		wal = db.wal
 	}
-	return wal.Truncate(validSnapshotTxn)
+	// Snapshots are taken with a read txn and are inclusive, so therefore
+	// include a potential write at validSnapshotTxn. We don't want this to be
+	// the first entry in the WAL after truncation, given it is already
+	// contained in the snapshot, so Truncate at validSnapshotTxn + 1.
+	return wal.Truncate(validSnapshotTxn + 1)
 }
 
 func (db *DB) getMinTXPersisted() uint64 {
