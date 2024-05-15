@@ -17,7 +17,7 @@ require (
 	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/planetscale/vtprotobuf v0.6.0
 	github.com/polarsignals/iceberg-go v0.0.0-20240502213135-2ee70b71e76b
-	github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9
+	github.com/polarsignals/wal v0.0.0-20240514152147-1cd4b81c9b88
 	github.com/prometheus/client_golang v1.19.0
 	github.com/stretchr/testify v1.9.0
 	github.com/thanos-io/objstore v0.0.0-20240506104147-63052b4c4867
