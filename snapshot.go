@@ -116,6 +116,13 @@ func (db *DB) asyncSnapshot(ctx context.Context, onSuccess func()) {
 	db.snapshot(ctx, true, onSuccess)
 }
 
+// Snapshot performs a database snapshot and writes it to the database snapshots
+// directory, as is done by automatic snapshots.
+func (db *DB) Snapshot(ctx context.Context) error {
+	db.snapshot(ctx, false, func() {})
+	return db.reclaimDiskSpace(ctx, nil)
+}
+
 func (db *DB) snapshot(ctx context.Context, async bool, onSuccess func()) {
 	if !db.columnStore.enableWAL {
 		return
