@@ -3323,3 +3323,60 @@ func Test_DB_Sample(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sampleSize, rows)
 }
+
+func Test_DB_ParquetRepeatedColumn(t *testing.T) {
+	ctx := context.Background()
+
+	type Repeated struct {
+		ExampleType string   `frostdb:",rle_dict,asc(0)"`
+		Stacktrace  []string `frostdb:",rle_dict"`
+		Timestamp   int64    `frostdb:",asc(1)"`
+		Value       int64
+	}
+
+	c, err := New(WithLogger(newTestLogger(t)))
+	require.NoError(t, err)
+	defer c.Close()
+
+	db, err := c.DB(ctx, "repeated")
+	require.NoError(t, err)
+
+	table, err := NewGenericTable[Repeated](db, "repeated", memory.NewGoAllocator())
+	require.NoError(t, err)
+	defer table.Release()
+
+	for i := 0; i < 10; i++ {
+		_, err = table.Write(ctx, Repeated{
+			ExampleType: "hello-world",
+			Stacktrace:  []string{"a", "b", "c"},
+			Timestamp:   int64(i),
+			Value:       8,
+		})
+		require.NoError(t, err)
+	}
+
+	// Force the arrow records into Parquet format
+	require.NoError(t, table.EnsureCompaction())
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	err = engine.ScanTable("repeated").
+		Project(
+			logicalplan.Col("stacktrace"),
+			logicalplan.Col("timestamp"),
+		).
+		Filter(
+			logicalplan.And(
+				logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(2))),
+			),
+		).
+		Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+			fmt.Println(ar)
+			// TODO validate
+			return nil
+		})
+	require.NoError(t, err)
+}
