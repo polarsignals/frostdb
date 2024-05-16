@@ -3345,10 +3345,11 @@ func Test_DB_ParquetRepeatedColumn(t *testing.T) {
 	require.NoError(t, err)
 	defer table.Release()
 
+	values := "abcdefghijklmnopqrstuvwxyz"
 	for i := 0; i < 10; i++ {
 		_, err = table.Write(ctx, Repeated{
 			ExampleType: "hello-world",
-			Stacktrace:  []string{"a", "b", "c"},
+			Stacktrace:  []string{string(values[i]), string(values[i+1]), string(values[i+2])},
 			Timestamp:   int64(i),
 			Value:       8,
 		})
@@ -3371,11 +3372,34 @@ func Test_DB_ParquetRepeatedColumn(t *testing.T) {
 		Filter(
 			logicalplan.And(
 				logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(2))),
+				logicalplan.Col("timestamp").Lt(logicalplan.Literal(int64(7))),
 			),
 		).
 		Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
-			fmt.Println(ar)
-			// TODO validate
+			require.Equal(t, int64(4), ar.NumRows())
+			switch arr := ar.Column(0).(type) {
+			case *array.List:
+				switch vals := arr.ListValues().(type) {
+				case *array.Dictionary:
+					switch e := vals.Dictionary().(type) {
+					case *array.Binary:
+						for i := 0; i < arr.Len(); i++ {
+							start, end := arr.ValueOffsets(i)
+							seen := ""
+							for j := start; j < end; j++ {
+								seen += string(e.Value(vals.GetValueIndex(int(j))))
+							}
+							require.Equal(t, values[3+i:3+i+3], seen)
+						}
+					default:
+						t.Errorf("expected dictionary encoding %T", e)
+					}
+				default:
+					t.Errorf("expected dictionary encoding")
+				}
+			default:
+				t.Errorf("expected list encoding")
+			}
 			return nil
 		})
 	require.NoError(t, err)
