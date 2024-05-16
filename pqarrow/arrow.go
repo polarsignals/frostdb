@@ -805,10 +805,14 @@ func (c *ParquetConverter) writeColumnToArray(
 	// If values were already read due to the push down of a physical filter. They may be provided to this function to avoid
 	// re-reading them during Arrow conversion.
 	if bitmap != nil && bitmap.GetCardinality() > 0 && len(preReadValues) != 0 {
+		i := 0
 		bitmap.Iterate(func(x uint32) bool {
-			w.Write([]parquet.Value{preReadValues[x]})
+			// overwrite the pre-read values to put them in order for writing
+			preReadValues[i] = preReadValues[x]
+			i++
 			return true
 		})
+		w.Write(preReadValues[:bitmap.GetCardinality()])
 		return nil
 	}
 
@@ -872,13 +876,16 @@ func (c *ParquetConverter) writeColumnToArray(
 						w.Write(c.scratchValues[listStart:])
 					}
 				} else {
+					i := 0
 					bitmap.Iterate(func(x uint32) bool {
 						// Check if the value falls within the range of the page.
 						if int(x) >= offset && int(x) < offset+int(p.NumValues()) {
-							w.Write([]parquet.Value{c.scratchValues[int(x)-offset]})
+							c.scratchValues[i] = c.scratchValues[int(x)-offset]
 						}
+						i++
 						return true
 					})
+					w.Write(c.scratchValues[:bitmap.GetCardinality()])
 				}
 			} else {
 				w.Write(c.scratchValues)
