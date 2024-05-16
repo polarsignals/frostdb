@@ -851,13 +851,36 @@ func (c *ParquetConverter) writeColumnToArray(
 			}
 
 			if bitmap != nil && bitmap.GetCardinality() > 0 {
-				bitmap.Iterate(func(x uint32) bool {
-					// Check if the value falls within the range of the page.
-					if int(x) >= offset && int(x) < offset+int(p.NumValues()) {
-						w.Write([]parquet.Value{c.scratchValues[int(x)-offset]})
+				if repeated { // a bitmap does not map onto a repeated column 1:1 (since values are repeated) we have to iterate over the values
+					listStart := 0
+					recording := false
+					for i, value := range c.scratchValues {
+						fmt.Println("value", value, "repetition level", value.RepetitionLevel())
+						if value.RepetitionLevel() == 0 { // Start of a new list // NOTE: that we're only supporting a single level of nesting of repeated fields; This is all that's supported today in FrostDB. But if that changes then this will be broken.
+							if recording { // If we were recording the list we can now write it
+								fmt.Println("writing list", listStart, i)
+								w.Write(c.scratchValues[listStart:i])
+							} else {
+								listStart = i
+							}
+						} else {
+							continue
+						}
+
+						// This row is contained in the bitmap; start recording the list to write
+						if bitmap.Contains(uint32(i + offset)) {
+							recording = true
+						}
 					}
-					return true
-				})
+				} else {
+					bitmap.Iterate(func(x uint32) bool {
+						// Check if the value falls within the range of the page.
+						if int(x) >= offset && int(x) < offset+int(p.NumValues()) {
+							w.Write([]parquet.Value{c.scratchValues[int(x)-offset]})
+						}
+						return true
+					})
+				}
 			} else {
 				w.Write(c.scratchValues)
 			}
