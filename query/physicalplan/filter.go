@@ -322,6 +322,13 @@ func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record
 		return nil, true, err
 	}
 
+	// Filter is a no-op
+	if bitmap.GetCardinality() == uint64(ar.NumRows()) {
+		ar.Retain() // Artifically increment the reference count to avoid double release, since we're returning the same record.
+		return ar, false, nil
+
+	}
+
 	if bitmap.IsEmpty() {
 		return nil, true, nil
 	}
