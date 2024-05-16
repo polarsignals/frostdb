@@ -877,15 +877,17 @@ func (c *ParquetConverter) writeColumnToArray(
 					}
 				} else {
 					i := 0
+					total := 0
 					bitmap.Iterate(func(x uint32) bool {
 						// Check if the value falls within the range of the page.
 						if int(x) >= offset && int(x) < offset+int(p.NumValues()) {
 							c.scratchValues[i] = c.scratchValues[int(x)-offset]
+							total++
 						}
 						i++
 						return true
 					})
-					w.Write(c.scratchValues[:bitmap.GetCardinality()])
+					w.Write(c.scratchValues[:total])
 				}
 			} else {
 				w.Write(c.scratchValues)
