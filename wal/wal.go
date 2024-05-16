@@ -112,6 +112,7 @@ type FileWAL struct {
 	closeTimeout time.Duration
 
 	newLogStoreWrapper func(wal.LogStore) wal.LogStore
+	ticker             Ticker
 }
 
 type logRequest struct {
@@ -150,6 +151,27 @@ type TestingOption func(*FileWAL)
 func WithTestingLogStoreWrapper(newLogStoreWrapper func(wal.LogStore) wal.LogStore) TestingOption {
 	return func(w *FileWAL) {
 		w.newLogStoreWrapper = newLogStoreWrapper
+	}
+}
+
+type Ticker interface {
+	C() <-chan time.Time
+	Stop()
+}
+
+type realTicker struct {
+	*time.Ticker
+}
+
+func (t realTicker) C() <-chan time.Time {
+	return t.Ticker.C
+}
+
+// WithTestingLoopTicker allows the caller to force processing of pending WAL
+// entries by providing a custom ticker implementation.
+func WithTestingLoopTicker(t Ticker) TestingOption {
+	return func(w *FileWAL) {
+		w.ticker = t
 	}
 }
 
@@ -239,8 +261,10 @@ func Open(
 }
 
 func (w *FileWAL) run(ctx context.Context) {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
+	if w.ticker == nil {
+		w.ticker = realTicker{Ticker: time.NewTicker(50 * time.Millisecond)}
+	}
+	defer w.ticker.Stop()
 	// lastQueueSize is only used on shutdown to reduce debug logging verbosity.
 	lastQueueSize := 0
 	w.lastBatchWrite = time.Now()
@@ -290,7 +314,7 @@ func (w *FileWAL) run(ctx context.Context) {
 			}
 			level.Debug(w.logger).Log("msg", "WAL shut down")
 			return
-		case <-ticker.C:
+		case <-w.ticker.C():
 			w.process()
 		}
 	}

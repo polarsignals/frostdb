@@ -130,10 +130,15 @@ func (t *tableProvider) Update(table *frostdb.Table) {
 	t.table.Store(table)
 }
 
+// walTickProbability is the probability that a WAL tick will occur after a
+// write, this simulates the passing of real time between WAL batch writes.
+const walTickProbability = 0.25
+
 // writerHelper is used concurrently to write to a table.
 type writerHelper struct {
 	logger       log.Logger
 	tp           *tableProvider
+	walTicker    *fakeTicker
 	timestampSum struct {
 		sync.Mutex
 		int64checksum
@@ -151,6 +156,16 @@ func genRandomLabels() map[string]string {
 	}
 	return labels
 }
+
+type fakeTicker struct {
+	c chan time.Time
+}
+
+func (t *fakeTicker) C() <-chan time.Time {
+	return t.c
+}
+
+func (t *fakeTicker) Stop() {}
 
 func (w *writerHelper) write(ctx context.Context) (uint64, error) {
 	types := []string{"cpu", "memory", "block", "mutex"}
@@ -187,6 +202,14 @@ func (w *writerHelper) write(ctx context.Context) (uint64, error) {
 	for i := range smpls {
 		timestamps = append(timestamps, smpls[i].Timestamp)
 		w.timestampSum.add(smpls[i].Timestamp)
+	}
+
+	if rand.Float64() < walTickProbability {
+		// Nonblocking write to channel.
+		select {
+		case w.walTicker.c <- time.Now():
+		default:
+		}
 	}
 	level.Info(w.logger).Log("msg", "write complete", "txn", tx, "rows", len(smpls), "timestamps", fmt.Sprintf("%v", timestamps))
 	return tx, nil
@@ -248,6 +271,7 @@ func newStore(
 	logger log.Logger,
 	objectStorage *frostdb.DefaultObjstoreBucket,
 	newLogStoreWrapper func(internalWal.LogStore) internalWal.LogStore,
+	fakeTicker wal.Ticker,
 ) (*frostdb.ColumnStore, error) {
 	return frostdb.New(
 		frostdb.WithStoragePath(storageDir),
@@ -266,7 +290,7 @@ func newStore(
 		// is set to be very large in order to trigger snapshots manually.
 		frostdb.WithSnapshotTriggerSize(math.MaxInt64),
 		frostdb.WithTestingOptions(
-			frostdb.WithTestingWalOptions(wal.WithTestingLogStoreWrapper(newLogStoreWrapper)),
+			frostdb.WithTestingWalOptions(wal.WithTestingLogStoreWrapper(newLogStoreWrapper), wal.WithTestingLoopTicker(fakeTicker)),
 		),
 	)
 }
@@ -304,12 +328,13 @@ func TestDST(t *testing.T) {
 	)
 	storageDir := t.TempDir()
 	logStoreWrapper := &testLogStore{}
+	walTicker := &fakeTicker{c: make(chan time.Time, 1)}
 	storeID := 0
 	c, err := newStore(
 		storageDir, log.WithPrefix(logger, "storeID", storeID), objectStorage, func(logStore internalWal.LogStore) internalWal.LogStore {
 			logStoreWrapper.LogStore = logStore
 			return logStoreWrapper
-		},
+		}, walTicker,
 	)
 	require.NoError(t, err)
 	defer c.Close()
@@ -333,7 +358,7 @@ func TestDST(t *testing.T) {
 	}
 
 	t.Log("DB initialized, starting commands")
-	w := &writerHelper{logger: logger, tp: tp}
+	w := &writerHelper{logger: logger, tp: tp, walTicker: walTicker}
 	writeAndWait := func() error {
 		tx, err := w.write(ctx)
 		if err != nil {
@@ -398,7 +423,7 @@ func TestDST(t *testing.T) {
 				log.WithPrefix(logger, "storeID", storeID), objectStorage, func(logStore internalWal.LogStore) internalWal.LogStore {
 					logStoreWrapper.LogStore = logStore
 					return logStoreWrapper
-				},
+				}, walTicker,
 			)
 			require.NoError(t, err)
 			newDB, err := c.DB(ctx, dbName)
