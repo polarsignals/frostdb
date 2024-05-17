@@ -42,6 +42,11 @@ message Entry {
     string table_name = 1;
     // Block ID of the new-table-block.
     bytes block_id = 2;
+    // NextTx is the next non-persisted transaction at the time of block
+    // persistence. If the block has been persisted, any txn id < next_tx is
+    // considered persisted or not relevant to this table (i.e. it can be a
+    // non-persisted txn from another table).
+    uint64 next_tx = 3;
   }
 
   // The snapshot entry.

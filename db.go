@@ -721,7 +721,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				"snapshot_tx", snapshotTx,
 			)
 		}
-		if err := wal.Truncate(snapshotTx); err != nil {
+		// snapshotTx can correspond to a write at that txn that is contained in
+		// the snapshot. We want the first entry of the WAL to be the subsequent
+		// txn to not replay duplicate writes.
+		if err := wal.Truncate(snapshotTx + 1); err != nil {
 			level.Info(db.logger).Log(
 				"msg", "failed to truncate WAL after loading snapshot",
 				"err", err,
@@ -732,18 +735,18 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 
 	// persistedTables is a map from a table name to the last transaction
 	// persisted.
-	persistedTables := map[string]uint64{}
+	persistedTables := make(map[string]uint64)
 	var lastTx uint64
 
 	start := time.Now()
-	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx+1, func(_ uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		switch e := record.Entry.EntryType.(type) {
 		case *walpb.Entry_TableBlockPersisted_:
-			persistedTables[e.TableBlockPersisted.TableName] = tx
-			if tx > snapshotTx {
+			persistedTables[e.TableBlockPersisted.TableName] = e.TableBlockPersisted.NextTx
+			if e.TableBlockPersisted.NextTx > snapshotTx {
 				// The loaded snapshot has data in a table that has been
 				// persisted. Delete all data in this table, since it has
 				// already been persisted.
@@ -776,7 +779,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	// WAL (i.e. entries that occupy space on disk but are useless).
 	performSnapshot := false
 
-	if err := wal.Replay(snapshotTx, func(tx uint64, record *walpb.Record) error {
+	if err := wal.Replay(snapshotTx+1, func(tx uint64, record *walpb.Record) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -799,9 +802,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				return err
 			}
 
-			if lastPersistedTx, ok := persistedTables[entry.TableName]; ok && tx < lastPersistedTx {
+			if nextNonPersistedTxn, ok := persistedTables[entry.TableName]; ok && tx <= nextNonPersistedTxn {
 				// This block has already been successfully persisted, so we can
-				// skip it.
+				// skip it. Note that if this new table block is the active
+				// block after persistence tx == nextNonPersistedTxn.
 				return nil
 			}
 
@@ -853,7 +857,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				"tx", tx,
 			)
 			table.pendingBlocks[table.active] = struct{}{}
-			go table.writeBlock(table.active, db.columnStore.manualBlockRotation, false)
+			go table.writeBlock(table.active, tx, db.columnStore.manualBlockRotation, false)
 
 			protoEqual := false
 			switch schema.(type) {
@@ -1008,12 +1012,13 @@ func (db *DB) Close(options ...CloseOption) error {
 		table.close()
 		if shouldPersist {
 			// Write the blocks but no snapshots since they are long-running
-			// jobs.
+			// jobs. Use db.tx.Load as the block's max txn since the table was
+			// closed above, so no writes are in flight at this stage.
 			// TODO(asubiotto): Maybe we should snapshot in any case since it
 			// should be faster to write to local disk than upload to object
 			// storage. This would avoid a slow WAL replay on startup if we
 			// don't manage to persist in time.
-			table.writeBlock(table.ActiveBlock(), false, false)
+			table.writeBlock(table.ActiveBlock(), db.tx.Load(), false, false)
 		}
 	}
 	level.Info(db.logger).Log("msg", "closed all tables")
@@ -1073,7 +1078,11 @@ func (db *DB) reclaimDiskSpace(ctx context.Context, wal WAL) error {
 	if wal == nil {
 		wal = db.wal
 	}
-	return wal.Truncate(validSnapshotTxn)
+	// Snapshots are taken with a read txn and are inclusive, so therefore
+	// include a potential write at validSnapshotTxn. We don't want this to be
+	// the first entry in the WAL after truncation, given it is already
+	// contained in the snapshot, so Truncate at validSnapshotTxn + 1.
+	return wal.Truncate(validSnapshotTxn + 1)
 }
 
 func (db *DB) getMinTXPersisted() uint64 {

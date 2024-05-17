@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1449,6 +1450,120 @@ func TestDBRecover(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond,
 			"expected at most one block persist entry; the others should have been snapshot and truncated",
 		)
+	})
+
+	// This test is a regression test to verify that writes completed during
+	// a block rotation are not lost on recovery.
+	t.Run("RotationDoesntDropWrites", func(t *testing.T) {
+		dir := setup(t, false)
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+		)
+		require.NoError(t, err)
+
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+		table, err := db.GetTable(dbAndTableName)
+		require.NoError(t, err)
+
+		// Simulate starting a write against the active block, this will block
+		// persistence until this write is finished.
+		block, finish, err := table.ActiveWriteBlock()
+		require.NoError(t, err)
+
+		// Rotate the block to create a new active block.
+		require.NoError(t, table.RotateBlock(ctx, block, false))
+
+		// Issue writes.
+		const nWrites = 5
+		expectedTimestamps := make(map[int64]struct{}, nWrites)
+		for i := 0; i < nWrites; i++ {
+			samples := dynparquet.NewTestSamples()
+			timestamp := rand.Int63()
+			for j := range samples {
+				samples[j].Timestamp = timestamp
+			}
+			r, err := samples.ToRecord()
+			require.NoError(t, err)
+			_, err = table.InsertRecord(ctx, r)
+			require.NoError(t, err)
+			expectedTimestamps[timestamp] = struct{}{}
+		}
+
+		// Finalize the block persistence and close the DB.
+		finish()
+
+		require.NoError(t, c.Close())
+		c, err = New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+
+		db, err = c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+
+		require.NoError(
+			t,
+			query.NewEngine(
+				memory.DefaultAllocator, db.TableProvider(),
+			).ScanTable(dbAndTableName).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				idxs := r.Schema().FieldIndices("timestamp")
+				require.Len(t, idxs, 1)
+				tCol := r.Column(idxs[0]).(*array.Int64)
+				for i := 0; i < tCol.Len(); i++ {
+					delete(expectedTimestamps, tCol.Value(i))
+				}
+				return nil
+			}),
+		)
+		require.Len(t, expectedTimestamps, 0, "expected to see all timestamps on recovery, but could not find %v", expectedTimestamps)
+	})
+
+	// This is a regression test for a bug found by DST that causes duplicate
+	// writes on recovery due to an off-by-one error in WAL truncation after
+	// a snapshot (WAL includes a write that is also in the snapshot).
+	t.Run("NoDuplicateWrites", func(t *testing.T) {
+		dir := setup(t, false)
+		c, err := New(
+			WithLogger(newTestLogger(t)),
+			WithStoragePath(dir),
+			WithWAL(),
+		)
+		require.NoError(t, err)
+		defer c.Close()
+
+		db, err := c.DB(ctx, dbAndTableName)
+		require.NoError(t, err)
+
+		// This is deduced based on the fact that `setup` inserts NewTestSamples
+		// numInserts times.
+		expectedRowsPerTimestamp := len(dynparquet.NewTestSamples())
+
+		timestamps := make(map[int64]int, numInserts)
+		require.NoError(
+			t,
+			query.NewEngine(
+				memory.DefaultAllocator,
+				db.TableProvider(),
+			).ScanTable(dbAndTableName).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				idxs := r.Schema().FieldIndices("timestamp")
+				require.Len(t, idxs, 1)
+				tCol := r.Column(idxs[0]).(*array.Int64)
+				for i := 0; i < tCol.Len(); i++ {
+					timestamps[tCol.Value(i)]++
+				}
+				return nil
+			}),
+		)
+		require.Len(t, timestamps, numInserts, "expected %d timestamps, but got %d", numInserts, len(timestamps))
+		for ts, occurrences := range timestamps {
+			require.Equal(t, expectedRowsPerTimestamp, occurrences, "expected %d rows for timestamp %d, but got %d", expectedRowsPerTimestamp, ts, occurrences)
+		}
 	})
 }
 
