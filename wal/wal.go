@@ -410,7 +410,7 @@ func (w *FileWAL) process() {
 				// last index are now 0. The underlying WAL will allow a
 				// record with any index to be written, however we only
 				// want to allow the next index to be logged.
-				w.protected.nextTx = truncateTx + 1
+				w.protected.nextTx = truncateTx
 				// Remove any records that have not yet been written and
 				// are now below the nextTx.
 				for w.protected.queue.Len() > 0 {
