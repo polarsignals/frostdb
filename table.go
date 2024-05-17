@@ -620,7 +620,8 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 
 	id := generateULID()
 	for id.Time() == block.ulid.Time() { // Ensure the new block has a different timestamp.
-		runtime.Gosched()
+		// Sleep a millisecond to ensure the ULID has a different timestamp.
+		time.Sleep(time.Millisecond)
 		id = generateULID()
 	}
 	if err := t.newTableBlock(t.active.minTx, tx, id); err != nil {

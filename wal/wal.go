@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -94,16 +95,24 @@ type FileWAL struct {
 		nextTx uint64
 	}
 
+	// scratch memory reused to reduce allocations.
+	scratch struct {
+		walBatch []types.LogEntry
+		reqBatch []*logRequest
+	}
+
 	// segmentSize indicates what the underlying WAL segment size is. This helps
 	// the run goroutine size batches more or less appropriately.
 	segmentSize int
-	// lastTimeProgressWasMade tracks just that and serves to log information in
-	// case the WAL has not made progress in some time.
-	lastTimeProgressWasMade time.Time
+	// lastBatchWrite is used to determine when to force a close of the WAL.
+	lastBatchWrite time.Time
 
 	cancel       func()
 	shutdownCh   chan struct{}
 	closeTimeout time.Duration
+
+	newLogStoreWrapper func(wal.LogStore) wal.LogStore
+	ticker             Ticker
 }
 
 type logRequest struct {
@@ -137,10 +146,40 @@ func (q *logRequestQueue) Pop() any {
 	return x
 }
 
+type TestingOption func(*FileWAL)
+
+func WithTestingLogStoreWrapper(newLogStoreWrapper func(wal.LogStore) wal.LogStore) TestingOption {
+	return func(w *FileWAL) {
+		w.newLogStoreWrapper = newLogStoreWrapper
+	}
+}
+
+type Ticker interface {
+	C() <-chan time.Time
+	Stop()
+}
+
+type realTicker struct {
+	*time.Ticker
+}
+
+func (t realTicker) C() <-chan time.Time {
+	return t.Ticker.C
+}
+
+// WithTestingLoopTicker allows the caller to force processing of pending WAL
+// entries by providing a custom ticker implementation.
+func WithTestingLoopTicker(t Ticker) TestingOption {
+	return func(w *FileWAL) {
+		w.ticker = t
+	}
+}
+
 func Open(
 	logger log.Logger,
 	reg prometheus.Registerer,
 	path string,
+	opts ...TestingOption,
 ) (*FileWAL, error) {
 	if err := os.MkdirAll(path, dirPerms); err != nil {
 		return nil, err
@@ -208,28 +247,41 @@ func Open(
 
 	w.protected.nextTx = lastIndex + 1
 
+	for _, o := range opts {
+		o(w)
+	}
+	if w.newLogStoreWrapper != nil {
+		w.log = w.newLogStoreWrapper(w.log)
+	}
+
+	w.scratch.walBatch = make([]types.LogEntry, 0, 64)
+	w.scratch.reqBatch = make([]*logRequest, 0, 64)
+
 	return w, nil
 }
 
 func (w *FileWAL) run(ctx context.Context) {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-	walBatch := make([]types.LogEntry, 0)
-	batch := make([]*logRequest, 0, 128)
+	if w.ticker == nil {
+		w.ticker = realTicker{Ticker: time.NewTicker(50 * time.Millisecond)}
+	}
+	defer w.ticker.Stop()
 	// lastQueueSize is only used on shutdown to reduce debug logging verbosity.
 	lastQueueSize := 0
-	// lastBatchWrite is used to determine when to force a close of the WAL.
-	lastBatchWrite := time.Now()
+	w.lastBatchWrite = time.Now()
 
 	for {
 		select {
 		case <-ctx.Done():
+			// Need to drain the queue before we can shutdown, so
+			// proactively try to process entries.
+			w.process()
+
 			w.protected.Lock()
 			n := w.protected.queue.Len()
 			w.protected.Unlock()
 			if n > 0 {
-				// force the WAL to close after some a timeout.
-				if w.closeTimeout > 0 && time.Since(lastBatchWrite) > w.closeTimeout {
+				// Force the WAL to close after some a timeout.
+				if w.closeTimeout > 0 && time.Since(w.lastBatchWrite) > w.closeTimeout {
 					w.metrics.walCloseTimeouts.Inc()
 					level.Error(w.logger).Log(
 						"msg", "WAL timed out attempting to close",
@@ -237,10 +289,12 @@ func (w *FileWAL) run(ctx context.Context) {
 					return
 				}
 
-				// Need to drain the queue before we can shutdown.
 				if n == lastQueueSize {
+					// No progress made.
+					runtime.Gosched()
 					continue
 				}
+
 				lastQueueSize = n
 				w.protected.Lock()
 				minTx := w.protected.queue[0].tx
@@ -260,128 +314,131 @@ func (w *FileWAL) run(ctx context.Context) {
 			}
 			level.Debug(w.logger).Log("msg", "WAL shut down")
 			return
-		case <-ticker.C:
-			batch := batch[:0]
-			w.protected.Lock()
-			batchSize := 0
-			for w.protected.queue.Len() > 0 && batchSize < w.segmentSize {
-				if minTx := w.protected.queue[0].tx; minTx != w.protected.nextTx {
-					if minTx < w.protected.nextTx {
-						// The next entry must be dropped otherwise progress
-						// will never be made. Log a warning given this could
-						// lead to missing data.
-						level.Warn(w.logger).Log(
-							"msg", "WAL cannot log a txn id that has already been seen; dropping entry",
-							"expected", w.protected.nextTx,
-							"found", minTx,
-						)
-						w.logRequestPool.Put(heap.Pop(&w.protected.queue))
-						w.metrics.walQueueSize.Sub(1)
-						// Keep on going since there might be other transactions
-						// below this one.
-						continue
-					}
-					if sinceProgress := time.Since(w.lastTimeProgressWasMade); sinceProgress > progressLogTimeout {
-						level.Info(w.logger).Log(
-							"msg", "wal has not made progress",
-							"since", sinceProgress,
-							"next_expected_tx", w.protected.nextTx,
-							"min_tx", minTx,
-						)
-					}
-					// Next expected tx has not yet been seen.
-					break
-				}
-				r := heap.Pop(&w.protected.queue).(*logRequest)
-				w.metrics.walQueueSize.Sub(1)
-				batch = append(batch, r)
-				batchSize += len(r.data)
-				w.protected.nextTx++
-			}
-			w.lastTimeProgressWasMade = time.Now()
-			// truncateTx will be non-zero if we either are about to log a
-			// record with a txn past the txn to truncate, or we have logged one
-			// in the past.
-			truncateTx := uint64(0)
-			if w.protected.truncateTx != 0 {
-				truncateTx = w.protected.truncateTx
-				w.protected.truncateTx = 0
-			}
-			w.protected.Unlock()
-			if len(batch) == 0 && truncateTx == 0 {
-				// No records to log or truncations.
-				continue
-			}
-
-			walBatch = walBatch[:0]
-			for _, r := range batch {
-				walBatch = append(walBatch, types.LogEntry{
-					Index: r.tx,
-					// No copy is needed here since the log request is only
-					// released once these bytes are persisted.
-					Data: r.data,
-				})
-			}
-
-			if len(walBatch) > 0 {
-				if err := w.log.StoreLogs(walBatch); err != nil {
-					w.metrics.failedLogs.Add(float64(len(batch)))
-					lastIndex, lastIndexErr := w.log.LastIndex()
-					level.Error(w.logger).Log(
-						"msg", "failed to write WAL batch",
-						"err", err,
-						"lastIndex", lastIndex,
-						"lastIndexErr", lastIndexErr,
-					)
-				}
-			}
-
-			if truncateTx != 0 {
-				w.metrics.lastTruncationAt.Set(float64(truncateTx))
-				level.Debug(w.logger).Log("msg", "truncating WAL", "tx", truncateTx)
-				if err := w.log.TruncateFront(truncateTx); err != nil {
-					level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", truncateTx, "err", err)
-				} else {
-					w.protected.Lock()
-					if truncateTx > w.protected.nextTx {
-						// truncateTx is the new firstIndex of the WAL. If it is
-						// greater than the next expected transaction, this was
-						// a full WAL truncation/reset so both the first and
-						// last index are now 0. The underlying WAL will allow a
-						// record with any index to be written, however we only
-						// want to allow the next index to be logged.
-						w.protected.nextTx = truncateTx + 1
-						// Remove any records that have not yet been written and
-						// are now below the nextTx.
-						for w.protected.queue.Len() > 0 {
-							if minTx := w.protected.queue[0].tx; minTx >= w.protected.nextTx {
-								break
-							}
-							w.logRequestPool.Put(heap.Pop(&w.protected.queue))
-							w.metrics.walQueueSize.Sub(1)
-						}
-					}
-					w.protected.Unlock()
-					level.Debug(w.logger).Log("msg", "truncated WAL", "tx", truncateTx)
-				}
-			}
-
-			// Remove references to a logRequest since the GC considers the
-			// popped element still accessible otherwise. Since these are sync
-			// pooled, we want to defer object lifetime management to the pool
-			// without interfering.
-			for i := range walBatch {
-				walBatch[i].Data = nil
-			}
-
-			for i, r := range batch {
-				batch[i] = nil
-				w.logRequestPool.Put(r)
-			}
-
-			lastBatchWrite = time.Now()
+		case <-w.ticker.C():
+			w.process()
 		}
 	}
+}
+
+func (w *FileWAL) process() {
+	w.scratch.reqBatch = w.scratch.reqBatch[:0]
+
+	w.protected.Lock()
+	batchSize := 0
+	for w.protected.queue.Len() > 0 && batchSize < w.segmentSize {
+		if minTx := w.protected.queue[0].tx; minTx != w.protected.nextTx {
+			if minTx < w.protected.nextTx {
+				// The next entry must be dropped otherwise progress
+				// will never be made. Log a warning given this could
+				// lead to missing data.
+				level.Warn(w.logger).Log(
+					"msg", "WAL cannot log a txn id that has already been seen; dropping entry",
+					"expected", w.protected.nextTx,
+					"found", minTx,
+				)
+				w.logRequestPool.Put(heap.Pop(&w.protected.queue))
+				w.metrics.walQueueSize.Sub(1)
+				// Keep on going since there might be other transactions
+				// below this one.
+				continue
+			}
+			if sinceProgress := time.Since(w.lastBatchWrite); sinceProgress > progressLogTimeout {
+				level.Info(w.logger).Log(
+					"msg", "wal has not made progress",
+					"since", sinceProgress,
+					"next_expected_tx", w.protected.nextTx,
+					"min_tx", minTx,
+				)
+			}
+			// Next expected tx has not yet been seen.
+			break
+		}
+		r := heap.Pop(&w.protected.queue).(*logRequest)
+		w.metrics.walQueueSize.Sub(1)
+		w.scratch.reqBatch = append(w.scratch.reqBatch, r)
+		batchSize += len(r.data)
+		w.protected.nextTx++
+	}
+	// truncateTx will be non-zero if we either are about to log a
+	// record with a txn past the txn to truncate, or we have logged one
+	// in the past.
+	truncateTx := uint64(0)
+	if w.protected.truncateTx != 0 {
+		truncateTx = w.protected.truncateTx
+		w.protected.truncateTx = 0
+	}
+	w.protected.Unlock()
+	if len(w.scratch.reqBatch) == 0 && truncateTx == 0 {
+		// No records to log or truncations.
+		return
+	}
+
+	w.scratch.walBatch = w.scratch.walBatch[:0]
+	for _, r := range w.scratch.reqBatch {
+		w.scratch.walBatch = append(w.scratch.walBatch, types.LogEntry{
+			Index: r.tx,
+			// No copy is needed here since the log request is only
+			// released once these bytes are persisted.
+			Data: r.data,
+		})
+	}
+
+	if len(w.scratch.walBatch) > 0 {
+		if err := w.log.StoreLogs(w.scratch.walBatch); err != nil {
+			w.metrics.failedLogs.Add(float64(len(w.scratch.reqBatch)))
+			lastIndex, lastIndexErr := w.log.LastIndex()
+			level.Error(w.logger).Log(
+				"msg", "failed to write WAL batch",
+				"err", err,
+				"lastIndex", lastIndex,
+				"lastIndexErr", lastIndexErr,
+			)
+		}
+	}
+
+	if truncateTx != 0 {
+		w.metrics.lastTruncationAt.Set(float64(truncateTx))
+		level.Debug(w.logger).Log("msg", "truncating WAL", "tx", truncateTx)
+		if err := w.log.TruncateFront(truncateTx); err != nil {
+			level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", truncateTx, "err", err)
+		} else {
+			w.protected.Lock()
+			if truncateTx > w.protected.nextTx {
+				// truncateTx is the new firstIndex of the WAL. If it is
+				// greater than the next expected transaction, this was
+				// a full WAL truncation/reset so both the first and
+				// last index are now 0. The underlying WAL will allow a
+				// record with any index to be written, however we only
+				// want to allow the next index to be logged.
+				w.protected.nextTx = truncateTx + 1
+				// Remove any records that have not yet been written and
+				// are now below the nextTx.
+				for w.protected.queue.Len() > 0 {
+					if minTx := w.protected.queue[0].tx; minTx >= w.protected.nextTx {
+						break
+					}
+					w.logRequestPool.Put(heap.Pop(&w.protected.queue))
+					w.metrics.walQueueSize.Sub(1)
+				}
+			}
+			w.protected.Unlock()
+			level.Debug(w.logger).Log("msg", "truncated WAL", "tx", truncateTx)
+		}
+	}
+
+	// Remove references to a logRequest since the GC considers the
+	// popped element still accessible otherwise. Since these are sync
+	// pooled, we want to defer object lifetime management to the pool
+	// without interfering.
+	for i := range w.scratch.walBatch {
+		w.scratch.walBatch[i].Data = nil
+	}
+	for i, r := range w.scratch.reqBatch {
+		w.scratch.reqBatch[i] = nil
+		w.logRequestPool.Put(r)
+	}
+
+	w.lastBatchWrite = time.Now()
 }
 
 // Truncate queues a truncation of the WAL at the given tx. Note that the
