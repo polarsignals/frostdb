@@ -69,6 +69,8 @@ github.com/olekukonko/tablewriter v0.0.5 h1:P2Ga83D34wi1o9J6Wh1mRuqd4mF/x/lgBS7N
 github.com/olekukonko/tablewriter v0.0.5/go.mod h1:hPp6KlRPjbx+hW8ykQs1w3UBbZlj6HuIJcUGPhkA7kY=
 github.com/parquet-go/parquet-go v0.20.1 h1:r5UqeMqyH2DrahZv6dlT41hH2NpS2F8atJWmX1ST1/U=
 github.com/parquet-go/parquet-go v0.20.1/go.mod h1:4YfUo8TkoGoqwzhA/joZKZ8f77wSMShOLHESY4Ys0bY=
+github.com/parquet-go/parquet-go v0.21.0 h1:cBIT1S7dA00LRVB4k9ZSrjPC1rQbiryIducp6nWDqZs=
+github.com/parquet-go/parquet-go v0.21.0/go.mod h1:wMYanjuaE900FTDTNY00JU+67Oqh9uO0pYWRNoPGctQ=
 github.com/pierrec/lz4/v4 v4.1.21 h1:yOVMLb6qSIDP67pl/5F7RepeKYu/VmTyEXvuMI5d9mQ=
 github.com/pierrec/lz4/v4 v4.1.21/go.mod h1:gZWDp/Ze/IJXGXf23ltt2EXimqmTUXEy0GFuRQyBid4=
 github.com/planetscale/vtprotobuf v0.6.0 h1:nBeETjudeJ5ZgBHUz1fVHvbqUKnYOXNhsIEabROxmNA=

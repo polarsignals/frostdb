@@ -13,7 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid v1.3.1
 	github.com/oklog/ulid/v2 v2.1.0
-	github.com/parquet-go/parquet-go v0.20.1
+	github.com/parquet-go/parquet-go v0.21.0
 	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/planetscale/vtprotobuf v0.6.0
 	github.com/polarsignals/iceberg-go v0.0.0-20240502213135-2ee70b71e76b
