@@ -756,7 +756,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 						filepath.Join(table.db.indexDir(), table.name, table.ActiveBlock().ulid.String()), // Any index files are found at <db.indexDir>/<table.name>/<block.id>
 						table.schema,
 						table.IndexConfig(),
-						db.Wait,
+						db.HighWatermark,
 						index.LSMWithMetrics(table.metrics.indexMetrics),
 						index.LSMWithLogger(table.logger),
 					)

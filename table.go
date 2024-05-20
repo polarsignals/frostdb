@@ -1040,7 +1040,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		filepath.Join(table.db.indexDir(), table.name, id.String()), // Any index files are found at <db.indexDir>/<table.name>/<block.id>
 		table.schema,
 		table.IndexConfig(),
-		table.db.Wait,
+		table.db.HighWatermark,
 		index.LSMWithMetrics(table.metrics.indexMetrics),
 		index.LSMWithLogger(table.logger),
 	)
