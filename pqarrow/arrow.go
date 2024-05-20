@@ -355,6 +355,11 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 		if err != nil {
 			return fmt.Errorf("physical filter of Parquet rows: %w", err)
 		}
+
+		// Disable the physical filter if the conversion percentage is above a threshold of 35%.
+		if float64(bm.GetCardinality())/float64(rg.NumRows()) > 0.35 {
+			bm = nil
+		}
 	}
 
 	for _, w := range c.writers {
