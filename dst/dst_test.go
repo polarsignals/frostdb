@@ -27,6 +27,7 @@ import (
 	"github.com/polarsignals/wal/types"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
+	"go.uber.org/goleak"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb"
@@ -371,6 +372,8 @@ func TestDST(t *testing.T) {
 	errg := &errgroup.Group{}
 	errg.SetLimit(32)
 	commandDistribution := make(map[command]int)
+
+	ignoreGoroutinesAtStartOfTest := goleak.IgnoreCurrent()
 	for i := 0; i < numCommands; i++ {
 		cmd := genCommand()
 		commandDistribution[cmd]++
@@ -417,6 +420,23 @@ func TestDST(t *testing.T) {
 			time.Sleep(1 * time.Millisecond)
 			// Graceful shutdown.
 			require.NoError(t, c.Close())
+			_ = errg.Wait()
+
+			// Unfortunately frostdb doesn't have goroutine lifecycle management
+			// and adding it could lead to subtle issues (e.g. on Close with
+			// many DBs). Instead, this test simply verifies all goroutines
+			// spawned up until this restart eventually exit after n retries.
+			const maxRetries = 10
+			for i := 0; i < maxRetries; i++ {
+				if err := goleak.Find(ignoreGoroutinesAtStartOfTest); err == nil {
+					break
+				} else if i == maxRetries-1 {
+					t.Fatalf("leaked goroutines found on Close: %v", err)
+				} else {
+					time.Sleep(1 * time.Millisecond)
+				}
+			}
+
 			storeID++
 			c, err = newStore(
 				storageDir,
