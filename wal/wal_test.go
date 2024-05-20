@@ -246,14 +246,17 @@ func TestWALTruncate(t *testing.T) {
 		// be observed on replay.
 		require.NoError(t, w.Log(1, logRecord("should-not-be-logged")))
 
-		// The only valid record to log is the one after truncateIdx.
-		require.NoError(t, w.Log(truncateIdx+1, logRecord("should-be-logged")))
+		// The only valid record to log is truncateIdx. Note that Truncate
+		// semantics are that Truncate truncates up to but not including the
+		// truncateIdx. In other words, truncateIdx becomes the first entry in
+		// the WAL.
+		require.NoError(t, w.Log(truncateIdx, logRecord("should-be-logged")))
 
 		// Wait for record to be logged.
 		require.Eventually(t, func() bool {
 			first, _ := w.FirstIndex()
 			last, _ := w.LastIndex()
-			return first == truncateIdx+1 && last == truncateIdx+1
+			return first == truncateIdx && last == truncateIdx
 		}, time.Second, 10*time.Millisecond)
 
 		numRecords := 0
@@ -261,7 +264,7 @@ func TestWALTruncate(t *testing.T) {
 			t,
 			w.Replay(0, func(tx uint64, r *walpb.Record) error {
 				numRecords++
-				require.Equal(t, uint64(truncateIdx+1), tx)
+				require.Equal(t, uint64(truncateIdx), tx)
 				require.Equal(t, []byte("should-be-logged"), r.Entry.GetWrite().Data)
 				return nil
 			}),
