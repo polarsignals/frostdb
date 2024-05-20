@@ -3054,7 +3054,7 @@ func Test_DB_SnapshotDuplicate_Corrupted(t *testing.T) {
 	time.Sleep(1 * time.Second) // wal flushes every 50ms
 
 	// Corrupt the snapshot file.
-	require.NoError(t, os.Truncate(filepath.Join(SnapshotDir(db, 2), snapshotFileName(2)), 100))
+	require.NoError(t, os.Truncate(filepath.Join(SnapshotDir(db, 3), snapshotFileName(3)), 100))
 
 	// Close the database to trigger a snapshot on close
 	require.NoError(t, c.Close())
