@@ -346,11 +346,11 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 	// to the Parquet rows that we've read into memory, and then convert only
 	// the rows that pass the filter. This saves on during Arrow record building.
 	var bm *physicalplan.Bitmap
-	if len(c.scratchPreReadValues) < len(parquetColumns) {
-		c.scratchPreReadValues = make([][]parquet.Value, len(parquetColumns))
-	}
 
 	if c.rowGroupFilter != nil {
+		if len(c.scratchPreReadValues) < len(parquetColumns) {
+			c.scratchPreReadValues = make([][]parquet.Value, len(parquetColumns))
+		}
 		bm, c.scratchPreReadValues, err = c.rowGroupFilter.EvalParquet(rg, c.scratchPreReadValues)
 		if err != nil {
 			return fmt.Errorf("physical filter of Parquet rows: %w", err)
