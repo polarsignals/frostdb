@@ -497,12 +497,12 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 }
 
 func (t *Table) writeBlock(block *TableBlock, nextTxn uint64, skipPersist, snapshotDB bool) {
-	level.Debug(t.logger).Log("msg", "syncing block")
+	level.Debug(t.logger).Log("msg", "syncing block", "ulid", block.ulid, "size", block.index.Size())
 	block.pendingWritersWg.Wait()
 
 	// from now on, the block will no longer be modified, we can persist it to disk
 
-	level.Debug(t.logger).Log("msg", "done syncing block")
+	level.Debug(t.logger).Log("msg", "done syncing block", "ulid", block.ulid, "size", block.index.Size())
 
 	// Persist the block
 	var err error
@@ -614,10 +614,13 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 		return nil
 	}
 
-	level.Debug(t.logger).Log("msg", "rotating block", "blockSize", block.Size(), "skipPersist", skipPersist)
-	defer func() {
-		level.Debug(t.logger).Log("msg", "done rotating block")
-	}()
+	level.Debug(t.logger).Log(
+		"msg", "rotating block",
+		"ulid", block.ulid,
+		"size", block.Size(),
+		"skip_persist", skipPersist,
+	)
+	defer level.Debug(t.logger).Log("msg", "done rotating block", "ulid", block.ulid)
 
 	tx, _, commit := t.db.begin()
 	defer commit()
