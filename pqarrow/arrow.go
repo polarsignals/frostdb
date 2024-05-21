@@ -357,10 +357,12 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 		}
 
 		// Disable the physical filter if the conversion percentage is above a threshold of 35%.
-		if float64(bm.GetCardinality())/float64(rg.NumRows()) > 0.35 {
+		if conversionPercentage := float64(bm.GetCardinality()) / float64(rg.NumRows()); conversionPercentage > 0.35 {
 			bm = nil
 		}
 	}
+
+	// TODO missing optimization for filter filtering out 100% of the rows.
 
 	for _, w := range c.writers {
 		for _, col := range w.colIdx {
@@ -818,6 +820,12 @@ func (c *ParquetConverter) writeColumnToArray(
 			return true
 		})
 		w.Write(preReadValues[:bitmap.GetCardinality()])
+		return nil
+	}
+
+	// preReadValues have been provided but the bitmap hasn't so just write the pre-read values.
+	if bitmap == nil && len(preReadValues) != 0 {
+		w.Write(preReadValues)
 		return nil
 	}
 
