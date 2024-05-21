@@ -2,7 +2,6 @@ package frostdb
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -380,7 +379,6 @@ func BenchmarkAggregation(b *testing.B) {
 		require.NoError(b, err)
 		_, err = table.InsertRecord(ctx, r)
 		require.NoError(b, err)
-		require.NoError(b, table.EnsureCompaction())
 	}
 
 	engine := query.NewEngine(
@@ -388,21 +386,46 @@ func BenchmarkAggregation(b *testing.B) {
 		db.TableProvider(),
 	)
 
-	for i := 0; i < 10000; i += 100 {
-		b.Run(fmt.Sprintf("%s+%v", "sum", i), func(b *testing.B) {
-			for j := 0; j < b.N; j++ {
-				engine.ScanTable("test").
-					Filter(
-						logicalplan.Col("timestamp").Gt(logicalplan.Literal(i)),
-					).
-					Aggregate(
-						[]*logicalplan.AggregationFunction{
-							logicalplan.Sum(logicalplan.Col("value")),
-						},
-						[]logicalplan.Expr{
-							logicalplan.Col("labels.label2"),
-						},
-					).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+	for _, bc := range []struct {
+		name    string
+		builder query.Builder
+	}{{
+		name: "sum",
+		builder: engine.ScanTable("test").
+			Aggregate(
+				[]*logicalplan.AggregationFunction{
+					logicalplan.Sum(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
+			),
+	}, {
+		name: "count",
+		builder: engine.ScanTable("test").
+			Aggregate(
+				[]*logicalplan.AggregationFunction{
+					logicalplan.Count(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
+			),
+	}, {
+		name: "max",
+		builder: engine.ScanTable("test").
+			Aggregate(
+				[]*logicalplan.AggregationFunction{
+					logicalplan.Max(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
+			),
+	}} {
+		b.Run(bc.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 					return nil
 				})
 			}
