@@ -338,7 +338,6 @@ func TestDST(t *testing.T) {
 		}, walTicker,
 	)
 	require.NoError(t, err)
-	defer c.Close()
 
 	ctx := context.Background()
 	var db atomic.Pointer[frostdb.DB]
@@ -481,6 +480,10 @@ func TestDST(t *testing.T) {
 	t.Log("Index files:", listFiles(filepath.Join("index", tableName)))
 	t.Log("snapshot files:", listFiles("snapshots"))
 	t.Log("WAL files:", listFiles("wal"))
+
+	// Defer a close here. This is not done at the start of the test because
+	// the test run itself may close the store.
+	defer c.Close()
 
 	timestampSum := &int64checksum{}
 	readTimestamps := make(map[int64]int)
