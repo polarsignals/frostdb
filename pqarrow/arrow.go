@@ -363,9 +363,12 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 	}
 
 	// TODO missing optimization for filter filtering out 100% of the rows.
-
 	for _, w := range c.writers {
 		for _, col := range w.colIdx {
+			var preReadValues []parquet.Value
+			if len(c.scratchPreReadValues) != 0 {
+				preReadValues = c.scratchPreReadValues[col]
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -376,7 +379,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 					false,
 					w.writer,
 					bm,
-					c.scratchPreReadValues[col]...,
+					preReadValues...,
 				); err != nil {
 					return fmt.Errorf("convert parquet column to arrow array: %w", err)
 				}
