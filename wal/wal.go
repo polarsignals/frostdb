@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 
@@ -261,8 +260,9 @@ func Open(
 }
 
 func (w *FileWAL) run(ctx context.Context) {
+	const defaultTickTime = 50 * time.Millisecond
 	if w.ticker == nil {
-		w.ticker = realTicker{Ticker: time.NewTicker(50 * time.Millisecond)}
+		w.ticker = realTicker{Ticker: time.NewTicker(defaultTickTime)}
 	}
 	defer w.ticker.Stop()
 	// lastQueueSize is only used on shutdown to reduce debug logging verbosity.
@@ -291,7 +291,7 @@ func (w *FileWAL) run(ctx context.Context) {
 
 				if n == lastQueueSize {
 					// No progress made.
-					runtime.Gosched()
+					time.Sleep(defaultTickTime)
 					continue
 				}
 

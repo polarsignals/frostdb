@@ -551,7 +551,7 @@ func (l *LSM) merge(level SentinelType) error {
 		// Find the first part that is <= the watermark and reset the compact list to that part.
 		wm := l.watermark()
 		compact.Iterate(func(node *Node) bool {
-			if node.part != nil && node.sentinel != L0 {
+			if node.part == nil && node.sentinel != L0 {
 				return false
 			}
 			if node.part.TX() <= wm {
