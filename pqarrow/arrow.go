@@ -772,6 +772,7 @@ func (c *ParquetConverter) writeColumnToArray(
 
 	pages := columnChunk.Pages()
 	defer pages.Close()
+	i := 0
 	for {
 		p, err := pages.ReadPage()
 		if err != nil {
@@ -781,7 +782,6 @@ func (c *ParquetConverter) writeColumnToArray(
 			return fmt.Errorf("read page: %w", err)
 		}
 		dict := p.Dictionary()
-
 		switch {
 		case !repeated && dictionaryOnly && dict != nil && p.NumNulls() == 0:
 			// If we are only writing the dictionary, we don't need to read
@@ -796,21 +796,19 @@ func (c *ParquetConverter) writeColumnToArray(
 				return fmt.Errorf("write page: %w", err)
 			}
 		default:
-			if n := p.NumValues(); int64(cap(c.scratchValues)) < n {
+			if n := columnChunk.NumValues(); int64(cap(c.scratchValues)) < n {
 				c.scratchValues = make([]parquet.Value, n)
 			} else {
 				c.scratchValues = c.scratchValues[:n]
 			}
-
-			// We're reading all values in the page so we always expect an io.EOF.
 			reader := p.Values()
-			if _, err := reader.ReadValues(c.scratchValues); err != nil && err != io.EOF {
+			i, err = reader.ReadValues(c.scratchValues[i:])
+			if err != nil && err != io.EOF {
 				return fmt.Errorf("read values: %w", err)
 			}
-
-			w.Write(c.scratchValues)
 		}
 	}
+	w.Write(c.scratchValues[:i])
 
 	return nil
 }
