@@ -496,9 +496,13 @@ func Benchmark_FilteredParquetAggregation(b *testing.B) {
 	}} {
 		b.Run(bc.name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
+				validated := false
 				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					require.Equal(b, []int64{6666700000, 6666566667, 6666633333}, r.Column(1).(*array.Int64).Int64Values())
+					validated = true
 					return nil
 				})
+				require.True(b, validated)
 			}
 		})
 	}
