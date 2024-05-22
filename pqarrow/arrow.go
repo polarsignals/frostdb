@@ -872,14 +872,19 @@ func (c *ParquetConverter) writeColumnToArray(
 
 			if bitmap != nil && bitmap.GetCardinality() > 0 {
 				if repeated { // a bitmap does not map onto a repeated column 1:1 (since values are repeated) we have to iterate over the values
+					head := 0
 					listStart := 0
 					recording := false
 					row := -1
+
+					// Walk through the values and record how many repeated values are in each list. Then if that list is in the bitmap
+					// move it to the front of the buffer. After all lists have been moved to the front of the buffer, write the sub-buffer.
 					for i, value := range c.scratchValues {
-						if value.RepetitionLevel() == 0 { // Start of a new list // NOTE: that we're only supporting a single level of nesting of repeated fields; This is all that's supported today in FrostDB. But if that changes then this will be broken.
+						if value.RepetitionLevel() == 0 { // Start of a new top-level list
 							row++          // start of a new row
-							if recording { // If we were recording the list we can now write it
-								w.Write(c.scratchValues[listStart:i])
+							if recording { // Move the list to the front of the buffer
+								copy(c.scratchValues[head:], c.scratchValues[listStart:i])
+								head += i - listStart
 							}
 							listStart = i
 
@@ -887,10 +892,15 @@ func (c *ParquetConverter) writeColumnToArray(
 							recording = bitmap.Contains(uint32(row + offset))
 						}
 					}
-					// Write the last list
+					// Move the final list to the front of the buffer
 					if recording {
-						w.Write(c.scratchValues[listStart:])
+						copy(c.scratchValues[head:], c.scratchValues[listStart:])
+						head += len(c.scratchValues) - listStart
 					}
+
+					// Write the sub-buffer
+					w.Write(c.scratchValues[:head])
+
 				} else {
 					i := 0
 					total := 0
