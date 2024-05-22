@@ -433,6 +433,77 @@ func BenchmarkAggregation(b *testing.B) {
 	}
 }
 
+func Benchmark_FilteredParquetAggregation(b *testing.B) {
+	ctx := context.Background()
+
+	columnStore, err := New()
+	require.NoError(b, err)
+	defer columnStore.Close()
+
+	db, err := columnStore.DB(ctx, "test")
+	require.NoError(b, err)
+
+	// Insert sample data
+	{
+		config := NewTableConfig(dynparquet.SampleDefinition())
+		table, err := db.Table("test", config)
+		require.NoError(b, err)
+
+		samples := make(dynparquet.Samples, 0, 200_000)
+		for i := 0; i < cap(samples); i++ {
+			samples = append(samples, dynparquet.Sample{
+				Labels: map[string]string{
+					"label1": "value1",
+					"label2": "value" + strconv.Itoa(i%3),
+				},
+				Stacktrace: []uuid.UUID{
+					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				},
+				Timestamp: int64(i),
+				Value:     int64(i),
+			})
+		}
+
+		r, err := samples.ToRecord()
+		require.NoError(b, err)
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(b, err)
+		require.NoError(b, table.EnsureCompaction())
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	for _, bc := range []struct {
+		name    string
+		builder query.Builder
+	}{{
+		name: "sum",
+		builder: engine.ScanTable("test").
+			Filter(
+				logicalplan.Col("timestamp").Gt(logicalplan.Literal(0)),
+			).
+			Aggregate(
+				[]*logicalplan.AggregationFunction{
+					logicalplan.Sum(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
+			),
+	}} {
+		b.Run(bc.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					return nil
+				})
+			}
+		})
+	}
+}
+
 func Test_Aggregation_DynCol(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	defer mem.AssertSize(t, 0)
