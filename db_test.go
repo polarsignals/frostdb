@@ -3364,6 +3364,7 @@ func Test_DB_ParquetRepeatedColumn(t *testing.T) {
 		db.TableProvider(),
 	)
 
+	validated := false
 	err = engine.ScanTable("repeated").
 		Project(
 			logicalplan.Col("stacktrace"),
@@ -3376,6 +3377,7 @@ func Test_DB_ParquetRepeatedColumn(t *testing.T) {
 			),
 		).
 		Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+			validated = true
 			require.Equal(t, int64(4), ar.NumRows())
 			switch arr := ar.Column(0).(type) {
 			case *array.List:
@@ -3403,4 +3405,5 @@ func Test_DB_ParquetRepeatedColumn(t *testing.T) {
 			return nil
 		})
 	require.NoError(t, err)
+	require.True(t, validated)
 }
