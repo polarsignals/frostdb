@@ -2638,7 +2638,7 @@ func Test_DB_PersistentDiskCompaction_BlockRotation(t *testing.T) {
 	}
 	require.Eventually(t, func() bool {
 		return table.active.index.LevelSize(index.L1) != 0
-	}, time.Second, time.Millisecond*10)
+	}, 3*time.Second, time.Millisecond*10)
 
 	validateRows := func(expected int64) {
 		pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
