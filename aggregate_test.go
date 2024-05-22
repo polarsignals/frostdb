@@ -480,7 +480,7 @@ func Benchmark_ParquetAggregation(b *testing.B) {
 	b.ResetTimer()
 	b.Run("paruqet_aggregation", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			engine.ScanTable("test").
+			require.NoError(b, engine.ScanTable("test").
 				Filter(
 					logicalplan.Col("timestamp").Gt(logicalplan.Literal(10)),
 				).
@@ -493,7 +493,7 @@ func Benchmark_ParquetAggregation(b *testing.B) {
 					},
 				).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 				return nil
-			})
+			}))
 		}
 	})
 }
