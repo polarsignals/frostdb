@@ -844,7 +844,6 @@ func (c *ParquetConverter) writeColumnToArray(
 			return fmt.Errorf("read page: %w", err)
 		}
 		dict := p.Dictionary()
-
 		switch {
 		case bitmap == nil && !repeated && dictionaryOnly && dict != nil && p.NumNulls() == 0:
 			// If we are only writing the dictionary, we don't need to read
@@ -903,17 +902,15 @@ func (c *ParquetConverter) writeColumnToArray(
 
 				} else {
 					i := 0
-					total := 0
 					bitmap.Iterate(func(x uint32) bool {
 						// Check if the value falls within the range of the page.
 						if int(x) >= offset && int(x) < offset+int(p.NumValues()) {
-							c.scratchValues[i] = c.scratchValues[int(x)-offset]
-							total++
+							c.scratchValues[i] = c.scratchValues[int(x)-offset] // TODO: large optimization here when moving spans
+							i++
 						}
-						i++
 						return true
 					})
-					w.Write(c.scratchValues[:total])
+					w.Write(c.scratchValues[:i])
 				}
 			} else {
 				w.Write(c.scratchValues)
