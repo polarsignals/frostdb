@@ -433,7 +433,7 @@ func BenchmarkAggregation(b *testing.B) {
 	}
 }
 
-// Benchmark_ParquetAggregation is similar to BenchmarkAggregation but uses uses Parquet as the storage format.
+// Benchmark_ParquetAggregation is similar to BenchmarkAggregation but uses Parquet as the storage format.
 func Benchmark_ParquetAggregation(b *testing.B) {
 	ctx := context.Background()
 
@@ -478,7 +478,7 @@ func Benchmark_ParquetAggregation(b *testing.B) {
 	)
 
 	b.ResetTimer()
-	b.Run("paruqet_aggregation", func(b *testing.B) {
+	b.Run("parquet_aggregation", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			require.NoError(b, engine.ScanTable("test").
 				Filter(
