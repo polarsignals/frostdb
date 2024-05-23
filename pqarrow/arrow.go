@@ -906,22 +906,15 @@ func (c *ParquetConverter) writeColumnToArray(
 					w.Write(c.scratchValues[:head])
 
 				} else {
-					indicies := []uint32{}
+					i := 0
 					bitmap.Iterate(func(x uint32) bool {
 						// Check if the value falls within the range of the page.
 						if int(x) >= offset && int(x) < offset+int(p.NumValues()) {
-							indicies = append(indicies, x-uint32(offset))
+							c.scratchValues[i] = c.scratchValues[int(x)-offset] // TODO: large optimization here when moving spans
+							i++
 						}
 						return true
 					})
-
-					ranges := buildIndexRanges(indicies)
-					i := 0
-					for _, r := range ranges {
-						copy(c.scratchValues[i:], c.scratchValues[r.Start:r.End])
-						i += int(r.End - r.Start)
-					}
-
 					w.Write(c.scratchValues[:i])
 				}
 			} else {
@@ -932,34 +925,6 @@ func (c *ParquetConverter) writeColumnToArray(
 	}
 
 	return nil
-}
-
-type IndexRange struct {
-	Start, End uint32
-}
-
-func buildIndexRanges(indices []uint32) []IndexRange {
-	ranges := []IndexRange{}
-
-	cur := IndexRange{
-		Start: indices[0],
-		End:   indices[0] + 1,
-	}
-
-	for _, i := range indices[1:] {
-		if i == cur.End {
-			cur.End++
-		} else {
-			ranges = append(ranges, cur)
-			cur = IndexRange{
-				Start: i,
-				End:   i + 1,
-			}
-		}
-	}
-
-	ranges = append(ranges, cur)
-	return ranges
 }
 
 // SingleMatchingColumn returns true if there is only a single matching column for the given column matchers.
