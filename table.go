@@ -822,7 +822,7 @@ func (t *Table) Iterator(
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(recovery.Do(func() error {
-			converter := pqarrow.NewParquetConverter(pool, *iterOpts)
+			converter := pqarrow.NewParquetConverter(pool, *iterOpts, conversionOpts...)
 			defer converter.Close()
 
 			for {
