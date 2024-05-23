@@ -808,6 +808,16 @@ func (t *Table) Iterator(
 	// buffered results are flushed to the next operator.
 	const bufferSize = 1024
 
+	conversionOpts := []pqarrow.ConverterOptions{}
+	if iterOpts.Filter != nil {
+		physicalFilter, err := physicalplan.BooleanExpr(iterOpts.Filter)
+		if err != nil {
+			return err
+		}
+
+		conversionOpts = append(conversionOpts, pqarrow.WithFilter(physicalFilter))
+	}
+
 	errg, ctx := errgroup.WithContext(ctx)
 	for _, callback := range callbacks {
 		callback := callback

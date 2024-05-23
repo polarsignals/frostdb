@@ -233,9 +233,18 @@ type ParquetConverter struct {
 	scratchPreReadValues [][]parquet.Value
 }
 
+type ConverterOptions func(*ParquetConverter)
+
+func WithFilter(filter physicalplan.BooleanExpression) ConverterOptions {
+	return func(c *ParquetConverter) {
+		c.rowGroupFilter = filter
+	}
+}
+
 func NewParquetConverter(
 	pool memory.Allocator,
 	iterOpts logicalplan.IterOptions,
+	opts ...ConverterOptions,
 ) *ParquetConverter {
 	c := &ParquetConverter{
 		mode:             normal,
@@ -244,15 +253,11 @@ func NewParquetConverter(
 		distinctColInfos: make([]*distinctColInfo, len(iterOpts.DistinctColumns)),
 	}
 
-	if iterOpts.Filter != nil {
-		var err error
-		c.rowGroupFilter, err = physicalplan.BooleanExpr(iterOpts.Filter)
-		if err != nil {
-			// This should never happen, as the filter has already been
-			// validated.
-			panic(fmt.Sprintf("programming error: %v", err))
-		}
-	} else if len(iterOpts.DistinctColumns) != 0 {
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	if iterOpts.Filter == nil && len(iterOpts.DistinctColumns) != 0 {
 		simpleDistinctExprs := true
 		for _, distinctColumn := range iterOpts.DistinctColumns {
 			if _, ok := distinctColumn.(*logicalplan.DynamicColumn); ok ||
