@@ -275,7 +275,7 @@ func ParquetValueCompareArrowScalar(v parquet.Value, s scalar.Scalar) int {
 func forEachParquetValue(chunk parquet.ColumnChunk, vals []parquet.Value, f func(i int, value parquet.Value) error) ([]parquet.Value, error) {
 	pages := chunk.Pages()
 	defer pages.Close()
-	n := 0
+	i := 0
 	for { // Read all the pages into the vals slice
 		p, err := pages.ReadPage()
 		if err != nil {
@@ -285,10 +285,11 @@ func forEachParquetValue(chunk parquet.ColumnChunk, vals []parquet.Value, f func
 			return nil, err
 		}
 		reader := p.Values()
-		n, err = reader.ReadValues(vals[n:])
+		n, err := reader.ReadValues(vals[i:])
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
+		i += n
 	}
 
 	// Callback for each value in the vals slice
