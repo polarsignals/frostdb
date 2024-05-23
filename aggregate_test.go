@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -435,6 +436,8 @@ func BenchmarkAggregation(b *testing.B) {
 
 func Benchmark_FilteredParquetAggregation(b *testing.B) {
 	ctx := context.Background()
+	rowCount := 200_000
+	step := 0.1 * float64(rowCount)
 
 	columnStore, err := New()
 	require.NoError(b, err)
@@ -476,14 +479,10 @@ func Benchmark_FilteredParquetAggregation(b *testing.B) {
 		db.TableProvider(),
 	)
 
-	for _, bc := range []struct {
-		name    string
-		builder query.Builder
-	}{{
-		name: "sum",
-		builder: engine.ScanTable("test").
+	for i := 0; i < rowCount; i += int(step) {
+		builder := engine.ScanTable("test").
 			Filter(
-				logicalplan.Col("timestamp").Gt(logicalplan.Literal(0)),
+				logicalplan.Col("timestamp").Gt(logicalplan.Literal(i)),
 			).
 			Aggregate(
 				[]*logicalplan.AggregationFunction{
@@ -492,13 +491,11 @@ func Benchmark_FilteredParquetAggregation(b *testing.B) {
 				[]logicalplan.Expr{
 					logicalplan.Col("labels.label2"),
 				},
-			),
-	}} {
-		b.Run(bc.name, func(b *testing.B) {
+			)
+		b.Run(fmt.Sprintf("filter-%v%%", 100*(float64(i)/float64(rowCount))), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				validated := false
-				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
-					require.Equal(b, []int64{6666700000, 6666566667, 6666633333}, r.Column(1).(*array.Int64).Int64Values())
+				_ = builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 					validated = true
 					return nil
 				})
