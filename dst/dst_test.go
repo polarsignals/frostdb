@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	randomSeedKey = "POLARSIGNALS_RANDOM_SEED"
+	randomSeedKey = "GORANDSEED"
 	numCommands   = 512
 	dbName        = "test"
 	tableName     = "test"
