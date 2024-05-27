@@ -21,8 +21,8 @@ require (
 	github.com/prometheus/client_golang v1.19.0
 	github.com/stretchr/testify v1.9.0
 	github.com/thanos-io/objstore v0.0.0-20240512204237-71ef2d0cf7c4
-	go.opentelemetry.io/otel v1.26.0
-	go.opentelemetry.io/otel/trace v1.26.0
+	go.opentelemetry.io/otel v1.27.0
+	go.opentelemetry.io/otel/trace v1.27.0
 	go.uber.org/goleak v1.3.0
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842
 	golang.org/x/sync v0.7.0
