@@ -1,0 +1,38 @@
+name: DST
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  dst:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      run: |
+        curl -L -o go-custom-linux-amd64.tar.gz https://github.com/asubiotto/go/releases/download/v0.0.1-test/go-custom-linux-amd64.tar.gz
+        tar -xzf go-custom-linux-amd64.tar.gz
+        sudo mv go /usr/local/go
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+        echo "GOROOT=/usr/local/go" >> $GITHUB_ENV
+
+    - name: Setup `wasmtime`
+      uses: bytecodealliance/actions/wasmtime/setup@v1
+
+    - name: Setup Go module cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-golang-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-golang-
+
+    - name: Run DST Test
+      run: |
+        go test ./...
