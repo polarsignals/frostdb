@@ -8,6 +8,7 @@ import (
 
 	"github.com/apache/arrow/go/v16/arrow"
 	"github.com/apache/arrow/go/v16/arrow/memory"
+	"github.com/apache/arrow/go/v16/arrow/scalar"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
@@ -470,6 +471,19 @@ func Build(
 			}
 			if ordered {
 				oInfo.nodeMaintainsOrdering()
+			}
+		case plan.Sample != nil:
+			v := plan.Sample.Expr.(*logicalplan.LiteralExpr).Value.(*scalar.Int64).Value
+			perSampler := v / int64(len(prev))
+			r := v % int64(len(prev))
+			for i := range prev {
+				adjust := int64(0)
+				if i < int(r) {
+					adjust = 1
+				}
+				s := NewReservoirSampler(perSampler + adjust)
+				prev[i].SetNext(s)
+				prev[i] = s
 			}
 		default:
 			panic("Unsupported plan")

@@ -21,6 +21,7 @@ type Builder interface {
 	Limit(expr logicalplan.Expr) Builder
 	Execute(ctx context.Context, callback func(ctx context.Context, r arrow.Record) error) error
 	Explain(ctx context.Context) (string, error)
+	Sample(size int64) Builder
 }
 
 type LocalEngine struct {
@@ -139,6 +140,17 @@ func (b LocalQueryBuilder) Limit(
 		pool:        b.pool,
 		tracer:      b.tracer,
 		planBuilder: b.planBuilder.Limit(expr),
+		execOpts:    b.execOpts,
+	}
+}
+
+func (b LocalQueryBuilder) Sample(
+	size int64,
+) Builder {
+	return LocalQueryBuilder{
+		pool:        b.pool,
+		tracer:      b.tracer,
+		planBuilder: b.planBuilder.Sample(logicalplan.Literal(size)),
 		execOpts:    b.execOpts,
 	}
 }
