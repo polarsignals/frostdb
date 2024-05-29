@@ -11,7 +11,7 @@ import (
 )
 
 type TestPlan struct {
-	finish   func() error
+	finish   func(ctx context.Context) error
 	callback func(ctx context.Context, r arrow.Record) error
 }
 
@@ -23,13 +23,13 @@ func (t *TestPlan) Callback(ctx context.Context, r arrow.Record) error {
 }
 func (t *TestPlan) Finish(ctx context.Context) error {
 	if t.finish != nil {
-		return t.finish()
+		return t.finish(ctx)
 	}
 	return nil
 }
-func (t *TestPlan) SetNext(next PhysicalPlan) {}
-func (t *TestPlan) Draw() *Diagram            { return nil }
-func (t *TestPlan) Close()                    {}
+func (t *TestPlan) SetNext(_ PhysicalPlan) {}
+func (t *TestPlan) Draw() *Diagram         { return nil }
+func (t *TestPlan) Close()                 {}
 
 func Test_Sampler(t *testing.T) {
 	ctx := context.Background()
@@ -75,10 +75,10 @@ func Test_Sampler(t *testing.T) {
 				}
 				r := bldr.NewRecord()
 				t.Cleanup(r.Release)
-				s.Callback(ctx, r)
+				require.NoError(t, s.Callback(ctx, r))
 			}
 
-			s.Finish(ctx)
+			require.NoError(t, s.Finish(ctx))
 			require.True(t, called)
 			require.Equal(t, test.reservoirSize, total)
 		})

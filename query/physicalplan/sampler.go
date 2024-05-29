@@ -55,7 +55,7 @@ func (s *ReservoirSampler) Close() {
 }
 
 // Callback collects all the records to sample.
-func (s *ReservoirSampler) Callback(ctx context.Context, r arrow.Record) error {
+func (s *ReservoirSampler) Callback(_ context.Context, r arrow.Record) error {
 	r = s.fill(r)
 	if r == nil {
 		return nil
@@ -66,7 +66,7 @@ func (s *ReservoirSampler) Callback(ctx context.Context, r arrow.Record) error {
 	return nil
 }
 
-// fill will fill the reservoir with the first size records
+// fill will fill the reservoir with the first size records.
 func (s *ReservoirSampler) fill(r arrow.Record) arrow.Record {
 	if s.currentSize == s.size {
 		return r
