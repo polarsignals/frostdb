@@ -21,12 +21,14 @@ func (t *TestPlan) Callback(ctx context.Context, r arrow.Record) error {
 	}
 	return nil
 }
+
 func (t *TestPlan) Finish(ctx context.Context) error {
 	if t.finish != nil {
 		return t.finish(ctx)
 	}
 	return nil
 }
+
 func (t *TestPlan) SetNext(_ PhysicalPlan) {}
 func (t *TestPlan) Draw() *Diagram         { return nil }
 func (t *TestPlan) Close()                 {}
