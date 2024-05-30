@@ -57,7 +57,7 @@ func (s *ReservoirSampler) Close() {
 // Callback collects all the records to sample.
 func (s *ReservoirSampler) Callback(_ context.Context, r arrow.Record) error {
 	r = s.fill(r)
-	if r == nil {
+	if r == nil { // The record fit in the reservoir
 		return nil
 	}
 
@@ -73,18 +73,13 @@ func (s *ReservoirSampler) fill(r arrow.Record) arrow.Record {
 	}
 
 	if s.currentSize+r.NumRows() <= s.size { // The record fits in the reservoir
-		for i := int64(0); i < r.NumRows(); i++ { // For simplicity of implementation the reservoir is by row; This is probably not optimal
-			s.reservoir = append(s.reservoir, r.NewSlice(i, i+1))
-		}
+		s.reservoir = append(s.reservoir, r)
 		s.currentSize += r.NumRows()
-		s.n += r.NumRows()
 		return nil
 	}
 
 	// The record partially fits in the reservoir
-	for i := int64(0); i < s.size-s.currentSize; i++ {
-		s.reservoir = append(s.reservoir, r.NewSlice(i, i+1))
-	}
+	s.reservoir = append(s.reservoir, r.NewSlice(0, s.size-s.currentSize))
 	r = r.NewSlice(s.size-s.currentSize, r.NumRows())
 	s.currentSize = s.size
 	s.n = s.size
@@ -98,7 +93,7 @@ func (s *ReservoirSampler) sample(r arrow.Record) {
 		i += math.Floor(math.Log(rand.Float64())/math.Log(1-s.w)) + 1
 		if i <= float64(n) {
 			// replace a random item of the reservoir with row i
-			s.reservoir[rand.Intn(int(s.size))] = r.NewSlice(int64(i)-s.n-1, int64(i)-s.n)
+			s.replace(rand.Intn(int(s.size)), r.NewSlice(int64(i)-s.n-1, int64(i)-s.n))
 			s.w = s.w * math.Exp(math.Log(rand.Float64())/float64(s.size))
 		}
 	}
@@ -115,4 +110,21 @@ func (s *ReservoirSampler) Finish(ctx context.Context) error {
 	}
 
 	return s.next.Finish(ctx)
+}
+
+// replace will replace the row at index i with the row in the record r at index j.
+func (s *ReservoirSampler) replace(i int, newRow arrow.Record) {
+
+	// find the record in the reservoir that contains the row at index i
+	rows := int64(0)
+	for k, record := range s.reservoir {
+		if int64(i) < rows+record.NumRows() { // Row i is contained in this record
+			front := record.NewSlice(0, int64(i)-rows)
+			back := record.NewSlice(int64(i)-rows+1, record.NumRows())
+			s.reservoir[k].Release() // Release the old reference to the entire record
+			s.reservoir = append(s.reservoir[:k], append([]arrow.Record{front, newRow, back}, s.reservoir[k+1:]...)...)
+			return
+		}
+		rows += record.NumRows()
+	}
 }
