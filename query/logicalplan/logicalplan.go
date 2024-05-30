@@ -161,6 +161,13 @@ func (plan *LogicalPlan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
 		}
 
 		return t, nil
+	case plan.Sample != nil:
+		t, err := expr.DataType(plan.Input)
+		if err != nil {
+			return nil, fmt.Errorf("data type for expr %v within Sample: %w", expr, err)
+		}
+
+		return t, nil
 	default:
 		return nil, fmt.Errorf("unknown logical plan")
 	}
