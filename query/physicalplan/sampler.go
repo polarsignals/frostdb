@@ -115,7 +115,6 @@ func (s *ReservoirSampler) Finish(ctx context.Context) error {
 
 // replace will replace the row at index i with the row in the record r at index j.
 func (s *ReservoirSampler) replace(i int, newRow arrow.Record) {
-
 	// find the record in the reservoir that contains the row at index i
 	rows := int64(0)
 	for k, record := range s.reservoir {
