@@ -120,6 +120,12 @@ func (s *ReservoirSampler) replace(i int, newRow arrow.Record) {
 	rows := int64(0)
 	for k, record := range s.reservoir {
 		if int64(i) < rows+record.NumRows() { // Row i is contained in this record
+			// Edge case where we're replacing a record that is a single row
+			if record.NumRows() == 1 {
+				s.reservoir[k].Release()
+				s.reservoir[k] = newRow
+				return
+			}
 			front := record.NewSlice(0, int64(i)-rows)
 			back := record.NewSlice(int64(i)-rows+1, record.NumRows())
 			s.reservoir[k].Release() // Release the old reference to the entire record
