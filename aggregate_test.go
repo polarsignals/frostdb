@@ -433,6 +433,80 @@ func BenchmarkAggregation(b *testing.B) {
 	}
 }
 
+func Benchmark_SamplingAggregation(b *testing.B) {
+	ctx := context.Background()
+
+	columnStore, err := New()
+	require.NoError(b, err)
+	defer columnStore.Close()
+
+	db, err := columnStore.DB(ctx, "test")
+	require.NoError(b, err)
+
+	// Insert sample data
+	{
+		config := NewTableConfig(dynparquet.SampleDefinition())
+		table, err := db.Table("test", config)
+		require.NoError(b, err)
+
+		totalRows := 10_000
+		recordSize := 100
+		samples := make(dynparquet.Samples, 0, recordSize)
+		for i := 0; i < totalRows/recordSize; i++ {
+			for j := 0; j < cap(samples); j++ {
+				samples = append(samples, dynparquet.Sample{
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value" + strconv.Itoa(i%3),
+					},
+					Stacktrace: []uuid.UUID{
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					},
+					Timestamp: int64(i*cap(samples) + j),
+					Value:     int64(i*cap(samples) + j),
+				})
+				r, err := samples.ToRecord()
+				require.NoError(b, err)
+				_, err = table.InsertRecord(ctx, r)
+				require.NoError(b, err)
+			}
+		}
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	for _, bc := range []struct {
+		name    string
+		builder query.Builder
+	}{{
+		name: "sum_sample(1000)",
+		builder: engine.ScanTable("test").
+			Sample(1000).
+			Aggregate(
+				[]*logicalplan.AggregationFunction{
+					logicalplan.Sum(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
+			),
+	}} {
+		b.Run(bc.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				executed := false
+				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					executed = true
+					return nil
+				})
+				require.True(b, executed)
+			}
+		})
+	}
+}
+
 func Test_Aggregation_DynCol(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	defer mem.AssertSize(t, 0)
