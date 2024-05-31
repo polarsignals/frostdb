@@ -74,6 +74,7 @@ func (s *ReservoirSampler) fill(r arrow.Record) arrow.Record {
 
 	if s.currentSize+r.NumRows() <= s.size { // The record fits in the reservoir
 		s.reservoir = append(s.reservoir, r)
+		r.Retain()
 		s.currentSize += r.NumRows()
 		return nil
 	}
