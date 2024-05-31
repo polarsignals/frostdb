@@ -479,30 +479,30 @@ func Benchmark_SamplingAggregation(b *testing.B) {
 		db.TableProvider(),
 	)
 
-	for _, bc := range []struct {
-		name    string
-		builder query.Builder
-	}{{
-		name: "sum_sample(1000)",
-		builder: engine.ScanTable("test").
-			Sample(1000).
-			Aggregate(
-				[]*logicalplan.AggregationFunction{
-					logicalplan.Sum(logicalplan.Col("value")),
-				},
-				[]logicalplan.Expr{
-					logicalplan.Col("labels.label2"),
-				},
-			),
-	}} {
-		b.Run(bc.name, func(b *testing.B) {
+	for name, bc := range map[string]struct {
+		samples int
+	}{
+		"sum_sample(1000)": {
+			samples: 1000,
+		},
+	} {
+		b.Run(name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				executed := false
-				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
-					executed = true
+				samples := 0
+				engine.ScanTable("test").
+					Sample(int64(bc.samples)).
+					Aggregate(
+						[]*logicalplan.AggregationFunction{
+							logicalplan.Sum(logicalplan.Col("value")),
+						},
+						[]logicalplan.Expr{
+							logicalplan.Col("labels.label2"),
+						},
+					).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					samples += int(r.NumRows())
 					return nil
 				})
-				require.True(b, executed)
+				require.Equal(b, bc.samples, samples)
 			}
 		})
 	}
