@@ -465,11 +465,12 @@ func Benchmark_SamplingAggregation(b *testing.B) {
 					Timestamp: int64(i*cap(samples) + j),
 					Value:     int64(i*cap(samples) + j),
 				})
-				r, err := samples.ToRecord()
-				require.NoError(b, err)
-				_, err = table.InsertRecord(ctx, r)
-				require.NoError(b, err)
 			}
+			r, err := samples.ToRecord()
+			require.NoError(b, err)
+			_, err = table.InsertRecord(ctx, r)
+			require.NoError(b, err)
+			samples = samples[:0]
 		}
 	}
 
