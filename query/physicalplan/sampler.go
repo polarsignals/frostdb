@@ -18,11 +18,9 @@ type ReservoirSampler struct {
 	// reservoir is the set of records that have been sampled. They may vary in schema due to dynamic columns.
 	reservoir []arrow.Record
 
-	// currentSize is the number of rows in the reservoir in all records.
-	currentSize int64
-
 	w float64 // w is the probability of keeping a record
 	n int64   // n is the number of rows that have been sampled thus far
+	i float64 // i is the current row number being sampled
 }
 
 // NewReservoirSampler will create a new ReservoirSampler operator that will sample up to size rows of all records seen by Callback.
@@ -68,21 +66,20 @@ func (s *ReservoirSampler) Callback(_ context.Context, r arrow.Record) error {
 
 // fill will fill the reservoir with the first size records.
 func (s *ReservoirSampler) fill(r arrow.Record) arrow.Record {
-	if s.currentSize == s.size {
+	if s.n >= s.size {
 		return r
 	}
 
-	if s.currentSize+r.NumRows() <= s.size { // The record fits in the reservoir
+	if s.n+r.NumRows() <= s.size { // The record fits in the reservoir
 		s.reservoir = append(s.reservoir, r)
 		r.Retain()
-		s.currentSize += r.NumRows()
+		s.n += r.NumRows()
 		return nil
 	}
 
 	// The record partially fits in the reservoir
-	s.reservoir = append(s.reservoir, r.NewSlice(0, s.size-s.currentSize))
-	r = r.NewSlice(s.size-s.currentSize, r.NumRows())
-	s.currentSize = s.size
+	s.reservoir = append(s.reservoir, r.NewSlice(0, s.size-s.n))
+	r = r.NewSlice(s.size-s.n, r.NumRows())
 	s.n = s.size
 	return r
 }
@@ -90,11 +87,18 @@ func (s *ReservoirSampler) fill(r arrow.Record) arrow.Record {
 // sample implements the reservoir sampling algorithm found https://en.wikipedia.org/wiki/Reservoir_sampling.
 func (s *ReservoirSampler) sample(r arrow.Record) {
 	n := s.n + r.NumRows()
-	for i := float64(s.n); i < float64(n); {
-		i += math.Floor(math.Log(rand.Float64())/math.Log(1-s.w)) + 1
-		if i <= float64(n) {
+	if s.i == 0 {
+		s.i = float64(s.n) - 1
+	} else if s.i < float64(n) {
+		s.replace(rand.Intn(int(s.size)), r.NewSlice(int64(s.i)-s.n, int64(s.i)-s.n+1))
+		s.w = s.w * math.Exp(math.Log(rand.Float64())/float64(s.size))
+	}
+
+	for s.i < float64(n) {
+		s.i += math.Floor(math.Log(rand.Float64())/math.Log(1-s.w)) + 1
+		if s.i < float64(n) {
 			// replace a random item of the reservoir with row i
-			s.replace(rand.Intn(int(s.size)), r.NewSlice(int64(i)-s.n-1, int64(i)-s.n))
+			s.replace(rand.Intn(int(s.size)), r.NewSlice(int64(s.i)-s.n, int64(s.i)-s.n+1))
 			s.w = s.w * math.Exp(math.Log(rand.Float64())/float64(s.size))
 		}
 	}
