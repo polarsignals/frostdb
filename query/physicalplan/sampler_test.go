@@ -137,3 +137,60 @@ func Test_Sampler_Randomness(t *testing.T) {
 		require.LessOrEqual(t, float64(count), upperBound)
 	}
 }
+
+func Benchmark_Sampler(b *testing.B) {
+	ctx := context.Background()
+	tests := map[string]struct {
+		reservoirSize int64
+		numRows       int
+		recordSize    int
+	}{
+		"10%_10_000_x10": {
+			reservoirSize: 1000,
+			numRows:       10_000,
+			recordSize:    10,
+		},
+	}
+
+	for name, test := range tests {
+		b.Run(name, func(b *testing.B) {
+			schema := arrow.NewSchema([]arrow.Field{
+				{Name: "a", Type: arrow.PrimitiveTypes.Int64},
+			}, nil)
+			bldr := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
+
+			recordCount := test.numRows / test.recordSize
+			records := make([]arrow.Record, 0, recordCount)
+			b.Cleanup(func() {
+				for _, r := range records {
+					r.Release()
+				}
+			})
+			for i := 0; i < recordCount; i++ {
+				for j := 0; j < test.recordSize; j++ {
+					bldr.Field(0).(*array.Int64Builder).Append(int64((i * test.recordSize) + j))
+				}
+				records = append(records, bldr.NewRecord())
+			}
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				// Create a new sampler
+				s := NewReservoirSampler(test.reservoirSize)
+				total := int64(0)
+				s.SetNext(&TestPlan{
+					callback: func(ctx context.Context, r arrow.Record) error {
+						total += r.NumRows()
+						return nil
+					},
+				})
+
+				for _, r := range records {
+					require.NoError(b, s.Callback(ctx, r))
+				}
+				require.NoError(b, s.Finish(ctx))
+				require.Equal(b, test.reservoirSize, total)
+			}
+		})
+	}
+}
