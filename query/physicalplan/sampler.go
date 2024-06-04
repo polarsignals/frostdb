@@ -26,9 +26,8 @@ type ReservoirSampler struct {
 // NewReservoirSampler will create a new ReservoirSampler operator that will sample up to size rows of all records seen by Callback.
 func NewReservoirSampler(size int64) *ReservoirSampler {
 	return &ReservoirSampler{
-		size:      size,
-		reservoir: make([]sample, 0, size),
-		w:         math.Exp(math.Log(rand.Float64()) / float64(size)),
+		size: size,
+		w:    math.Exp(math.Log(rand.Float64()) / float64(size)),
 	}
 }
 
@@ -71,22 +70,27 @@ func (s *ReservoirSampler) fill(r arrow.Record) arrow.Record {
 	}
 
 	if s.n+r.NumRows() <= s.size { // The record fits in the reservoir
-		for i := int64(0); i < r.NumRows(); i++ {
-			s.reservoir = append(s.reservoir, sample{r: r, i: i})
-			r.Retain()
-		}
+		s.reservoir = append(s.reservoir, sample{r: r, i: -1}) // -1 means the record is not sampled; use the entire record
+		r.Retain()
 		s.n += r.NumRows()
 		return nil
 	}
 
 	// The record partially fits in the reservoir
-	for i := int64(0); i < s.size-s.n; i++ {
+	for i := int64(0); i < s.size-s.n; i++ { // TODO fix me
 		s.reservoir = append(s.reservoir, sample{r: r, i: i})
 		r.Retain()
 	}
 	r = r.NewSlice(s.size-s.n, r.NumRows())
 	s.n = s.size
 	return r
+}
+
+func (s *ReservoirSampler) sliceReservoir() {
+	newReservoir := make([]sample, 0, s.size)
+	for i := int64(0); i < s.size; i++ {
+		newReservoir = append(newReservoir, s.reservoir[i])
+	}
 }
 
 // sample implements the reservoir sampling algorithm found https://en.wikipedia.org/wiki/Reservoir_sampling.
@@ -114,6 +118,13 @@ func (s *ReservoirSampler) sample(r arrow.Record) {
 func (s *ReservoirSampler) Finish(ctx context.Context) error {
 	// Send all the records in the reservoir to the next operator
 	for _, r := range s.reservoir {
+		if r.i == -1 {
+			if err := s.next.Callback(ctx, r.r); err != nil {
+				return err
+			}
+			continue
+		}
+
 		record := r.r.NewSlice(r.i, r.i+1)
 		defer record.Release()
 		if err := s.next.Callback(ctx, record); err != nil {
