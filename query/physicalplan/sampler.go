@@ -91,7 +91,9 @@ func (s *ReservoirSampler) sliceReservoir() {
 	for _, r := range s.reservoir {
 		for j := int64(0); j < r.r.NumRows(); j++ {
 			newReservoir = append(newReservoir, sample{r: r.r, i: j})
+			r.r.Retain()
 		}
+		r.r.Release()
 	}
 	s.reservoir = newReservoir
 }
