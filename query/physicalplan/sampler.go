@@ -57,6 +57,9 @@ func (s *ReservoirSampler) Callback(_ context.Context, r arrow.Record) error {
 	if r == nil { // The record fit in the reservoir
 		return nil
 	}
+	if s.n == s.size { // The reservoir just filled up. Slice the reservoir to the correct size so we can easily perform row replacement
+		s.sliceReservoir()
+	}
 
 	// Sample the record
 	s.sample(r)
@@ -77,10 +80,7 @@ func (s *ReservoirSampler) fill(r arrow.Record) arrow.Record {
 	}
 
 	// The record partially fits in the reservoir
-	for i := int64(0); i < s.size-s.n; i++ { // TODO fix me
-		s.reservoir = append(s.reservoir, sample{r: r, i: i})
-		r.Retain()
-	}
+	s.reservoir = append(s.reservoir, sample{r: r.NewSlice(0, s.size-s.n), i: -1})
 	r = r.NewSlice(s.size-s.n, r.NumRows())
 	s.n = s.size
 	return r
@@ -88,9 +88,12 @@ func (s *ReservoirSampler) fill(r arrow.Record) arrow.Record {
 
 func (s *ReservoirSampler) sliceReservoir() {
 	newReservoir := make([]sample, 0, s.size)
-	for i := int64(0); i < s.size; i++ {
-		newReservoir = append(newReservoir, s.reservoir[i])
+	for _, r := range s.reservoir {
+		for j := int64(0); j < r.r.NumRows(); j++ {
+			newReservoir = append(newReservoir, sample{r: r.r, i: j})
+		}
 	}
+	s.reservoir = newReservoir
 }
 
 // sample implements the reservoir sampling algorithm found https://en.wikipedia.org/wiki/Reservoir_sampling.
