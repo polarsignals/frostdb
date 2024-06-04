@@ -122,10 +122,13 @@ func ValidateSingleFieldSet(plan *LogicalPlan) *PlanValidationError {
 	if plan.Limit != nil {
 		fieldsSet = append(fieldsSet, 6)
 	}
+	if plan.Sample != nil {
+		fieldsSet = append(fieldsSet, 7)
+	}
 
 	if len(fieldsSet) != 1 {
 		fieldsFound := make([]string, 0)
-		fields := []string{"SchemaScan", "TableScan", "Filter", "Distinct", "Projection", "Aggregation"}
+		fields := []string{"SchemaScan", "TableScan", "Filter", "Distinct", "Projection", "Aggregation", "Limit", "Sample"}
 		for _, i := range fieldsSet {
 			fieldsFound = append(fieldsFound, fields[i])
 		}

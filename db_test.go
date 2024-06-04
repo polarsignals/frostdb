@@ -3279,3 +3279,47 @@ func (a *AssertBucket) Upload(ctx context.Context, path string, r io.Reader) err
 	}
 	return a.Bucket.Upload(ctx, path, r)
 }
+
+func Test_DB_Sample(t *testing.T) {
+	t.Parallel()
+	config := NewTableConfig(
+		dynparquet.SampleDefinition(),
+	)
+	logger := newTestLogger(t)
+
+	c, err := New(WithLogger(logger))
+	t.Cleanup(func() {
+		require.NoError(t, c.Close())
+	})
+	require.NoError(t, err)
+	db, err := c.DB(context.Background(), "test")
+	require.NoError(t, err)
+	table, err := db.Table("test", config)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	for i := 0; i < 500; i++ {
+		samples := dynparquet.GenerateTestSamples(10)
+		r, err := samples.ToRecord()
+		require.NoError(t, err)
+		_, err = table.InsertRecord(ctx, r)
+		require.NoError(t, err)
+	}
+
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	lock := &sync.Mutex{}
+	rows := int64(0)
+	sampleSize := int64(13)
+	engine := query.NewEngine(pool, db.TableProvider())
+	err = engine.ScanTable("test").
+		Sample(sampleSize). // Sample 13 rows
+		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			lock.Lock()
+			defer lock.Unlock()
+			rows += r.NumRows()
+			return nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, sampleSize, rows)
+}

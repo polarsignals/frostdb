@@ -25,6 +25,7 @@ type LogicalPlan struct {
 	Projection  *Projection
 	Aggregation *Aggregation
 	Limit       *Limit
+	Sample      *Sample
 }
 
 // Callback is a function that is called throughout a chain of operators
@@ -157,6 +158,13 @@ func (plan *LogicalPlan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
 		t, err := expr.DataType(plan.Input)
 		if err != nil {
 			return nil, fmt.Errorf("data type for expr %v within Distinct: %w", expr, err)
+		}
+
+		return t, nil
+	case plan.Sample != nil:
+		t, err := expr.DataType(plan.Input)
+		if err != nil {
+			return nil, fmt.Errorf("data type for expr %v within Sample: %w", expr, err)
 		}
 
 		return t, nil
@@ -413,4 +421,12 @@ type Limit struct {
 
 func (l *Limit) String() string {
 	return "Limit" + " Expr: " + fmt.Sprint(l.Expr)
+}
+
+type Sample struct {
+	Expr Expr
+}
+
+func (s *Sample) String() string {
+	return "Sample" + " Expr: " + fmt.Sprint(s.Expr)
 }

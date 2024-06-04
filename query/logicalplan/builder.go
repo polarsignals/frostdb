@@ -237,6 +237,22 @@ func resolveAggregation(plan *LogicalPlan, agg *AggregationFunction) ([]*Aggrega
 	}
 }
 
+func (b Builder) Sample(expr Expr) Builder {
+	if expr == nil {
+		return b
+	}
+
+	return Builder{
+		err: b.err,
+		plan: &LogicalPlan{
+			Input: b.plan,
+			Sample: &Sample{
+				Expr: expr,
+			},
+		},
+	}
+}
+
 func (b Builder) Build() (*LogicalPlan, error) {
 	if b.err != nil {
 		return nil, b.err
