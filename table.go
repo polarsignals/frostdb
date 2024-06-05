@@ -444,12 +444,12 @@ func (t *Table) writeBlock(
 	if rbo.wg != nil {
 		defer rbo.wg.Done()
 	}
-	level.Debug(t.logger).Log("msg", "syncing block", "ulid", block.ulid, "size", block.index.Size())
+	level.Debug(t.logger).Log("msg", "syncing block", "next_txn", nextTxn, "ulid", block.ulid, "size", block.index.Size())
 	block.pendingWritersWg.Wait()
 
 	// from now on, the block will no longer be modified, we can persist it to disk
 
-	level.Debug(t.logger).Log("msg", "done syncing block", "ulid", block.ulid, "size", block.index.Size())
+	level.Debug(t.logger).Log("msg", "done syncing block", "next_txn", nextTxn, "ulid", block.ulid, "size", block.index.Size())
 
 	// Persist the block
 	var err error
@@ -473,6 +473,7 @@ func (t *Table) writeBlock(
 			return err
 		}
 
+		level.Debug(t.logger).Log("msg", "recording block persistence in WAL", "ulid", block.ulid, "txn", tx)
 		if err := t.wal.Log(tx, &walpb.Record{
 			Entry: &walpb.Entry{
 				EntryType: &walpb.Entry_TableBlockPersisted_{
