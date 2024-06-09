@@ -2,6 +2,7 @@ package arrowutils
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"testing"
 
@@ -240,7 +241,7 @@ func TestSortRecordBuilderReuse(t *testing.T) {
 }
 
 func TestReorderRecord(t *testing.T) {
-	t.Run("Without dictionary field", func(t *testing.T) {
+	t.Run("Simple", func(t *testing.T) {
 		mem := memory.NewGoAllocator()
 		b := array.NewRecordBuilder(mem, arrow.NewSchema(
 			[]arrow.Field{
@@ -266,7 +267,7 @@ func TestReorderRecord(t *testing.T) {
 		want := []int64{1, 2, 3}
 		require.Equal(t, want, result.Column(0).(*array.Int64).Int64Values())
 	})
-	t.Run("With dictionary field", func(t *testing.T) {
+	t.Run("WithDict", func(t *testing.T) {
 		mem := memory.NewGoAllocator()
 		b := array.NewRecordBuilder(mem, arrow.NewSchema(
 			[]arrow.Field{
@@ -281,27 +282,83 @@ func TestReorderRecord(t *testing.T) {
 		))
 		defer b.Release()
 		d := b.Field(0).(*array.BinaryDictionaryBuilder)
-		d.Reserve(3)
-		require.Nil(t, d.AppendString("3"))
-		require.Nil(t, d.AppendString("2"))
-		require.Nil(t, d.AppendString("1"))
+		require.NoError(t, d.AppendString("3"))
+		require.NoError(t, d.AppendString("2"))
+		require.NoError(t, d.AppendString("1"))
+		d.AppendNull()
+		require.NoError(t, d.AppendString("3"))
 		r := b.NewRecord()
 		defer r.Release()
 
 		indices := array.NewInt32Builder(mem)
-		indices.AppendValues([]int32{2, 1, 0}, nil)
-		by := indices.NewInt32Array()
+		indices.AppendValues([]int32{2, 1, 4, 0, 3}, nil)
+		result, err := Take(compute.WithAllocator(context.Background(), mem), r, indices.NewInt32Array())
+		require.NoError(t, err)
+		defer result.Release()
+
+		want := []string{"1", "2", "3", "3", ""}
+		got := result.Column(0).(*array.Dictionary)
+		require.Equal(t, len(want), got.Len())
+		for i, v := range want {
+			if v == "" {
+				require.True(t, got.IsNull(i))
+				continue
+			}
+			require.Equal(t, want[i], got.ValueStr(i))
+		}
+	})
+	t.Run("List", func(t *testing.T) {
+		mem := memory.NewGoAllocator()
+		b := array.NewRecordBuilder(mem, arrow.NewSchema(
+			[]arrow.Field{
+				{
+					Name: "list",
+					Type: arrow.ListOf(&arrow.DictionaryType{IndexType: arrow.PrimitiveTypes.Int32, ValueType: arrow.BinaryTypes.String}),
+				},
+			}, nil,
+		))
+		defer b.Release()
+		lb := b.Field(0).(*array.ListBuilder)
+		vb := lb.ValueBuilder().(*array.BinaryDictionaryBuilder)
+		lb.Append(true)
+		require.NoError(t, vb.AppendString("1"))
+		require.NoError(t, vb.AppendString("2"))
+		require.NoError(t, vb.AppendString("3"))
+		require.NoError(t, vb.AppendString("1"))
+		lb.Append(false)
+		lb.Append(true)
+		require.NoError(t, vb.AppendString("4"))
+		require.NoError(t, vb.AppendString("5"))
+		require.NoError(t, vb.AppendString("6"))
+		lb.Append(true)
+		require.NoError(t, vb.AppendString("3"))
+		require.NoError(t, vb.AppendString("3"))
+		require.NoError(t, vb.AppendString("3"))
+		require.NoError(t, vb.AppendString("4"))
+		r := b.NewRecord()
+		defer r.Release()
+
+		indices := array.NewInt32Builder(mem)
+		indices.AppendValues([]int32{2, 1, 0, 3}, nil)
 		result, err := Take(
-			compute.WithAllocator(context.Background(), mem), r, by)
+			compute.WithAllocator(context.Background(), mem), r, indices.NewInt32Array())
 		require.Nil(t, err)
 		defer result.Release()
 
-		want := []string{"1", "2", "3"}
-		got := result.Column(0).(*array.Dictionary)
-		str := got.Dictionary().(*array.String)
-		require.Equal(t, len(want), got.Len())
-		for i := range want {
-			require.Equal(t, want[i], str.Value(got.GetValueIndex(i)))
+		got := result.Column(0).(*array.List)
+		expected := []string{
+			"[\"4\",\"5\",\"6\"]",
+			"",
+			"[\"1\",\"2\",\"3\",\"1\"]",
+			"[\"3\",\"3\",\"3\",\"4\"]",
+		}
+		require.Equal(t, len(expected), got.Len())
+		for i, v := range expected {
+			if len(v) == 0 {
+				require.True(t, got.IsNull(i), "expected null at %d", i)
+				continue
+			}
+			require.Equal(t, expected[i], got.ValueStr(i), "unexpected value at %d", i)
 		}
 	})
 }
@@ -386,4 +443,88 @@ func sortAndCompare(t *testing.T, kase SortCase) {
 	defer got.Release()
 
 	require.Equal(t, kase.Indices, got.Int32Values())
+}
+
+func BenchmarkTake(b *testing.B) {
+	const (
+		numRows            = 1024
+		numValsPerListElem = 4
+	)
+	mem := memory.NewGoAllocator()
+	b.Run("Dict", func(b *testing.B) {
+		rb := array.NewRecordBuilder(mem, arrow.NewSchema(
+			[]arrow.Field{
+				{
+					Name: "dict",
+					Type: &arrow.DictionaryType{
+						IndexType: arrow.PrimitiveTypes.Int32,
+						ValueType: arrow.BinaryTypes.Binary,
+					},
+				},
+			}, nil,
+		))
+		defer rb.Release()
+		d := rb.Field(0).(*array.BinaryDictionaryBuilder)
+		for i := 0; i < numRows; i++ {
+			// Interesting to benchmark with a string that appears every other row.
+			// i.e. only one entry in the dict.
+			require.NoError(b, d.AppendString("appearseveryotherrow"))
+			require.NoError(b, d.AppendString(fmt.Sprintf("%d", i)))
+		}
+		r := rb.NewRecord()
+		indices := array.NewInt32Builder(mem)
+		for i := r.NumRows() - 1; i > 0; i-- {
+			indices.Append(int32(i))
+		}
+		ctx := compute.WithAllocator(context.Background(), mem)
+		indArr := indices.NewInt32Array()
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := Take(ctx, r, indArr); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("List", func(b *testing.B) {
+		listb := array.NewRecordBuilder(mem, arrow.NewSchema(
+			[]arrow.Field{
+				{
+					Name: "list",
+					Type: arrow.ListOf(
+						&arrow.DictionaryType{
+							IndexType: arrow.PrimitiveTypes.Int32, ValueType: arrow.BinaryTypes.Binary,
+						},
+					),
+				},
+			}, nil,
+		))
+		defer listb.Release()
+
+		l := listb.Field(0).(*array.ListBuilder)
+		vb := l.ValueBuilder().(*array.BinaryDictionaryBuilder)
+		for i := 0; i < numRows; i++ {
+			l.Append(true)
+			for j := 0; j < numValsPerListElem-1; j++ {
+				require.NoError(b, vb.AppendString(fmt.Sprintf("%d", i)))
+			}
+			require.NoError(b, vb.AppendString("appearseveryrow"))
+		}
+
+		r := listb.NewRecord()
+		indices := array.NewInt32Builder(mem)
+		for i := numRows - 1; i > 0; i-- {
+			indices.Append(int32(i))
+		}
+		ctx := compute.WithAllocator(context.Background(), mem)
+		indArr := indices.NewInt32Array()
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := Take(ctx, r, indArr); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

@@ -68,16 +68,16 @@ func SortRecord(r arrow.Record, columns []SortingColumn) (*array.Int32, error) {
 //
 // Use compute.WithAllocator to pass a custom memory.Allocator.
 func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Record, error) {
-	// compute.Take doesn't support dictionaries. Use take on r when r does not have
-	// dictionary column.
-	var hasDictionary bool
+	// compute.Take doesn't support dictionaries or lists. Use take on r when r
+	// does not have these columns.
+	var customTake bool
 	for i := 0; i < int(r.NumCols()); i++ {
-		if r.Column(i).DataType().ID() == arrow.DICTIONARY {
-			hasDictionary = true
+		if r.Column(i).DataType().ID() == arrow.DICTIONARY || r.Column(i).DataType().ID() == arrow.LIST {
+			customTake = true
 			break
 		}
 	}
-	if !hasDictionary {
+	if !customTake {
 		res, err := compute.Take(
 			ctx,
 			compute.TakeOptions{BoundsCheck: true},
@@ -89,8 +89,11 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 		}
 		return res.(*compute.RecordDatum).Value, nil
 	}
-	resArr := make([]arrow.Array, r.NumCols())
+	if r.NumCols() == 0 {
+		return r, nil
+	}
 
+	resArr := make([]arrow.Array, r.NumCols())
 	defer func() {
 		for _, a := range resArr {
 			if a != nil {
@@ -102,19 +105,27 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 	for i := 0; i < int(r.NumCols()); i++ {
 		i := i
 		col := r.Column(i)
-		if d, ok := col.(*array.Dictionary); ok {
-			g.Go(func() error {
-				return TakeDictColumn(ctx, d, i, resArr, indices)
-			})
-		} else {
-			g.Go(func() error {
-				return TakeColumn(ctx, col, i, resArr, indices)
-			})
+		switch arr := r.Column(i).(type) {
+		case *array.Dictionary:
+			g.Go(func() error { return TakeDictColumn(ctx, arr, i, resArr, indices) })
+		case *array.List:
+			g.Go(func() error { return TakeListColumn(ctx, arr, i, resArr, indices) })
+		default:
+			g.Go(func() error { return TakeColumn(ctx, col, i, resArr, indices) })
 		}
 	}
-	err := g.Wait()
-	if err != nil {
+	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+
+	// We checked for at least one column at the beginning of the function.
+	expectedLen := resArr[0].Len()
+	for _, a := range resArr {
+		if a.Len() != expectedLen {
+			return nil, fmt.Errorf(
+				"pqarrow/arrowutils: expected same length %d for all columns got %d for %s", expectedLen, a.Len(), a.DataType().Name(),
+			)
+		}
 	}
 	return array.NewRecord(r.Schema(), resArr, int64(indices.Len())), nil
 }
@@ -129,32 +140,62 @@ func TakeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, 
 }
 
 func TakeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arrow.Array, indices *array.Int32) error {
-	var add func(b *array.BinaryDictionaryBuilder, idx int) error
-	switch e := a.Dictionary().(type) {
+	r := array.NewDictionaryBuilderWithDict(
+		compute.GetAllocator(ctx), a.DataType().(*arrow.DictionaryType), a.Dictionary(),
+	).(*array.BinaryDictionaryBuilder)
+	defer r.Release()
+
+	r.Reserve(indices.Len())
+	idxBuilder := r.IndexBuilder()
+	for _, i := range indices.Int32Values() {
+		if a.IsNull(int(i)) {
+			r.AppendNull()
+			continue
+		}
+		idxBuilder.Append(a.GetValueIndex(int(i)))
+	}
+
+	arr[idx] = r.NewArray()
+	return nil
+}
+
+func TakeListColumn(ctx context.Context, a *array.List, idx int, arr []arrow.Array, indices *array.Int32) error {
+	r := array.NewBuilder(compute.GetAllocator(ctx), a.DataType()).(*array.ListBuilder)
+	valueBuilder, ok := r.ValueBuilder().(*array.BinaryDictionaryBuilder)
+	if !ok {
+		return fmt.Errorf("unexpected value builder type %T for list column", r.ValueBuilder())
+	}
+
+	listValues := a.ListValues().(*array.Dictionary)
+	switch dictV := listValues.Dictionary().(type) {
 	case *array.String:
-		add = func(b *array.BinaryDictionaryBuilder, idx int) error {
-			return b.AppendString(e.Value(idx))
+		if err := valueBuilder.InsertStringDictValues(dictV); err != nil {
+			return err
 		}
 	case *array.Binary:
-		add = func(b *array.BinaryDictionaryBuilder, idx int) error {
-			return b.Append(e.Value(idx))
+		if err := valueBuilder.InsertDictValues(dictV); err != nil {
+			return err
 		}
-	default:
-		panic(fmt.Sprintf("unexpected dictionary type %T for take", e))
 	}
-	r := array.NewBuilder(compute.GetAllocator(ctx), a.DataType()).(*array.BinaryDictionaryBuilder)
-	defer r.Release()
+	idxBuilder := valueBuilder.IndexBuilder()
+
 	r.Reserve(indices.Len())
 	for _, i := range indices.Int32Values() {
 		if a.IsNull(int(i)) {
 			r.AppendNull()
 			continue
 		}
-		err := add(r, a.GetValueIndex(int(i)))
-		if err != nil {
-			return err
+
+		r.Append(true)
+		start, end := a.ValueOffsets(int(i))
+		for j := start; j < end; j++ {
+			idxBuilder.Append(listValues.GetValueIndex(int(j)))
 		}
+		// Resize is necessary here for the correct offsets to be appended to
+		// the list builder. Otherwise length will remain at 0.
+		valueBuilder.Resize(idxBuilder.Len())
 	}
+
 	arr[idx] = r.NewArray()
 	return nil
 }
