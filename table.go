@@ -885,7 +885,7 @@ func (t *Table) Iterator(
 					}
 				}
 			}
-		}))
+		}, t.logger))
 	}
 
 	errg.Go(func() error {
@@ -1007,7 +1007,7 @@ func (t *Table) SchemaIterator(
 					}
 				}
 			}
-		}))
+		}, t.logger))
 	}
 
 	errg.Go(func() error {
