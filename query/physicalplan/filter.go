@@ -298,23 +298,25 @@ func filter(pool memory.Allocator, filterExpr BooleanExpression, ar arrow.Record
 		totalRows += int64(r.End - r.Start)
 	}
 
-	cols := make([]arrow.Array, ar.NumCols())
+	cols := make([]arrow.Array, 0, ar.NumCols())
 	defer func() {
 		for _, col := range cols {
 			col.Release()
 		}
 	}()
 	numRanges := len(recordRanges)
-	for i := range cols {
+	for i := range ar.Columns() {
 		colRanges := make([]arrow.Array, 0, numRanges)
 		for _, rr := range recordRanges {
 			colRanges = append(colRanges, rr.Column(i))
 		}
 
-		cols[i], err = array.Concatenate(colRanges, pool)
+		c, err := array.Concatenate(colRanges, pool)
 		if err != nil {
 			return nil, true, err
 		}
+
+		cols = append(cols, c)
 	}
 
 	return array.NewRecord(ar.Schema(), cols, totalRows), false, nil
