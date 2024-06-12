@@ -277,7 +277,7 @@ func NewParquetConverter(
 	return c
 }
 
-func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *dynparquet.Schema) error {
+func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *dynparquet.Schema, indices *physicalplan.Bitmap) error {
 	schema, err := ParquetRowGroupToArrowSchema(ctx, rg, s, c.iterOpts)
 	if err != nil {
 		return err
@@ -350,7 +350,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 	// Instead of converting every row in a row group we can apply the filter
 	// to the Parquet rows that we've read into memory, and then convert only
 	// the rows that pass the filter. This saves on during Arrow record building.
-	var bm *physicalplan.Bitmap
+	bm := indices
 
 	if c.rowGroupFilter != nil {
 		if len(c.scratchPreReadValues) < len(parquetColumns) {
