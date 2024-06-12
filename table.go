@@ -809,12 +809,14 @@ func (t *Table) Iterator(
 	const bufferSize = 1024
 
 	conversionOpts := []pqarrow.ConverterOptions{}
+	samplerOptions := []pqarrow.SamplerOption{}
 	if iterOpts.Filter != nil {
 		physicalFilter, err := physicalplan.BooleanExpr(iterOpts.Filter)
 		if err != nil {
 			return err
 		}
 
+		samplerOptions = append(samplerOptions, pqarrow.WithSamplerFilter(physicalFilter))
 		conversionOpts = append(conversionOpts, pqarrow.WithFilter(physicalFilter))
 	}
 
@@ -822,8 +824,7 @@ func (t *Table) Iterator(
 	for _, callback := range callbacks {
 		callback := callback
 		errg.Go(recovery.Do(func() error {
-			converter := pqarrow.NewParquetConverter(pool, *iterOpts, conversionOpts...)
-			defer converter.Close()
+			sampler := pqarrow.NewSampler(10_000, t.schema, samplerOptions...)
 
 			for {
 				select {
@@ -831,7 +832,10 @@ func (t *Table) Iterator(
 					return ctx.Err()
 				case rg, ok := <-rowGroups:
 					if !ok {
-						r := converter.NewRecord()
+						r, err := sampler.Convert(ctx, pool, *iterOpts)
+						if err != nil {
+							return err
+						}
 						if r == nil {
 							return nil
 						}
@@ -853,42 +857,12 @@ func (t *Table) Iterator(
 						}
 					case index.ReleaseableRowGroup:
 						defer rg.Release()
-						if err := converter.Convert(ctx, rg, t.schema); err != nil {
+						if err := sampler.Sample(rg); err != nil {
 							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
-						}
-						// This RowGroup had no relevant data. Ignore it.
-						if len(converter.Fields()) == 0 {
-							continue
-						}
-						if converter.NumRows() >= bufferSize {
-							err := func() error {
-								r := converter.NewRecord()
-								defer r.Release()
-								converter.Reset() // Reset the converter to drop any dictionaries that were built.
-								return callback(ctx, r)
-							}()
-							if err != nil {
-								return err
-							}
 						}
 					case dynparquet.DynamicRowGroup:
-						if err := converter.Convert(ctx, rg, t.schema); err != nil {
+						if err := sampler.Sample(rg); err != nil {
 							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
-						}
-						// This RowGroup had no relevant data. Ignore it.
-						if len(converter.Fields()) == 0 {
-							continue
-						}
-						if converter.NumRows() >= bufferSize {
-							err := func() error {
-								r := converter.NewRecord()
-								defer r.Release()
-								converter.Reset() // Reset the converter to drop any dictionaries that were built.
-								return callback(ctx, r)
-							}()
-							if err != nil {
-								return err
-							}
 						}
 					default:
 						return fmt.Errorf("unknown row group type: %T", t)
