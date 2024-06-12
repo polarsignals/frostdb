@@ -496,7 +496,16 @@ func (t *Table) dropPendingBlock(block *TableBlock) {
 	}
 }
 
-func (t *Table) writeBlock(block *TableBlock, nextTxn uint64, skipPersist, snapshotDB bool) {
+func (t *Table) writeBlock(
+	block *TableBlock, nextTxn uint64, snapshotDB bool, opts ...RotateBlockOption,
+) {
+	rbo := &rotateBlockOptions{}
+	for _, o := range opts {
+		o(rbo)
+	}
+	if rbo.wg != nil {
+		defer rbo.wg.Done()
+	}
 	level.Debug(t.logger).Log("msg", "syncing block", "ulid", block.ulid, "size", block.index.Size())
 	block.pendingWritersWg.Wait()
 
@@ -506,7 +515,7 @@ func (t *Table) writeBlock(block *TableBlock, nextTxn uint64, skipPersist, snaps
 
 	// Persist the block
 	var err error
-	if !skipPersist && block.index.Size() != 0 {
+	if !rbo.skipPersist && block.index.Size() != 0 {
 		err = block.Persist()
 	}
 	t.dropPendingBlock(block)
@@ -605,12 +614,43 @@ func (t *Table) writeBlock(block *TableBlock, nextTxn uint64, skipPersist, snaps
 	}
 }
 
-func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bool) error {
+type rotateBlockOptions struct {
+	skipPersist bool
+	wg          *sync.WaitGroup
+}
+
+type RotateBlockOption func(*rotateBlockOptions)
+
+// WithRotateBlockSkipPersist instructs the block rotation operation to not
+// persist the block to object storage.
+func WithRotateBlockSkipPersist() RotateBlockOption {
+	return func(o *rotateBlockOptions) {
+		o.skipPersist = true
+	}
+}
+
+// WithRotateBlockWaitGroup provides a WaitGroup. The rotate block operation
+// will call wg.Done once the block has been persisted. Otherwise, RotateBlock
+// asynchronously persists the block.
+func WithRotateBlockWaitGroup(wg *sync.WaitGroup) RotateBlockOption {
+	return func(o *rotateBlockOptions) {
+		o.wg = wg
+	}
+}
+
+func (t *Table) RotateBlock(_ context.Context, block *TableBlock, opts ...RotateBlockOption) error {
+	rbo := &rotateBlockOptions{}
+	for _, o := range opts {
+		o(rbo)
+	}
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
 	// Need to check that we haven't already rotated this block.
 	if t.active != block {
+		if rbo.wg != nil {
+			rbo.wg.Done()
+		}
 		return nil
 	}
 
@@ -618,7 +658,7 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 		"msg", "rotating block",
 		"ulid", block.ulid,
 		"size", block.Size(),
-		"skip_persist", skipPersist,
+		"skip_persist", rbo.skipPersist,
 	)
 	defer level.Debug(t.logger).Log("msg", "done rotating block", "ulid", block.ulid)
 
@@ -637,7 +677,7 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 	t.metrics.blockRotated.Inc()
 	t.metrics.numParts.Set(float64(0))
 
-	if !skipPersist {
+	if !rbo.skipPersist {
 		// If skipping persist, this block rotation is simply a block discard,
 		// so no need to add this block to pending blocks. Some callers rely
 		// on the fact that blocks are not available for reads as soon as
@@ -647,7 +687,7 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, skipPersist bo
 	// We don't check t.db.columnStore.manualBlockRotation here because this is
 	// the entry point for users to trigger a manual block rotation and they
 	// will specify through skipPersist if they want the block to be persisted.
-	go t.writeBlock(block, tx, skipPersist, true)
+	go t.writeBlock(block, tx, true, opts...)
 
 	return nil
 }
@@ -750,7 +790,7 @@ func (t *Table) appender(ctx context.Context) (*TableBlock, func(), error) {
 		// We need to rotate the block and the writer won't actually be used.
 		finish()
 
-		err = t.RotateBlock(ctx, block, false)
+		err = t.RotateBlock(ctx, block)
 		if err != nil {
 			return nil, nil, fmt.Errorf("rotate block: %w", err)
 		}
