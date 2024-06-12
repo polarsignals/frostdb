@@ -157,12 +157,16 @@ func (s *Sampler) Convert(ctx context.Context, pool memory.Allocator, iterOpts l
 	defer converter.Close()
 
 	for _, sample := range s.reservoir {
-		var indicies []uint32
-		if sample.sampled {
-			indicies = sample.rows.ToArray()
+		var indices *physicalplan.Bitmap
+		switch {
+		case sample.sampled:
+			indices = physicalplan.NewBitmap()
+			indices.Add(uint32(sample.i))
+		default:
+			indices = sample.rows
 		}
 
-		if err := converter.Convert(ctx, sample, s.schema, indicies...); err != nil {
+		if err := converter.Convert(ctx, sample, s.schema, indices); err != nil {
 			return nil, err
 		}
 	}
