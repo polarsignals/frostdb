@@ -2,6 +2,7 @@ package frostdb
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -428,6 +429,149 @@ func BenchmarkAggregation(b *testing.B) {
 				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 					return nil
 				})
+			}
+		})
+	}
+}
+
+func Test_FilteredParquetAggregation(t *testing.T) {
+	ctx := context.Background()
+	rowCount := 200_000
+	samplesPerRecord := 100
+
+	columnStore, err := New()
+	require.NoError(t, err)
+	defer columnStore.Close()
+
+	db, err := columnStore.DB(ctx, "test")
+	require.NoError(t, err)
+
+	// Insert sample data
+	{
+		config := NewTableConfig(dynparquet.SampleDefinition())
+		table, err := db.Table("test", config)
+		require.NoError(t, err)
+
+		samples := make(dynparquet.Samples, samplesPerRecord)
+		for i := 0; i < rowCount; i += samplesPerRecord {
+			for j := 0; j < cap(samples); j++ {
+				samples[j] = dynparquet.Sample{
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value" + strconv.Itoa(i%3),
+					},
+					Stacktrace: []uuid.UUID{
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					},
+					Timestamp: int64(i + j),
+					Value:     int64(i + j),
+				}
+			}
+
+			r, err := samples.ToRecord()
+			require.NoError(t, err)
+			_, err = table.InsertRecord(ctx, r)
+			require.NoError(t, err)
+		}
+		require.NoError(t, table.EnsureCompaction())
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	builder := engine.ScanTable("test").
+		Filter(
+			logicalplan.Col("timestamp").Gt(logicalplan.Literal(0)),
+		).
+		Aggregate(
+			[]*logicalplan.AggregationFunction{
+				logicalplan.Sum(logicalplan.Col("value")),
+			},
+			[]logicalplan.Expr{
+				logicalplan.Col("labels.label2"),
+			},
+		)
+	validated := false
+	_ = builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+		require.Equal(t, int64(3), r.NumRows())
+		require.Equal(t, []int64{666336301650, 667003301650, 665670296700}, r.Column(1).(*array.Int64).Int64Values())
+		validated = true
+		return nil
+	})
+	require.True(t, validated)
+}
+
+func Benchmark_FilteredParquetAggregation(b *testing.B) {
+	ctx := context.Background()
+	rowCount := 200_000
+	samplesPerRecord := 100
+	step := 0.1 * float64(rowCount)
+
+	columnStore, err := New()
+	require.NoError(b, err)
+	defer columnStore.Close()
+
+	db, err := columnStore.DB(ctx, "test")
+	require.NoError(b, err)
+
+	// Insert sample data
+	{
+		config := NewTableConfig(dynparquet.SampleDefinition())
+		table, err := db.Table("test", config)
+		require.NoError(b, err)
+
+		samples := make(dynparquet.Samples, samplesPerRecord)
+		for i := 0; i < rowCount; i += samplesPerRecord {
+			for j := 0; j < cap(samples); j++ {
+				samples[j] = dynparquet.Sample{
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value" + strconv.Itoa(i%3),
+					},
+					Stacktrace: []uuid.UUID{
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					},
+					Timestamp: int64(i + j),
+					Value:     int64(i + j),
+				}
+			}
+
+			r, err := samples.ToRecord()
+			require.NoError(b, err)
+			_, err = table.InsertRecord(ctx, r)
+			require.NoError(b, err)
+		}
+		require.NoError(b, table.EnsureCompaction())
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	for i := 0; i < rowCount; i += int(step) {
+		builder := engine.ScanTable("test").
+			Filter(
+				logicalplan.Col("timestamp").Gt(logicalplan.Literal(i)),
+			).
+			Aggregate(
+				[]*logicalplan.AggregationFunction{
+					logicalplan.Sum(logicalplan.Col("value")),
+				},
+				[]logicalplan.Expr{
+					logicalplan.Col("labels.label2"),
+				},
+			)
+		b.Run(fmt.Sprintf("filter-%v%%", 100*(float64(i)/float64(rowCount))), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				validated := false
+				_ = builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+					validated = true
+					return nil
+				})
+				require.True(b, validated)
 			}
 		})
 	}
