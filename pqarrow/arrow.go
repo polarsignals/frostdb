@@ -914,18 +914,17 @@ func (c *ParquetConverter) writeColumnToArray(
 						// Check if the value falls within the range of the page.
 						if int(x) >= offset && int(x) < offset+int(n) {
 							if spanStart == -1 {
-								spanStart = int(x)
+								spanStart = int(x) - offset
 								span = 0
 							} else if int(x) != spanStart+i { // End of span
 								i += copy(c.scratchValues[i:i+span], c.scratchValues[spanStart:spanStart+span])
-								spanStart = int(x)
+								spanStart = int(x) - offset
 								span = 0
 							}
 
 							span++
-							return true
 						}
-						return false
+						return true
 					})
 					// write the final span if there is one
 					if spanStart != -1 {
