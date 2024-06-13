@@ -437,6 +437,7 @@ func BenchmarkAggregation(b *testing.B) {
 func Benchmark_FilteredParquetAggregation(b *testing.B) {
 	ctx := context.Background()
 	rowCount := 200_000
+	samplesPerRecord := 100
 	step := 0.1 * float64(rowCount)
 
 	columnStore, err := New()
@@ -452,25 +453,27 @@ func Benchmark_FilteredParquetAggregation(b *testing.B) {
 		table, err := db.Table("test", config)
 		require.NoError(b, err)
 
-		samples := make(dynparquet.Samples, 0, 200_000)
-		for i := 0; i < cap(samples); i++ {
-			samples = append(samples, dynparquet.Sample{
-				Labels: map[string]string{
-					"label1": "value1",
-					"label2": "value" + strconv.Itoa(i%3),
-				},
-				Stacktrace: []uuid.UUID{
-					{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-				},
-				Timestamp: int64(i),
-				Value:     int64(i),
-			})
-		}
+		samples := make(dynparquet.Samples, samplesPerRecord)
+		for i := 0; i < rowCount; i += samplesPerRecord {
+			for j := 0; j < cap(samples); j++ {
+				samples[j] = dynparquet.Sample{
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value" + strconv.Itoa(i%3),
+					},
+					Stacktrace: []uuid.UUID{
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					},
+					Timestamp: int64((i * samplesPerRecord) + j),
+					Value:     int64((i * samplesPerRecord) + j),
+				}
+			}
 
-		r, err := samples.ToRecord()
-		require.NoError(b, err)
-		_, err = table.InsertRecord(ctx, r)
-		require.NoError(b, err)
+			r, err := samples.ToRecord()
+			require.NoError(b, err)
+			_, err = table.InsertRecord(ctx, r)
+			require.NoError(b, err)
+		}
 		require.NoError(b, table.EnsureCompaction())
 	}
 
