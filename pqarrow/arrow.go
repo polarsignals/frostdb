@@ -840,6 +840,7 @@ func (c *ParquetConverter) writeColumnToArray(
 	pages := columnChunk.Pages()
 	defer pages.Close()
 	offset := 0
+	iterator := bitmap.Iterator()
 	for {
 		p, err := pages.ReadPage()
 		if err != nil {
@@ -910,9 +911,9 @@ func (c *ParquetConverter) writeColumnToArray(
 					n := p.NumValues()
 					spanStart := -1
 					span := 0
-					bitmap.Iterate(func(x uint32) bool {
-						// Check if the value falls within the range of the page.
-						if int(x) >= offset && int(x) < offset+int(n) {
+					for iterator.HasNext() {
+						if x := iterator.PeekNext(); int(x) >= offset && int(x) < offset+int(n) {
+							iterator.Next()
 							if spanStart == -1 {
 								spanStart = int(x) - offset
 								span = 0
@@ -923,9 +924,10 @@ func (c *ParquetConverter) writeColumnToArray(
 							}
 
 							span++
+						} else {
+							break
 						}
-						return true
-					})
+					}
 					// write the final span if there is one
 					if spanStart != -1 {
 						i += copy(c.scratchValues[i:i+span], c.scratchValues[spanStart:spanStart+span])
