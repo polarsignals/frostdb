@@ -1206,7 +1206,7 @@ func TestDBRecover(t *testing.T) {
 		// the second write, and the second was triggered before the third write.
 		if blockRotation {
 			// A block rotation should trigger the third snapshot.
-			require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+			require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
 			// Wait for the snapshot to complete
 			require.Eventually(t, func() bool {
 				files, err := os.ReadDir(db.snapshotsDir())
@@ -1404,7 +1404,7 @@ func TestDBRecover(t *testing.T) {
 		table, err := db.GetTable(dbAndTableName)
 		require.NoError(t, err)
 
-		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
 
 		rec, err := dynparquet.NewTestSamples().ToRecord()
 		require.NoError(t, err)
@@ -1414,7 +1414,7 @@ func TestDBRecover(t *testing.T) {
 
 		// RotateBlock again, this should log a couple of persisted block WAL
 		// entries.
-		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+		require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
 		require.NoError(t, c.Close())
 
 		c, err = New(
@@ -1474,7 +1474,7 @@ func TestDBRecover(t *testing.T) {
 		require.NoError(t, err)
 
 		// Rotate the block to create a new active block.
-		require.NoError(t, table.RotateBlock(ctx, block, false))
+		require.NoError(t, table.RotateBlock(ctx, block))
 
 		// Issue writes.
 		const nWrites = 5
@@ -1635,7 +1635,7 @@ func TestDBMinTXPersisted(t *testing.T) {
 	writeTx, err := table.InsertRecord(ctx, r)
 	require.NoError(t, err)
 
-	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
 	// Writing the block is asynchronous, so wait for both the new table block
 	// txn and the block persistence txn.
 	db.Wait(writeTx + 2)
@@ -2657,7 +2657,7 @@ func Test_DB_PersistentDiskCompaction_BlockRotation(t *testing.T) {
 	validateRows(1200)
 
 	// Rotate block
-	require.NoError(t, table.RotateBlock(context.Background(), table.ActiveBlock(), false))
+	require.NoError(t, table.RotateBlock(context.Background(), table.ActiveBlock()))
 
 	validateRows(1200)
 
@@ -3151,7 +3151,7 @@ func Test_Iceberg(t *testing.T) {
 
 	validateRows(10)
 
-	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
 	require.Eventually(t, func() bool {
 		info, err := bucket.Attributes(ctx, filepath.Join("test", "test", "metadata", "v1.metadata.json"))
 		if err != nil {
@@ -3171,7 +3171,7 @@ func Test_Iceberg(t *testing.T) {
 
 	validateRows(13)
 
-	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock(), false))
+	require.NoError(t, table.RotateBlock(ctx, table.ActiveBlock()))
 	require.Eventually(t, func() bool {
 		info, err := bucket.Attributes(ctx, filepath.Join("test", "test", "metadata", "v2.metadata.json"))
 		if err != nil {

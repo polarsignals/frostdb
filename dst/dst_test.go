@@ -400,7 +400,7 @@ func TestDST(t *testing.T) {
 		case rotate:
 			errg.Go(func() error {
 				table := tp.GetTable()
-				if err := table.RotateBlock(ctx, table.ActiveBlock(), false); err != nil {
+				if err := table.RotateBlock(ctx, table.ActiveBlock()); err != nil {
 					return fmt.Errorf("rotate error: %s", err)
 				}
 				return nil

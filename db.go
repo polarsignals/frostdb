@@ -844,7 +844,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 				// tx == nextNonPersistedTxn, we should not persist the active
 				// block, but just create a new block.
 				table.pendingBlocks[table.active] = struct{}{}
-				go table.writeBlock(table.active, tx, db.columnStore.manualBlockRotation, false)
+				go table.writeBlock(table.active, tx, db.columnStore.manualBlockRotation)
 			}
 
 			protoEqual := false
@@ -1006,7 +1006,7 @@ func (db *DB) Close(options ...CloseOption) error {
 			// should be faster to write to local disk than upload to object
 			// storage. This would avoid a slow WAL replay on startup if we
 			// don't manage to persist in time.
-			table.writeBlock(table.ActiveBlock(), db.tx.Load(), false, false)
+			table.writeBlock(table.ActiveBlock(), db.tx.Load(), false)
 		}
 	}
 	level.Info(db.logger).Log("msg", "closed all tables")
