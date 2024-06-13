@@ -151,6 +151,9 @@ func (s *Sampler) replace(j int, r *Sample) {
 }
 
 func (s *Sampler) Convert(ctx context.Context, pool memory.Allocator, iterOpts logicalplan.IterOptions) (arrow.Record, error) {
+	if len(s.reservoir) == 0 {
+		return nil, nil
+	}
 	s.merge()
 
 	converter := NewParquetConverter(pool, iterOpts)

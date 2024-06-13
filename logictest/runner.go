@@ -267,7 +267,7 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (stri
 	converter := pqarrow.NewParquetConverter(memory.NewGoAllocator(), logicalplan.IterOptions{})
 	defer converter.Close()
 
-	if err := converter.Convert(ctx, buf, schema); err != nil {
+	if err := converter.Convert(ctx, buf, schema, nil); err != nil {
 		return "", err
 	}
 

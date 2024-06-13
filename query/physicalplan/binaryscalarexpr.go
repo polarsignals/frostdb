@@ -82,15 +82,23 @@ func (e BinaryScalarExpr) EvalParquet(rg parquet.RowGroup, in [][]parquet.Value)
 	}
 
 	// Reuse the input slice if it's already been allocated
-	if len(in[index]) < int(leftData.NumValues()) {
-		in[index] = make([]parquet.Value, leftData.NumValues())
+	var buf []parquet.Value
+	if len(in) != 0 {
+		if len(in[index]) < int(leftData.NumValues()) {
+			in[index] = make([]parquet.Value, leftData.NumValues())
+			buf = in[index]
+		}
+	} else {
+		buf = make([]parquet.Value, leftData.NumValues())
 	}
-	bm, col, err := BinaryScalarParquetOperation(leftData, e.Right, e.Op, in[index])
+	bm, col, err := BinaryScalarParquetOperation(leftData, e.Right, e.Op, buf)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	in[index] = col
+	if len(in) != 0 {
+		in[index] = col
+	}
 	return bm, in, nil
 }
 
