@@ -643,7 +643,7 @@ func (s *ColumnStore) DropDB(name string) error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 	delete(s.dbs, name)
-	return os.Remove(filepath.Join(s.DatabasesDir(), name))
+	return os.RemoveAll(filepath.Join(s.DatabasesDir(), name))
 }
 
 func (db *DB) openWAL(ctx context.Context, opts ...wal.TestingOption) (WAL, error) {
@@ -668,6 +668,8 @@ func (db *DB) openWAL(ctx context.Context, opts ...wal.TestingOption) (WAL, erro
 const (
 	walPath       = "wal"
 	snapshotsPath = "snapshots"
+	indexPath     = "index"
+	trashPath     = "trash"
 )
 
 func (db *DB) walDir() string {
@@ -679,11 +681,11 @@ func (db *DB) snapshotsDir() string {
 }
 
 func (db *DB) trashDir() string {
-	return filepath.Join(db.storagePath, "trash")
+	return filepath.Join(db.storagePath, trashPath)
 }
 
 func (db *DB) indexDir() string {
-	return filepath.Join(db.storagePath, "index")
+	return filepath.Join(db.storagePath, indexPath)
 }
 
 // recover attempts to recover database state from a combination of snapshots and the WAL.
@@ -1319,10 +1321,22 @@ func validateName(name string) bool {
 	return !strings.Contains(name, "/")
 }
 
-// dropStorage removes snapshots and WAL data from the storage directory.
+// dropStorage removes all data from the storage directory, but leaves the empty
+// storage directory.
 func (db *DB) dropStorage() error {
 	trashDir := db.trashDir()
 
+	entries, err := os.ReadDir(db.storagePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Nothing to drop.
+			return nil
+		}
+		return err
+	}
+	// Try to rename all entries as this is O(1) per entry. We want to preserve
+	// the storagePath for future opens of this database. Callers that want to
+	// drop the DB remove storagePath themselves.
 	if moveErr := func() error {
 		if err := os.MkdirAll(trashDir, os.FileMode(0o755)); err != nil {
 			return fmt.Errorf("making trash dir: %w", err)
@@ -1334,23 +1348,23 @@ func (db *DB) dropStorage() error {
 		if err != nil {
 			return err
 		}
-		if err := os.Rename(db.snapshotsDir(), filepath.Join(tmpPath, snapshotsPath)); err != nil && !os.IsNotExist(err) {
-			return err
+		errs := make([]error, 0, len(entries))
+		for _, e := range entries {
+			if err := os.Rename(filepath.Join(db.storagePath, e.Name()), filepath.Join(tmpPath, e.Name())); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, err)
+			}
 		}
-		if err := os.Rename(db.walDir(), filepath.Join(tmpPath, walPath)); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+		return errors.Join(errs...)
 	}(); moveErr != nil {
-		// If we failed to move the wal/snapshots to the trash dir, fall
-		// back to attempting to remove them with RemoveAll.
-		if err := os.RemoveAll(db.snapshotsDir()); err != nil {
-			return fmt.Errorf("%v: %v", moveErr, err)
+		// If we failed to move storage path entries to the trash dir, fall back
+		// to attempting to remove them with RemoveAll.
+		errs := make([]error, 0, len(entries))
+		for _, e := range entries {
+			if err := os.RemoveAll(filepath.Join(db.storagePath, e.Name())); err != nil {
+				errs = append(errs, err)
+			}
 		}
-		if err := os.RemoveAll(db.walDir()); err != nil {
-			return fmt.Errorf("%v: %v", moveErr, err)
-		}
-		return moveErr
+		return errors.Join(errs...)
 	}
 	return os.RemoveAll(trashDir)
 }
