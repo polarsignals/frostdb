@@ -347,26 +347,6 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 		// If we get here, we couldn't use the fast path.
 	}
 
-	// Instead of converting every row in a row group we can apply the filter
-	// to the Parquet rows that we've read into memory, and then convert only
-	// the rows that pass the filter. This saves on during Arrow record building.
-	bm := indices
-
-	if c.rowGroupFilter != nil {
-		if len(c.scratchPreReadValues) < len(parquetColumns) {
-			c.scratchPreReadValues = make([][]parquet.Value, len(parquetColumns))
-		}
-		bm, c.scratchPreReadValues, err = c.rowGroupFilter.EvalParquet(rg, c.scratchPreReadValues)
-		if err != nil {
-			return fmt.Errorf("physical filter of Parquet rows: %w", err)
-		}
-
-		// Disable the physical filter if the conversion percentage is above a threshold of 35%.
-		if conversionPercentage := float64(bm.GetCardinality()) / float64(rg.NumRows()); conversionPercentage > 0.35 {
-			bm = nil
-		}
-	}
-
 	// TODO missing optimization for filter filtering out 100% of the rows.
 	for _, w := range c.writers {
 		for _, col := range w.colIdx {
@@ -383,7 +363,7 @@ func (c *ParquetConverter) Convert(ctx context.Context, rg parquet.RowGroup, s *
 					parquetColumns[col],
 					false,
 					w.writer,
-					bm,
+					indices,
 					preReadValues...,
 				); err != nil {
 					return fmt.Errorf("convert parquet column to arrow array: %w", err)
@@ -820,7 +800,11 @@ func (c *ParquetConverter) writeColumnToArray(
 	pages := columnChunk.Pages()
 	defer pages.Close()
 	offset := 0
-	arrIdx, indices := 0, bitmap.ToArray()
+	var arrIdx int
+	var indices []uint32
+	if bitmap != nil {
+		indices = bitmap.ToArray()
+	}
 	for {
 		p, err := pages.ReadPage()
 		if err != nil {
