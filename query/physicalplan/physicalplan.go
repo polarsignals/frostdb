@@ -415,19 +415,8 @@ func Build(
 				prev[0] = d
 			}
 		case plan.Filter != nil:
-			// Create a filter for each previous plan.
-			// Can be multiple filters or just a single
-			// filter depending on the previous concurrency.
-			for i := range prev {
-				f, err := Filter(pool, tracer, plan.Filter.Expr)
-				if err != nil {
-					visitErr = err
-					return false
-				}
-				prev[i].SetNext(f)
-				prev[i] = f
-			}
-			oInfo.applyFilter(plan.Filter.Expr)
+			// Filters get pushed down into the physical conversion layer.
+			// We don't need to add a filter layer here.
 			oInfo.nodeMaintainsOrdering()
 		case plan.Aggregation != nil:
 			ordered, err := shouldPlanOrderedAggregate(execOpts, oInfo, plan.Aggregation)
