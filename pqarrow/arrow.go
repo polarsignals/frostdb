@@ -817,30 +817,10 @@ func (c *ParquetConverter) writeColumnToArray(
 		}
 	}
 
-	// If values were already read due to the push down of a physical filter. They may be provided to this function to avoid
-	// re-reading them during Arrow conversion.
-	if bitmap != nil && bitmap.GetCardinality() > 0 && len(preReadValues) != 0 {
-		i := 0
-		bitmap.Iterate(func(x uint32) bool {
-			// overwrite the pre-read values to put them in order for writing
-			preReadValues[i] = preReadValues[x]
-			i++
-			return true
-		})
-		w.Write(preReadValues[:bitmap.GetCardinality()])
-		return nil
-	}
-
-	// preReadValues have been provided but the bitmap hasn't so just write the pre-read values.
-	if bitmap == nil && len(preReadValues) != 0 {
-		w.Write(preReadValues)
-		return nil
-	}
-
 	pages := columnChunk.Pages()
 	defer pages.Close()
 	offset := 0
-	iterator := bitmap.Iterator()
+	arrIdx, indices := 0, bitmap.ToArray()
 	for {
 		p, err := pages.ReadPage()
 		if err != nil {
@@ -875,7 +855,7 @@ func (c *ParquetConverter) writeColumnToArray(
 				return fmt.Errorf("read values: %w", err)
 			}
 
-			if bitmap != nil && bitmap.GetCardinality() > 0 {
+			if len(indices) > 0 {
 				if repeated { // a bitmap does not map onto a repeated column 1:1 (since values are repeated) we have to iterate over the values
 					head := 0
 					listStart := 0
@@ -911,9 +891,9 @@ func (c *ParquetConverter) writeColumnToArray(
 					n := p.NumValues()
 					spanStart := -1
 					span := 0
-					for iterator.HasNext() {
-						if x := iterator.PeekNext(); int(x) >= offset && int(x) < offset+int(n) {
-							iterator.Next()
+					for arrIdx < len(indices) {
+						if x := indices[arrIdx]; int(x) >= offset && int(x) < offset+int(n) {
+							arrIdx++
 							if spanStart == -1 {
 								spanStart = int(x) - offset
 								span = 0
