@@ -434,6 +434,75 @@ func BenchmarkAggregation(b *testing.B) {
 	}
 }
 
+func Test_FilteredParquetAggregation(t *testing.T) {
+	ctx := context.Background()
+	rowCount := 200_000
+	samplesPerRecord := 100
+
+	columnStore, err := New()
+	require.NoError(t, err)
+	defer columnStore.Close()
+
+	db, err := columnStore.DB(ctx, "test")
+	require.NoError(t, err)
+
+	// Insert sample data
+	{
+		config := NewTableConfig(dynparquet.SampleDefinition())
+		table, err := db.Table("test", config)
+		require.NoError(t, err)
+
+		samples := make(dynparquet.Samples, samplesPerRecord)
+		for i := 0; i < rowCount; i += samplesPerRecord {
+			for j := 0; j < cap(samples); j++ {
+				samples[j] = dynparquet.Sample{
+					Labels: map[string]string{
+						"label1": "value1",
+						"label2": "value" + strconv.Itoa(i%3),
+					},
+					Stacktrace: []uuid.UUID{
+						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+					},
+					Timestamp: int64((i * samplesPerRecord) + j),
+					Value:     int64((i * samplesPerRecord) + j),
+				}
+			}
+
+			r, err := samples.ToRecord()
+			require.NoError(t, err)
+			_, err = table.InsertRecord(ctx, r)
+			require.NoError(t, err)
+		}
+		require.NoError(t, table.EnsureCompaction())
+	}
+
+	engine := query.NewEngine(
+		memory.NewGoAllocator(),
+		db.TableProvider(),
+	)
+
+	builder := engine.ScanTable("test").
+		Filter(
+			logicalplan.Col("timestamp").Gt(logicalplan.Literal(0)),
+		).
+		Aggregate(
+			[]*logicalplan.AggregationFunction{
+				logicalplan.Sum(logicalplan.Col("value")),
+			},
+			[]logicalplan.Expr{
+				logicalplan.Col("labels.label2"),
+			},
+		)
+	validated := false
+	_ = builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+		require.Equal(t, int64(3), r.NumRows())
+		require.Equal(t, []int64{666336301650, 667003301650, 665670296700}, r.Column(1).(*array.Int64).Int64Values())
+		validated = true
+		return nil
+	})
+	require.True(t, validated)
+}
+
 func Benchmark_FilteredParquetAggregation(b *testing.B) {
 	ctx := context.Background()
 	rowCount := 200_000
