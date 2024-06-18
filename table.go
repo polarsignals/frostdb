@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/RoaringBitmap/roaring"
 	"github.com/apache/arrow/go/v16/arrow"
 	"github.com/apache/arrow/go/v16/arrow/array"
 	"github.com/apache/arrow/go/v16/arrow/memory"
@@ -766,7 +767,7 @@ func (t *Table) View(ctx context.Context, fn func(ctx context.Context, tx uint64
 }
 
 type RowGroupConverter interface {
-	Convert(ctx context.Context, rg parquet.RowGroup, schema *dynparquet.Schema) error
+	Convert(ctx context.Context, rg parquet.RowGroup, schema *dynparquet.Schema, indices *roaring.Bitmap) error
 	NewRecord() (arrow.Record, error)
 	NumRows() int
 	Reset()
@@ -823,7 +824,7 @@ func (t *Table) Iterator(
 			return err
 		}
 
-		samplerOptions = append(samplerOptions, pqarrow.WithSamplerFilter(physicalFilter))
+		samplerOptions = append(samplerOptions, pqarrow.WithSamplerFilter(physicalFilter), pqarrow.WithSamplerPool(pool))
 		conversionOpts = append(conversionOpts, pqarrow.WithFilter(physicalFilter))
 	}
 
@@ -832,11 +833,11 @@ func (t *Table) Iterator(
 		callback := callback
 		errg.Go(recovery.Do(func() error {
 			var converter RowGroupConverter
+			cnv := pqarrow.NewParquetConverter(pool, *iterOpts)
+			defer cnv.Close()
+			converter = cnv
 			if iterOpts.Sample > 0 {
-				converter = pqarrow.NewSampler(10_000, t.schema, samplerOptions...)
-			} else {
-				converter := pqarrow.NewParquetConverter(pool, *iterOpts)
-				defer converter.Close()
+				converter = pqarrow.NewSampler(iterOpts.Sample, t.schema, append(samplerOptions, pqarrow.WithSamplerConverter(cnv))...)
 			}
 
 			for {
@@ -870,7 +871,7 @@ func (t *Table) Iterator(
 						}
 					case index.ReleaseableRowGroup:
 						defer rg.Release()
-						if err := converter.Convert(ctx, rg, t.schema); err != nil {
+						if err := converter.Convert(ctx, rg, t.schema, nil); err != nil {
 							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 						}
 						if converter.NumRows() >= bufferSize {
@@ -888,7 +889,7 @@ func (t *Table) Iterator(
 							}
 						}
 					case dynparquet.DynamicRowGroup:
-						if err := converter.Convert(ctx, rg, t.schema); err != nil {
+						if err := converter.Convert(ctx, rg, t.schema, nil); err != nil {
 							return fmt.Errorf("failed to convert row group to arrow record: %v", err)
 						}
 						if converter.NumRows() >= bufferSize {

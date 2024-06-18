@@ -407,12 +407,12 @@ func (c *ParquetConverter) NumRows() int {
 	return c.builder.Field(0).Len()
 }
 
-func (c *ParquetConverter) NewRecord() arrow.Record {
+func (c *ParquetConverter) NewRecord() (arrow.Record, error) {
 	if c.builder != nil {
-		return c.builder.NewRecord()
+		return c.builder.NewRecord(), nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 func (c *ParquetConverter) Reset() {

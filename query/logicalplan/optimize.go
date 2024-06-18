@@ -1,5 +1,9 @@
 package logicalplan
 
+import (
+	"github.com/apache/arrow/go/v16/arrow/scalar"
+)
+
 var hashedMatch = "hashed"
 
 type Optimizer interface {
@@ -16,6 +20,7 @@ func DefaultOptimizers() []Optimizer {
 		&FilterPushDown{},
 		&DistinctPushDown{},
 		&AggFuncPushDown{},
+		&SamplerPushDown{},
 	}
 }
 
@@ -189,5 +194,30 @@ func (p *AggFuncPushDown) optimize(plan *LogicalPlan, filterExpr Expr) {
 
 	if plan.Input != nil {
 		p.optimize(plan.Input, filterExpr)
+	}
+}
+
+// SamplerPushDown optimizer will push down the sampler into the Parquet conversion layer. If a filter is present it will also push down
+// the filter to the Parquet conversion layer. This allows the Parquet conversion layer to sample the data before converting it to Arrow.
+type SamplerPushDown struct{}
+
+func (p *SamplerPushDown) Optimize(plan *LogicalPlan) *LogicalPlan {
+	p.optimize(plan, 0, nil)
+	return plan
+}
+
+func (p *SamplerPushDown) optimize(plan *LogicalPlan, sample int64, prevPlan *LogicalPlan) {
+	switch {
+	case plan.TableScan != nil:
+		if sample != 0 {
+			plan.TableScan.Sample = sample
+		}
+	case plan.Sample != nil:
+		sample = plan.Sample.Expr.(*LiteralExpr).Value.(*scalar.Int64).Value
+		prevPlan.Input = plan.Input // Short circuit the Sample operator; since we're pushing it down, we don't need it.
+	}
+
+	if plan.Input != nil {
+		p.optimize(plan.Input, sample, plan)
 	}
 }

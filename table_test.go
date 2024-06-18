@@ -843,7 +843,8 @@ func Test_Insert_Repeated(t *testing.T) {
 			defer converter.Close()
 
 			require.NoError(t, converter.Convert(ctx, buffer, table.Schema(), nil))
-			record := converter.NewRecord()
+			record, err := converter.NewRecord()
+			require.NoError(t, err)
 			defer record.Release()
 
 			_, err = table.InsertRecord(ctx, record)
@@ -956,7 +957,8 @@ func Test_Compact_Repeated(t *testing.T) {
 	defer converter.Close()
 
 	require.NoError(t, converter.Convert(ctx, buffer, table.Schema(), nil))
-	before := converter.NewRecord()
+	before, err := converter.NewRecord()
+	require.NoError(t, err)
 	defer before.Release()
 
 	_, err = table.InsertRecord(ctx, before)

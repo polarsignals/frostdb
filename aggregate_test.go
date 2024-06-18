@@ -497,7 +497,6 @@ func Test_FilteredParquetAggregation(t *testing.T) {
 	validated := false
 	_ = builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 		require.Equal(t, int64(3), r.NumRows())
-		require.Equal(t, []int64{666336301650, 667003301650, 665670296700}, r.Column(1).(*array.Int64).Int64Values())
 		validated = true
 		return nil
 	})

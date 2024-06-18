@@ -136,6 +136,7 @@ func (s *TableScan) Execute(ctx context.Context, pool memory.Allocator) error {
 		logicalplan.WithFilter(s.options.Filter),
 		logicalplan.WithDistinctColumns(s.options.Distinct...),
 		logicalplan.WithReadMode(s.options.ReadMode),
+		logicalplan.WithSample(s.options.Sample),
 	}
 
 	errg, _ := errgroup.WithContext(ctx)

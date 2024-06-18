@@ -268,6 +268,9 @@ type TableScan struct {
 
 	// ReadMode indicates the mode to use when reading.
 	ReadMode ReadMode
+
+	// Sample is the number of rows to sample.
+	Sample int64
 }
 
 func (scan *TableScan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {

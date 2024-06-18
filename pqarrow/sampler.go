@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"slices"
 
+	"github.com/RoaringBitmap/roaring"
 	"github.com/apache/arrow/go/v16/arrow"
 	"github.com/apache/arrow/go/v16/arrow/memory"
 	"github.com/parquet-go/parquet-go"
@@ -25,9 +26,9 @@ type Sampler struct {
 	i float64
 
 	// options
-	filter   physicalplan.BooleanExpression
-	pool     memory.Allocator
-	iterOpts logicalplan.IterOptions
+	filter    physicalplan.BooleanExpression
+	pool      memory.Allocator
+	converter *ParquetConverter
 }
 
 type Sample struct {
@@ -49,9 +50,21 @@ func (s *Sample) NumRows() int64 {
 
 type SamplerOption func(*Sampler)
 
+func WithSamplerPool(pool memory.Allocator) SamplerOption {
+	return func(s *Sampler) {
+		s.pool = pool
+	}
+}
+
 func WithSamplerFilter(filter physicalplan.BooleanExpression) SamplerOption {
 	return func(s *Sampler) {
 		s.filter = filter
+	}
+}
+
+func WithSamplerConverter(converter *ParquetConverter) SamplerOption {
+	return func(s *Sampler) {
+		s.converter = converter
 	}
 }
 
@@ -60,6 +73,7 @@ func NewSampler(k int64, schema *dynparquet.Schema, options ...SamplerOption) *S
 		size:   k,
 		schema: schema,
 		w:      math.Exp(math.Log(rand.Float64()) / float64(k)),
+		pool:   memory.NewGoAllocator(),
 	}
 	for _, opt := range options {
 		opt(s)
@@ -71,9 +85,9 @@ func NewSampler(k int64, schema *dynparquet.Schema, options ...SamplerOption) *S
 func (s *Sampler) NumRows() int { return 0 }
 
 // Reset is a noop
-func (s *Sampler) Reset()
+func (s *Sampler) Reset() {}
 
-func (s *Sampler) Convert(ctx context.Context, rg parquet.RowGroup, _ *dynparquet.Schema) error {
+func (s *Sampler) Convert(ctx context.Context, rg parquet.RowGroup, _ *dynparquet.Schema, _ *roaring.Bitmap) error {
 	sample := &Sample{
 		rg: rg,
 		id: s.rowGroupID,
@@ -172,17 +186,18 @@ func (s *Sampler) NewRecord() (arrow.Record, error) {
 	}
 	s.merge()
 
-	converter := NewParquetConverter(s.pool, s.iterOpts)
-	defer converter.Close()
+	if s.converter == nil {
+		s.converter = NewParquetConverter(s.pool, logicalplan.IterOptions{})
+		defer s.converter.Close()
+	}
 
 	for _, sample := range s.reservoir {
-		if err := converter.Convert(context.TODO(), sample.rg, s.schema, sample.rows); err != nil {
+		if err := s.converter.Convert(context.TODO(), sample.rg, s.schema, sample.rows); err != nil {
 			return nil, err
 		}
 	}
 
-	r := converter.NewRecord()
-	return r, nil
+	return s.converter.NewRecord()
 }
 
 // Merge merges samples that contain the same underlying rowgroup into a single sample.
