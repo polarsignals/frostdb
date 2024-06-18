@@ -463,8 +463,8 @@ func Test_FilteredParquetAggregation(t *testing.T) {
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 					},
-					Timestamp: int64((i * samplesPerRecord) + j),
-					Value:     int64((i * samplesPerRecord) + j),
+					Timestamp: int64(i + j),
+					Value:     int64(i + j),
 				}
 			}
 
@@ -533,8 +533,8 @@ func Benchmark_FilteredParquetAggregation(b *testing.B) {
 					Stacktrace: []uuid.UUID{
 						{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 					},
-					Timestamp: int64((i * samplesPerRecord) + j),
-					Value:     int64((i * samplesPerRecord) + j),
+					Timestamp: int64(i + j),
+					Value:     int64(i + j),
 				}
 			}
 
