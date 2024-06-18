@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/polarsignals/iceberg-go"
 	"github.com/polarsignals/iceberg-go/catalog"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
 	"golang.org/x/sync/errgroup"
@@ -1713,6 +1714,7 @@ func Test_DB_Limiter(t *testing.T) {
 // DropStorage ensures that a database can continue on after drop storage is called.
 func Test_DB_DropStorage(t *testing.T) {
 	logger := newTestLogger(t)
+	ctx := context.Background()
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	defer mem.AssertSize(t, 0)
 
@@ -1722,8 +1724,11 @@ func Test_DB_DropStorage(t *testing.T) {
 
 	dir := t.TempDir()
 
+	// Use an actual prometheus registry to test duplicate metrics
+	// registration.
 	c, err := New(
 		WithLogger(logger),
+		WithRegistry(prometheus.NewRegistry()),
 		WithWAL(),
 		WithStoragePath(dir),
 		WithActiveMemorySize(1*MiB),
@@ -1732,15 +1737,14 @@ func Test_DB_DropStorage(t *testing.T) {
 		_ = c.Close()
 	}()
 	require.NoError(t, err)
-	const dbName = "test"
-	db, err := c.DB(context.Background(), dbName)
+	const dbAndTableName = "test"
+	db, err := c.DB(ctx, dbAndTableName)
 	require.NoError(t, err)
-	table, err := db.Table("test", config)
+	table, err := db.Table(dbAndTableName, config)
 	require.NoError(t, err)
 
 	samples := dynparquet.NewTestSamples()
 
-	ctx := context.Background()
 	for i := 0; i < 100; i++ {
 		r, err := samples.ToRecord()
 		require.NoError(t, err)
@@ -1751,7 +1755,7 @@ func Test_DB_DropStorage(t *testing.T) {
 	countRows := func(expected int) {
 		rows := 0
 		engine := query.NewEngine(mem, db.TableProvider())
-		err = engine.ScanTable("test").
+		err = engine.ScanTable(dbAndTableName).
 			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 				rows += int(r.NumRows())
 				return nil
@@ -1762,9 +1766,31 @@ func Test_DB_DropStorage(t *testing.T) {
 	countRows(300)
 
 	level.Debug(logger).Log("msg", "dropping storage")
-	require.NoError(t, c.DropDB(dbName))
+	require.NoError(t, c.DropDB(dbAndTableName))
 
-	// Open a new store against the dropped storage, and expect empty db
+	// Getting without creating a DB should return an error.
+	_, err = c.GetDB(dbAndTableName)
+	require.Error(t, err)
+
+	// Opening a new DB with the same name should be fine.
+	db, err = c.DB(ctx, dbAndTableName)
+	require.NoError(t, err)
+	// A table as well.
+	table, err = db.Table(dbAndTableName, config)
+	require.NoError(t, err)
+
+	r, err := samples.ToRecord()
+	require.NoError(t, err)
+	defer r.Release()
+	_, err = table.InsertRecord(ctx, r)
+	require.NoError(t, err)
+	// Expect a three rows in the table.
+	countRows(3)
+
+	// Dropping twice should be valid as well.
+	require.NoError(t, c.DropDB(dbAndTableName))
+
+	// Open a new store against the dropped storage, and expect empty db.
 	c, err = New(
 		WithLogger(logger),
 		WithWAL(),
@@ -1776,9 +1802,9 @@ func Test_DB_DropStorage(t *testing.T) {
 	}()
 	require.NoError(t, err)
 	level.Debug(logger).Log("msg", "opening new db")
-	db, err = c.DB(context.Background(), "test")
+	db, err = c.DB(ctx, dbAndTableName)
 	require.NoError(t, err)
-	_, err = db.Table("test", config)
+	_, err = db.Table(dbAndTableName, config)
 	require.NoError(t, err)
 	countRows(0)
 }
