@@ -485,6 +485,7 @@ func Test_FilteredParquetAggregation(t *testing.T) {
 		Filter(
 			logicalplan.Col("timestamp").Gt(logicalplan.Literal(0)),
 		).
+		Sample(10_000).
 		Aggregate(
 			[]*logicalplan.AggregationFunction{
 				logicalplan.Sum(logicalplan.Col("value")),
@@ -556,6 +557,7 @@ func Benchmark_FilteredParquetAggregation(b *testing.B) {
 			Filter(
 				logicalplan.Col("timestamp").Gt(logicalplan.Literal(i)),
 			).
+			Sample(10_000).
 			Aggregate(
 				[]*logicalplan.AggregationFunction{
 					logicalplan.Sum(logicalplan.Col("value")),
