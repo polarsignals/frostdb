@@ -116,7 +116,8 @@ func TestDifferentSchemasToArrow(t *testing.T) {
 	require.NoError(t, c.Convert(ctx, buf3, dynSchema, nil))
 	require.NoError(t, c.Convert(ctx, buf4, dynSchema, nil))
 
-	ar := c.NewRecord()
+	ar, err := c.NewRecord()
+	require.NoError(t, err)
 	defer ar.Release()
 	require.Equal(t, int64(8), ar.NumCols())
 	require.Equal(t, int64(5), ar.NumRows())
@@ -259,7 +260,8 @@ func TestMergeToArrow(t *testing.T) {
 	c := NewParquetConverter(memory.DefaultAllocator, logicalplan.IterOptions{})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, merge, dynSchema, nil))
-	ar := c.NewRecord()
+	ar, err := c.NewRecord()
+	require.NoError(t, err)
 	require.Equal(t, int64(5), ar.NumRows())
 	require.Equal(t, int64(8), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 8)
@@ -295,7 +297,7 @@ func BenchmarkNestedParquetToArrow(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		require.NoError(b, c.Convert(ctx, pb, schema, nil))
 		// Reset converter.
-		_ = c.NewRecord()
+		_, _ = c.NewRecord()
 	}
 }
 
@@ -331,7 +333,7 @@ func BenchmarkParquetToArrow(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		require.NoError(b, c.Convert(ctx, buf, dynSchema, nil))
 		// Reset converter.
-		_ = c.NewRecord()
+		_, _ = c.NewRecord()
 	}
 }
 
@@ -477,7 +479,8 @@ func TestDistinctBinaryExprOptimization(t *testing.T) {
 		})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, buf, dynSchema, nil))
-	ar := c.NewRecord()
+	ar, err := c.NewRecord()
+	require.NoError(t, err)
 	require.Equal(t, int64(1), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 3)
@@ -571,7 +574,8 @@ func TestDistinctBinaryExprOptimizationMixed(t *testing.T) {
 	})
 	defer c.Close()
 	require.NoError(t, c.Convert(ctx, buf, dynSchema, nil))
-	ar := c.NewRecord()
+	ar, err := c.NewRecord()
+	require.NoError(t, err)
 	require.Equal(t, int64(2), ar.NumRows())
 	require.Equal(t, int64(3), ar.NumCols())
 	require.Len(t, ar.Schema().Fields(), 3)
@@ -603,7 +607,8 @@ func TestList(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, c.Convert(ctx, buf, s, nil))
 
-	record := c.NewRecord()
+	record, err := c.NewRecord()
+	require.NoError(t, err)
 	t.Log(record)
 	rows := record.NumRows()
 	require.Equal(t, int64(1), rows)
@@ -821,7 +826,8 @@ func Test_ParquetToArrowV2(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, c.Convert(ctx, pb, schema, nil))
 	}
-	r := c.NewRecord()
+	r, err := c.NewRecord()
+	require.NoError(t, err)
 	defer r.Release()
 	require.Equal(t, int64(n), r.NumRows())
 }
@@ -856,7 +862,8 @@ func Test_ParquetToArrow(t *testing.T) {
 	defer c.Close()
 
 	require.NoError(t, c.Convert(ctx, buf, dynSchema, nil))
-	r := c.NewRecord()
+	r, err := c.NewRecord()
+	require.NoError(t, err)
 	defer r.Release()
 	require.Equal(t, int64(1000), r.NumRows())
 }

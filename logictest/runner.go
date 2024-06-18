@@ -271,7 +271,10 @@ func (r *Runner) handleInsert(ctx context.Context, c *datadriven.TestData) (stri
 		return "", err
 	}
 
-	rec := converter.NewRecord()
+	rec, err := converter.NewRecord()
+	if err != nil {
+		return "", err
+	}
 	defer rec.Release()
 
 	if _, err := r.activeTable.InsertRecord(ctx, rec); err != nil {
