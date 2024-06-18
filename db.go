@@ -112,6 +112,11 @@ func New(
 		}
 	}
 
+	// Wrap the registry in a reusable registry to allow metrics to be
+	// registered multiple times in cases e.g. where a database is dropped and
+	// subsequently recreated, or a table is dropped and recreated.
+	s.reg = newReusableRegistry(s.reg)
+
 	s.metrics = metrics{
 		shutdownDuration: promauto.With(s.reg).NewHistogram(prometheus.HistogramOpts{
 			Name: "frostdb_shutdown_duration",
