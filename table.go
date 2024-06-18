@@ -816,14 +816,17 @@ func (t *Table) Iterator(
 	// buffered results are flushed to the next operator.
 	const bufferSize = 1024
 
-	samplerOptions := []pqarrow.SamplerOption{}
+	samplerOptions := []pqarrow.SamplerOption{
+		pqarrow.WithSamplerPool(pool),
+	}
+
 	if iterOpts.Filter != nil {
 		physicalFilter, err := physicalplan.BooleanExpr(iterOpts.Filter)
 		if err != nil {
 			return err
 		}
 
-		samplerOptions = append(samplerOptions, pqarrow.WithSamplerFilter(physicalFilter), pqarrow.WithSamplerPool(pool))
+		samplerOptions = append(samplerOptions, pqarrow.WithSamplerFilter(physicalFilter))
 	}
 
 	errg, ctx := errgroup.WithContext(ctx)
