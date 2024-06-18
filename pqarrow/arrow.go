@@ -213,10 +213,9 @@ type ParquetConverter struct {
 
 	// Output fields, for each outputSchema.Field(i) there will always be a
 	// corresponding builder.Field(i).
-	outputSchema   *arrow.Schema
-	iterOpts       logicalplan.IterOptions
-	rowGroupFilter physicalplan.BooleanExpression
-	builder        *builder.RecordBuilder
+	outputSchema *arrow.Schema
+	iterOpts     logicalplan.IterOptions
+	builder      *builder.RecordBuilder
 
 	// writers are wrappers over a subset of builder.Fields().
 	writers []MultiColumnWriter
@@ -233,28 +232,15 @@ type ParquetConverter struct {
 	scratchPreReadValues [][]parquet.Value
 }
 
-type ConverterOptions func(*ParquetConverter)
-
-func WithFilter(filter physicalplan.BooleanExpression) ConverterOptions {
-	return func(c *ParquetConverter) {
-		c.rowGroupFilter = filter
-	}
-}
-
 func NewParquetConverter(
 	pool memory.Allocator,
 	iterOpts logicalplan.IterOptions,
-	opts ...ConverterOptions,
 ) *ParquetConverter {
 	c := &ParquetConverter{
 		mode:             normal,
 		pool:             pool,
 		iterOpts:         iterOpts,
 		distinctColInfos: make([]*distinctColInfo, len(iterOpts.DistinctColumns)),
-	}
-
-	for _, opt := range opts {
-		opt(c)
 	}
 
 	if iterOpts.Filter == nil && len(iterOpts.DistinctColumns) != 0 {
