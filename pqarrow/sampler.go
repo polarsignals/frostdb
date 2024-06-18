@@ -18,7 +18,7 @@ import (
 type Sampler struct {
 	rowGroupID int64 // monotonically increasing row group ID; used for merging samples of the same row group
 	size       int64
-	reservoir  []*Sample
+	reservoir  []Sample
 	schema     *dynparquet.Schema
 
 	w float64
@@ -40,7 +40,7 @@ type Sample struct {
 	i       int64
 }
 
-func (s *Sample) NumRows() int64 {
+func (s Sample) NumRows() int64 {
 	if s.rows == nil {
 		return s.rg.NumRows()
 	}
@@ -88,7 +88,7 @@ func (s *Sampler) NumRows() int { return 0 }
 func (s *Sampler) Reset() {}
 
 func (s *Sampler) Convert(ctx context.Context, rg parquet.RowGroup, _ *dynparquet.Schema, _ *roaring.Bitmap) error {
-	sample := &Sample{
+	sample := Sample{
 		rg: rg,
 		id: s.rowGroupID,
 	}
@@ -102,8 +102,9 @@ func (s *Sampler) Convert(ctx context.Context, rg parquet.RowGroup, _ *dynparque
 		sample.rows = bm
 	}
 
-	sample = s.fill(sample)
-	if sample == nil {
+	var ok bool
+	sample, ok = s.fill(sample)
+	if !ok {
 		return nil
 	}
 	if s.n == s.size { // The reservoir is full; Slice up the reservoir into single row entries. This will make replacement easier.
@@ -115,52 +116,48 @@ func (s *Sampler) Convert(ctx context.Context, rg parquet.RowGroup, _ *dynparque
 	return nil
 }
 
-func (s *Sampler) fill(rg *Sample) *Sample {
-	if rg == nil {
-		return nil
-	}
-
+func (s *Sampler) fill(rg Sample) (Sample, bool) {
 	if rg.NumRows() == 0 {
-		return nil
+		return Sample{}, false
 	}
 
 	if s.n+rg.NumRows() <= s.size { // All rows fit in the reservoir
 		s.reservoir = append(s.reservoir, rg)
 		s.n += rg.NumRows()
-		return nil
+		return Sample{}, false
 	}
 
 	remaining := s.size - s.n
 	rows := rg.rows.ToArray()
 	bm := physicalplan.NewBitmap()
 	bm.AddMany(rows[:remaining])
-	s.reservoir = append(s.reservoir, &Sample{rg: rg.rg, rows: bm})
+	s.reservoir = append(s.reservoir, Sample{rg: rg.rg, rows: bm})
 	s.n = s.size
 
 	toSample := physicalplan.NewBitmap()
 	toSample.AddMany(rows[remaining:])
-	return &Sample{rg: rg.rg, rows: toSample}
+	return Sample{rg: rg.rg, rows: toSample}, true
 }
 
 func (s *Sampler) sliceReservoir() {
-	newReservoir := make([]*Sample, 0, s.size)
+	newReservoir := make([]Sample, 0, s.size)
 	for _, sample := range s.reservoir {
 		rows := sample.rows.ToArray()
 		for _, row := range rows {
-			newReservoir = append(newReservoir, &Sample{rg: sample.rg, rows: sample.rows, sampled: true, i: int64(row)})
+			newReservoir = append(newReservoir, Sample{rg: sample.rg, rows: sample.rows, sampled: true, i: int64(row)})
 		}
 	}
 	s.reservoir = newReservoir
 }
 
-func (s *Sampler) sample(rg *Sample) {
+func (s *Sampler) sample(rg Sample) {
 	indices := rg.rows.ToArray()
 	n := s.n + rg.NumRows()
 	if s.i == 0 {
 		s.i = float64(s.n) - 1
 	} else if s.i < float64(n) {
 		index := indices[int64(s.i)-s.n]
-		s.replace(rand.Intn(int(s.size)), &Sample{rg: rg.rg, rows: rg.rows, sampled: true, i: int64(index)})
+		s.replace(rand.Intn(int(s.size)), Sample{rg: rg.rg, rows: rg.rows, sampled: true, i: int64(index)})
 		s.w = s.w * math.Exp(math.Log(rand.Float64())/float64(s.size))
 	}
 
@@ -169,15 +166,18 @@ func (s *Sampler) sample(rg *Sample) {
 		if s.i < float64(n) {
 			// replace a random item of the reservoir with row i
 			index := indices[int64(s.i)-s.n]
-			s.replace(rand.Intn(int(s.size)), &Sample{rg: rg.rg, rows: rg.rows, sampled: true, i: int64(index)})
+			s.replace(rand.Intn(int(s.size)), Sample{rg: rg.rg, rows: rg.rows, sampled: true, i: int64(index)})
 			s.w = s.w * math.Exp(math.Log(rand.Float64())/float64(s.size))
 		}
 	}
 	s.n = n
 }
 
-func (s *Sampler) replace(j int, r *Sample) {
-	s.reservoir[j] = r
+func (s *Sampler) replace(j int, r Sample) {
+	s.reservoir[j].rg = r.rg
+	s.reservoir[j].rows = r.rows
+	s.reservoir[j].sampled = r.sampled
+	s.reservoir[j].i = r.i
 }
 
 func (s *Sampler) NewRecord() (arrow.Record, error) {
@@ -202,7 +202,7 @@ func (s *Sampler) NewRecord() (arrow.Record, error) {
 
 // Merge merges samples that contain the same underlying rowgroup into a single sample.
 func (s *Sampler) merge() {
-	slices.SortFunc(s.reservoir, func(i, j *Sample) int {
+	slices.SortFunc(s.reservoir, func(i, j Sample) int {
 		switch {
 		case i.id < j.id:
 			return -1
@@ -214,7 +214,7 @@ func (s *Sampler) merge() {
 	})
 
 	// Since we sorted the slice by underlying rowgroup, we can perform a single scan and merge only adjacent samples.
-	newReservoir := make([]*Sample, 0, len(s.reservoir))
+	newReservoir := make([]Sample, 0, len(s.reservoir))
 	current := s.reservoir[0]
 	if current.sampled {
 		current.rows = physicalplan.NewBitmap()
