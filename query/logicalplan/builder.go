@@ -237,8 +237,8 @@ func resolveAggregation(plan *LogicalPlan, agg *AggregationFunction) ([]*Aggrega
 	}
 }
 
-func (b Builder) Sample(expr Expr) Builder {
-	if expr == nil {
+func (b Builder) Sample(expr, limit Expr) Builder {
+	if expr == nil || limit == nil {
 		return b
 	}
 
@@ -247,7 +247,8 @@ func (b Builder) Sample(expr Expr) Builder {
 		plan: &LogicalPlan{
 			Input: b.plan,
 			Sample: &Sample{
-				Expr: expr,
+				Expr:  expr,
+				Limit: limit,
 			},
 		},
 	}

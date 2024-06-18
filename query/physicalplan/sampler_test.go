@@ -54,8 +54,13 @@ func Test_Sampler(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
+			allocator := memory.NewCheckedAllocator(memory.NewGoAllocator())
+			t.Cleanup(func() {
+				allocator.AssertSize(t, 0)
+			})
+
 			// Create a new sampler
-			s := NewReservoirSampler(test.reservoirSize)
+			s := NewReservoirSampler(test.reservoirSize, 10_000, allocator)
 			called := false
 			total := int64(0)
 			s.SetNext(&TestPlan{
@@ -69,7 +74,8 @@ func Test_Sampler(t *testing.T) {
 			schema := arrow.NewSchema([]arrow.Field{
 				{Name: "a", Type: arrow.PrimitiveTypes.Int64},
 			}, nil)
-			bldr := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
+			bldr := array.NewRecordBuilder(allocator, schema)
+			t.Cleanup(bldr.Release)
 
 			for i := 0; i < test.numRows/test.recordSize; i++ {
 				for j := 0; j < test.recordSize; j++ {
@@ -83,6 +89,8 @@ func Test_Sampler(t *testing.T) {
 			require.NoError(t, s.Finish(ctx))
 			require.True(t, called)
 			require.Equal(t, test.reservoirSize, total)
+			s.Close()
+			require.Zero(t, s.sizeInBytes)
 		})
 	}
 }
@@ -98,7 +106,11 @@ func Test_Sampler_Randomness(t *testing.T) {
 
 	// Create a new sampler
 	for i := int64(0); i < iterations; i++ {
-		s := NewReservoirSampler(reservoirSize)
+		allocator := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		t.Cleanup(func() {
+			allocator.AssertSize(t, 0)
+		})
+		s := NewReservoirSampler(reservoirSize, 10_000, allocator)
 		s.SetNext(&TestPlan{
 			callback: func(ctx context.Context, r arrow.Record) error {
 				for _, v := range r.Column(0).(*array.Int64).Int64Values() {
@@ -111,7 +123,8 @@ func Test_Sampler_Randomness(t *testing.T) {
 		schema := arrow.NewSchema([]arrow.Field{
 			{Name: "a", Type: arrow.PrimitiveTypes.Int64},
 		}, nil)
-		bldr := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
+		bldr := array.NewRecordBuilder(allocator, schema)
+		t.Cleanup(bldr.Release)
 
 		for i := int64(0); i < numRows/recordSize; i++ {
 			for j := int64(0); j < recordSize; j++ {
@@ -123,6 +136,8 @@ func Test_Sampler_Randomness(t *testing.T) {
 		}
 
 		require.NoError(t, s.Finish(ctx))
+		s.Close()
+		require.Zero(t, s.sizeInBytes)
 	}
 
 	// Any given number has a reservoirSize/numRows or for current settings a 10/100 chance of being selected
@@ -176,7 +191,7 @@ func Benchmark_Sampler(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				// Create a new sampler
-				s := NewReservoirSampler(test.reservoirSize)
+				s := NewReservoirSampler(test.reservoirSize, 10_000, memory.NewGoAllocator())
 				total := int64(0)
 				s.SetNext(&TestPlan{
 					callback: func(ctx context.Context, r arrow.Record) error {
@@ -193,4 +208,128 @@ func Benchmark_Sampler(b *testing.B) {
 			}
 		})
 	}
+}
+
+func Test_Sampler_Materialize(t *testing.T) {
+	ctx := context.Background()
+	allocator := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	t.Cleanup(func() {
+		allocator.AssertSize(t, 0)
+	})
+	s := NewReservoirSampler(10, 10_000, allocator)
+	s.SetNext(&TestPlan{})
+
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "a", Type: arrow.PrimitiveTypes.Int64},
+	}, nil)
+	bldr := array.NewRecordBuilder(allocator, schema)
+	t.Cleanup(bldr.Release)
+
+	for i := 0; i < 10; i++ {
+		for j := 0; j < 10; j++ {
+			bldr.Field(0).(*array.Int64Builder).Append(int64((i * 10) + j))
+		}
+		r := bldr.NewRecord()
+		t.Cleanup(r.Release)
+		require.NoError(t, s.Callback(ctx, r))
+	}
+
+	// Create a new schema for records
+	schema = arrow.NewSchema([]arrow.Field{
+		{Name: "a", Type: arrow.PrimitiveTypes.Int64},
+		{Name: "b", Type: arrow.PrimitiveTypes.Int64},
+	}, nil)
+	bldr = array.NewRecordBuilder(allocator, schema)
+	t.Cleanup(bldr.Release)
+
+	for i := 0; i < 10; i++ {
+		for j := 0; j < 10; j++ {
+			bldr.Field(0).(*array.Int64Builder).Append(int64((i * 10) + j))
+			bldr.Field(1).(*array.Int64Builder).Append(int64((i * 10) + j))
+		}
+		r := bldr.NewRecord()
+		t.Cleanup(r.Release)
+		require.NoError(t, s.Callback(ctx, r))
+	}
+
+	s.materialize(allocator)
+	s.Close()
+	require.Zero(t, s.sizeInBytes)
+}
+
+type AccountingAllocator struct {
+	allocator *memory.CheckedAllocator
+	maxUsed   int
+}
+
+func (a *AccountingAllocator) Allocate(size int) []byte {
+	b := a.allocator.Allocate(size)
+	if current := a.allocator.CurrentAlloc(); current > a.maxUsed {
+		a.maxUsed = current
+	}
+	return b
+}
+
+func (a *AccountingAllocator) Reallocate(size int, data []byte) []byte {
+	b := a.allocator.Reallocate(size, data)
+	if current := a.allocator.CurrentAlloc(); current > a.maxUsed {
+		a.maxUsed = current
+	}
+	return b
+}
+
+func (a *AccountingAllocator) Free(data []byte) {
+	a.allocator.Free(data)
+	if current := a.allocator.CurrentAlloc(); current > a.maxUsed {
+		a.maxUsed = current
+	}
+}
+
+func Test_Sampler_MaxSizeAllocation(t *testing.T) {
+	ctx := context.Background()
+	allocator := &AccountingAllocator{
+		allocator: memory.NewCheckedAllocator(memory.NewGoAllocator()),
+	}
+	t.Cleanup(func() {
+		require.Equal(t, allocator.maxUsed, 1024) // Expect the most we allocated was 1024 bytes during materialization
+		allocator.allocator.AssertSize(t, 0)
+	})
+	s := NewReservoirSampler(10, 200, allocator)
+	s.SetNext(&TestPlan{})
+
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "a", Type: arrow.PrimitiveTypes.Int64},
+	}, nil)
+	bldr := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
+	t.Cleanup(bldr.Release)
+
+	for i := 0; i < 10; i++ {
+		for j := 0; j < 10; j++ {
+			bldr.Field(0).(*array.Int64Builder).Append(int64((i * 10) + j))
+		}
+		r := bldr.NewRecord()
+		t.Cleanup(r.Release)
+		require.NoError(t, s.Callback(ctx, r))
+	}
+
+	// Create a new schema for records
+	schema = arrow.NewSchema([]arrow.Field{
+		{Name: "a", Type: arrow.PrimitiveTypes.Int64},
+		{Name: "b", Type: arrow.PrimitiveTypes.Int64},
+	}, nil)
+	bldr = array.NewRecordBuilder(memory.NewGoAllocator(), schema)
+	t.Cleanup(bldr.Release)
+
+	for i := 0; i < 10; i++ {
+		for j := 0; j < 10; j++ {
+			bldr.Field(0).(*array.Int64Builder).Append(int64((i * 10) + j))
+			bldr.Field(1).(*array.Int64Builder).Append(int64((i * 10) + j))
+		}
+		r := bldr.NewRecord()
+		t.Cleanup(r.Release)
+		require.NoError(t, s.Callback(ctx, r))
+	}
+
+	s.Close()
+	require.Zero(t, s.sizeInBytes)
 }
