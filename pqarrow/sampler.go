@@ -25,7 +25,9 @@ type Sampler struct {
 	i float64
 
 	// options
-	filter physicalplan.BooleanExpression
+	filter   physicalplan.BooleanExpression
+	pool     memory.Allocator
+	iterOpts logicalplan.IterOptions
 }
 
 type Sample struct {
@@ -65,7 +67,13 @@ func NewSampler(k int64, schema *dynparquet.Schema, options ...SamplerOption) *S
 	return s
 }
 
-func (s *Sampler) Sample(rg parquet.RowGroup) error {
+// NumRows is a noop
+func (s *Sampler) NumRows() int { return 0 }
+
+// Reset is a noop
+func (s *Sampler) Reset()
+
+func (s *Sampler) Convert(ctx context.Context, rg parquet.RowGroup, _ *dynparquet.Schema) error {
 	sample := &Sample{
 		rg: rg,
 		id: s.rowGroupID,
@@ -158,17 +166,17 @@ func (s *Sampler) replace(j int, r *Sample) {
 	s.reservoir[j] = r
 }
 
-func (s *Sampler) Convert(ctx context.Context, pool memory.Allocator, iterOpts logicalplan.IterOptions) (arrow.Record, error) {
+func (s *Sampler) NewRecord() (arrow.Record, error) {
 	if len(s.reservoir) == 0 {
 		return nil, nil
 	}
 	s.merge()
 
-	converter := NewParquetConverter(pool, iterOpts)
+	converter := NewParquetConverter(s.pool, s.iterOpts)
 	defer converter.Close()
 
 	for _, sample := range s.reservoir {
-		if err := converter.Convert(ctx, sample.rg, s.schema, sample.rows); err != nil {
+		if err := converter.Convert(context.TODO(), sample.rg, s.schema, sample.rows); err != nil {
 			return nil, err
 		}
 	}

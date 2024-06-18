@@ -39,9 +39,16 @@ type IterOptions struct {
 	Filter             Expr
 	DistinctColumns    []Expr
 	ReadMode           ReadMode
+	Sample             int64
 }
 
 type Option func(opts *IterOptions)
+
+func WithSample(s int64) Option {
+	return func(opts *IterOptions) {
+		opts.Sample = s
+	}
+}
 
 func WithReadMode(m ReadMode) Option {
 	return func(opts *IterOptions) {
