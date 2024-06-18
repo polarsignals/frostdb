@@ -112,6 +112,9 @@ func New(
 		}
 	}
 
+	// Register metrics that are updated by the collector.
+	s.reg.MustRegister(&collector{s: s})
+
 	s.metrics = metrics{
 		shutdownDuration: promauto.With(s.reg).NewHistogram(prometheus.HistogramOpts{
 			Name: "frostdb_shutdown_duration",
@@ -352,7 +355,6 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 }
 
 type dbMetrics struct {
-	txHighWatermark prometheus.GaugeFunc
 	snapshotMetrics *snapshotMetrics
 }
 
@@ -566,12 +568,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 
 		// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
 		db.metrics = &dbMetrics{
-			txHighWatermark: promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-				Name: "frostdb_tx_high_watermark",
-				Help: "The highest transaction number that has been released to be read",
-			}, func() float64 {
-				return float64(db.highWatermark.Load())
-			}),
 			snapshotMetrics: newSnapshotMetrics(reg),
 		}
 		return nil

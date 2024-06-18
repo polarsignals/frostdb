@@ -441,16 +441,6 @@ func newTable(
 
 	t.pendingBlocks = make(map[*TableBlock]struct{})
 
-	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "frostdb_table_active_block_size",
-		Help: "Size of the active table block in bytes.",
-	}, func() float64 {
-		if active := t.ActiveBlock(); active != nil {
-			return float64(active.Size())
-		}
-		return 0
-	})
-
 	return t, nil
 }
 
