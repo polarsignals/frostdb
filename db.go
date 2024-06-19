@@ -23,7 +23,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid/v2"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/exp/maps"
 	"golang.org/x/sync/errgroup"
@@ -60,7 +59,7 @@ type ColumnStore struct {
 	enableWAL           bool
 	manualBlockRotation bool
 	snapshotTriggerSize int64
-	metrics             metrics
+	metrics             globalMetrics
 	recoveryConcurrency int
 
 	// indexDegree is the degree of the btree index (default = 2)
@@ -79,14 +78,8 @@ type ColumnStore struct {
 	// testingOptions are options only used for testing purposes.
 	testingOptions struct {
 		disableReclaimDiskSpaceOnSnapshot bool
-		walTestingOptions                 []wal.TestingOption
+		walTestingOptions                 []wal.Option
 	}
-}
-
-type metrics struct {
-	shutdownDuration  prometheus.Histogram
-	shutdownStarted   prometheus.Counter
-	shutdownCompleted prometheus.Counter
 }
 
 type Option func(*ColumnStore) error
@@ -114,21 +107,7 @@ func New(
 
 	// Register metrics that are updated by the collector.
 	s.reg.MustRegister(&collector{s: s})
-
-	s.metrics = metrics{
-		shutdownDuration: promauto.With(s.reg).NewHistogram(prometheus.HistogramOpts{
-			Name: "frostdb_shutdown_duration",
-			Help: "time it takes for the columnarstore to complete a full shutdown.",
-		}),
-		shutdownStarted: promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
-			Name: "frostdb_shutdown_started",
-			Help: "Indicates a shutdown of the columnarstore has started.",
-		}),
-		shutdownCompleted: promauto.With(s.reg).NewCounter(prometheus.CounterOpts{
-			Name: "frostdb_shutdown_completed",
-			Help: "Indicates a shutdown of the columnarstore has completed.",
-		}),
-	}
+	s.metrics = makeAndRegisterGlobalMetrics(s.reg)
 
 	if s.enableWAL && s.storagePath == "" {
 		return nil, fmt.Errorf("storage path must be configured if WAL is enabled")
@@ -354,13 +333,8 @@ func (s *ColumnStore) recoverDBsFromStorage(ctx context.Context) error {
 	return g.Wait()
 }
 
-type dbMetrics struct {
-	snapshotMetrics *snapshotMetrics
-}
-
 type DB struct {
 	columnStore *ColumnStore
-	reg         prometheus.Registerer
 	logger      log.Logger
 	tracer      trace.Tracer
 	name        string
@@ -389,7 +363,8 @@ type DB struct {
 
 	snapshotInProgress atomic.Bool
 
-	metrics *dbMetrics
+	metrics         snapshotMetrics
+	metricsProvider tableMetricsProvider
 }
 
 // DataSinkSource is a convenience interface for a data source and sink.
@@ -476,20 +451,20 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		s.mtx.Lock()
 	}
 
-	reg := prometheus.WrapRegistererWith(prometheus.Labels{"db": name}, s.reg)
 	logger := log.WithPrefix(s.logger, "db", name)
 	db = &DB{
-		columnStore: s,
-		name:        name,
-		mtx:         &sync.RWMutex{},
-		tables:      map[string]*Table{},
-		roTables:    map[string]*Table{},
-		reg:         reg,
-		logger:      logger,
-		tracer:      s.tracer,
-		wal:         &wal.NopWAL{},
-		sources:     s.sources,
-		sinks:       s.sinks,
+		columnStore:     s,
+		name:            name,
+		mtx:             &sync.RWMutex{},
+		tables:          map[string]*Table{},
+		roTables:        map[string]*Table{},
+		logger:          logger,
+		tracer:          s.tracer,
+		wal:             &wal.NopWAL{},
+		sources:         s.sources,
+		sinks:           s.sinks,
+		metrics:         s.metrics.snapshotMetricsForDB(name),
+		metricsProvider: tableMetricsProvider{dbName: name, m: s.metrics},
 	}
 
 	if s.storagePath != "" {
@@ -546,7 +521,15 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 					delete(s.dbReplaysInProgress, name)
 				}()
 				var err error
-				db.wal, err = db.openWAL(ctx, s.testingOptions.walTestingOptions...)
+				db.wal, err = db.openWAL(
+					ctx,
+					append(
+						[]wal.Option{
+							wal.WithMetrics(s.metrics.metricsForFileWAL(name)),
+							wal.WithStoreMetrics(s.metrics.metricsForWAL(name)),
+						}, s.testingOptions.walTestingOptions...,
+					)...,
+				)
 				return err
 			}(); err != nil {
 				return err
@@ -564,11 +547,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 					table.wal = db.wal
 				}
 			}
-		}
-
-		// Register metrics last to avoid duplicate registration should and of the WAL or storage replay errors occur
-		db.metrics = &dbMetrics{
-			snapshotMetrics: newSnapshotMetrics(reg),
 		}
 		return nil
 	}(); dbSetupErr != nil {
@@ -642,10 +620,9 @@ func (s *ColumnStore) DropDB(name string) error {
 	return os.RemoveAll(filepath.Join(s.DatabasesDir(), name))
 }
 
-func (db *DB) openWAL(ctx context.Context, opts ...wal.TestingOption) (WAL, error) {
+func (db *DB) openWAL(ctx context.Context, opts ...wal.Option) (WAL, error) {
 	wal, err := wal.Open(
 		db.logger,
-		db.reg,
 		db.walDir(),
 		opts...,
 	)
@@ -808,7 +785,7 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 							db,
 							tableName,
 							config,
-							db.reg,
+							db.metricsProvider.metricsForTable(tableName),
 							db.logger,
 							db.tracer,
 							wal,
@@ -1096,7 +1073,7 @@ func (db *DB) readOnlyTable(name string) (*Table, error) {
 		db,
 		name,
 		nil,
-		db.reg,
+		db.metricsProvider.metricsForTable(name),
 		db.logger,
 		db.tracer,
 		db.wal,
@@ -1171,7 +1148,7 @@ func (db *DB) table(name string, config *tablepb.TableConfig, id ulid.ULID) (*Ta
 			db,
 			name,
 			config,
-			db.reg,
+			db.metricsProvider.metricsForTable(name),
 			db.logger,
 			db.tracer,
 			db.wal,

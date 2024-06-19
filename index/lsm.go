@@ -63,7 +63,7 @@ type LSM struct {
 type LSMMetrics struct {
 	Compactions        *prometheus.CounterVec
 	LevelSize          *prometheus.GaugeVec
-	CompactionDuration prometheus.Histogram
+	CompactionDuration prometheus.Observer
 }
 
 // LevelConfig is the configuration for a level in the LSM.

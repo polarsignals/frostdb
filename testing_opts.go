@@ -22,7 +22,7 @@ func WithTestingNoDiskSpaceReclaimOnSnapshot() TestingOption {
 	}
 }
 
-func WithTestingWalOptions(opts ...wal.TestingOption) TestingOption {
+func WithTestingWalOptions(opts ...wal.Option) TestingOption {
 	return func(c *ColumnStore) error {
 		c.testingOptions.walTestingOptions = opts
 		return nil

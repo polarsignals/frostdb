@@ -118,8 +118,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/polarsignals/iceberg-go v0.0.0-20240502213135-2ee70b71e76b h1:Dbm5itapR0uYIMujR8OntWpDJ/nm5OM6JiaKauLcZ4Y=
 github.com/polarsignals/iceberg-go v0.0.0-20240502213135-2ee70b71e76b/go.mod h1:5T9ChEZjRNhAGGLwH1cqzDA7wXB84SmU+WkXQr/ZAjo=
-github.com/polarsignals/wal v0.0.0-20240514152147-1cd4b81c9b88 h1:FZvQW8MXcNjwLfWDRAatOA83Pof5+iKW7veuInygBXY=
-github.com/polarsignals/wal v0.0.0-20240514152147-1cd4b81c9b88/go.mod h1:EVDHAAe+7GQ33A1/x+/gE+sBPN4toQ0XG5RoLD49xr8=
+github.com/polarsignals/wal v0.0.0-20240619104840-9da940027f9c h1:ReFgEXqZ9/y+/9ZdNHOa1L62wqt8mWqoqrWutWj2x+A=
+github.com/polarsignals/wal v0.0.0-20240619104840-9da940027f9c/go.mod h1:EVDHAAe+7GQ33A1/x+/gE+sBPN4toQ0XG5RoLD49xr8=
 github.com/prometheus/client_golang v1.19.1 h1:wZWJDwK+NameRJuPGDhlnFgx8e8HN3XHQeLaYJFJBOE=
 github.com/prometheus/client_golang v1.19.1/go.mod h1:mP78NwGzrVks5S2H6ab8+ZZGJLZUq1hoULYBAYBw1Ho=
 github.com/prometheus/client_model v0.5.0 h1:VQw1hfvPvk3Uv6Qf29VrPF32JB6rtbgI6cYPYQjL0Qw=
