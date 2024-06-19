@@ -23,8 +23,6 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid/v2"
 	"github.com/parquet-go/parquet-go"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
@@ -259,7 +257,7 @@ func NewGenericTable[T any](db *DB, name string, mem memory.Allocator, options .
 type Table struct {
 	db      *DB
 	name    string
-	metrics *tableMetrics
+	metrics tableMetrics
 	logger  log.Logger
 	tracer  trace.Tracer
 
@@ -330,19 +328,6 @@ type Closer interface {
 	Close(cleanup bool) error
 }
 
-type tableMetrics struct {
-	blockPersisted       prometheus.Counter
-	blockRotated         prometheus.Counter
-	rowsInserted         prometheus.Counter
-	rowBytesInserted     prometheus.Counter
-	zeroRowsInserted     prometheus.Counter
-	rowInsertSize        prometheus.Histogram
-	lastCompletedBlockTx prometheus.Gauge
-	numParts             prometheus.Gauge
-
-	indexMetrics *index.LSMMetrics
-}
-
 func schemaFromTableConfig(tableConfig *tablepb.TableConfig) (*dynparquet.Schema, error) {
 	switch schema := tableConfig.Schema.(type) {
 	case *tablepb.TableConfig_DeprecatedSchema:
@@ -359,7 +344,7 @@ func newTable(
 	db *DB,
 	name string,
 	tableConfig *tablepb.TableConfig,
-	reg prometheus.Registerer,
+	metrics tableMetrics,
 	logger log.Logger,
 	tracer trace.Tracer,
 	wal WAL,
@@ -374,8 +359,6 @@ func newTable(
 		return nil, errors.New(msg)
 	}
 
-	reg = prometheus.WrapRegistererWith(prometheus.Labels{"table": name}, reg)
-
 	if tableConfig == nil {
 		tableConfig = defaultTableConfig()
 	}
@@ -386,49 +369,14 @@ func newTable(
 	}
 
 	t := &Table{
-		db:     db,
-		name:   name,
-		logger: logger,
-		tracer: tracer,
-		mtx:    &sync.RWMutex{},
-		wal:    wal,
-		schema: s,
-		metrics: &tableMetrics{
-			numParts: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "frostdb_table_num_parts",
-				Help: "Number of parts currently active.",
-			}),
-			blockPersisted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_blocks_persisted_total",
-				Help: "Number of table blocks that have been persisted.",
-			}),
-			blockRotated: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_blocks_rotated_total",
-				Help: "Number of table blocks that have been rotated.",
-			}),
-			rowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_rows_inserted_total",
-				Help: "Number of rows inserted into table.",
-			}),
-			rowBytesInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_row_bytes_inserted_total",
-				Help: "Number of bytes inserted into table.",
-			}),
-			zeroRowsInserted: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "frostdb_table_zero_rows_inserted_total",
-				Help: "Number of times it was attempted to insert zero rows into the table.",
-			}),
-			rowInsertSize: promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-				Name:    "frostdb_table_row_insert_size",
-				Help:    "Size of batch inserts into table.",
-				Buckets: prometheus.ExponentialBuckets(1, 2, 10),
-			}),
-			lastCompletedBlockTx: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "frostdb_table_last_completed_block_tx",
-				Help: "Last completed block transaction.",
-			}),
-			indexMetrics: index.NewLSMMetrics(reg),
-		},
+		db:      db,
+		name:    name,
+		logger:  logger,
+		tracer:  tracer,
+		mtx:     &sync.RWMutex{},
+		wal:     wal,
+		schema:  s,
+		metrics: metrics,
 	}
 
 	// Store the table config
@@ -440,16 +388,6 @@ func newTable(
 	}
 
 	t.pendingBlocks = make(map[*TableBlock]struct{})
-
-	promauto.With(reg).NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "frostdb_table_active_block_size",
-		Help: "Size of the active table block in bytes.",
-	}, func() float64 {
-		if active := t.ActiveBlock(); active != nil {
-			return float64(active.Size())
-		}
-		return 0
-	})
 
 	return t, nil
 }
@@ -1084,7 +1022,7 @@ func newTableBlock(table *Table, prevTx, tx uint64, id ulid.ULID) (*TableBlock, 
 		table.schema,
 		table.IndexConfig(),
 		table.db.HighWatermark,
-		index.LSMWithMetrics(table.metrics.indexMetrics),
+		index.LSMWithMetrics(&table.metrics.indexMetrics),
 		index.LSMWithLogger(table.logger),
 	)
 	if err != nil {

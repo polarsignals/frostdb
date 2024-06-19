@@ -58,13 +58,42 @@ func (w *NopWAL) LastIndex() (uint64, error) {
 	return 0, nil
 }
 
-type fileWALMetrics struct {
-	failedLogs            prometheus.Counter
-	lastTruncationAt      prometheus.Gauge
-	walRepairs            prometheus.Counter
-	walRepairsLostRecords prometheus.Counter
-	walCloseTimeouts      prometheus.Counter
-	walQueueSize          prometheus.Gauge
+type Metrics struct {
+	FailedLogs            prometheus.Counter
+	LastTruncationAt      prometheus.Gauge
+	WalRepairs            prometheus.Counter
+	WalRepairsLostRecords prometheus.Counter
+	WalCloseTimeouts      prometheus.Counter
+	WalQueueSize          prometheus.Gauge
+}
+
+func newMetrics(reg prometheus.Registerer) *Metrics {
+	return &Metrics{
+		FailedLogs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			Name: "failed_logs_total",
+			Help: "Number of failed WAL logs",
+		}),
+		LastTruncationAt: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+			Name: "last_truncation_at",
+			Help: "The last transaction the WAL was truncated to",
+		}),
+		WalRepairs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			Name: "repairs_total",
+			Help: "The number of times the WAL had to be repaired (truncated) due to corrupt records",
+		}),
+		WalRepairsLostRecords: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			Name: "repairs_lost_records_total",
+			Help: "The number of WAL records lost due to WAL repairs (truncations)",
+		}),
+		WalCloseTimeouts: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			Name: "close_timeouts_total",
+			Help: "The number of times the WAL failed to close due to a timeout",
+		}),
+		WalQueueSize: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
+			Name: "queue_size",
+			Help: "The number of unprocessed requests in the WAL queue",
+		}),
+	}
 }
 
 const (
@@ -77,7 +106,9 @@ type FileWAL struct {
 	path   string
 	log    wal.LogStore
 
-	metrics        *fileWALMetrics
+	metrics      *Metrics
+	storeMetrics *wal.Metrics
+
 	logRequestCh   chan *logRequest
 	logRequestPool *sync.Pool
 	arrowBufPool   *sync.Pool
@@ -145,11 +176,23 @@ func (q *logRequestQueue) Pop() any {
 	return x
 }
 
-type TestingOption func(*FileWAL)
+type Option func(*FileWAL)
 
-func WithTestingLogStoreWrapper(newLogStoreWrapper func(wal.LogStore) wal.LogStore) TestingOption {
+func WithTestingLogStoreWrapper(newLogStoreWrapper func(wal.LogStore) wal.LogStore) Option {
 	return func(w *FileWAL) {
 		w.newLogStoreWrapper = newLogStoreWrapper
+	}
+}
+
+func WithMetrics(m *Metrics) Option {
+	return func(w *FileWAL) {
+		w.metrics = m
+	}
+}
+
+func WithStoreMetrics(m *wal.Metrics) Option {
+	return func(w *FileWAL) {
+		w.storeMetrics = m
 	}
 }
 
@@ -168,7 +211,7 @@ func (t realTicker) C() <-chan time.Time {
 
 // WithTestingLoopTicker allows the caller to force processing of pending WAL
 // entries by providing a custom ticker implementation.
-func WithTestingLoopTicker(t Ticker) TestingOption {
+func WithTestingLoopTicker(t Ticker) Option {
 	return func(w *FileWAL) {
 		w.ticker = t
 	}
@@ -176,30 +219,17 @@ func WithTestingLoopTicker(t Ticker) TestingOption {
 
 func Open(
 	logger log.Logger,
-	reg prometheus.Registerer,
 	path string,
-	opts ...TestingOption,
+	opts ...Option,
 ) (*FileWAL, error) {
 	if err := os.MkdirAll(path, dirPerms); err != nil {
 		return nil, err
 	}
 
-	reg = prometheus.WrapRegistererWithPrefix("frostdb_wal_", reg)
 	segmentSize := wal.DefaultSegmentSize
-	logStore, err := wal.Open(path, wal.WithLogger(logger), wal.WithMetricsRegisterer(reg), wal.WithSegmentSize(segmentSize))
-	if err != nil {
-		return nil, err
-	}
-
-	lastIndex, err := logStore.LastIndex()
-	if err != nil {
-		return nil, err
-	}
-
 	w := &FileWAL{
 		logger:       logger,
 		path:         path,
-		log:          logStore,
 		logRequestCh: make(chan *logRequest),
 		logRequestPool: &sync.Pool{
 			New: func() any {
@@ -214,43 +244,32 @@ func Open(
 			},
 		},
 		closeTimeout: 1 * time.Second,
-		metrics: &fileWALMetrics{
-			failedLogs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "failed_logs_total",
-				Help: "Number of failed WAL logs",
-			}),
-			lastTruncationAt: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "last_truncation_at",
-				Help: "The last transaction the WAL was truncated to",
-			}),
-			walRepairs: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "repairs_total",
-				Help: "The number of times the WAL had to be repaired (truncated) due to corrupt records",
-			}),
-			walRepairsLostRecords: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "repairs_lost_records_total",
-				Help: "The number of WAL records lost due to WAL repairs (truncations)",
-			}),
-			walCloseTimeouts: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-				Name: "close_timeouts_total",
-				Help: "The number of times the WAL failed to close due to a timeout",
-			}),
-			walQueueSize: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-				Name: "queue_size",
-				Help: "The number of unprocessed requests in the WAL queue",
-			}),
-		},
-		segmentSize: segmentSize,
-		shutdownCh:  make(chan struct{}),
+		segmentSize:  segmentSize,
+		shutdownCh:   make(chan struct{}),
 	}
-
-	w.protected.nextTx = lastIndex + 1
 
 	for _, o := range opts {
 		o(w)
 	}
+
+	logStore, err := wal.Open(path, wal.WithLogger(logger), wal.WithMetrics(w.storeMetrics), wal.WithSegmentSize(segmentSize))
+	if err != nil {
+		return nil, err
+	}
+
+	lastIndex, err := logStore.LastIndex()
+	if err != nil {
+		return nil, err
+	}
+	w.protected.nextTx = lastIndex + 1
+
 	if w.newLogStoreWrapper != nil {
-		w.log = w.newLogStoreWrapper(w.log)
+		w.log = w.newLogStoreWrapper(logStore)
+	} else {
+		w.log = logStore
+	}
+	if w.metrics == nil {
+		w.metrics = newMetrics(prometheus.NewRegistry())
 	}
 
 	w.scratch.walBatch = make([]types.LogEntry, 0, 64)
@@ -282,7 +301,7 @@ func (w *FileWAL) run(ctx context.Context) {
 			if n > 0 {
 				// Force the WAL to close after some a timeout.
 				if w.closeTimeout > 0 && time.Since(w.lastBatchWrite) > w.closeTimeout {
-					w.metrics.walCloseTimeouts.Inc()
+					w.metrics.WalCloseTimeouts.Inc()
 					level.Error(w.logger).Log(
 						"msg", "WAL timed out attempting to close",
 					)
@@ -337,7 +356,7 @@ func (w *FileWAL) process() {
 					"found", minTx,
 				)
 				w.logRequestPool.Put(heap.Pop(&w.protected.queue))
-				w.metrics.walQueueSize.Sub(1)
+				w.metrics.WalQueueSize.Sub(1)
 				// Keep on going since there might be other transactions
 				// below this one.
 				continue
@@ -354,7 +373,7 @@ func (w *FileWAL) process() {
 			break
 		}
 		r := heap.Pop(&w.protected.queue).(*logRequest)
-		w.metrics.walQueueSize.Sub(1)
+		w.metrics.WalQueueSize.Sub(1)
 		w.scratch.reqBatch = append(w.scratch.reqBatch, r)
 		batchSize += len(r.data)
 		w.protected.nextTx++
@@ -385,7 +404,7 @@ func (w *FileWAL) process() {
 
 	if len(w.scratch.walBatch) > 0 {
 		if err := w.log.StoreLogs(w.scratch.walBatch); err != nil {
-			w.metrics.failedLogs.Add(float64(len(w.scratch.reqBatch)))
+			w.metrics.FailedLogs.Add(float64(len(w.scratch.reqBatch)))
 			lastIndex, lastIndexErr := w.log.LastIndex()
 			level.Error(w.logger).Log(
 				"msg", "failed to write WAL batch",
@@ -397,7 +416,7 @@ func (w *FileWAL) process() {
 	}
 
 	if truncateTx != 0 {
-		w.metrics.lastTruncationAt.Set(float64(truncateTx))
+		w.metrics.LastTruncationAt.Set(float64(truncateTx))
 		level.Debug(w.logger).Log("msg", "truncating WAL", "tx", truncateTx)
 		if err := w.log.TruncateFront(truncateTx); err != nil {
 			level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", truncateTx, "err", err)
@@ -418,7 +437,7 @@ func (w *FileWAL) process() {
 						break
 					}
 					w.logRequestPool.Put(heap.Pop(&w.protected.queue))
-					w.metrics.walQueueSize.Sub(1)
+					w.metrics.WalQueueSize.Sub(1)
 				}
 			}
 			w.protected.Unlock()
@@ -493,7 +512,7 @@ func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
 
 	w.protected.Lock()
 	heap.Push(&w.protected.queue, r)
-	w.metrics.walQueueSize.Add(1)
+	w.metrics.WalQueueSize.Add(1)
 	w.protected.Unlock()
 
 	return nil
@@ -564,7 +583,7 @@ func (w *FileWAL) LogRecord(tx uint64, table string, record arrow.Record) error 
 
 	w.protected.Lock()
 	heap.Push(&w.protected.queue, r)
-	w.metrics.walQueueSize.Add(1)
+	w.metrics.WalQueueSize.Add(1)
 	w.protected.Unlock()
 
 	return nil
@@ -618,8 +637,8 @@ func (w *FileWAL) Replay(tx uint64, handler ReplayHandlerFunc) (err error) {
 			if err = w.log.TruncateBack(tx - 1); err != nil {
 				return
 			}
-			w.metrics.walRepairs.Inc()
-			w.metrics.walRepairsLostRecords.Add(float64((lastIndex - tx) + 1))
+			w.metrics.WalRepairs.Inc()
+			w.metrics.WalRepairsLostRecords.Add(float64((lastIndex - tx) + 1))
 		}
 	}()
 

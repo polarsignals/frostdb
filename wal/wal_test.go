@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
@@ -18,7 +17,6 @@ func TestWAL(t *testing.T) {
 	dir := t.TempDir()
 	w, err := Open(
 		log.NewNopLogger(),
-		prometheus.NewRegistry(),
 		dir,
 	)
 	require.NoError(t, err)
@@ -39,7 +37,6 @@ func TestWAL(t *testing.T) {
 
 	w, err = Open(
 		log.NewNopLogger(),
-		prometheus.NewRegistry(),
 		dir,
 	)
 	require.NoError(t, err)
@@ -70,7 +67,6 @@ func TestWAL(t *testing.T) {
 	require.NoError(t, os.RemoveAll(dir))
 	w, err = Open(
 		log.NewNopLogger(),
-		prometheus.NewRegistry(),
 		dir,
 	)
 	require.NoError(t, err)
@@ -83,7 +79,6 @@ func TestCorruptWAL(t *testing.T) {
 
 	w, err := Open(
 		log.NewNopLogger(),
-		prometheus.NewRegistry(),
 		path,
 	)
 	require.NoError(t, err)
@@ -107,7 +102,6 @@ func TestCorruptWAL(t *testing.T) {
 
 	w, err = Open(
 		log.NewNopLogger(),
-		prometheus.NewRegistry(),
 		path,
 	)
 	require.NoError(t, err)
@@ -128,7 +122,6 @@ func TestUnexpectedTxn(t *testing.T) {
 	func() {
 		w, err := Open(
 			log.NewNopLogger(),
-			prometheus.NewRegistry(),
 			walDir,
 		)
 		require.NoError(t, err)
@@ -147,7 +140,6 @@ func TestUnexpectedTxn(t *testing.T) {
 	}()
 	w, err := Open(
 		log.NewNopLogger(),
-		prometheus.NewRegistry(),
 		walDir,
 	)
 	require.NoError(t, err)
@@ -176,7 +168,6 @@ func TestWALTruncate(t *testing.T) {
 			dir := t.TempDir()
 			w, err := Open(
 				log.NewNopLogger(),
-				prometheus.NewRegistry(),
 				dir,
 			)
 			require.NoError(t, err)
@@ -220,7 +211,6 @@ func TestWALTruncate(t *testing.T) {
 		dir := t.TempDir()
 		w, err := Open(
 			log.NewNopLogger(),
-			prometheus.NewRegistry(),
 			dir,
 		)
 		require.NoError(t, err)
@@ -277,7 +267,6 @@ func TestWALCloseTimeout(t *testing.T) {
 	dir := t.TempDir()
 	w, err := Open(
 		log.NewNopLogger(),
-		prometheus.NewRegistry(),
 		dir,
 	)
 	require.NoError(t, err)
