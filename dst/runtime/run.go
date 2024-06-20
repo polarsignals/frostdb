@@ -8,6 +8,8 @@ import (
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/experimental/sysfs"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
+
+	"github.com/polarsignals/frostdb/dst/vfs"
 )
 
 const (
@@ -42,7 +44,7 @@ func run(modulePath string) error {
 		WithStdout(os.Stdout).
 		WithStderr(os.Stderr).
 		// Mount filesystem. This is taken from wazero's CLI implementation.
-		WithFSConfig(wazero.NewFSConfig().(sysfs.FSConfig).WithSysFSMount(sysfs.DirFS("/"), "/")).
+		WithFSConfig(wazero.NewFSConfig().(sysfs.FSConfig).WithSysFSMount(vfs.New("/"), "/")).
 		// All these time-related configuration options are to allow the module
 		// to access "real" time on the host. We could use this as a source of
 		// determinisme, but we currently compile the module with -faketime
