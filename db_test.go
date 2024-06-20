@@ -2,7 +2,6 @@ package frostdb
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -28,6 +27,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/polarsignals/frostdb/dynparquet"
+	tablepb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/table/v1alpha1"
 	walpb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/wal/v1alpha1"
 	"github.com/polarsignals/frostdb/index"
 	"github.com/polarsignals/frostdb/query"
@@ -537,141 +537,6 @@ func Test_DB_Filter_Block(t *testing.T) {
 	}
 }
 
-// ErrorBucket is an objstore.Bucket implementation that supports error injection.
-type ErrorBucket struct {
-	iter                      func(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error
-	get                       func(ctx context.Context, name string) (io.ReadCloser, error)
-	getRange                  func(ctx context.Context, name string, off, length int64) (io.ReadCloser, error)
-	exists                    func(ctx context.Context, name string) (bool, error)
-	isObjNotFoundErr          func(err error) bool
-	isCustomerManagedKeyError func(err error) bool
-	attributes                func(ctx context.Context, name string) (objstore.ObjectAttributes, error)
-
-	upload func(ctx context.Context, name string, r io.Reader) error
-	delete func(ctx context.Context, name string) error
-	close  func() error
-}
-
-func (e *ErrorBucket) IsAccessDeniedErr(err error) bool {
-	return err != nil
-}
-
-func (e *ErrorBucket) Iter(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error {
-	if e.iter != nil {
-		return e.iter(ctx, dir, f, options...)
-	}
-
-	return nil
-}
-
-func (e *ErrorBucket) Get(ctx context.Context, name string) (io.ReadCloser, error) {
-	if e.get != nil {
-		return e.get(ctx, name)
-	}
-
-	return nil, nil
-}
-
-func (e *ErrorBucket) GetRange(ctx context.Context, name string, off, length int64) (io.ReadCloser, error) {
-	if e.getRange != nil {
-		return e.getRange(ctx, name, off, length)
-	}
-
-	return nil, nil
-}
-
-func (e *ErrorBucket) Exists(ctx context.Context, name string) (bool, error) {
-	if e.exists != nil {
-		return e.exists(ctx, name)
-	}
-
-	return false, nil
-}
-
-func (e *ErrorBucket) IsObjNotFoundErr(err error) bool {
-	if e.isObjNotFoundErr != nil {
-		return e.isObjNotFoundErr(err)
-	}
-
-	return false
-}
-
-func (e *ErrorBucket) IsCustomerManagedKeyError(err error) bool {
-	if e.isCustomerManagedKeyError != nil {
-		return e.isCustomerManagedKeyError(err)
-	}
-
-	return false
-}
-
-func (e *ErrorBucket) Attributes(ctx context.Context, name string) (objstore.ObjectAttributes, error) {
-	if e.attributes != nil {
-		return e.attributes(ctx, name)
-	}
-
-	return objstore.ObjectAttributes{}, nil
-}
-
-func (e *ErrorBucket) Close() error {
-	if e.close != nil {
-		return e.close()
-	}
-
-	return nil
-}
-
-func (e *ErrorBucket) Upload(ctx context.Context, name string, r io.Reader) error {
-	if e.upload != nil {
-		return e.upload(ctx, name, r)
-	}
-
-	return nil
-}
-
-func (e *ErrorBucket) Delete(ctx context.Context, name string) error {
-	if e.delete != nil {
-		return e.delete(ctx, name)
-	}
-
-	return nil
-}
-
-func (e *ErrorBucket) Name() string { return "error bucket" }
-
-func Test_DB_OpenError(t *testing.T) {
-	logger := newTestLogger(t)
-
-	temp := true
-	tempErr := fmt.Errorf("injected temporary error")
-	e := &ErrorBucket{
-		iter: func(context.Context, string, func(string) error, ...objstore.IterOption) error {
-			if temp {
-				temp = false
-				return tempErr
-			}
-			return nil
-		},
-	}
-	sinksource := NewDefaultObjstoreBucket(e)
-
-	c, err := New(
-		WithLogger(logger),
-		WithReadWriteStorage(sinksource),
-	)
-	require.NoError(t, err)
-	defer c.Close()
-
-	// First time returns temporary error and triggers the chicken switch
-	db, err := c.DB(context.Background(), "test")
-	require.Error(t, err)
-	require.Nil(t, db)
-	require.True(t, errors.Is(err, tempErr))
-
-	db, err = c.DB(context.Background(), "test")
-	require.NoError(t, err)
-	require.NotNil(t, db)
-}
-
 func Test_DB_Block_Optimization(t *testing.T) {
 	sanitize := func(name string) string {
 		return strings.Replace(name, "/", "-", -1)
@@ -1104,14 +969,15 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 		WithActiveMemorySize(100*KiB),
 	)
 	require.NoError(t, err)
-	db, err := c.DB(context.Background(), "test")
+	const tableName = "test"
+	ctx := context.Background()
+	db, err := c.DB(ctx, tableName)
 	require.NoError(t, err)
-	table, err := db.Table("test", config)
+	table, err := db.Table(tableName, config)
 	require.NoError(t, err)
 
 	samples := dynparquet.NewTestSamples()
 
-	ctx := context.Background()
 	for i := 0; i < 100; i++ {
 		r, err := samples.ToRecord()
 		require.NoError(t, err)
@@ -1131,15 +997,18 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 	require.NoError(t, err)
 	defer c.Close()
 
-	// Query with an aggregat query
+	db, err = c.DB(ctx, tableName)
+	require.NoError(t, err)
+
+	// Query with an aggregate query.
 	pool := memory.NewGoAllocator()
-	engine := query.NewEngine(pool, db.TableProvider())
-	err = engine.ScanTable("test").
+	engine := query.NewEngine(pool, db.TableProvider(WithProvideIfNotExists(map[string]*tablepb.TableConfig{tableName: config})))
+	err = engine.ScanTable(tableName).
 		Aggregate(
 			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.label2")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(ctx, func(ctx context.Context, r arrow.Record) error {
 			return nil
 		})
 	require.NoError(t, err)

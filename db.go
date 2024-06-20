@@ -339,9 +339,8 @@ type DB struct {
 	tracer      trace.Tracer
 	name        string
 
-	mtx      *sync.RWMutex
-	roTables map[string]*Table
-	tables   map[string]*Table
+	mtx    *sync.RWMutex
+	tables map[string]*Table
 
 	storagePath string
 	wal         WAL
@@ -457,7 +456,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 		name:            name,
 		mtx:             &sync.RWMutex{},
 		tables:          map[string]*Table{},
-		roTables:        map[string]*Table{},
 		logger:          logger,
 		tracer:          s.tracer,
 		wal:             &wal.NopWAL{},
@@ -485,26 +483,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 			}
 		}
 		db.txPool = NewTxPool(&db.highWatermark)
-		// Wait to start the compactor pool since benchmarks show that WAL
-		// replay is a lot more efficient if it is not competing against
-		// compaction. Additionally, if the CompactAfterRecovery option is
-		// specified, we don't want the user-specified compaction to race with
-		// our compactor pool.
-		if len(db.sources) != 0 {
-			for _, source := range db.sources {
-				prefixes, err := source.Prefixes(ctx, name)
-				if err != nil {
-					return err
-				}
-
-				for _, prefix := range prefixes {
-					_, err := db.readOnlyTable(prefix)
-					if err != nil {
-						return err
-					}
-				}
-			}
-		}
 
 		if s.enableWAL {
 			if err := func() error {
@@ -538,11 +516,6 @@ func (s *ColumnStore) DB(ctx context.Context, name string, opts ...DBOption) (*D
 			// they are loaded from object storage and snapshots with a no-op
 			// WAL by default.
 			for _, table := range db.tables {
-				if !table.config.Load().DisableWal {
-					table.wal = db.wal
-				}
-			}
-			for _, table := range db.roTables {
 				if !table.config.Load().DisableWal {
 					table.wal = db.wal
 				}
@@ -775,24 +748,17 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 					db.mtx.Lock()
 					defer db.mtx.Unlock()
 					config := NewTableConfig(schema, FromConfig(entry.Config))
-					if _, ok := db.roTables[tableName]; ok {
-						table, err = db.promoteReadOnlyTableLocked(tableName, config)
-						if err != nil {
-							return fmt.Errorf("promoting read only table: %w", err)
-						}
-					} else {
-						table, err = newTable(
-							db,
-							tableName,
-							config,
-							db.metricsProvider.metricsForTable(tableName),
-							db.logger,
-							db.tracer,
-							wal,
-						)
-						if err != nil {
-							return fmt.Errorf("instantiate table: %w", err)
-						}
+					table, err = newTable(
+						db,
+						tableName,
+						config,
+						db.metricsProvider.metricsForTable(tableName),
+						db.logger,
+						db.tracer,
+						wal,
+					)
+					if err != nil {
+						return fmt.Errorf("instantiate table: %w", err)
 					}
 
 					table.active, err = newTableBlock(table, 0, tx, id)
@@ -1063,48 +1029,6 @@ func (db *DB) getMinTXPersisted() uint64 {
 	return minTx
 }
 
-func (db *DB) readOnlyTable(name string) (*Table, error) {
-	table, ok := db.tables[name]
-	if ok {
-		return table, nil
-	}
-
-	table, err := newTable(
-		db,
-		name,
-		nil,
-		db.metricsProvider.metricsForTable(name),
-		db.logger,
-		db.tracer,
-		db.wal,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create table: %w", err)
-	}
-
-	db.roTables[name] = table
-	return table, nil
-}
-
-// promoteReadOnlyTableLocked promotes a read-only table to a read-write table.
-// The read-write table is returned but not added to the database. Callers must
-// do so.
-// db.mtx must be held while calling this method.
-func (db *DB) promoteReadOnlyTableLocked(name string, config *tablepb.TableConfig) (*Table, error) {
-	table, ok := db.roTables[name]
-	if !ok {
-		return nil, fmt.Errorf("read only table %s not found", name)
-	}
-	schema, err := schemaFromTableConfig(config)
-	if err != nil {
-		return nil, err
-	}
-	table.config.Store(config)
-	table.schema = schema
-	delete(db.roTables, name)
-	return table, nil
-}
-
 // Table will get or create a new table with the given name and config. If a table already exists with the given name, it will have it's configuration updated.
 func (db *DB) Table(name string, config *tablepb.TableConfig) (*Table, error) {
 	return db.table(name, config, generateULID())
@@ -1135,27 +1059,17 @@ func (db *DB) table(name string, config *tablepb.TableConfig, id ulid.ULID) (*Ta
 		return table, nil
 	}
 
-	// Check if this table exists as a read only table
-	if _, ok := db.roTables[name]; ok {
-		var err error
-		table, err = db.promoteReadOnlyTableLocked(name, config)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		var err error
-		table, err = newTable(
-			db,
-			name,
-			config,
-			db.metricsProvider.metricsForTable(name),
-			db.logger,
-			db.tracer,
-			db.wal,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create table: %w", err)
-		}
+	table, err := newTable(
+		db,
+		name,
+		config,
+		db.metricsProvider.metricsForTable(name),
+		db.logger,
+		db.tracer,
+		db.wal,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
 	tx, _, commit := db.begin()
@@ -1187,8 +1101,8 @@ func (db *DB) GetTable(name string) (*Table, error) {
 	return table, nil
 }
 
-func (db *DB) TableProvider() *DBTableProvider {
-	return NewDBTableProvider(db)
+func (db *DB) TableProvider(opts ...TableProviderOption) *DBTableProvider {
+	return NewDBTableProvider(db, opts...)
 }
 
 // TableNames returns the names of all the db's tables.
@@ -1200,29 +1114,47 @@ func (db *DB) TableNames() []string {
 }
 
 type DBTableProvider struct {
-	db *DB
+	db   *DB
+	cfgs map[string]*tablepb.TableConfig
 }
 
-func NewDBTableProvider(db *DB) *DBTableProvider {
-	return &DBTableProvider{
+type TableProviderOption func(*DBTableProvider)
+
+// WithProvideIfNotExists will create tables if they do not exist in the db. Use
+// this if tables could exist only in object storage.
+func WithProvideIfNotExists(cfgs map[string]*tablepb.TableConfig) TableProviderOption {
+	return func(p *DBTableProvider) {
+		p.cfgs = cfgs
+	}
+}
+
+func NewDBTableProvider(db *DB, opts ...TableProviderOption) *DBTableProvider {
+	p := &DBTableProvider{
 		db: db,
 	}
+	for _, o := range opts {
+		o(p)
+	}
+	return p
 }
 
 func (p *DBTableProvider) GetTable(name string) (logicalplan.TableReader, error) {
-	p.db.mtx.RLock()
-	defer p.db.mtx.RUnlock()
-	tbl, ok := p.db.tables[name]
-	if ok {
-		return tbl, nil
+	tr, err := p.db.GetTable(name)
+	if err == nil {
+		// Table found.
+		return tr, nil
 	}
 
-	tbl, ok = p.db.roTables[name]
-	if ok {
-		return tbl, nil
+	// Table not found, check if we should create it to read from object
+	// storage.
+	if p.cfgs == nil || !errors.As(err, &ErrTableNotFound{}) {
+		return nil, err
 	}
-
-	return nil, fmt.Errorf("table %v not found", name)
+	cfg, ok := p.cfgs[name]
+	if !ok {
+		return nil, fmt.Errorf("%w: and no table config found for %s", err, name)
+	}
+	return p.db.Table(name, cfg)
 }
 
 // beginRead returns the high watermark. Reads can safely access any write that has a lower or equal tx id than the returned number.
