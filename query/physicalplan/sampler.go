@@ -248,7 +248,7 @@ func (s *ReservoirSampler) materialize(allocator memory.Allocator) error {
 				}
 			} else {
 				if err := builder.AppendValue(f, r.Column(i), int(r.i)); err != nil {
-					panic("at the disco")
+					return err
 				}
 			}
 		}
