@@ -347,12 +347,6 @@ func TestDST(t *testing.T) {
 	if os.Getenv(randomSeedKey) == "" {
 		t.Skipf("%s not set, skipping deterministic simulation tests", randomSeedKey)
 	}
-	if os.Getenv("GOOS") != "wasip1" || os.Getenv("GOARCH") != "wasm" {
-		t.Skipf(
-			"GOOS=%s != wasip1 GOARCH=%s != wasm, skipping deterministic simulation tests",
-			os.Getenv("GOOS"), os.Getenv("GOARCH"),
-		)
-	}
 
 	t.Log("Running DST using random seed:", os.Getenv(randomSeedKey))
 	logger := newTestLogger(t)
