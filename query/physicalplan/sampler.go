@@ -106,7 +106,9 @@ func (s *ReservoirSampler) Callback(_ context.Context, r arrow.Record) error {
 	// Sample the record
 	s.sample(r, ref)
 	if s.sizeInBytes >= s.sizeLimit {
-		s.materialize(s.allocator)
+		if err := s.materialize(s.allocator); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -204,7 +206,7 @@ func (s *ReservoirSampler) replace(i int, newRow sample) {
 }
 
 // materialize will build a new record from the reservoir to release the underlying records.
-func (s *ReservoirSampler) materialize(allocator memory.Allocator) {
+func (s *ReservoirSampler) materialize(allocator memory.Allocator) error {
 	// Build the unified schema for the records
 	schema := s.reservoir[0].Schema()
 	fields := schema.Fields()
@@ -240,7 +242,9 @@ func (s *ReservoirSampler) materialize(allocator memory.Allocator) {
 		for i, f := range bldr.Fields() { // TODO handle disparate schemas
 			// Check if this record has this field
 			if !r.Schema().HasField(schema.Field(i).Name) {
-				builder.AppendValue(f, nil, -1)
+				if err := builder.AppendValue(f, nil, -1); err != nil {
+					return err
+				}
 			} else {
 				if err := builder.AppendValue(f, r.Column(i), int(r.i)); err != nil {
 					panic("at the disco")
@@ -261,4 +265,5 @@ func (s *ReservoirSampler) materialize(allocator memory.Allocator) {
 
 	// reslice the reservoir for easy row replacement
 	s.sliceReservoir()
+	return nil
 }

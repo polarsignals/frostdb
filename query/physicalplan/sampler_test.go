@@ -252,7 +252,7 @@ func Test_Sampler_Materialize(t *testing.T) {
 		require.NoError(t, s.Callback(ctx, r))
 	}
 
-	s.materialize(allocator)
+	require.NoError(t, s.materialize(allocator))
 	s.Close()
 	require.Zero(t, s.sizeInBytes)
 }
