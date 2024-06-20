@@ -143,6 +143,7 @@ type FileWAL struct {
 
 	newLogStoreWrapper func(wal.LogStore) wal.LogStore
 	ticker             Ticker
+	testingDroppedLogs func([]types.LogEntry)
 }
 
 type logRequest struct {
@@ -214,6 +215,14 @@ func (t realTicker) C() <-chan time.Time {
 func WithTestingLoopTicker(t Ticker) Option {
 	return func(w *FileWAL) {
 		w.ticker = t
+	}
+}
+
+// WithTestingCallbackWithDroppedLogsOnClose is called when the WAL times out on
+// close with all the entries that could not be written.
+func WithTestingCallbackWithDroppedLogsOnClose(cb func([]types.LogEntry)) Option {
+	return func(w *FileWAL) {
+		w.testingDroppedLogs = cb
 	}
 }
 
@@ -305,6 +314,15 @@ func (w *FileWAL) run(ctx context.Context) {
 					level.Error(w.logger).Log(
 						"msg", "WAL timed out attempting to close",
 					)
+					if w.testingDroppedLogs != nil {
+						batch := make([]types.LogEntry, 0, n)
+						w.protected.Lock()
+						for _, v := range w.protected.queue {
+							batch = append(batch, types.LogEntry{Index: v.tx, Data: v.data})
+						}
+						w.protected.Unlock()
+						w.testingDroppedLogs(batch)
+					}
 					return
 				}
 
