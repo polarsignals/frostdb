@@ -98,33 +98,44 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 		default:
 			return fmt.Errorf("non-dictionary array %T provided for dictionary builder", a)
 		}
+	case *array.ListBuilder:
+		return buildList(b.ValueBuilder(), b, arr, i)
 	case *ListBuilder:
-		vb := b.ValueBuilder()
-		list := arr.(*array.List)
-		start, end := list.ValueOffsets(i)
-		values := array.NewSlice(list.ListValues(), start, end)
-		defer values.Release()
-
-		switch v := values.(type) {
-		case *array.Dictionary:
-			switch dict := v.Dictionary().(type) {
-			case *array.Binary:
-				b.Append(true)
-				for j := 0; j < v.Len(); j++ {
-					switch bldr := vb.(type) {
-					case *array.BinaryDictionaryBuilder:
-						if err := bldr.Append(dict.Value(v.GetValueIndex(j))); err != nil {
-							return err
-						}
-					default:
-						return fmt.Errorf("uknown value builder type %T", bldr)
-					}
-				}
-			}
-		}
+		return buildList(b.ValueBuilder(), b, arr, i)
 	default:
 		return fmt.Errorf("unsupported type for arrow append %T", b)
 	}
+	return nil
+}
+
+type ListLikeBuilder interface {
+	Append(bool)
+}
+
+func buildList(vb any, b ListLikeBuilder, arr arrow.Array, i int) error {
+	list := arr.(*array.List)
+	start, end := list.ValueOffsets(i)
+	values := array.NewSlice(list.ListValues(), start, end)
+	defer values.Release()
+
+	switch v := values.(type) {
+	case *array.Dictionary:
+		switch dict := v.Dictionary().(type) {
+		case *array.Binary:
+			b.Append(true)
+			for j := 0; j < v.Len(); j++ {
+				switch bldr := vb.(type) {
+				case *array.BinaryDictionaryBuilder:
+					if err := bldr.Append(dict.Value(v.GetValueIndex(j))); err != nil {
+						return err
+					}
+				default:
+					return fmt.Errorf("uknown value builder type %T", bldr)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
