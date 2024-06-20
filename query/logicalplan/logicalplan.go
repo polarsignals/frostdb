@@ -424,7 +424,8 @@ func (l *Limit) String() string {
 }
 
 type Sample struct {
-	Expr Expr
+	Expr  Expr
+	Limit Expr
 }
 
 func (s *Sample) String() string {

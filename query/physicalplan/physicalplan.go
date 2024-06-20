@@ -474,14 +474,16 @@ func Build(
 			}
 		case plan.Sample != nil:
 			v := plan.Sample.Expr.(*logicalplan.LiteralExpr).Value.(*scalar.Int64).Value
+			limit := plan.Sample.Limit.(*logicalplan.LiteralExpr).Value.(*scalar.Int64).Value
 			perSampler := v / int64(len(prev))
+			perSamplerLimit := limit / int64(len(prev))
 			r := v % int64(len(prev))
 			for i := range prev {
 				adjust := int64(0)
 				if i < int(r) {
 					adjust = 1
 				}
-				s := NewReservoirSampler(perSampler + adjust)
+				s := NewReservoirSampler(perSampler+adjust, perSamplerLimit, pool)
 				prev[i].SetNext(s)
 				prev[i] = s
 			}

@@ -3339,7 +3339,7 @@ func Test_DB_Sample(t *testing.T) {
 	sampleSize := int64(13)
 	engine := query.NewEngine(pool, db.TableProvider())
 	err = engine.ScanTable("test").
-		Sample(sampleSize). // Sample 13 rows
+		Sample(sampleSize, 1024*1024). // Sample 13 rows, materialize the reservoir at 1MB
 		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
 			lock.Lock()
 			defer lock.Unlock()
