@@ -55,6 +55,8 @@ func run(modulePath string) error {
 		WithSysWalltime().
 		WithArgs(os.Args...)
 
+	vfs.MustInstantiate(ctx, r)
+
 	moduleBytes, err := os.ReadFile(modulePath)
 	if err != nil {
 		return fmt.Errorf("reading module: %w", err)

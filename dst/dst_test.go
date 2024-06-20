@@ -339,6 +339,12 @@ func newTestLogger(t testing.TB) log.Logger {
 	return logger
 }
 
+// Remove unused warnings for now.
+var (
+	_ = vfsShutdown
+	_ = vfsRestart
+)
+
 // TestDST runs deterministic simulation tests against FrostDB. For true
 // determinism and reproducibility, this test needs to be run with
 // GORANDSEED set, the modified go runtime found at github.com/polarsignals/go,
