@@ -58,15 +58,21 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 				dt = &arrow.BinaryType{}
 			default:
 				switch enc.Encoding() {
-				// TODO(asubiotto): Should we remove this check for a deprecated
-				// format?
-				//nolint:staticcheck
-				case format.PlainDictionary:
-					fallthrough
 				case format.RLEDictionary:
 					dt = &arrow.DictionaryType{
 						IndexType: &arrow.Uint32Type{},
 						ValueType: &arrow.BinaryType{},
+					}
+					if !n.Repeated() {
+						// TODO(asubiotto): As currently written, it doesn't
+						//  make sense to have a list of run end encoded values.
+						//  To reduce complexity, we currently refuse to REE
+						//  encode lists of dictionaries, but we should figure
+						//  this out.
+						dt = arrow.RunEndEncodedOf(
+							arrow.PrimitiveTypes.Int32,
+							dt,
+						)
 					}
 				default:
 					dt = &arrow.BinaryType{}
@@ -76,9 +82,14 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 			switch lt.Integer.BitWidth {
 			case 64:
 				if lt.Integer.IsSigned {
-					dt = &arrow.Int64Type{}
+					dt = arrow.PrimitiveTypes.Int64
 				} else {
-					dt = &arrow.Uint64Type{}
+					dt = arrow.PrimitiveTypes.Uint64
+				}
+				if n.Encoding().Encoding() == format.DeltaBinaryPacked {
+					// REE arrays are usually a good bet to represent delta
+					// binary packed integers. This can be tuned if necessary.
+					dt = arrow.RunEndEncodedOf(arrow.PrimitiveTypes.Int32, dt)
 				}
 			default:
 				return nil, errors.New("unsupported int bit width")
@@ -88,6 +99,9 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 		}
 	case t.Kind() == parquet.Boolean:
 		dt = &arrow.BooleanType{}
+		if n.Encoding().Encoding() == format.RLE {
+			dt = arrow.RunEndEncodedOf(arrow.PrimitiveTypes.Int32, dt)
+		}
 	case t.Kind() == parquet.Double:
 		dt = &arrow.Float64Type{}
 	default:
