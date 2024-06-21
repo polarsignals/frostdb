@@ -7,6 +7,7 @@ import (
 
 	"github.com/apache/arrow/go/v16/arrow"
 	"github.com/apache/arrow/go/v16/arrow/memory"
+	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/polarsignals/frostdb/pqarrow/convert"
@@ -282,39 +283,37 @@ func (scan *TableScan) DataTypeForExpr(expr Expr) (arrow.DataType, error) {
 	return t, nil
 }
 
+func parquetNodeToConcreteType(n parquet.Node) (arrow.DataType, error) {
+	t, err := convert.ParquetNodeToType(n)
+	if err != nil {
+		return nil, fmt.Errorf("convert parquet node to type: %w", err)
+	}
+	if rt, ok := t.(*arrow.RunEndEncodedType); ok {
+		// Unwrap REE arrays to their concrete types.
+		t = rt.Encoded()
+	}
+	return t, nil
+
+}
+
 func DataTypeForExprWithSchema(expr Expr, s *dynparquet.Schema) (arrow.DataType, error) {
 	switch expr := expr.(type) {
 	case *Column:
 		colDef, found := s.FindDynamicColumnForConcreteColumn(expr.ColumnName)
 		if found {
-			t, err := convert.ParquetNodeToType(colDef.StorageLayout)
-			if err != nil {
-				return nil, fmt.Errorf("convert parquet node to type: %w", err)
-			}
-
-			return t, nil
+			return parquetNodeToConcreteType(colDef.StorageLayout)
 		}
 
 		colDef, found = s.FindColumn(expr.ColumnName)
 		if found {
-			t, err := convert.ParquetNodeToType(colDef.StorageLayout)
-			if err != nil {
-				return nil, fmt.Errorf("convert parquet node to type: %w", err)
-			}
-
-			return t, nil
+			return parquetNodeToConcreteType(colDef.StorageLayout)
 		}
 
 		return nil, fmt.Errorf("column %q not found", expr.ColumnName)
 	case *DynamicColumn:
 		colDef, found := s.FindDynamicColumn(expr.ColumnName)
 		if found {
-			t, err := convert.ParquetNodeToType(colDef.StorageLayout)
-			if err != nil {
-				return nil, fmt.Errorf("convert parquet node to type: %w", err)
-			}
-
-			return t, nil
+			return parquetNodeToConcreteType(colDef.StorageLayout)
 		}
 
 		return nil, fmt.Errorf("dynamic column %q not found", expr.ColumnName)
