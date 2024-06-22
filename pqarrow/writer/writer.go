@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"unsafe"
 
+	"github.com/apache/arrow/go/v16/arrow"
 	"github.com/apache/arrow/go/v16/arrow/array"
+	"github.com/apache/arrow/go/v16/arrow/memory"
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
@@ -379,7 +382,10 @@ func (m *mapWriter) Write(_ []parquet.Value) {
 }
 
 type dictionaryValueWriter struct {
-	b builder.ColumnBuilder
+	b       builder.ColumnBuilder
+	scratch struct {
+		values []parquet.Value
+	}
 }
 
 func NewDictionaryValueWriter(b builder.ColumnBuilder, _ int) ValueWriter {
@@ -401,5 +407,66 @@ func (w *dictionaryValueWriter) Write(values []parquet.Value) {
 				}
 			}
 		}
+	default:
+		panic(fmt.Sprintf("unsupported dictionary type: %T", db))
 	}
+}
+
+// WritePage writes a page directly to the dictionaryValueWriter. It is valid
+// for callers to write a page with dictionary values directly (i.e.
+// p.Dictionary() == nil).
+func (w *dictionaryValueWriter) WritePage(p parquet.Page) error {
+	if p.NumNulls() > 0 {
+		return ErrCannotWritePageDirectly
+	}
+
+	dict := p.Dictionary()
+	if dict == nil {
+		// This page represents the dictionary values.
+		v := p.Data()
+		switch b := w.b.(type) {
+		case *array.BinaryDictionaryBuilder:
+			data, offsets := v.ByteArray()
+			for i := 0; i < len(offsets)-1; i++ {
+				if err := b.Append(data[offsets[i]:offsets[i+1]]); err != nil {
+					return fmt.Errorf("appending dictionary value: %w", err)
+				}
+			}
+		default:
+			panic(fmt.Sprintf("unsupported dictionary type: %T", b))
+		}
+		return nil
+	}
+
+	indexData := p.Data()
+	dictData := dict.Page().Data()
+
+	indexes := indexData.Int32()
+	flatDictValues, dictValueOffsets := dictData.ByteArray()
+
+	dictValues := array.NewBinaryData(
+		array.NewData(
+			arrow.BinaryTypes.Binary,
+			p.Dictionary().Len(),
+			[]*memory.Buffer{
+				nil,
+				memory.NewBufferBytes(unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(dictValueOffsets))), len(dictValueOffsets)*arrow.Uint32SizeBytes)),
+				memory.NewBufferBytes(flatDictValues),
+			},
+			nil, 0, 0),
+	)
+
+	switch b := w.b.(type) {
+	case *array.BinaryDictionaryBuilder:
+		// TODO(asubiotto): Improve this to be able to reuse the dictionary.
+		if err := b.InsertDictValues(dictValues); err != nil {
+			return fmt.Errorf("inserting dict values: %w", err)
+		}
+		b.IndexBuilder().Builder.(*array.Uint32Builder).AppendValues(unsafe.Slice((*uint32)(unsafe.Pointer(unsafe.SliceData(indexes))), len(indexes)), nil)
+		b.Resize(b.IndexBuilder().Len())
+	default:
+		panic(fmt.Sprintf("unsupported dictionary type: %T", b))
+	}
+
+	return nil
 }

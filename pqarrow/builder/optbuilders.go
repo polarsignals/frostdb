@@ -792,3 +792,7 @@ func (b *OptFloat64Builder) ResetToLength(n int) {
 	b.data = b.data[:n]
 	b.validityBitmap = resizeBitmap(b.validityBitmap, n)
 }
+
+type OptBinaryDictionaryBuilder struct {
+	array.BinaryDictionaryBuilder
+}
