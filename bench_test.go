@@ -145,14 +145,19 @@ func (t *typesResult) Swap(i, j int) {
 	(*t)[i], (*t)[j] = (*t)[j], (*t)[i]
 }
 
-// getDeterministicTypeFilterExpr will always return a deterministic profile
+// getCPUTypeFilter will always return a deterministic profile
 // type across benchmark runs, as well as a pretty string to print this type.
-func getDeterministicTypeFilterExpr(
+func getCPUTypeFilter(
 	ctx context.Context, engine *query.LocalEngine,
 ) ([]logicalplan.Expr, string, error) {
 	results := make(typesResult, 0)
 	if err := getTypesQuery(engine).Execute(ctx, func(_ context.Context, r arrow.Record) error {
+		nameIdx := r.Schema().FieldIndices("name")[0]
 		for i := 0; i < int(r.NumRows()); i++ {
+			if !strings.Contains(string(r.Column(nameIdx).(*array.Dictionary).GetOneForMarshal(i).([]byte)), "cpu") {
+				// Not a CPU profile type, ignore.
+				continue
+			}
 			row := make([]string, 0, len(typeColumns))
 			for j := range typeColumns {
 				v := r.Column(j).GetOneForMarshal(i)
@@ -166,7 +171,7 @@ func getDeterministicTypeFilterExpr(
 	}
 
 	if len(results) == 0 {
-		return nil, "", errors.New("no types found")
+		return nil, "", errors.New("no cpu types found")
 	}
 	sort.Sort(&results)
 
@@ -182,7 +187,7 @@ func getDeterministicTypeFilterExpr(
 
 // getDeterministicLabel will always return a deterministic label/value pair
 // across benchmarks.
-func getDeterministicLabelValuePair(ctx context.Context, engine *query.LocalEngine) (string, string, error) {
+func getDeterministicLabelValuePairForType(ctx context.Context, engine *query.LocalEngine, typeFilter []logicalplan.Expr) (string, string, error) {
 	labels := make([]string, 0)
 	if err := getLabelsQuery(engine).Execute(ctx, func(_ context.Context, r arrow.Record) error {
 		arr := r.Column(0)
@@ -196,17 +201,20 @@ func getDeterministicLabelValuePair(ctx context.Context, engine *query.LocalEngi
 	sort.Strings(labels)
 	for _, label := range labels {
 		values := make([]string, 0)
-		if err := getValuesForLabelQuery(engine, label).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
-			arr := r.Column(0)
-			for i := 0; i < arr.Len(); i++ {
-				if arr.IsNull(i) {
-					continue
+		if err := engine.ScanTable(tableName).
+			Filter(logicalplan.And(typeFilter...)).
+			Distinct(logicalplan.Col(label)).
+			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				arr := r.Column(0)
+				for i := 0; i < arr.Len(); i++ {
+					if arr.IsNull(i) {
+						continue
+					}
+					v := arr.GetOneForMarshal(i)
+					values = append(values, string(v.([]byte)))
 				}
-				v := arr.GetOneForMarshal(i)
-				values = append(values, string(v.([]byte)))
-			}
-			return nil
-		}); err != nil {
+				return nil
+			}); err != nil {
 			return "", "", err
 		}
 		if len(values) == 0 {
@@ -229,14 +237,15 @@ func BenchmarkQuery(b *testing.B) {
 		memory.NewGoAllocator(),
 		db.TableProvider(),
 	)
-	start, end := getLatest15MinInterval(ctx, b, engine)
-	label, value, err := getDeterministicLabelValuePair(ctx, engine)
-	require.NoError(b, err)
-	typeFilter, filterPretty, err := getDeterministicTypeFilterExpr(ctx, engine)
+	typeFilter, filterPretty, err := getCPUTypeFilter(ctx, engine)
 	require.NoError(b, err)
 
-	b.Logf("using label/value pair: (label=%s,value=%s)", label, value)
+	start, end := getLatest15MinInterval(ctx, b, engine)
+	label, value, err := getDeterministicLabelValuePairForType(ctx, engine, typeFilter)
+	require.NoError(b, err)
+
 	b.Logf("using types filter: %s", filterPretty)
+	b.Logf("using label/value pair: (label=%s,value=%s)", label, value)
 
 	fullFilter := append(
 		typeFilter,
