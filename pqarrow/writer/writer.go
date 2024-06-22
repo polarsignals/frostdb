@@ -403,3 +403,67 @@ func (w *dictionaryValueWriter) Write(values []parquet.Value) {
 		}
 	}
 }
+
+type reeWriter struct {
+	b       *array.RunEndEncodedBuilder
+	vb      array.Builder
+	lastVal any
+	started bool
+	scratch struct {
+		values []parquet.Value
+	}
+}
+
+func NewRunEndEncodedValueWriter(b builder.ColumnBuilder, _ int) ValueWriter {
+	reeBuilder := b.(*array.RunEndEncodedBuilder)
+	return &reeWriter{
+		b:  reeBuilder,
+		vb: reeBuilder.ValueBuilder(),
+	}
+}
+
+func (w *reeWriter) Write(values []parquet.Value) {
+	// TODO(asubiotto): Very inefficient.
+	switch b := w.vb.(type) {
+	case *array.BinaryDictionaryBuilder:
+		for _, v := range values {
+			w.b.Append(1)
+			if err := b.Append(v.Bytes()); err != nil {
+				panic(err)
+			}
+		}
+	default:
+		panic(fmt.Sprintf("unhandled value builder type %T", b))
+	}
+}
+
+func (w *reeWriter) WritePage(p parquet.Page) error {
+	numVals := int(p.NumValues())
+	if p.NumNulls() == p.NumValues() {
+		// Fast path for a page full of nulls.
+		if w.started && w.lastVal == nil {
+			w.b.ContinueRun(uint64(numVals))
+			return nil
+		}
+		// First null found.
+		w.started = true
+		w.lastVal = nil
+		w.vb.AppendNull()
+		w.b.Append(uint64(numVals))
+		return nil
+	}
+
+	if cap(w.scratch.values) < numVals {
+		w.scratch.values = make([]parquet.Value, numVals)
+	}
+	w.scratch.values = w.scratch.values[:numVals]
+
+	_, err := p.Values().ReadValues(w.scratch.values)
+	// We're reading all values in the page so we always expect an io.EOF.
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("read values: %w", err)
+	}
+
+	w.Write(w.scratch.values)
+	return nil
+}

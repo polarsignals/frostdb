@@ -147,6 +147,8 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 		wr = writer.NewFloat64ValueWriter
 	case *arrow.DictionaryType:
 		wr = writer.NewDictionaryValueWriter
+	case *arrow.RunEndEncodedType:
+		wr = writer.NewRunEndEncodedValueWriter
 	default:
 		return nil, errors.New("unsupported type: " + n.Type().String())
 	}
