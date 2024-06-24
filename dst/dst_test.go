@@ -404,8 +404,13 @@ func TestDST(t *testing.T) {
 		return nil
 	}
 
-	errg := &errgroup.Group{}
-	errg.SetLimit(32)
+	newErrg := func() *errgroup.Group {
+		errg := &errgroup.Group{}
+		errg.SetLimit(32)
+		return errg
+	}
+
+	errg := newErrg()
 	commandDistribution := make(map[command]int)
 
 	ignoreGoroutinesAtStartOfTest := goleak.IgnoreCurrent()
@@ -496,6 +501,9 @@ func TestDST(t *testing.T) {
 			// Graceful shutdown.
 			require.NoError(t, c.Close())
 			_ = errg.Wait()
+			// Reset the errg, otherwise if an error was encountered, it will
+			// be returned on the next Wait call.
+			errg = newErrg()
 			waitForRunningGoroutines(t)
 			restart(t)
 		case hardRestart:
@@ -506,6 +514,9 @@ func TestDST(t *testing.T) {
 			// channel below. The snapshot of the directory has already been
 			// taken, so all of this is just cleanup code.
 			_ = errg.Wait()
+			// Reset the errg, otherwise if an error was encountered, it will
+			// be returned on the next Wait call.
+			errg = newErrg()
 			// Close the WAL ticker chan to ensure draining of all WAL entries.
 			// This is done as a workaround so that pending WAL entries are
 			// fully written to the LogStore and recorded as "lost".
