@@ -393,31 +393,40 @@ func newTable(
 }
 
 func (t *Table) newTableBlock(prevTx, tx uint64, id ulid.ULID) error {
-	b, err := id.MarshalBinary()
+	blockID, err := func() ([]byte, error) {
+		b, err := id.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+
+		newActive, err := newTableBlock(t, prevTx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		t.active = newActive
+		return b, nil
+	}()
 	if err != nil {
+		// A WAL record must always be logged for the given txn, otherwise
+		// subsequent txns will block waiting for this record. This logs a noop
+		// record.
+		if logErr := t.wal.Log(tx, nil); logErr != nil {
+			err = fmt.Errorf("error logging on newTableBlock err: %v, original err: %w", logErr, err)
+		}
 		return err
 	}
 
-	if err := t.wal.Log(tx, &walpb.Record{
+	return t.wal.Log(tx, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_NewTableBlock_{
 				NewTableBlock: &walpb.Entry_NewTableBlock{
 					TableName: t.name,
-					BlockId:   b,
+					BlockId:   blockID,
 					Config:    t.config.Load(),
 				},
 			},
 		},
-	}); err != nil {
-		return err
-	}
-
-	t.active, err = newTableBlock(t, prevTx, tx, id)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	})
 }
 
 func (t *Table) dropPendingBlock(block *TableBlock) {
@@ -458,8 +467,7 @@ func (t *Table) writeBlock(
 	}
 	t.dropPendingBlock(block)
 	if err != nil {
-		level.Error(t.logger).Log("msg", "failed to persist block")
-		level.Error(t.logger).Log("msg", err.Error())
+		level.Error(t.logger).Log("msg", "failed to persist block", "ulid", block.ulid, "err", err)
 		return
 	}
 
@@ -599,7 +607,6 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, opts ...Rotate
 		"size", block.Size(),
 		"skip_persist", rbo.skipPersist,
 	)
-	defer level.Debug(t.logger).Log("msg", "done rotating block", "ulid", block.ulid)
 
 	tx, _, commit := t.db.begin()
 	defer commit()
@@ -611,6 +618,9 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, opts ...Rotate
 		id = generateULID()
 	}
 	if err := t.newTableBlock(t.active.minTx, tx, id); err != nil {
+		level.Debug(t.logger).Log(
+			"msg", "failed to create new table block when rotating block", "ulid", block.ulid, "err", err,
+		)
 		return err
 	}
 	t.metrics.blockRotated.Inc()
@@ -628,6 +638,7 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, opts ...Rotate
 	// will specify through skipPersist if they want the block to be persisted.
 	go t.writeBlock(block, tx, true, opts...)
 
+	level.Debug(t.logger).Log("msg", "done rotating block", "ulid", block.ulid)
 	return nil
 }
 
