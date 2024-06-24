@@ -1000,16 +1000,17 @@ func (db *DB) Close(options ...CloseOption) error {
 }
 
 func (db *DB) closeInternal() error {
-	if db.columnStore.enableWAL && db.wal != nil {
-		if err := db.wal.Close(); err != nil {
-			return err
+	defer func() {
+		// Clean up the txPool even on error.
+		if db.txPool != nil {
+			db.txPool.Stop()
 		}
-	}
-	if db.txPool != nil {
-		db.txPool.Stop()
-	}
+	}()
 
-	return nil
+	if !db.columnStore.enableWAL || db.wal == nil {
+		return nil
+	}
+	return db.wal.Close()
 }
 
 func (db *DB) maintainWAL() {
