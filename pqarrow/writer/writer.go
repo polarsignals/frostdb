@@ -1,6 +1,7 @@
 package writer
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -11,15 +12,32 @@ import (
 )
 
 type ValueWriter interface {
-	WritePage(p parquet.Page) error
+	// Write writes a slice of values to the underlying builder (slow path).
 	Write([]parquet.Value)
 }
 
+type PageWriter interface {
+	ValueWriter
+	// WritePage is the optimized path for writing a page of values to the
+	// underlying builder. There are cases in which the given page cannot be
+	// written directly, in which case ErrCannotWritePageDirectly is returned.
+	// The caller should fall back to writing values.
+	WritePage(parquet.Page) error
+}
+
+var ErrCannotWritePageDirectly = errors.New("cannot write page directly")
+
+type writerBase struct{}
+
+func (w writerBase) canWritePageDirectly(p parquet.Page) bool {
+	// Currently, for most writers, only pages with zero nulls and no dictionary
+	// can be written.
+	return p.NumNulls() == 0 && p.Dictionary() == nil
+}
+
 type binaryValueWriter struct {
-	b       *builder.OptBinaryBuilder
-	scratch struct {
-		values []parquet.Value
-	}
+	writerBase
+	b *builder.OptBinaryBuilder
 }
 
 type NewWriterFunc func(b builder.ColumnBuilder, numValues int) ValueWriter
@@ -37,31 +55,16 @@ func (w *binaryValueWriter) Write(values []parquet.Value) {
 }
 
 func (w *binaryValueWriter) WritePage(p parquet.Page) error {
-	if p.NumNulls() != 0 {
-		reader := p.Values()
-		if cap(w.scratch.values) < int(p.NumValues()) {
-			w.scratch.values = make([]parquet.Value, p.NumValues())
-		}
-		w.scratch.values = w.scratch.values[:p.NumValues()]
-		_, err := reader.ReadValues(w.scratch.values)
-		// We're reading all values in the page so we always expect an io.EOF.
-		if err != nil && err != io.EOF {
-			return fmt.Errorf("read values: %w", err)
-		}
-		w.Write(w.scratch.values)
-		return nil
+	if !w.canWritePageDirectly(p) {
+		return ErrCannotWritePageDirectly
 	}
-
-	// No nulls in page.
 	values := p.Data()
 	return w.b.AppendData(values.ByteArray())
 }
 
 type int64ValueWriter struct {
-	b       *builder.OptInt64Builder
-	scratch struct {
-		values []parquet.Value
-	}
+	writerBase
+	b *builder.OptInt64Builder
 }
 
 func NewInt64ValueWriter(b builder.ColumnBuilder, _ int) ValueWriter {
@@ -76,21 +79,9 @@ func (w *int64ValueWriter) Write(values []parquet.Value) {
 }
 
 func (w *int64ValueWriter) WritePage(p parquet.Page) error {
-	if p.NumNulls() != 0 {
-		reader := p.Values()
-		if cap(w.scratch.values) < int(p.NumValues()) {
-			w.scratch.values = make([]parquet.Value, p.NumValues())
-		}
-		w.scratch.values = w.scratch.values[:p.NumValues()]
-		_, err := reader.ReadValues(w.scratch.values)
-		// We're reading all values in the page so we always expect an io.EOF.
-		if err != nil && err != io.EOF {
-			return fmt.Errorf("read values: %w", err)
-		}
-		w.Write(w.scratch.values)
-		return nil
+	if !w.canWritePageDirectly(p) {
+		return ErrCannotWritePageDirectly
 	}
-
 	// No nulls in page.
 	values := p.Data()
 	w.b.AppendData(values.Int64())
@@ -120,22 +111,6 @@ func (w *uint64ValueWriter) Write(values []parquet.Value) {
 			w.b.Append(uint64(v.Int64()))
 		}
 	}
-}
-
-// TODO: implement fast path of writing the whole page directly.
-func (w *uint64ValueWriter) WritePage(p parquet.Page) error {
-	reader := p.Values()
-
-	values := make([]parquet.Value, p.NumValues())
-	_, err := reader.ReadValues(values)
-	// We're reading all values in the page so we always expect an io.EOF.
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("read values: %w", err)
-	}
-
-	w.Write(values)
-
-	return nil
 }
 
 type repeatedValueWriter struct {
@@ -182,22 +157,6 @@ func (w *repeatedValueWriter) Write(values []parquet.Value) {
 	}
 }
 
-// TODO: implement fast path of writing the whole page directly.
-func (w *repeatedValueWriter) WritePage(p parquet.Page) error {
-	reader := p.Values()
-
-	values := make([]parquet.Value, p.NumValues())
-	_, err := reader.ReadValues(values)
-	// We're reading all values in the page so we always expect an io.EOF.
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("read values: %w", err)
-	}
-
-	w.Write(values)
-
-	return nil
-}
-
 type float64ValueWriter struct {
 	b   *array.Float64Builder
 	buf []float64
@@ -222,46 +181,32 @@ func (w *float64ValueWriter) Write(values []parquet.Value) {
 }
 
 func (w *float64ValueWriter) WritePage(p parquet.Page) error {
-	reader := p.Values()
-
-	ireader, ok := reader.(parquet.DoubleReader)
-	if ok {
-		// fast path
-		if w.buf == nil {
-			w.buf = make([]float64, p.NumValues())
-		}
-		values := w.buf
-		for {
-			n, err := ireader.ReadDoubles(values)
-			if err != nil && err != io.EOF {
-				return fmt.Errorf("read values: %w", err)
-			}
-
-			w.b.AppendValues(values[:n], nil)
-			if err == io.EOF {
-				break
-			}
-		}
-		return nil
+	ireader, ok := p.Values().(parquet.DoubleReader)
+	if !ok {
+		return ErrCannotWritePageDirectly
 	}
 
-	values := make([]parquet.Value, p.NumValues())
-	_, err := reader.ReadValues(values)
-	// We're reading all values in the page so we always expect an io.EOF.
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("read values: %w", err)
+	if w.buf == nil {
+		w.buf = make([]float64, p.NumValues())
 	}
+	values := w.buf
+	for {
+		n, err := ireader.ReadDoubles(values)
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("read values: %w", err)
+		}
 
-	w.Write(values)
-
+		w.b.AppendValues(values[:n], nil)
+		if err == io.EOF {
+			break
+		}
+	}
 	return nil
 }
 
 type booleanValueWriter struct {
-	b       *builder.OptBooleanBuilder
-	scratch struct {
-		values []parquet.Value
-	}
+	writerBase
+	b *builder.OptBooleanBuilder
 }
 
 func NewBooleanValueWriter(b builder.ColumnBuilder, numValues int) ValueWriter {
@@ -277,22 +222,9 @@ func (w *booleanValueWriter) Write(values []parquet.Value) {
 }
 
 func (w *booleanValueWriter) WritePage(p parquet.Page) error {
-	if p.NumNulls() != 0 {
-		reader := p.Values()
-		if cap(w.scratch.values) < int(p.NumValues()) {
-			w.scratch.values = make([]parquet.Value, p.NumValues())
-		}
-		w.scratch.values = w.scratch.values[:p.NumValues()]
-		_, err := reader.ReadValues(w.scratch.values)
-		// We're reading all values in the page so we always expect an io.EOF.
-		if err != nil && err != io.EOF {
-			return fmt.Errorf("read values: %w", err)
-		}
-		w.Write(w.scratch.values)
-		return nil
+	if !w.canWritePageDirectly(p) {
+		return ErrCannotWritePageDirectly
 	}
-
-	// No nulls in page.
 	values := p.Data()
 	w.b.Append(values.Boolean(), int(p.NumValues()))
 	return nil
@@ -311,19 +243,6 @@ func NewStructWriterFromOffset(offset int) NewWriterFunc {
 			b:      b.(*array.StructBuilder),
 		}
 	}
-}
-
-func (s *structWriter) WritePage(p parquet.Page) error {
-	// TODO: there's probably a more optimized way to handle a page of values here; but doing this for simplicity of implementation right meow.
-	values := make([]parquet.Value, p.NumValues())
-	_, err := p.Values().ReadValues(values)
-	// We're reading all values in the page so we always expect an io.EOF.
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("read values: %w", err)
-	}
-
-	s.Write(values)
-	return nil
 }
 
 func (s *structWriter) Write(values []parquet.Value) {
@@ -455,10 +374,6 @@ func NewMapWriter(b builder.ColumnBuilder, _ int) ValueWriter {
 	}
 }
 
-func (m *mapWriter) WritePage(_ parquet.Page) error {
-	panic("not implemented")
-}
-
 func (m *mapWriter) Write(_ []parquet.Value) {
 	panic("not implemented")
 }
@@ -487,16 +402,4 @@ func (w *dictionaryValueWriter) Write(values []parquet.Value) {
 			}
 		}
 	}
-}
-
-func (w *dictionaryValueWriter) WritePage(p parquet.Page) error {
-	values := make([]parquet.Value, p.NumValues())
-	_, err := p.Values().ReadValues(values)
-	// We're reading all values in the page so we always expect an io.EOF.
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("read values: %w", err)
-	}
-
-	w.Write(values)
-	return nil
 }
