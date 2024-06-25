@@ -141,6 +141,9 @@ type FileWAL struct {
 	shutdownCh   chan struct{}
 	closeTimeout time.Duration
 
+	// forceProcess is a channel to force processing of the pending log queue.
+	forceProcess chan struct{}
+
 	newLogStoreWrapper func(wal.LogStore) wal.LogStore
 	ticker             Ticker
 	testingDroppedLogs func([]types.LogEntry)
@@ -149,6 +152,9 @@ type FileWAL struct {
 type logRequest struct {
 	tx   uint64
 	data []byte
+	// onLog is set for callers to be notified when the data has been logged,
+	// either successfully or not.
+	onLog func(error)
 }
 
 // min-heap based priority queue to synchronize log requests to be in order of
@@ -255,6 +261,7 @@ func Open(
 		closeTimeout: 1 * time.Second,
 		segmentSize:  segmentSize,
 		shutdownCh:   make(chan struct{}),
+		forceProcess: make(chan struct{}, 1),
 	}
 
 	for _, o := range opts {
@@ -353,14 +360,61 @@ func (w *FileWAL) run(ctx context.Context) {
 			return
 		case <-w.ticker.C():
 			w.process()
+		case <-w.forceProcess:
+			w.process()
 		}
 	}
+}
+
+func (w *FileWAL) releaseLogRequest(r *logRequest) {
+	r.tx = 0
+	r.data = r.data[:0]
+	r.onLog = nil
+	w.logRequestPool.Put(r)
 }
 
 func (w *FileWAL) process() {
 	w.scratch.reqBatch = w.scratch.reqBatch[:0]
 
 	w.protected.Lock()
+	truncateTx := w.protected.truncateTx
+	if truncateTx != 0 {
+		// Reset truncateTx.
+		w.protected.truncateTx = 0
+
+		w.metrics.LastTruncationAt.Set(float64(truncateTx))
+		level.Debug(w.logger).Log("msg", "truncating WAL", "tx", truncateTx)
+		truncateErr := func() error {
+			w.protected.Unlock()
+			defer w.protected.Lock()
+			return w.log.TruncateFront(truncateTx)
+		}()
+
+		if truncateErr != nil {
+			level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", truncateTx, "err", truncateErr)
+		} else {
+			if truncateTx > w.protected.nextTx {
+				// truncateTx is the new firstIndex of the WAL. If it is
+				// greater than the next expected transaction, this was
+				// a full WAL truncation/reset so both the first and
+				// last index are now 0. The underlying WAL will allow a
+				// record with any index to be written, however we only
+				// want to allow the next index to be logged.
+				w.protected.nextTx = truncateTx
+				// Remove any records that have not yet been written and
+				// are now below the nextTx.
+				for w.protected.queue.Len() > 0 {
+					if minTx := w.protected.queue[0].tx; minTx >= w.protected.nextTx {
+						break
+					}
+					w.releaseLogRequest(heap.Pop(&w.protected.queue).(*logRequest))
+					w.metrics.WalQueueSize.Sub(1)
+				}
+			}
+			level.Debug(w.logger).Log("msg", "truncated WAL", "tx", truncateTx)
+		}
+	}
+
 	batchSize := 0
 	for w.protected.queue.Len() > 0 && batchSize < w.segmentSize {
 		if minTx := w.protected.queue[0].tx; minTx != w.protected.nextTx {
@@ -373,7 +427,7 @@ func (w *FileWAL) process() {
 					"expected", w.protected.nextTx,
 					"found", minTx,
 				)
-				w.logRequestPool.Put(heap.Pop(&w.protected.queue))
+				w.releaseLogRequest(heap.Pop(&w.protected.queue).(*logRequest))
 				w.metrics.WalQueueSize.Sub(1)
 				// Keep on going since there might be other transactions
 				// below this one.
@@ -396,15 +450,8 @@ func (w *FileWAL) process() {
 		batchSize += len(r.data)
 		w.protected.nextTx++
 	}
-	// truncateTx will be non-zero if we either are about to log a
-	// record with a txn past the txn to truncate, or we have logged one
-	// in the past.
-	truncateTx := uint64(0)
-	if w.protected.truncateTx != 0 {
-		truncateTx = w.protected.truncateTx
-		w.protected.truncateTx = 0
-	}
 	w.protected.Unlock()
+
 	if len(w.scratch.reqBatch) == 0 && truncateTx == 0 {
 		// No records to log or truncations.
 		return
@@ -421,7 +468,8 @@ func (w *FileWAL) process() {
 	}
 
 	if len(w.scratch.walBatch) > 0 {
-		if err := w.log.StoreLogs(w.scratch.walBatch); err != nil {
+		err := w.log.StoreLogs(w.scratch.walBatch)
+		if err != nil {
 			w.metrics.FailedLogs.Add(float64(len(w.scratch.reqBatch)))
 			lastIndex, lastIndexErr := w.log.LastIndex()
 			level.Error(w.logger).Log(
@@ -431,35 +479,10 @@ func (w *FileWAL) process() {
 				"lastIndexErr", lastIndexErr,
 			)
 		}
-	}
-
-	if truncateTx != 0 {
-		w.metrics.LastTruncationAt.Set(float64(truncateTx))
-		level.Debug(w.logger).Log("msg", "truncating WAL", "tx", truncateTx)
-		if err := w.log.TruncateFront(truncateTx); err != nil {
-			level.Error(w.logger).Log("msg", "failed to truncate WAL", "tx", truncateTx, "err", err)
-		} else {
-			w.protected.Lock()
-			if truncateTx > w.protected.nextTx {
-				// truncateTx is the new firstIndex of the WAL. If it is
-				// greater than the next expected transaction, this was
-				// a full WAL truncation/reset so both the first and
-				// last index are now 0. The underlying WAL will allow a
-				// record with any index to be written, however we only
-				// want to allow the next index to be logged.
-				w.protected.nextTx = truncateTx
-				// Remove any records that have not yet been written and
-				// are now below the nextTx.
-				for w.protected.queue.Len() > 0 {
-					if minTx := w.protected.queue[0].tx; minTx >= w.protected.nextTx {
-						break
-					}
-					w.logRequestPool.Put(heap.Pop(&w.protected.queue))
-					w.metrics.WalQueueSize.Sub(1)
-				}
+		for _, r := range w.scratch.reqBatch {
+			if r.onLog != nil {
+				r.onLog(err)
 			}
-			w.protected.Unlock()
-			level.Debug(w.logger).Log("msg", "truncated WAL", "tx", truncateTx)
 		}
 	}
 
@@ -472,7 +495,7 @@ func (w *FileWAL) process() {
 	}
 	for i, r := range w.scratch.reqBatch {
 		w.scratch.reqBatch[i] = nil
-		w.logRequestPool.Put(r)
+		w.releaseLogRequest(r)
 	}
 
 	w.lastBatchWrite = time.Now()
@@ -516,9 +539,43 @@ func (w *FileWAL) Close() error {
 }
 
 func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
+	w.protected.Lock()
+	nextTx := w.protected.nextTx
+	w.protected.Unlock()
+	if tx < nextTx {
+		// Transaction should not be logged. This could happen if a truncation
+		// has been issued simultaneously as logging a WAL record.
+		level.Warn(w.logger).Log(
+			"msg", "attempted to log txn below next expected txn",
+			"tx", tx,
+			"next_tx", nextTx,
+		)
+		return nil
+	}
+
+	synchronous := false
+	size := record.SizeVT()
+	if size != 0 {
+		switch record.Entry.EntryType.(type) {
+		case *walpb.Entry_NewTableBlock_:
+			// NewTableBlock entries must be logged synchronously or we risk
+			// losing data by allowing the active block to be overwritten before
+			// we are sure that the previous table block's rotation event has
+			// been durably persisted.
+			synchronous = true
+		default:
+		}
+	}
+
 	r := w.logRequestPool.Get().(*logRequest)
 	r.tx = tx
-	size := record.SizeVT()
+	var errCh chan error
+	if synchronous {
+		errCh = make(chan error, 1)
+		r.onLog = func(err error) {
+			errCh <- err
+		}
+	}
 	if cap(r.data) < size {
 		r.data = make([]byte, size)
 	}
@@ -533,7 +590,11 @@ func (w *FileWAL) Log(tx uint64, record *walpb.Record) error {
 	w.metrics.WalQueueSize.Add(1)
 	w.protected.Unlock()
 
-	return nil
+	if !synchronous {
+		return nil
+	}
+	w.forceProcess <- struct{}{}
+	return <-errCh
 }
 
 func (w *FileWAL) getArrowBuf() *bytes.Buffer {
@@ -556,26 +617,13 @@ func (w *FileWAL) writeRecord(buf *bytes.Buffer, record arrow.Record) error {
 }
 
 func (w *FileWAL) LogRecord(tx uint64, table string, record arrow.Record) error {
-	w.protected.Lock()
-	nextTx := w.protected.nextTx
-	w.protected.Unlock()
-	if tx < nextTx {
-		// Transaction should not be logged. This could happen if a truncation
-		// has been issued simultaneously as logging a WAL record.
-		level.Warn(w.logger).Log(
-			"msg", "attempted to log txn below next expected txn",
-			"tx", tx,
-			"next_tx", nextTx,
-		)
-		return nil
-	}
 	buf := w.getArrowBuf()
 	defer w.putArrowBuf(buf)
 	if err := w.writeRecord(buf, record); err != nil {
 		return err
 	}
 
-	walrecord := &walpb.Record{
+	return w.Log(tx, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_Write_{
 				Write: &walpb.Entry_Write{
@@ -585,26 +633,7 @@ func (w *FileWAL) LogRecord(tx uint64, table string, record arrow.Record) error 
 				},
 			},
 		},
-	}
-
-	r := w.logRequestPool.Get().(*logRequest)
-	r.tx = tx
-	size := walrecord.SizeVT()
-	if cap(r.data) < size {
-		r.data = make([]byte, size)
-	}
-	r.data = r.data[:size]
-	_, err := walrecord.MarshalToSizedBufferVT(r.data)
-	if err != nil {
-		return err
-	}
-
-	w.protected.Lock()
-	heap.Push(&w.protected.queue, r)
-	w.metrics.WalQueueSize.Add(1)
-	w.protected.Unlock()
-
-	return nil
+	})
 }
 
 func (w *FileWAL) FirstIndex() (uint64, error) {

@@ -281,6 +281,10 @@ type Sync interface {
 
 type WAL interface {
 	Close() error
+	// Log logs a record to the WAL asynchronously for performance reasons given
+	// we do not guarantee durability. The only record types that are logged
+	// synchronously are:
+	// - NewTableBlock
 	Log(tx uint64, record *walpb.Record) error
 	LogRecord(tx uint64, table string, record arrow.Record) error
 	// Replay replays WAL records from the given first index. If firstIndex is
@@ -638,7 +642,9 @@ func (t *Table) RotateBlock(_ context.Context, block *TableBlock, opts ...Rotate
 	// will specify through skipPersist if they want the block to be persisted.
 	go t.writeBlock(block, tx, true, opts...)
 
-	level.Debug(t.logger).Log("msg", "done rotating block", "ulid", block.ulid)
+	level.Debug(t.logger).Log(
+		"msg", "done rotating block", "ulid", block.ulid, "new_active_block_ulid", t.active.ulid,
+	)
 	return nil
 }
 
