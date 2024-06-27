@@ -2,6 +2,7 @@ package pqarrow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -780,36 +781,42 @@ func (c *ParquetConverter) writeColumnToArray(
 			}
 			return fmt.Errorf("read page: %w", err)
 		}
-		dict := p.Dictionary()
 
-		switch {
-		case !repeated && dictionaryOnly && dict != nil && p.NumNulls() == 0:
-			// If we are only writing the dictionary, we don't need to read
-			// the values.
-			if err := w.WritePage(dict.Page()); err != nil {
-				return fmt.Errorf("write dictionary page: %w", err)
+		dict := p.Dictionary()
+		if dict != nil && dictionaryOnly {
+			// We only want distinct values; write only the dictionary page.
+			if p.NumNulls() > 0 {
+				// Since dictionary pages do not represent nulls, write a null
+				// value if the non-dictionary page has at least one null.
+				w.Write([]parquet.Value{parquet.NullValue()})
 			}
-		case !repeated && p.NumNulls() == 0 && dict == nil:
-			// If the column has no nulls, we can read all values at once
-			// consecutively without worrying about null values.
-			if err := w.WritePage(p); err != nil {
+			p = dict.Page()
+		}
+
+		if pw, ok := w.(writer.PageWriter); ok {
+			err := pw.WritePage(p)
+			if err == nil {
+				continue
+			} else if err != nil && !errors.Is(err, writer.ErrCannotWritePageDirectly) {
 				return fmt.Errorf("write page: %w", err)
 			}
-		default:
-			if n := p.NumValues(); int64(cap(c.scratchValues)) < n {
-				c.scratchValues = make([]parquet.Value, n)
-			} else {
-				c.scratchValues = c.scratchValues[:n]
-			}
-
-			// We're reading all values in the page so we always expect an io.EOF.
-			reader := p.Values()
-			if _, err := reader.ReadValues(c.scratchValues); err != nil && err != io.EOF {
-				return fmt.Errorf("read values: %w", err)
-			}
-
-			w.Write(c.scratchValues)
+			// Could not write page directly, fall through to slow path.
 		}
+
+		// Write values using the slow path.
+		n := p.NumValues()
+		if int64(cap(c.scratchValues)) < n {
+			c.scratchValues = make([]parquet.Value, n)
+		}
+		c.scratchValues = c.scratchValues[:n]
+
+		// We're reading all values in the page so we always expect an io.EOF.
+		reader := p.Values()
+		if _, err := reader.ReadValues(c.scratchValues); err != nil && err != io.EOF {
+			return fmt.Errorf("read values: %w", err)
+		}
+
+		w.Write(c.scratchValues)
 	}
 
 	return nil
