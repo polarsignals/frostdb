@@ -22,7 +22,7 @@ func TestWAL(t *testing.T) {
 	require.NoError(t, err)
 	w.RunAsync()
 
-	require.NoError(t, w.Log(1, &walpb.Record{
+	writeRecord := &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_Write_{
 				Write: &walpb.Entry_Write{
@@ -31,7 +31,12 @@ func TestWAL(t *testing.T) {
 				},
 			},
 		},
-	}))
+	}
+
+	require.NoError(t, w.Log(1, writeRecord))
+	// Verify writing a nil record.
+	require.NoError(t, w.Log(2, nil))
+	require.NoError(t, w.Log(3, writeRecord))
 
 	require.NoError(t, w.Close())
 
@@ -42,15 +47,25 @@ func TestWAL(t *testing.T) {
 	require.NoError(t, err)
 	w.RunAsync()
 
+	numRecords := 0
 	err = w.Replay(0, func(tx uint64, r *walpb.Record) error {
-		require.Equal(t, uint64(1), tx)
-		require.Equal(t, []byte("test-data"), r.Entry.GetWrite().Data)
-		require.Equal(t, "test-table", r.Entry.GetWrite().TableName)
+		numRecords++
+		switch tx {
+		case 1:
+			fallthrough
+		case 3:
+			require.Equal(t, writeRecord, r)
+		case 2:
+			require.Equal(t, &walpb.Record{}, r)
+		default:
+			t.Fatalf("unexpected tx: %d", tx)
+		}
 		return nil
 	})
 	require.NoError(t, err)
+	require.Equal(t, 3, numRecords)
 
-	require.NoError(t, w.Log(2, &walpb.Record{
+	require.NoError(t, w.Log(4, &walpb.Record{
 		Entry: &walpb.Entry{
 			EntryType: &walpb.Entry_Write_{
 				Write: &walpb.Entry_Write{

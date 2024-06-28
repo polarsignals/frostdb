@@ -715,6 +715,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 
 	start := time.Now()
 	if err := wal.Replay(snapshotTx+1, func(_ uint64, record *walpb.Record) error {
+		if record.SizeVT() == 0 {
+			// This was an empty record, skip it.
+			return nil
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -737,6 +741,10 @@ func (db *DB) recover(ctx context.Context, wal WAL) error {
 	performSnapshot := false
 
 	if err := wal.Replay(snapshotTx+1, func(tx uint64, record *walpb.Record) error {
+		if record.SizeVT() == 0 {
+			// This was an empty record, skip it.
+			return nil
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}

@@ -239,6 +239,9 @@ func (s *testLogStore) accumulateLogs(logs []types.LogEntry) error {
 		if err := walRec.UnmarshalVT(log.Data); err != nil {
 			return err
 		}
+		if walRec.SizeVT() == 0 {
+			continue
+		}
 		writeInfo, ok := walRec.Entry.EntryType.(*walpb.Entry_Write_)
 		if !ok {
 			continue
