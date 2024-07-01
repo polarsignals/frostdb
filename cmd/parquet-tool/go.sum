@@ -91,10 +91,14 @@ github.com/polarsignals/frostdb v0.0.0-20240422193019-ddfc5534c809 h1:9IHOjvAsyt
 github.com/polarsignals/frostdb v0.0.0-20240422193019-ddfc5534c809/go.mod h1:YHgVYKw5Ynnw8/dMdFz8LL9SPjMXXPxm5X2Yzd5a/rA=
 github.com/polarsignals/frostdb v0.0.0-20240531143051-eaf80c711e0a h1:R5W7iCLaP2w1s9LBnONPXrJDEPwzvMvviUbo/uBxwzA=
 github.com/polarsignals/frostdb v0.0.0-20240531143051-eaf80c711e0a/go.mod h1:lzPdZ78hhdb/Hx1ljqhfNO3aBy+Sgh34pdaxfxu+j3Y=
+github.com/polarsignals/frostdb v0.0.0-20240627133947-6206acd5457c h1:bp9kslfQE52NjTF27qEqs2RxXNmotCy1D4uqI2aT0DU=
+github.com/polarsignals/frostdb v0.0.0-20240627133947-6206acd5457c/go.mod h1:Yi3xaZgm67l5p9Z94nSk62qvCj2+az+wEgghsqjrW9g=
 github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9 h1:SwUso/MRikI7aLlEelX4k6N107fT4uTAzmtyMTfjr44=
 github.com/polarsignals/wal v0.0.0-20231123092250-5d233119cfc9/go.mod h1:EVDHAAe+7GQ33A1/x+/gE+sBPN4toQ0XG5RoLD49xr8=
 github.com/polarsignals/wal v0.0.0-20240514152147-1cd4b81c9b88 h1:FZvQW8MXcNjwLfWDRAatOA83Pof5+iKW7veuInygBXY=
 github.com/polarsignals/wal v0.0.0-20240514152147-1cd4b81c9b88/go.mod h1:EVDHAAe+7GQ33A1/x+/gE+sBPN4toQ0XG5RoLD49xr8=
+github.com/polarsignals/wal v0.0.0-20240619104840-9da940027f9c h1:ReFgEXqZ9/y+/9ZdNHOa1L62wqt8mWqoqrWutWj2x+A=
+github.com/polarsignals/wal v0.0.0-20240619104840-9da940027f9c/go.mod h1:EVDHAAe+7GQ33A1/x+/gE+sBPN4toQ0XG5RoLD49xr8=
 github.com/prometheus/client_golang v1.19.0 h1:ygXvpU1AoN1MhdzckN+PyD9QJOSD4x7kmXYlnfbA6JU=
 github.com/prometheus/client_golang v1.19.0/go.mod h1:ZRM9uEAypZakd+q/x7+gmsvXdURP+DABIEIjnmDdp+k=
 github.com/prometheus/client_golang v1.19.1 h1:wZWJDwK+NameRJuPGDhlnFgx8e8HN3XHQeLaYJFJBOE=
@@ -133,6 +137,8 @@ golang.org/x/exp v0.0.0-20240416160154-fe59bbe5cc7f h1:99ci1mjWVBWwJiEKYY6jWa4d2
 golang.org/x/exp v0.0.0-20240416160154-fe59bbe5cc7f/go.mod h1:/lliqkxwWAhPjf5oSOIJup2XcqJaw8RGS6k3TGEc7GI=
 golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 h1:vr/HnozRka3pE4EsMEg1lgkXJkTFJCVUX+S/ZT6wYzM=
 golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842/go.mod h1:XtvwrStGgqGPLc4cjQfWqZHG1YFdYs6swckp8vpsjnc=
+golang.org/x/exp v0.0.0-20240531132922-fd00a4e0eefc h1:O9NuF4s+E/PvMIy+9IUZB9znFwUIXEWSstNjek6VpVg=
+golang.org/x/exp v0.0.0-20240531132922-fd00a4e0eefc/go.mod h1:XtvwrStGgqGPLc4cjQfWqZHG1YFdYs6swckp8vpsjnc=
 golang.org/x/mod v0.17.0 h1:zY54UmvipHiNd+pm+m0x9KhZ9hl1/7QNMyxXbc6ICqA=
 golang.org/x/mod v0.17.0/go.mod h1:hTbmBsO62+eylJbnUtE2MGJUyE7QWk4xUqPFrRgJ+7c=
 golang.org/x/sync v0.7.0 h1:YsImfSBoP9QPYL0xyKJPq0gcaJdG3rInoqxTWbfQu9M=
