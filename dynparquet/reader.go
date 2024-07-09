@@ -23,7 +23,7 @@ type SerializedBuffer struct {
 func ReaderFromBytes(buf []byte) (*SerializedBuffer, error) {
 	f, err := parquet.OpenFile(bytes.NewReader(buf), int64(len(buf)))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error opening file from buffer: %w", err)
 	}
 
 	return NewSerializedBuffer(f)

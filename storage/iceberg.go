@@ -284,7 +284,7 @@ func (i *Iceberg) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema,
 				parquet.FileReadMode(parquet.ReadModeAsync),
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to open file %s: %w", e.DataFile().FilePath(), err)
 			}
 
 			// Get a reader from the file bytes

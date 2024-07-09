@@ -363,7 +363,7 @@ func SerializeRecord(r arrow.Record, schema *dynparquet.Schema) (*dynparquet.Ser
 	}
 	f, err := parquet.OpenFile(bytes.NewReader(b.Bytes()), int64(b.Len()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read buf: %v", err)
 	}
 	buf, err := dynparquet.NewSerializedBuffer(f)
 	if err != nil {
