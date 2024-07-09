@@ -183,7 +183,7 @@ func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName str
 		parquet.FileReadMode(parquet.ReadModeAsync),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open block: %s :%v", blockName, err)
 	}
 
 	return file, nil
