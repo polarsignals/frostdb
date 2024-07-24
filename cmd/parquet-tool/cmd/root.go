@@ -30,4 +30,5 @@ func init() {
 	rootCmd.AddCommand(rowgroupCmd)
 	rootCmd.AddCommand(columnCmd)
 	rootCmd.AddCommand(rowCmd)
+	rootCmd.AddCommand(statsCmd)
 }
