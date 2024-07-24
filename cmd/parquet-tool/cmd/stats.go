@@ -77,21 +77,48 @@ func runStats(file string) error {
 	keys := maps.Keys(s)
 	slices.Sort(keys)
 
+	var (
+		totalCompressedSize   int64
+		totalUncompressedSize int64
+		totalByteSize         int64
+	)
 	for _, k := range keys {
 		row := s[k]
-		table.Append(
-			[]string{
-				k,
-				row.Type,
-				fmt.Sprintf("%d", row.NumVal),
-				row.Encoding,
-				humanize.Bytes(uint64(row.TotalCompressedSize)),
-				humanize.Bytes(uint64(row.TotalUncompressedSize)),
-				fmt.Sprintf("%.2f", float64(row.TotalUncompressedSize-row.TotalCompressedSize)/float64(row.TotalCompressedSize)*100),
-				fmt.Sprintf("%.2f", float64(row.TotalUncompressedSize)/float64(row.TotalByteSize)*100),
-			})
+		table.Append([]string{
+			k,
+			row.Type,
+			fmt.Sprintf("%d", row.NumVal),
+			row.Encoding,
+			humanize.Bytes(uint64(row.TotalCompressedSize)),
+			humanize.Bytes(uint64(row.TotalUncompressedSize)),
+			fmt.Sprintf("%.2f", float64(row.TotalUncompressedSize-row.TotalCompressedSize)/float64(row.TotalCompressedSize)*100),
+			fmt.Sprintf("%.2f", float64(row.TotalUncompressedSize)/float64(row.TotalByteSize)*100),
+		})
+
+		totalCompressedSize += row.TotalCompressedSize
+		totalUncompressedSize += row.TotalUncompressedSize
+		totalByteSize += row.TotalByteSize
 	}
+
+	table.Append([]string{
+		"Total",
+		"",
+		"",
+		"",
+		humanize.Bytes(uint64(totalCompressedSize)),
+		humanize.Bytes(uint64(totalUncompressedSize)),
+		"",
+		"",
+	})
 	table.Render()
 
 	return nil
+}
+
+func sum(a []int64) int64 {
+	var s int64
+	for _, v := range a {
+		s += v
+	}
+	return s
 }
