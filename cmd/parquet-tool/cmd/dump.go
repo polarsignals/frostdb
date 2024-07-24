@@ -48,7 +48,7 @@ func dump(file string) error {
 					humanize.Bytes(uint64(ds.MetaData.TotalCompressedSize)),
 					humanize.Bytes(uint64(ds.MetaData.TotalUncompressedSize)),
 					fmt.Sprintf("%.2f", float64(ds.MetaData.TotalUncompressedSize-ds.MetaData.TotalCompressedSize)/float64(ds.MetaData.TotalCompressedSize)*100),
-					fmt.Sprintf("%.2f", float64(ds.MetaData.TotalCompressedSize)/float64(rg.TotalByteSize)*100),
+					fmt.Sprintf("%.2f", float64(ds.MetaData.TotalUncompressedSize)/float64(rg.TotalByteSize)*100),
 				})
 		}
 		table.Render()
