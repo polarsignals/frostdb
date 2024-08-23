@@ -3,7 +3,8 @@ module github.com/polarsignals/frostdb
 go 1.21
 
 require (
-	github.com/RoaringBitmap/roaring v1.9.3
+	github.com/RoaringBitmap/roaring v1.9.4
+	github.com/RoaringBitmap/roaring/v2 v2.3.4
 	github.com/apache/arrow/go/v16 v16.1.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cockroachdb/datadriven v1.0.2
