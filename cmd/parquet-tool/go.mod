@@ -11,7 +11,7 @@ require (
 	github.com/parquet-go/parquet-go v0.22.0
 	github.com/polarsignals/frostdb v0.0.0-20240531143051-eaf80c711e0a
 	github.com/prometheus/client_golang v1.19.1
-	github.com/spf13/cobra v1.8.0
+	github.com/spf13/cobra v1.8.1
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842
 )
 

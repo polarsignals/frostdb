@@ -19,7 +19,7 @@ require (
 	github.com/polarsignals/iceberg-go v0.0.0-20240502213135-2ee70b71e76b
 	github.com/polarsignals/wal v0.0.0-20240619104840-9da940027f9c
 	github.com/prometheus/client_golang v1.19.1
-	github.com/spf13/cobra v1.8.0
+	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.9.0
 	github.com/tetratelabs/wazero v1.7.3
 	github.com/thanos-io/objstore v0.0.0-20240818203309-0363dadfdfb1
