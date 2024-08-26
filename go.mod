@@ -13,7 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid v1.3.1
 	github.com/oklog/ulid/v2 v2.1.0
-	github.com/parquet-go/parquet-go v0.22.0
+	github.com/parquet-go/parquet-go v0.23.0
 	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/planetscale/vtprotobuf v0.6.0
 	github.com/polarsignals/iceberg-go v0.0.0-20240502213135-2ee70b71e76b
@@ -71,8 +71,8 @@ require (
 	github.com/prometheus/common v0.48.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rivo/uniseg v0.4.4 // indirect
-	github.com/segmentio/encoding v0.3.6 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/segmentio/encoding v0.4.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.etcd.io/bbolt v1.3.6 // indirect
