@@ -986,8 +986,10 @@ func (db *DB) Close(options ...CloseOption) error {
 	}
 	level.Info(db.logger).Log("msg", "closed all tables")
 
-	if err := db.closeInternal(); err != nil {
-		return err
+	if !opts.clearStorage { // No need to gracefully close the wal if we're clearing storage.
+		if err := db.closeInternal(); err != nil {
+			return err
+		}
 	}
 
 	if (shouldPersist || opts.clearStorage) && db.storagePath != "" {
