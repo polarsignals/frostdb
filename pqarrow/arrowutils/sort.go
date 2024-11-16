@@ -140,22 +140,45 @@ func TakeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, 
 }
 
 func TakeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arrow.Array, indices *array.Int32) error {
-	r := array.NewDictionaryBuilderWithDict(
-		compute.GetAllocator(ctx), a.DataType().(*arrow.DictionaryType), a.Dictionary(),
-	).(*array.BinaryDictionaryBuilder)
-	defer r.Release()
+	switch a.Dictionary().(type) {
+	case *array.String:
+		r := array.NewDictionaryBuilderWithDict(
+			compute.GetAllocator(ctx), a.DataType().(*arrow.DictionaryType), a.Dictionary(),
+		).(*array.BinaryDictionaryBuilder)
+		defer r.Release()
 
-	r.Reserve(indices.Len())
-	idxBuilder := r.IndexBuilder()
-	for _, i := range indices.Int32Values() {
-		if a.IsNull(int(i)) {
-			r.AppendNull()
-			continue
+		r.Reserve(indices.Len())
+		idxBuilder := r.IndexBuilder()
+		for _, i := range indices.Int32Values() {
+			if a.IsNull(int(i)) {
+				r.AppendNull()
+				continue
+			}
+			idxBuilder.Append(a.GetValueIndex(int(i)))
 		}
-		idxBuilder.Append(a.GetValueIndex(int(i)))
+
+		arr[idx] = r.NewArray()
+		return nil
+	case *array.FixedSizeBinary:
+		r := array.NewDictionaryBuilderWithDict(
+			compute.GetAllocator(ctx), a.DataType().(*arrow.DictionaryType), a.Dictionary(),
+		).(*array.FixedSizeBinaryDictionaryBuilder)
+		defer r.Release()
+
+		r.Reserve(indices.Len())
+		idxBuilder := r.IndexBuilder()
+		for _, i := range indices.Int32Values() {
+			if a.IsNull(int(i)) {
+				r.AppendNull()
+				continue
+			}
+			idxBuilder.Append(a.GetValueIndex(int(i)))
+		}
+
+		arr[idx] = r.NewArray()
+		return nil
 	}
 
-	arr[idx] = r.NewArray()
 	return nil
 }
 
@@ -263,13 +286,21 @@ func newMultiColSorter(
 					},
 					bytes.Compare,
 				)
+			case *array.FixedSizeBinary:
+				ms.comparisons[i] = newOrderedSorter[[]byte](
+					&fixedSizeBinaryDictionary{
+						dict: e,
+						elem: elem,
+					},
+					bytes.Compare,
+				)
 			default:
 				ms.Release()
-				return nil, fmt.Errorf("unsupported dictionary column type for sorting %T", e)
+				return nil, fmt.Errorf("unsupported dictionary column type for sorting %T for column %s", e, r.Schema().Field(col.Index).Name)
 			}
 		default:
 			ms.Release()
-			return nil, fmt.Errorf("unsupported column type for sorting %T", e)
+			return nil, fmt.Errorf("unsupported column type for sorting %T for column %s", e, r.Schema().Field(col.Index).Name)
 		}
 	}
 	return ms, nil
@@ -415,5 +446,18 @@ func (s *binaryDictionary) IsNull(i int) bool {
 }
 
 func (s *binaryDictionary) Value(i int) []byte {
+	return s.elem.Value(s.dict.GetValueIndex(i))
+}
+
+type fixedSizeBinaryDictionary struct {
+	dict *array.Dictionary
+	elem *array.FixedSizeBinary
+}
+
+func (s *fixedSizeBinaryDictionary) IsNull(i int) bool {
+	return s.dict.IsNull(i)
+}
+
+func (s *fixedSizeBinaryDictionary) Value(i int) []byte {
 	return s.elem.Value(s.dict.GetValueIndex(i))
 }
