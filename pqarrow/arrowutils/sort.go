@@ -220,7 +220,7 @@ func newMultiColSorter(
 	}
 	ms.Reserve(int(r.NumRows()), len(columns))
 	for i := range columns {
-		ms.directions[i] = int(columns[i].Direction.comparison())
+		ms.directions[i] = columns[i].Direction.comparison()
 		ms.nullsFirst[i] = columns[i].NullsFirst
 	}
 	for i, col := range columns {
@@ -243,6 +243,8 @@ func newMultiColSorter(
 			ms.comparisons[i] = newOrderedSorter[string](e, cmp.Compare)
 		case *array.Binary:
 			ms.comparisons[i] = newOrderedSorter[[]byte](e, bytes.Compare)
+		case *array.Timestamp:
+			ms.comparisons[i] = newOrderedSorter[arrow.Timestamp](e, cmp.Compare)
 		case *array.Dictionary:
 			switch elem := e.Dictionary().(type) {
 			case *array.String:

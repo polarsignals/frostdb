@@ -110,6 +110,26 @@ func TestSortRecord(t *testing.T) {
 			Indices: []int32{2, 1, 0},
 		},
 		{
+			Name: "By Timestamp column ascending",
+			Samples: Samples{
+				{Timestamp: 3},
+				{Timestamp: 2},
+				{Timestamp: 1},
+			},
+			Columns: []SortingColumn{{Index: 5}},
+			Indices: []int32{2, 1, 0},
+		},
+		{
+			Name: "By Timestamp column descending",
+			Samples: Samples{
+				{Timestamp: 1},
+				{Timestamp: 2},
+				{Timestamp: 3},
+			},
+			Columns: []SortingColumn{{Index: 5, Direction: Descending}},
+			Indices: []int32{2, 1, 0},
+		},
+		{
 			Name: "By Dict column ascending",
 			Samples: Samples{
 				{Dict: "3"},
@@ -365,11 +385,12 @@ func TestReorderRecord(t *testing.T) {
 
 // Use all supported sort field.
 type Sample struct {
-	Int      int64
-	Double   float64
-	String   string
-	Dict     string
-	Nullable *int64
+	Int       int64
+	Double    float64
+	String    string
+	Dict      string
+	Nullable  *int64
+	Timestamp arrow.Timestamp
 }
 
 type Samples []Sample
@@ -401,6 +422,11 @@ func (s Samples) Record() arrow.Record {
 				Type:     arrow.PrimitiveTypes.Int64,
 				Nullable: true,
 			},
+			{
+				Name:     "timestamp",
+				Type:     &arrow.TimestampType{},
+				Nullable: true,
+			},
 		}, nil),
 	)
 
@@ -409,11 +435,17 @@ func (s Samples) Record() arrow.Record {
 	fString := b.Field(2).(*array.StringBuilder)
 	fDict := b.Field(3).(*array.BinaryDictionaryBuilder)
 	fNullable := b.Field(4).(*array.Int64Builder)
+	fTimestamp := b.Field(5).(*array.TimestampBuilder)
 
 	for _, v := range s {
 		fInt.Append(v.Int)
 		fDouble.Append(v.Double)
 		fString.Append(v.String)
+		if v.Timestamp == 0 {
+			fTimestamp.AppendNull()
+		} else {
+			fTimestamp.Append(v.Timestamp)
+		}
 		_ = fDict.AppendString(v.Dict)
 		if v.Nullable != nil {
 			fNullable.Append(*v.Nullable)
