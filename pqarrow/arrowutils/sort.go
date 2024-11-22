@@ -72,7 +72,10 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 	// does not have these columns.
 	var customTake bool
 	for i := 0; i < int(r.NumCols()); i++ {
-		if r.Column(i).DataType().ID() == arrow.DICTIONARY || r.Column(i).DataType().ID() == arrow.LIST {
+		if r.Column(i).DataType().ID() == arrow.DICTIONARY ||
+			r.Column(i).DataType().ID() == arrow.RUN_END_ENCODED ||
+			r.Column(i).DataType().ID() == arrow.LIST ||
+			r.Column(i).DataType().ID() == arrow.STRUCT {
 			customTake = true
 			break
 		}
@@ -108,8 +111,12 @@ func Take(ctx context.Context, r arrow.Record, indices *array.Int32) (arrow.Reco
 		switch arr := r.Column(i).(type) {
 		case *array.Dictionary:
 			g.Go(func() error { return TakeDictColumn(ctx, arr, i, resArr, indices) })
+		case *array.RunEndEncoded:
+			g.Go(func() error { return TakeRunEndEncodedColumn(ctx, arr, i, resArr, indices) })
 		case *array.List:
 			g.Go(func() error { return TakeListColumn(ctx, arr, i, resArr, indices) })
+		case *array.Struct:
+			g.Go(func() error { return TakeStructColumn(ctx, arr, i, resArr, indices) })
 		default:
 			g.Go(func() error { return TakeColumn(ctx, col, i, resArr, indices) })
 		}
@@ -172,6 +179,7 @@ func TakeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arr
 				r.AppendNull()
 				continue
 			}
+			// TODO: Improve this by not copying actual values.
 			idxBuilder.Append(a.GetValueIndex(int(i)))
 		}
 
@@ -179,6 +187,51 @@ func TakeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arr
 		return nil
 	}
 
+	return nil
+}
+
+func TakeRunEndEncodedColumn(ctx context.Context, a *array.RunEndEncoded, idx int, arr []arrow.Array, indices *array.Int32) error {
+	expandedIndexBuilder := array.NewInt32Builder(compute.GetAllocator(ctx))
+	defer expandedIndexBuilder.Release()
+
+	dict := a.Values().(*array.Dictionary)
+	for i := 0; i < a.Len(); i++ {
+		if dict.IsNull(a.GetPhysicalIndex(i)) {
+			expandedIndexBuilder.AppendNull()
+		} else {
+			expandedIndexBuilder.Append(int32(dict.GetValueIndex(a.GetPhysicalIndex(i))))
+		}
+	}
+	expandedIndex := expandedIndexBuilder.NewInt32Array()
+	defer expandedIndex.Release()
+
+	expandedReorderedArr := make([]arrow.Array, 1)
+	if err := TakeColumn(ctx, expandedIndex, 0, expandedReorderedArr, indices); err != nil {
+		return err
+	}
+	expandedReordered := expandedReorderedArr[0].(*array.Int32)
+	defer expandedReordered.Release()
+
+	b := array.NewRunEndEncodedBuilder(
+		compute.GetAllocator(ctx), a.RunEndsArr().DataType(), a.Values().DataType(),
+	)
+	defer b.Release()
+	b.Reserve(indices.Len())
+
+	dictValues := dict.Dictionary().(*array.String)
+	for i := 0; i < expandedReordered.Len(); i++ {
+		if expandedReordered.IsNull(i) {
+			b.AppendNull()
+			continue
+		}
+		reorderedIndex := expandedReordered.Value(i)
+		v := dictValues.Value(int(reorderedIndex))
+		if err := b.AppendValueFromString(v); err != nil {
+			return err
+		}
+	}
+
+	arr[idx] = b.NewRunEndEncodedArray()
 	return nil
 }
 
@@ -220,6 +273,45 @@ func TakeListColumn(ctx context.Context, a *array.List, idx int, arr []arrow.Arr
 	}
 
 	arr[idx] = r.NewArray()
+	return nil
+}
+
+func TakeStructColumn(ctx context.Context, a *array.Struct, idx int, arr []arrow.Array, indices *array.Int32) error {
+	aType := a.Data().DataType().(*arrow.StructType)
+
+	cols := make([]arrow.Array, a.NumField())
+	names := make([]string, a.NumField())
+	defer func() {
+		for _, col := range cols {
+			if col != nil {
+				col.Release()
+			}
+		}
+	}()
+
+	for i := 0; i < a.NumField(); i++ {
+		names[i] = aType.Field(i).Name
+
+		switch f := a.Field(i).(type) {
+		case *array.RunEndEncoded:
+			err := TakeRunEndEncodedColumn(ctx, f, i, cols, indices)
+			if err != nil {
+				return err
+			}
+		default:
+			err := TakeColumn(ctx, f, i, cols, indices)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	takeStruct, err := array.NewStructArray(cols, names)
+	if err != nil {
+		return err
+	}
+
+	arr[idx] = takeStruct
 	return nil
 }
 

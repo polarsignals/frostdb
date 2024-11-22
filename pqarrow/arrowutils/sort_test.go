@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/apache/arrow/go/v16/arrow"
@@ -281,8 +282,26 @@ func TestSortRecordBuilderReuse(t *testing.T) {
 }
 
 func TestReorderRecord(t *testing.T) {
+	readRunEndEncodedDictionary := func(arr *array.RunEndEncoded) string {
+		arrDict := arr.Values().(*array.Dictionary)
+		arrDictValues := arrDict.Dictionary().(*array.String)
+
+		values := make([]string, arr.Len())
+		for i := 0; i < arr.Len(); i++ {
+			physicalIndex := arr.GetPhysicalIndex(i)
+			if arrDict.IsNull(physicalIndex) {
+				values[i] = array.NullValueStr
+				continue
+			}
+			valueIndex := arrDict.GetValueIndex(physicalIndex)
+			values[i] = arrDictValues.Value(valueIndex)
+		}
+		return "[" + strings.Join(values, " ") + "]"
+	}
+
 	t.Run("Simple", func(t *testing.T) {
-		mem := memory.NewGoAllocator()
+		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		defer mem.AssertSize(t, 0)
 		b := array.NewRecordBuilder(mem, arrow.NewSchema(
 			[]arrow.Field{
 				{
@@ -299,8 +318,8 @@ func TestReorderRecord(t *testing.T) {
 		indices := array.NewInt32Builder(mem)
 		indices.AppendValues([]int32{2, 1, 0}, nil)
 		by := indices.NewInt32Array()
-		result, err := Take(
-			compute.WithAllocator(context.Background(), mem), r, by)
+		defer by.Release()
+		result, err := Take(compute.WithAllocator(context.Background(), mem), r, by)
 		require.Nil(t, err)
 		defer result.Release()
 
@@ -308,7 +327,8 @@ func TestReorderRecord(t *testing.T) {
 		require.Equal(t, want, result.Column(0).(*array.Int64).Int64Values())
 	})
 	t.Run("WithStringDict", func(t *testing.T) {
-		mem := memory.NewGoAllocator()
+		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		defer mem.AssertSize(t, 0)
 		b := array.NewRecordBuilder(mem, arrow.NewSchema(
 			[]arrow.Field{
 				{
@@ -332,7 +352,9 @@ func TestReorderRecord(t *testing.T) {
 
 		indices := array.NewInt32Builder(mem)
 		indices.AppendValues([]int32{2, 1, 4, 0, 3}, nil)
-		result, err := Take(compute.WithAllocator(context.Background(), mem), r, indices.NewInt32Array())
+		by := indices.NewInt32Array()
+		defer by.Release()
+		result, err := Take(compute.WithAllocator(context.Background(), mem), r, by)
 		require.NoError(t, err)
 		defer result.Release()
 
@@ -347,8 +369,56 @@ func TestReorderRecord(t *testing.T) {
 			require.Equal(t, want[i], got.ValueStr(i))
 		}
 	})
+	t.Run("RunEndEncoded", func(t *testing.T) {
+		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		defer mem.AssertSize(t, 0)
+
+		b := array.NewRecordBuilder(mem, arrow.NewSchema(
+			[]arrow.Field{
+				{
+					Name: "ree",
+					Type: arrow.RunEndEncodedOf(
+						arrow.PrimitiveTypes.Int32,
+						&arrow.DictionaryType{
+							IndexType: arrow.PrimitiveTypes.Uint32,
+							ValueType: arrow.BinaryTypes.String,
+						}),
+				},
+			}, nil,
+		))
+		defer b.Release()
+
+		ree := b.Field(0).(*array.RunEndEncodedBuilder)
+		require.NoError(t, ree.AppendValueFromString("3"))
+		require.NoError(t, ree.AppendValueFromString("2"))
+		require.NoError(t, ree.AppendValueFromString("1"))
+		ree.AppendNull()
+		require.NoError(t, ree.AppendValueFromString("3"))
+		r := b.NewRecord()
+		defer r.Release()
+
+		indices := array.NewInt32Builder(mem)
+		indices.AppendValues([]int32{2, 1, 4, 0, 3}, nil)
+		by := indices.NewInt32Array()
+		defer by.Release()
+
+		// Reordering
+
+		result, err := Take(compute.WithAllocator(context.Background(), mem), r, by)
+		require.NoError(t, err)
+		defer result.Release()
+
+		// Testing
+
+		sorted := result.Column(0).(*array.RunEndEncoded)
+		sortedEnds := sorted.RunEndsArr().(*array.Int32)
+		// notice how the index to 3 is runEndEncoded
+		require.Equal(t, "[1 2 4 5]", sortedEnds.String())
+		require.Equal(t, "[1 2 3 3 (null)]", readRunEndEncodedDictionary(sorted))
+	})
 	t.Run("WithFixedSizeBinaryDict", func(t *testing.T) {
-		mem := memory.NewGoAllocator()
+		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		defer mem.AssertSize(t, 0)
 		b := array.NewRecordBuilder(mem, arrow.NewSchema(
 			[]arrow.Field{
 				{
@@ -372,7 +442,9 @@ func TestReorderRecord(t *testing.T) {
 
 		indices := array.NewInt32Builder(mem)
 		indices.AppendValues([]int32{2, 1, 4, 0, 3}, nil)
-		result, err := Take(compute.WithAllocator(context.Background(), mem), r, indices.NewInt32Array())
+		by := indices.NewInt32Array()
+		defer by.Release()
+		result, err := Take(compute.WithAllocator(context.Background(), mem), r, by)
 		require.NoError(t, err)
 		defer result.Release()
 
@@ -389,6 +461,8 @@ func TestReorderRecord(t *testing.T) {
 	})
 	t.Run("List", func(t *testing.T) {
 		mem := memory.NewGoAllocator()
+		// mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		// defer mem.AssertSize(t, 0)
 		b := array.NewRecordBuilder(mem, arrow.NewSchema(
 			[]arrow.Field{
 				{
@@ -420,8 +494,10 @@ func TestReorderRecord(t *testing.T) {
 
 		indices := array.NewInt32Builder(mem)
 		indices.AppendValues([]int32{2, 1, 0, 3}, nil)
+		by := indices.NewInt32Array()
+		defer by.Release()
 		result, err := Take(
-			compute.WithAllocator(context.Background(), mem), r, indices.NewInt32Array())
+			compute.WithAllocator(context.Background(), mem), r, by)
 		require.Nil(t, err)
 		defer result.Release()
 
@@ -440,6 +516,74 @@ func TestReorderRecord(t *testing.T) {
 			}
 			require.Equal(t, expected[i], got.ValueStr(i), "unexpected value at %d", i)
 		}
+	})
+	t.Run("Struct", func(t *testing.T) {
+		LabelArrowType := arrow.RunEndEncodedOf(
+			arrow.PrimitiveTypes.Int32,
+			&arrow.DictionaryType{
+				IndexType: arrow.PrimitiveTypes.Uint32,
+				ValueType: arrow.BinaryTypes.String,
+			},
+		)
+
+		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		defer mem.AssertSize(t, 0)
+
+		b := array.NewRecordBuilder(mem, arrow.NewSchema(
+			[]arrow.Field{
+				{
+					Name: "struct",
+					Type: arrow.StructOf(
+						arrow.Field{Name: "first", Type: LabelArrowType, Nullable: true},
+						arrow.Field{Name: "second", Type: LabelArrowType, Nullable: true},
+						arrow.Field{Name: "third", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+					),
+				},
+			}, &arrow.Metadata{},
+		))
+		defer b.Release()
+
+		sb := b.Field(0).(*array.StructBuilder)
+		firstFieldBuilder := sb.FieldBuilder(0).(*array.RunEndEncodedBuilder)
+		secondFieldBuilder := sb.FieldBuilder(1).(*array.RunEndEncodedBuilder)
+		thirdFieldBuilder := sb.FieldBuilder(2).(*array.Int64Builder)
+
+		sb.Append(true)
+		require.NoError(t, firstFieldBuilder.AppendValueFromString("3"))
+		require.NoError(t, secondFieldBuilder.AppendValueFromString("1"))
+		thirdFieldBuilder.Append(1)
+		sb.Append(true)
+		require.NoError(t, firstFieldBuilder.AppendValueFromString("2"))
+		require.NoError(t, secondFieldBuilder.AppendValueFromString("2"))
+		thirdFieldBuilder.Append(2)
+		sb.Append(true)
+		require.NoError(t, firstFieldBuilder.AppendValueFromString("1"))
+		require.NoError(t, secondFieldBuilder.AppendValueFromString("3"))
+		thirdFieldBuilder.Append(3)
+		sb.Append(true)
+		firstFieldBuilder.AppendNull()
+		require.NoError(t, secondFieldBuilder.AppendValueFromString("4"))
+		thirdFieldBuilder.Append(4)
+		sb.Append(true)
+		require.NoError(t, firstFieldBuilder.AppendValueFromString("3"))
+		require.NoError(t, secondFieldBuilder.AppendValueFromString("5"))
+		thirdFieldBuilder.Append(5)
+
+		r := b.NewRecord()
+		defer r.Release()
+
+		indices := array.NewInt32Builder(mem)
+		indices.AppendValues([]int32{2, 1, 4, 0, 3}, nil)
+		by := indices.NewInt32Array()
+		defer by.Release()
+		result, err := Take(compute.WithAllocator(context.Background(), mem), r, by)
+		require.Nil(t, err)
+		defer result.Release()
+		resultStruct := result.Column(0).(*array.Struct)
+
+		require.Equal(t, "[1 2 3 3 (null)]", readRunEndEncodedDictionary(resultStruct.Field(0).(*array.RunEndEncoded)))
+		require.Equal(t, "[3 2 5 1 4]", readRunEndEncodedDictionary(resultStruct.Field(1).(*array.RunEndEncoded)))
+		require.Equal(t, "[3 2 5 1 4]", resultStruct.Field(2).(*array.Int64).String())
 	})
 }
 
