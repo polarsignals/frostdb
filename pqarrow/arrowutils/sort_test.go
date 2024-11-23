@@ -585,6 +585,36 @@ func TestReorderRecord(t *testing.T) {
 		require.Equal(t, "[3 2 5 1 4]", readRunEndEncodedDictionary(resultStruct.Field(1).(*array.RunEndEncoded)))
 		require.Equal(t, "[3 2 5 1 4]", resultStruct.Field(2).(*array.Int64).String())
 	})
+
+	t.Run("StructEmpty", func(t *testing.T) {
+		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		defer mem.AssertSize(t, 0)
+
+		b := array.NewRecordBuilder(mem, arrow.NewSchema(
+			[]arrow.Field{
+				{
+					Name: "struct",
+					Type: arrow.StructOf(),
+				},
+			}, &arrow.Metadata{},
+		))
+		defer b.Release()
+		b.Field(0).AppendNulls(5)
+
+		r := b.NewRecord()
+		defer r.Release()
+
+		indices := array.NewInt32Builder(mem)
+		indices.AppendValues([]int32{2, 1, 4, 0, 3}, nil)
+		by := indices.NewInt32Array()
+		defer by.Release()
+
+		result, err := Take(compute.WithAllocator(context.Background(), mem), r, by)
+		require.Nil(t, err)
+		defer result.Release()
+		resultStruct := result.Column(0).(*array.Struct)
+		resultStruct.Len()
+	})
 }
 
 // Use all supported sort field.

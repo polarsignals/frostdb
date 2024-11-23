@@ -279,6 +279,12 @@ func TakeListColumn(ctx context.Context, a *array.List, idx int, arr []arrow.Arr
 func TakeStructColumn(ctx context.Context, a *array.Struct, idx int, arr []arrow.Array, indices *array.Int32) error {
 	aType := a.Data().DataType().(*arrow.StructType)
 
+	// Immediately, return this struct if it has no fields/columns
+	if a.NumField() == 0 {
+		arr[idx] = a
+		return nil
+	}
+
 	cols := make([]arrow.Array, a.NumField())
 	names := make([]string, a.NumField())
 	defer func() {
