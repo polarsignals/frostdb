@@ -281,6 +281,9 @@ func TakeStructColumn(ctx context.Context, a *array.Struct, idx int, arr []arrow
 
 	// Immediately, return this struct if it has no fields/columns
 	if a.NumField() == 0 {
+		// If the original record is released and this is released once more,
+		// as usually done, we want to retain it once more.
+		a.Retain()
 		arr[idx] = a
 		return nil
 	}
