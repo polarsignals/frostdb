@@ -88,7 +88,7 @@ func Test_TXList_Async(t *testing.T) {
 
 	// Verify the pool is empty
 	foundtx := false
-	p.Iterate(func(tx uint64) bool {
+	p.Iterate(func(_ uint64) bool {
 		foundtx = true
 		return true
 	})

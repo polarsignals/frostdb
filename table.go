@@ -1486,7 +1486,7 @@ func (t *Table) distinctRecordsForCompaction(compact []parts.Part) ([]arrow.Reco
 	d := physicalplan.Distinct(memory.NewGoAllocator(), t.tracer, columnExprs)
 	output := physicalplan.OutputPlan{}
 	newRecords := make([]arrow.Record, 0)
-	output.SetNextCallback(func(ctx context.Context, r arrow.Record) error {
+	output.SetNextCallback(func(_ context.Context, r arrow.Record) error {
 		r.Retain()
 		newRecords = append(newRecords, r)
 		return nil

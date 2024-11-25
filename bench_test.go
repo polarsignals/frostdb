@@ -79,7 +79,7 @@ func getLatest15MinInterval(ctx context.Context, b testing.TB, engine *query.Loc
 			},
 			nil,
 		).Execute(ctx,
-		func(ctx context.Context, r arrow.Record) error {
+		func(_ context.Context, r arrow.Record) error {
 			r.Retain()
 			result = r
 			return nil
@@ -204,7 +204,7 @@ func getDeterministicLabelValuePairForType(ctx context.Context, engine *query.Lo
 		if err := engine.ScanTable(tableName).
 			Filter(logicalplan.And(typeFilter...)).
 			Distinct(logicalplan.Col(label)).
-			Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+			Execute(ctx, func(_ context.Context, r arrow.Record) error {
 				arr := r.Column(0)
 				for i := 0; i < arr.Len(); i++ {
 					if arr.IsNull(i) {
@@ -257,7 +257,7 @@ func BenchmarkQuery(b *testing.B) {
 	b.Run("Types", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			if err := getTypesQuery(engine).
-				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				Execute(ctx, func(_ context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {
 						b.Fatal("expected at least one row")
 					}
@@ -270,7 +270,7 @@ func BenchmarkQuery(b *testing.B) {
 
 	b.Run("Labels", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			if err := getLabelsQuery(engine).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+			if err := getLabelsQuery(engine).Execute(ctx, func(_ context.Context, r arrow.Record) error {
 				if r.NumRows() == 0 {
 					b.Fatal("expected at least one row")
 				}
@@ -284,7 +284,7 @@ func BenchmarkQuery(b *testing.B) {
 	b.Run("Values", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			if err := getValuesForLabelQuery(engine, label).
-				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				Execute(ctx, func(_ context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {
 						b.Fatal("expected at least one row")
 					}
@@ -310,7 +310,7 @@ func BenchmarkQuery(b *testing.B) {
 						logicalplan.Col("stacktrace"),
 					},
 				).
-				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				Execute(ctx, func(_ context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {
 						b.Fatal("expected at least one row")
 					}
@@ -337,7 +337,7 @@ func BenchmarkQuery(b *testing.B) {
 						logicalplan.Col("timestamp"),
 					},
 				).
-				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				Execute(ctx, func(_ context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {
 						b.Fatal("expected at least one row")
 					}
@@ -360,7 +360,7 @@ func BenchmarkQuery(b *testing.B) {
 				Filter(
 					logicalplan.And(fullFilter...),
 				).
-				Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				Execute(ctx, func(_ context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {
 						b.Fatal("expected at least one row")
 					}

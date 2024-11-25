@@ -123,7 +123,7 @@ func TestAggregateInconsistentSchema(t *testing.T) {
 					[]logicalplan.Expr{logicalplan.Col("labels.label2")},
 				).
 				Project(testCase.fn(logicalplan.Col("value")).Alias(testCase.alias)).
-				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+				Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 					r.Retain()
 					res = r
 					return nil
@@ -237,7 +237,7 @@ func TestAggregationProjection(t *testing.T) {
 			logicalplan.DynCol("labels"),
 			logicalplan.Col("timestamp").Gt(logicalplan.Literal(1)).Alias("timestamp"),
 		).
-		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, ar arrow.Record) error {
 			records = append(records, ar)
 			ar.Retain()
 			return nil
@@ -425,7 +425,7 @@ func BenchmarkAggregation(b *testing.B) {
 	}} {
 		b.Run(bc.name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				_ = bc.builder.Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+				_ = bc.builder.Execute(ctx, func(_ context.Context, _ arrow.Record) error {
 					return nil
 				})
 			}
@@ -510,7 +510,7 @@ func Test_Aggregation_DynCol(t *testing.T) {
 			[]*logicalplan.AggregationFunction{logicalplan.Max(logicalplan.DynCol("foo"))},
 			nil,
 		).
-		Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, ar arrow.Record) error {
 			require.Equal(t, 3, int(ar.NumCols()))
 			require.Equal(t, 1, int(ar.NumRows()))
 			return nil
