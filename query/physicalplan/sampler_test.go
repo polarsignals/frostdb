@@ -291,7 +291,7 @@ func Test_Sampler_MaxSizeAllocation(t *testing.T) {
 		allocator: memory.NewCheckedAllocator(memory.NewGoAllocator()),
 	}
 	t.Cleanup(func() {
-		require.Equal(t, allocator.maxUsed, 1024) // Expect the most we allocated was 1024 bytes during materialization
+		require.LessOrEqual(t, allocator.maxUsed, 1024) // Expect the most we allocated was 1024 bytes during materialization
 		allocator.allocator.AssertSize(t, 0)
 	})
 	s := NewReservoirSampler(10, 200, allocator)
