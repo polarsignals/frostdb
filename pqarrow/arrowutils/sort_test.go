@@ -460,9 +460,8 @@ func TestReorderRecord(t *testing.T) {
 		}
 	})
 	t.Run("List", func(t *testing.T) {
-		mem := memory.NewGoAllocator()
-		// mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
-		// defer mem.AssertSize(t, 0)
+		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		defer mem.AssertSize(t, 0)
 		b := array.NewRecordBuilder(mem, arrow.NewSchema(
 			[]arrow.Field{
 				{

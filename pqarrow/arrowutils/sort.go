@@ -241,6 +241,7 @@ func TakeListColumn(ctx context.Context, a *array.List, idx int, arr []arrow.Arr
 	if !ok {
 		return fmt.Errorf("unexpected value builder type %T for list column", r.ValueBuilder())
 	}
+	defer valueBuilder.Release()
 
 	listValues := a.ListValues().(*array.Dictionary)
 	switch dictV := listValues.Dictionary().(type) {
