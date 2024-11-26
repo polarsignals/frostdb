@@ -312,7 +312,7 @@ func writeListOf(def, column, startIdx int, a *array.List, value func(idx int) p
 }
 
 func writeNull(column int) arrowToParquet {
-	return func(w parquet.Row, row int) parquet.Row {
+	return func(w parquet.Row, _ int) parquet.Row {
 		return append(w, parquet.Value{}.Level(0, 0, column))
 	}
 }

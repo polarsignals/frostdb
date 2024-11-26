@@ -233,7 +233,7 @@ func ValidateTableScan(plan *LogicalPlan) *PlanValidationError {
 // ValidateAggregation validates the logical plan's aggregation step.
 func ValidateAggregation(plan *LogicalPlan) *PlanValidationError {
 	// check that the expression is not nil
-	if plan.Aggregation.AggExprs == nil || len(plan.Aggregation.AggExprs) == 0 {
+	if len(plan.Aggregation.AggExprs) == 0 {
 		return &PlanValidationError{
 			plan:    plan,
 			message: "invalid aggregation: expression cannot be nil",

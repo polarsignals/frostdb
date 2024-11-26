@@ -13,7 +13,7 @@ import (
 )
 
 func TestBuild(t *testing.T) {
-	t.Run("NewBuild", func(t *testing.T) {
+	t.Run("NewBuild", func(_ *testing.T) {
 		b := records.NewBuild[samples.Sample](memory.DefaultAllocator)
 		defer b.Release()
 

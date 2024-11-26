@@ -97,7 +97,7 @@ func TestDBWithWALAndBucket(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
 				return nil
 			}},
@@ -238,7 +238,7 @@ func TestDBWithWAL(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 				ar.Retain()
 				records = append(records, ar)
 				return nil
@@ -262,7 +262,7 @@ func TestDBWithWAL(t *testing.T) {
 			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.label2")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, _ arrow.Record) error {
 			return nil
 		})
 	require.NoError(t, err)
@@ -341,7 +341,7 @@ func Test_DB_WithStorage(t *testing.T) {
 	var inMemory arrow.Record
 	err = engine.ScanTable(t.Name()).
 		Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			r.Retain()
 			inMemory = r
 			return nil
@@ -368,7 +368,7 @@ func Test_DB_WithStorage(t *testing.T) {
 	var onDisk arrow.Record
 	err = engine.ScanTable(t.Name()).
 		Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			r.Retain()
 			onDisk = r
 			return nil
@@ -527,7 +527,7 @@ func Test_DB_Filter_Block(t *testing.T) {
 			if test.distinct != nil {
 				query = query.Distinct(test.distinct...)
 			}
-			err = query.Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+			err = query.Execute(context.Background(), func(_ context.Context, ar arrow.Record) error {
 				require.Equal(t, test.rows, ar.NumRows())
 				require.Equal(t, test.cols, ar.NumCols())
 				return nil
@@ -821,7 +821,7 @@ func Test_DB_Block_Optimization(t *testing.T) {
 			}
 			rows := int64(0)
 			cols := int64(0)
-			err = query.Execute(context.Background(), func(ctx context.Context, ar arrow.Record) error {
+			err = query.Execute(context.Background(), func(_ context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
 				cols += ar.NumCols()
 				return nil
@@ -865,7 +865,7 @@ func Test_DB_TableWrite_FlatSchema(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	err = engine.ScanTable("test").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+	err = engine.ScanTable("test").Execute(ctx, func(_ context.Context, ar arrow.Record) error {
 		require.Equal(t, int64(1), ar.NumRows())
 		require.Equal(t, int64(3), ar.NumCols())
 		return nil
@@ -940,7 +940,7 @@ func Test_DB_TableWrite_DynamicSchema(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	err = engine.ScanTable("test").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+	err = engine.ScanTable("test").Execute(ctx, func(_ context.Context, ar arrow.Record) error {
 		require.Equal(t, int64(3), ar.NumRows())
 		require.Equal(t, int64(7), ar.NumCols())
 		return nil
@@ -963,7 +963,7 @@ func Test_DB_TableNotExist(t *testing.T) {
 		db.TableProvider(),
 	)
 
-	err = engine.ScanTable("does-not-exist").Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+	err = engine.ScanTable("does-not-exist").Execute(ctx, func(_ context.Context, _ arrow.Record) error {
 		return nil
 	})
 	require.Error(t, err)
@@ -1074,7 +1074,7 @@ func Test_DB_TableWrite_ArrowRecord(t *testing.T) {
 				if test.distinct != nil {
 					bldr = bldr.Distinct(test.distinct)
 				}
-				err = bldr.Execute(ctx, func(ctx context.Context, ar arrow.Record) error {
+				err = bldr.Execute(ctx, func(_ context.Context, ar arrow.Record) error {
 					require.Equal(t, test.rows, ar.NumRows())
 					require.Equal(t, test.cols, ar.NumCols())
 					return nil
@@ -1139,7 +1139,7 @@ func Test_DB_ReadOnlyQuery(t *testing.T) {
 			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.label2")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, _ arrow.Record) error {
 			return nil
 		})
 	require.NoError(t, err)
@@ -1441,7 +1441,7 @@ func TestDBRecover(t *testing.T) {
 
 		require.Eventually(t, func() bool {
 			numBlockPersists := 0
-			require.NoError(t, db.wal.Replay(0, func(tx uint64, entry *walpb.Record) error {
+			require.NoError(t, db.wal.Replay(0, func(_ uint64, entry *walpb.Record) error {
 				if _, ok := entry.Entry.EntryType.(*walpb.Entry_TableBlockPersisted_); ok {
 					numBlockPersists++
 				}
@@ -1512,7 +1512,7 @@ func TestDBRecover(t *testing.T) {
 			t,
 			query.NewEngine(
 				memory.DefaultAllocator, db.TableProvider(),
-			).ScanTable(dbAndTableName).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+			).ScanTable(dbAndTableName).Execute(ctx, func(_ context.Context, r arrow.Record) error {
 				idxs := r.Schema().FieldIndices("timestamp")
 				require.Len(t, idxs, 1)
 				tCol := r.Column(idxs[0]).(*array.Int64)
@@ -1551,7 +1551,7 @@ func TestDBRecover(t *testing.T) {
 			query.NewEngine(
 				memory.DefaultAllocator,
 				db.TableProvider(),
-			).ScanTable(dbAndTableName).Execute(ctx, func(ctx context.Context, r arrow.Record) error {
+			).ScanTable(dbAndTableName).Execute(ctx, func(_ context.Context, r arrow.Record) error {
 				idxs := r.Schema().FieldIndices("timestamp")
 				require.Len(t, idxs, 1)
 				tCol := r.Column(idxs[0]).(*array.Int64)
@@ -1704,7 +1704,7 @@ func Test_DB_Limiter(t *testing.T) {
 					[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 					[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
 				).
-				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+				Execute(context.Background(), func(_ context.Context, _ arrow.Record) error {
 					return nil
 				})
 		})
@@ -1756,7 +1756,7 @@ func Test_DB_DropStorage(t *testing.T) {
 		rows := 0
 		engine := query.NewEngine(mem, db.TableProvider())
 		err = engine.ScanTable(dbAndTableName).
-			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 				rows += int(r.NumRows())
 				return nil
 			})
@@ -1867,7 +1867,7 @@ func Test_DB_EngineInMemory(t *testing.T) {
 			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, _ arrow.Record) error {
 			t.FailNow() // should not be called
 			return nil
 		})
@@ -1879,7 +1879,7 @@ func Test_DB_EngineInMemory(t *testing.T) {
 			[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 			[]logicalplan.Expr{logicalplan.Col("labels.namespace")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			require.Equal(t, int64(2), r.NumRows())
 			return nil
 		})
@@ -1921,7 +1921,7 @@ func Test_DB_SnapshotOnClose(t *testing.T) {
 
 	// Check that we have a snapshot
 	found := false
-	require.NoError(t, filepath.WalkDir(dir, func(path string, info fs.DirEntry, err error) error {
+	require.NoError(t, filepath.WalkDir(dir, func(path string, _ fs.DirEntry, _ error) error {
 		if filepath.Ext(path) == ".fdbs" {
 			found = true
 		}
@@ -2001,7 +2001,7 @@ func Test_DB_All(t *testing.T) {
 	err = engine.ScanTable(t.Name()).
 		Project(logicalplan.All()).
 		Filter(logicalplan.Col("timestamp").GtEq(logicalplan.Literal(2))).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			require.Equal(t, int64(2), r.NumRows())
 			require.Equal(t, int64(8), r.NumCols())
 			return nil
@@ -2100,7 +2100,7 @@ func Test_DB_PrehashedStorage(t *testing.T) {
 			ctx,
 			tx,
 			allocator,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 				require.Equal(t, int64(3), ar.NumRows())
 				require.Equal(t, int64(13), ar.NumCols())
 				return nil
@@ -2189,7 +2189,7 @@ func Test_DB_WithParquetDiskCompaction(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
 				return nil
 			}},
@@ -2247,12 +2247,12 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			writes:       defaultWrites,
 		},
 		"corrupted L1": {
-			beforeClose: func(table *Table, dir string) {},
+			beforeClose: func(_ *Table, _ string) {},
 			lvl2Parts:   3,
 			lvl1Parts:   1,
 			finalRows:   1200,
 			writes:      defaultWrites,
-			beforeReplay: func(table *Table, dir string) {
+			beforeReplay: func(table *Table, _ string) {
 				// Corrupt the LSM file; this should trigger a recovery from the WAL
 				l1Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L1")
 				levelFile := filepath.Join(l1Dir, fmt.Sprintf("00000000000000000000%s", index.IndexFileExtension))
@@ -2262,11 +2262,11 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			},
 		},
 		"corrupted L2": {
-			beforeClose: func(table *Table, dir string) {},
+			beforeClose: func(_ *Table, _ string) {},
 			lvl2Parts:   4,
 			lvl1Parts:   0,
 			finalRows:   1200,
-			beforeReplay: func(table *Table, dir string) {
+			beforeReplay: func(table *Table, _ string) {
 				// Corrupt the LSM file; this should trigger a recovery from the WAL
 				l2Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L2")
 				levelFile := filepath.Join(l2Dir, fmt.Sprintf("00000000000000000000%s", index.IndexFileExtension))
@@ -2294,11 +2294,11 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			},
 		},
 		"L1 cleanup failure with corruption": { // Compaction from L1->L2 happens, but L1 is not cleaned up and L2 gets corrupted
-			beforeClose: func(table *Table, dir string) {},
+			beforeClose: func(_ *Table, _ string) {},
 			lvl2Parts:   1,
 			lvl1Parts:   0,
 			finalRows:   300,
-			beforeReplay: func(table *Table, dir string) {
+			beforeReplay: func(table *Table, _ string) {
 				// Copy the L2 file back to L1 to simulate that it was not cleaned up
 				l2Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L2")
 				l2File := filepath.Join(l2Dir, fmt.Sprintf("00000000000000000000%s", index.IndexFileExtension))
@@ -2328,11 +2328,11 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			},
 		},
 		"L1 cleanup failure": { // Compaction from L1->L2 happens, but L1 is not cleaned up
-			beforeClose: func(table *Table, dir string) {},
+			beforeClose: func(_ *Table, _ string) {},
 			lvl2Parts:   1,
 			lvl1Parts:   0,
 			finalRows:   300,
-			beforeReplay: func(table *Table, dir string) {
+			beforeReplay: func(table *Table, _ string) {
 				// Copy the L2 file back to L1 to simulate that it was not cleaned up
 				l2Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L2")
 				l2File := filepath.Join(l2Dir, fmt.Sprintf("00000000000000000000%s", index.IndexFileExtension))
@@ -2357,15 +2357,15 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			},
 		},
 		"L1 cleanup failure with corruption after snapshot": { // Snapshot happens after L1 compaction; Then compaction happens from L1->L2, but L1 is not cleaned up and L2 gets corrupted
-			beforeClose: func(table *Table, dir string) {},
+			beforeClose: func(_ *Table, _ string) {},
 			lvl2Parts:   1,
 			lvl1Parts:   0,
 			finalRows:   303,
-			beforeReplay: func(table *Table, dir string) {
+			beforeReplay: func(table *Table, _ string) {
 				// Move the save files back into L1 to simulate an unssuccessful cleanup after L1 compaction
 				l1Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L1")
 				saveDir := filepath.Join(table.db.indexDir(), "save")
-				require.NoError(t, filepath.WalkDir(saveDir, func(path string, info fs.DirEntry, err error) error {
+				require.NoError(t, filepath.WalkDir(saveDir, func(path string, _ fs.DirEntry, _ error) error {
 					if filepath.Ext(path) == index.IndexFileExtension {
 						// Move the save file back to the original file
 						sv, err := os.Open(path)
@@ -2392,14 +2392,14 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			writes: []write{
 				{ // Get to L1 compaction
 					n: 100,
-					op: func(table *Table, dir string) {
+					op: func(table *Table, _ string) {
 						require.Eventually(t, func() bool {
 							return table.active.index.LevelSize(index.L1) != 0
 						}, time.Second, time.Millisecond*10)
 					},
 				},
 				{ // trigger a snapshot (leaving the only valid data in L1)
-					op: func(table *Table, dir string) {
+					op: func(table *Table, _ string) {
 						tx := table.db.highWatermark.Load()
 						require.NoError(t, table.db.snapshotAtTX(context.Background(), tx, table.db.snapshotWriter(tx)))
 					},
@@ -2409,7 +2409,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 						l1Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L1")
 						saveDir := filepath.Join(dir, "save")
 						require.NoError(t, os.MkdirAll(saveDir, 0o755)) // Create a directory to save the files
-						require.NoError(t, filepath.WalkDir(l1Dir, func(path string, info fs.DirEntry, err error) error {
+						require.NoError(t, filepath.WalkDir(l1Dir, func(path string, _ fs.DirEntry, _ error) error {
 							if filepath.Ext(path) == index.IndexFileExtension {
 								lvl, err := os.Open(path)
 								require.NoError(t, err)
@@ -2434,7 +2434,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 		},
 		"snapshot": {
 			beforeReplay: func(_ *Table, _ string) {},
-			beforeClose: func(table *Table, dir string) {
+			beforeClose: func(table *Table, _ string) {
 				// trigger a snapshot
 				success := false
 				table.db.snapshot(context.Background(), false, func() {
@@ -2460,14 +2460,14 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 			writes:    defaultWrites,
 		},
 		"corruption after snapshot": {
-			beforeReplay: func(table *Table, dir string) {
+			beforeReplay: func(table *Table, _ string) {
 				l1Dir := filepath.Join(table.db.indexDir(), "test", table.active.ulid.String(), "L1")
 				levelFile := filepath.Join(l1Dir, fmt.Sprintf("00000000000000000001%v", index.IndexFileExtension))
 				info, err := os.Stat(levelFile)
 				require.NoError(t, err)
 				require.NoError(t, os.Truncate(levelFile, info.Size()-1)) // truncate the last byte to pretend the write didn't finish
 			},
-			beforeClose: func(table *Table, dir string) {
+			beforeClose: func(table *Table, _ string) {
 				// trigger a snapshot
 				tx := table.db.highWatermark.Load()
 				require.NoError(t, table.db.snapshotAtTX(context.Background(), tx, table.db.snapshotWriter(tx)))
@@ -2548,7 +2548,7 @@ func Test_DB_PersistentDiskCompaction(t *testing.T) {
 				rows := int64(0)
 				engine := query.NewEngine(pool, db.TableProvider())
 				err = engine.ScanTable("test").
-					Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+					Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 						rows += r.NumRows()
 						return nil
 					})
@@ -2672,7 +2672,7 @@ func Test_DB_PersistentDiskCompaction_BlockRotation(t *testing.T) {
 		rows := int64(0)
 		engine := query.NewEngine(pool, db.TableProvider())
 		err = engine.ScanTable("test").
-			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 				rows += r.NumRows()
 				return nil
 			})
@@ -2784,7 +2784,7 @@ func Test_DB_PersistentDiskCompaction_NonOverlappingCompaction(t *testing.T) {
 		rows := int64(0)
 		engine := query.NewEngine(pool, db.TableProvider())
 		err = engine.ScanTable("test").
-			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 				rows += r.NumRows()
 				return nil
 			})
@@ -2931,7 +2931,7 @@ func Test_DB_SnapshotNewerData(t *testing.T) {
 				rows := int64(0)
 				engine := query.NewEngine(pool, db.TableProvider())
 				err = engine.ScanTable("test").
-					Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+					Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 						rows += r.NumRows()
 						return nil
 					})
@@ -3019,7 +3019,7 @@ func Test_DB_SnapshotDuplicate(t *testing.T) {
 		rows := int64(0)
 		engine := query.NewEngine(pool, db.TableProvider())
 		err = engine.ScanTable("test").
-			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 				rows += r.NumRows()
 				return nil
 			})
@@ -3107,7 +3107,7 @@ func Test_DB_SnapshotDuplicate_Corrupted(t *testing.T) {
 		rows := int64(0)
 		engine := query.NewEngine(pool, db.TableProvider())
 		err = engine.ScanTable("test").
-			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 				rows += r.NumRows()
 				return nil
 			})
@@ -3167,7 +3167,7 @@ func Test_Iceberg(t *testing.T) {
 		rows := int64(0)
 		engine := query.NewEngine(pool, db.TableProvider())
 		err = engine.ScanTable("test").
-			Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+			Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 				rows += r.NumRows()
 				return nil
 			})
@@ -3218,7 +3218,7 @@ func Test_Iceberg(t *testing.T) {
 	err = engine.ScanTable("test").Filter(
 		logicalplan.Col("timestamp").Gt(logicalplan.Literal(int64(2))),
 	).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			rows += r.NumRows()
 			return nil
 		})
@@ -3237,7 +3237,7 @@ func Test_Iceberg(t *testing.T) {
 			logicalplan.Col("value").Gt(logicalplan.Literal(int64(5))),
 		),
 	).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			rows += r.NumRows()
 			return nil
 		})
@@ -3272,7 +3272,7 @@ func Test_DB_EmptyPersist(t *testing.T) {
 	logger := newTestLogger(t)
 	assertBucket := &AssertBucket{
 		Bucket: objstore.NewInMemBucket(),
-		uploadFunc: func(ctx context.Context, path string, r io.Reader) error {
+		uploadFunc: func(_ context.Context, _ string, _ io.Reader) error {
 			t.Fatal("unexpected upload")
 			return nil
 		},
@@ -3340,7 +3340,7 @@ func Test_DB_Sample(t *testing.T) {
 	engine := query.NewEngine(pool, db.TableProvider())
 	err = engine.ScanTable("test").
 		Sample(sampleSize, 1024*1024). // Sample 13 rows, materialize the reservoir at 1MB
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			lock.Lock()
 			defer lock.Unlock()
 			rows += r.NumRows()

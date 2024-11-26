@@ -76,7 +76,7 @@ func check(t *testing.T, lsm *LSM, records, buffers int) {
 	})
 	rec := 0
 	buf := 0
-	require.NoError(t, lsm.Scan(context.Background(), "", nil, nil, math.MaxUint64, func(ctx context.Context, v any) error {
+	require.NoError(t, lsm.Scan(context.Background(), "", nil, nil, math.MaxUint64, func(_ context.Context, v any) error {
 		switch v.(type) {
 		case arrow.Record:
 			rec++

@@ -14,7 +14,7 @@ const (
 
 var rootCmd = &cobra.Command{
 	Use: "runtime --module=<path> [module_args]",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		modulePath, err := cmd.Flags().GetString(modulePathFlagName)
 		if err != nil {
 			return err

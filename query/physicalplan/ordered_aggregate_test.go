@@ -177,7 +177,7 @@ func TestOrderedAggregate(t *testing.T) {
 			)
 			resultCursor := 0
 			o.SetNext(&OutputPlan{
-				callback: func(ctx context.Context, r arrow.Record) error {
+				callback: func(_ context.Context, r arrow.Record) error {
 					if r.NumRows() == 0 {
 						require.True(t, resultCursor < len(tc.resultRecords))
 						return nil

@@ -139,7 +139,7 @@ func Test_Table_Concurrency(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 				totalrows += ar.NumRows()
 
 				return nil
@@ -254,7 +254,7 @@ func benchmarkTableInserts(b *testing.B, rows, iterations, writers int) {
 				ctx,
 				tx,
 				pool,
-				[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 					defer ar.Release()
 					totalrows += ar.NumRows()
 
@@ -303,7 +303,7 @@ func Test_Table_ReadIsolation(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
 				return nil
 			}},
@@ -318,13 +318,13 @@ func Test_Table_ReadIsolation(t *testing.T) {
 	table.db.tx.Store(3)
 	table.db.highWatermark.Store(3)
 
-	err = table.View(ctx, func(ctx context.Context, tx uint64) error {
+	err = table.View(ctx, func(ctx context.Context, _ uint64) error {
 		rows := int64(0)
 		err = table.Iterator(
 			ctx,
 			table.db.highWatermark.Load(),
 			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 				rows += ar.NumRows()
 
 				return nil
@@ -450,14 +450,14 @@ func Test_Table_Bloomfilter(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		iterations := 0
-		err := table.View(context.Background(), func(ctx context.Context, tx uint64) error {
+		err := table.View(context.Background(), func(_ context.Context, tx uint64) error {
 			pool := memory.NewGoAllocator()
 
 			require.NoError(t, table.Iterator(
 				context.Background(),
 				tx,
 				pool,
-				[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+				[]logicalplan.Callback{func(_ context.Context, _ arrow.Record) error {
 					iterations++
 					return nil
 				}},
@@ -571,7 +571,7 @@ func Test_L0Query(t *testing.T) {
 			ctx,
 			tx,
 			pool,
-			[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 				records++
 				require.Equal(t, int64(3), ar.NumRows())
 				require.Equal(t, int64(8), ar.NumCols())
@@ -854,7 +854,7 @@ func Test_Insert_Repeated(t *testing.T) {
 					ctx,
 					tx,
 					memory.NewGoAllocator(),
-					[]logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+					[]logicalplan.Callback{func(_ context.Context, ar arrow.Record) error {
 						require.Equal(t, int64(3), ar.NumRows())
 						require.Equal(t, int64(3), ar.NumCols())
 						return nil
@@ -870,7 +870,7 @@ func Test_Insert_Repeated(t *testing.T) {
 					[]*logicalplan.AggregationFunction{logicalplan.Sum(logicalplan.Col("value"))},
 					[]logicalplan.Expr{logicalplan.Col("values")},
 				).
-				Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+				Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 					require.Equal(t, int64(2), r.NumRows())
 					require.Equal(t, int64(2), r.NumCols())
 					return nil
@@ -971,7 +971,7 @@ func Test_Compact_Repeated(t *testing.T) {
 			ctx,
 			tx,
 			memory.NewGoAllocator(),
-			[]logicalplan.Callback{func(ctx context.Context, after arrow.Record) error {
+			[]logicalplan.Callback{func(_ context.Context, after arrow.Record) error {
 				require.True(t, array.RecordEqual(before, after))
 				return nil
 			}},
@@ -1070,7 +1070,7 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 	require.NoError(t, query.NewEngine(
 		memory.DefaultAllocator,
 		db.TableProvider()).ScanTable(tableName).Execute(
-		context.Background(), func(ctx context.Context, r arrow.Record) error {
+		context.Background(), func(_ context.Context, r arrow.Record) error {
 			rowsRead += int(r.NumRows())
 			return nil
 		}))
@@ -1090,7 +1090,7 @@ func TestTableUniquePrimaryIndex(t *testing.T) {
 	require.NoError(t, query.NewEngine(
 		memory.DefaultAllocator,
 		db.TableProvider()).ScanTable(tableName).Execute(
-		context.Background(), func(ctx context.Context, r arrow.Record) error {
+		context.Background(), func(_ context.Context, r arrow.Record) error {
 			rowsRead += int(r.NumRows())
 			return nil
 		}))
@@ -1166,7 +1166,7 @@ func Test_Issue685(t *testing.T) {
 			},
 			nil,
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			require.Equal(t, int64(1), r.NumRows())
 			require.Equal(t, int64(10002), r.Column(0).(*array.Int64).Value(0))
 			return nil
@@ -1211,7 +1211,7 @@ func Test_Issue741_Deadlock(t *testing.T) {
 	// Simulate a query that is canceled
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.Error(t, table.Iterator(ctx, math.MaxUint64, memory.NewGoAllocator(), []logicalplan.Callback{func(ctx context.Context, ar arrow.Record) error {
+	require.Error(t, table.Iterator(ctx, math.MaxUint64, memory.NewGoAllocator(), []logicalplan.Callback{func(_ context.Context, _ arrow.Record) error {
 		return nil
 	}}))
 

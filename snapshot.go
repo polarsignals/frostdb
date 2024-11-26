@@ -720,7 +720,7 @@ func (db *DB) snapshotsDo(ctx context.Context, dir string, callback func(tx uint
 }
 
 func StoreSnapshot(ctx context.Context, tx uint64, db *DB, snapshot io.Reader) error {
-	return db.snapshotAtTX(ctx, tx, func(ctx context.Context, w io.Writer) error {
+	return db.snapshotAtTX(ctx, tx, func(_ context.Context, w io.Writer) error {
 		_, err := io.Copy(w, snapshot)
 		return err
 	})

@@ -230,7 +230,7 @@ func (i *Iceberg) String() string {
 func (i *Iceberg) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, _ uint64, callback func(context.Context, any) error) error {
 	t, err := i.catalog.LoadTable(ctx, []string{i.bucketURI, prefix}, iceberg.Properties{})
 	if err != nil {
-		if errors.Is(catalog.ErrorTableNotFound, err) {
+		if errors.Is(err, catalog.ErrorTableNotFound) {
 			return nil
 		}
 		return fmt.Errorf("failed to load table: %w", err)
@@ -330,7 +330,7 @@ func (i *Iceberg) Upload(ctx context.Context, name string, r io.Reader) error {
 	tablePath := filepath.Join(i.bucketURI, filepath.Dir(filepath.Dir(name)))
 	t, err := i.catalog.LoadTable(ctx, []string{tablePath}, iceberg.Properties{})
 	if err != nil {
-		if !errors.Is(catalog.ErrorTableNotFound, err) {
+		if !errors.Is(err, catalog.ErrorTableNotFound) {
 			return err
 		}
 

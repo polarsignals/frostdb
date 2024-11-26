@@ -82,7 +82,7 @@ func (p *parquetPart) Least() (*dynparquet.DynamicRow, error) {
 		return p.minRow, nil
 	}
 
-	minRow, err := min(p.buf)
+	minRow, err := minRow(p.buf)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (p *parquetPart) Most() (*dynparquet.DynamicRow, error) {
 		return p.maxRow, nil
 	}
 
-	maxRow, err := max(p.buf)
+	maxRow, err := maxRow(p.buf)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (p *parquetPart) OverlapsWith(schema *dynparquet.Schema, otherPart Part) (b
 	return schema.Cmp(a, d) <= 0 && schema.Cmp(c, b) <= 0, nil
 }
 
-func max(buf *dynparquet.SerializedBuffer) (*dynparquet.DynamicRow, error) {
+func maxRow(buf *dynparquet.SerializedBuffer) (*dynparquet.DynamicRow, error) {
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
 	rg := buf.DynamicRowGroup(buf.NumRowGroups() - 1)
 	reader := rg.DynamicRows()
@@ -146,7 +146,7 @@ func max(buf *dynparquet.SerializedBuffer) (*dynparquet.DynamicRow, error) {
 	return rowBuf.GetCopy(0), nil
 }
 
-func min(buf *dynparquet.SerializedBuffer) (*dynparquet.DynamicRow, error) {
+func minRow(buf *dynparquet.SerializedBuffer) (*dynparquet.DynamicRow, error) {
 	rowBuf := &dynparquet.DynamicRows{Rows: make([]parquet.Row, 1)}
 	reader := buf.DynamicRowGroup(0).DynamicRows()
 	defer reader.Close()

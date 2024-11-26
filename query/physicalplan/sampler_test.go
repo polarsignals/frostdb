@@ -64,7 +64,7 @@ func Test_Sampler(t *testing.T) {
 			called := false
 			total := int64(0)
 			s.SetNext(&TestPlan{
-				callback: func(ctx context.Context, r arrow.Record) error {
+				callback: func(_ context.Context, r arrow.Record) error {
 					called = true
 					total += r.NumRows()
 					return nil
@@ -112,7 +112,7 @@ func Test_Sampler_Randomness(t *testing.T) {
 		})
 		s := NewReservoirSampler(reservoirSize, 10_000, allocator)
 		s.SetNext(&TestPlan{
-			callback: func(ctx context.Context, r arrow.Record) error {
+			callback: func(_ context.Context, r arrow.Record) error {
 				for _, v := range r.Column(0).(*array.Int64).Int64Values() {
 					bins[v]++
 				}
@@ -194,7 +194,7 @@ func Benchmark_Sampler(b *testing.B) {
 				s := NewReservoirSampler(test.reservoirSize, 10_000, memory.NewGoAllocator())
 				total := int64(0)
 				s.SetNext(&TestPlan{
-					callback: func(ctx context.Context, r arrow.Record) error {
+					callback: func(_ context.Context, r arrow.Record) error {
 						total += r.NumRows()
 						return nil
 					},

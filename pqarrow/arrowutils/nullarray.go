@@ -17,22 +17,22 @@ type VirtualNullArray struct {
 	len int
 }
 
-func MakeVirtualNullArray(dt arrow.DataType, len int) VirtualNullArray {
+func MakeVirtualNullArray(dt arrow.DataType, length int) VirtualNullArray {
 	return VirtualNullArray{
 		dt:  dt,
-		len: len,
+		len: length,
 	}
 }
 
 // MakeNullArray makes a physical arrow.Array full of NULLs of the given
 // DataType.
-func MakeNullArray(mem memory.Allocator, dt arrow.DataType, len int) arrow.Array {
+func MakeNullArray(mem memory.Allocator, dt arrow.DataType, length int) arrow.Array {
 	// TODO(asubiotto): This can be improved by using the optimized builders'
 	// AppendNulls. Not sure whether this should be part of the builder package.
 	b := builder.NewBuilder(mem, dt)
 	defer b.Release()
-	b.Reserve(len)
-	for i := 0; i < len; i++ {
+	b.Reserve(length)
+	for i := 0; i < length; i++ {
 		b.AppendNull()
 	}
 	return b.NewArray()

@@ -169,7 +169,7 @@ func TestLogic(t *testing.T) {
 			allocator: memory.NewCheckedAllocator(memory.DefaultAllocator),
 		}
 		r := NewRunner(fdb, schemas)
-		datadriven.RunTest(t, path, func(t *testing.T, c *datadriven.TestData) string {
+		datadriven.RunTest(t, path, func(_ *testing.T, c *datadriven.TestData) string {
 			return r.RunCmd(ctx, c)
 		})
 		if path != "testdata/exec/aggregate/ordered_aggregate" { // NOTE: skip checking the limit for the ordered aggregator as it still leaks memory.

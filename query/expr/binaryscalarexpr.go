@@ -137,41 +137,41 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 
 	switch operator {
 	case logicalplan.OpLtEq:
-		min := Min(leftColumnIndex)
-		if min.IsNull() {
+		minValue := Min(leftColumnIndex)
+		if minValue.IsNull() {
 			// If min is null, we don't know what the non-null min value is, so
 			// we need to let the execution engine scan this column chunk
 			// further.
 			return true, nil
 		}
-		return compare(min, right) <= 0, nil
+		return compare(minValue, right) <= 0, nil
 	case logicalplan.OpLt:
-		min := Min(leftColumnIndex)
-		if min.IsNull() {
+		minValue := Min(leftColumnIndex)
+		if minValue.IsNull() {
 			// If min is null, we don't know what the non-null min value is, so
 			// we need to let the execution engine scan this column chunk
 			// further.
 			return true, nil
 		}
-		return compare(min, right) < 0, nil
+		return compare(minValue, right) < 0, nil
 	case logicalplan.OpGt:
-		max := Max(leftColumnIndex)
-		if max.IsNull() {
+		maxValue := Max(leftColumnIndex)
+		if maxValue.IsNull() {
 			// If max is null, we don't know what the non-null max value is, so
 			// we need to let the execution engine scan this column chunk
 			// further.
 			return true, nil
 		}
-		return compare(max, right) > 0, nil
+		return compare(maxValue, right) > 0, nil
 	case logicalplan.OpGtEq:
-		max := Max(leftColumnIndex)
-		if max.IsNull() {
+		maxValue := Max(leftColumnIndex)
+		if maxValue.IsNull() {
 			// If max is null, we don't know what the non-null max value is, so
 			// we need to let the execution engine scan this column chunk
 			// further.
 			return true, nil
 		}
-		return compare(max, right) >= 0, nil
+		return compare(maxValue, right) >= 0, nil
 	default:
 		return true, nil
 	}
@@ -179,20 +179,20 @@ func BinaryScalarOperation(left parquet.ColumnChunk, right parquet.Value, operat
 
 // Min returns the minimum value found in the column chunk across all pages.
 func Min(columnIndex parquet.ColumnIndex) parquet.Value {
-	min := columnIndex.MinValue(0)
+	minV := columnIndex.MinValue(0)
 	for i := 1; i < columnIndex.NumPages(); i++ {
 		v := columnIndex.MinValue(i)
-		if min.IsNull() {
-			min = v
+		if minV.IsNull() {
+			minV = v
 			continue
 		}
 
-		if compare(min, v) == 1 {
-			min = v
+		if compare(minV, v) == 1 {
+			minV = v
 		}
 	}
 
-	return min
+	return minV
 }
 
 func NullCount(columnIndex parquet.ColumnIndex) int64 {
@@ -205,20 +205,20 @@ func NullCount(columnIndex parquet.ColumnIndex) int64 {
 
 // Max returns the maximum value found in the column chunk across all pages.
 func Max(columnIndex parquet.ColumnIndex) parquet.Value {
-	max := columnIndex.MaxValue(0)
+	maxValue := columnIndex.MaxValue(0)
 	for i := 1; i < columnIndex.NumPages(); i++ {
 		v := columnIndex.MaxValue(i)
-		if max.IsNull() {
-			max = v
+		if maxValue.IsNull() {
+			maxValue = v
 			continue
 		}
 
-		if compare(max, v) == -1 {
-			max = v
+		if compare(maxValue, v) == -1 {
+			maxValue = v
 		}
 	}
 
-	return max
+	return maxValue
 }
 
 // compares two parquet values. 0 if they are equal, -1 if v1 < v2, 1 if v1 > v2.
