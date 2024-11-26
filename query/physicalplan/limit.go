@@ -6,11 +6,9 @@ import (
 
 	"github.com/apache/arrow/go/v16/arrow"
 	"github.com/apache/arrow/go/v16/arrow/array"
-	"github.com/apache/arrow/go/v16/arrow/compute"
 	"github.com/apache/arrow/go/v16/arrow/memory"
 	"github.com/apache/arrow/go/v16/arrow/scalar"
 	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/pqarrow/arrowutils"
 	"github.com/polarsignals/frostdb/query/logicalplan"
@@ -87,60 +85,12 @@ func (l *Limiter) Callback(ctx context.Context, r arrow.Record) error {
 	indices := indicesBuilder.NewInt32Array()
 	defer indices.Release()
 
-	// compute.Take doesn't support dictionaries. Use take on r when r does not have
-	// dictionary column.
-	var hasDictionary bool
-	for i := 0; i < int(r.NumCols()); i++ {
-		if r.Column(i).DataType().ID() == arrow.DICTIONARY {
-			hasDictionary = true
-			break
-		}
-	}
-	if !hasDictionary {
-		res, err := compute.Take(
-			ctx,
-			compute.TakeOptions{BoundsCheck: true},
-			compute.NewDatumWithoutOwning(r),
-			compute.NewDatumWithoutOwning(indices),
-		)
-		if err != nil {
-			return err
-		}
-		r.Release()
-		return l.next.Callback(ctx, res.(*compute.RecordDatum).Value)
-	}
-	resArr := make([]arrow.Array, r.NumCols())
-
-	defer func() {
-		for _, a := range resArr {
-			if a != nil {
-				a.Release()
-			}
-		}
-	}()
-	var g errgroup.Group
-	for i := 0; i < int(r.NumCols()); i++ {
-		i := i
-		col := r.Column(i)
-		if d, ok := col.(*array.Dictionary); ok {
-			g.Go(func() error {
-				return arrowutils.TakeDictColumn(ctx, d, i, resArr, indices)
-			})
-		} else {
-			g.Go(func() error {
-				return arrowutils.TakeColumn(ctx, col, i, resArr, indices)
-			})
-		}
-	}
-	err := g.Wait()
+	limitedRecord, err := arrowutils.Take(ctx, r, indices)
 	if err != nil {
 		return err
 	}
 
-	if err := l.next.Callback(
-		ctx,
-		array.NewRecord(r.Schema(), resArr, int64(indices.Len())),
-	); err != nil {
+	if err := l.next.Callback(ctx, limitedRecord); err != nil {
 		return err
 	}
 
