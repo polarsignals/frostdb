@@ -820,13 +820,13 @@ func minInt64array(arr *array.Int64) int64 {
 	// Note that the zero-length check must be performed before calling this
 	// function.
 	vals := arr.Int64Values()
-	min := vals[0]
+	minV := vals[0]
 	for _, v := range vals {
-		if v < min {
-			min = v
+		if v < minV {
+			minV = v
 		}
 	}
-	return min
+	return minV
 }
 
 func minFloat64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
@@ -848,13 +848,13 @@ func minFloat64array(arr *array.Float64) float64 {
 	// Note that the zero-length check must be performed before calling this
 	// function.
 	vals := arr.Float64Values()
-	min := vals[0]
+	minV := vals[0]
 	for _, v := range vals {
-		if v < min {
-			min = v
+		if v < minV {
+			minV = v
 		}
 	}
-	return min
+	return minV
 }
 
 type MaxAggregation struct{}
@@ -898,13 +898,13 @@ func maxInt64array(arr *array.Int64) int64 {
 	// Note that the zero-length check must be performed before calling this
 	// function.
 	vals := arr.Int64Values()
-	max := vals[0]
+	maxV := vals[0]
 	for _, v := range vals {
-		if v > max {
-			max = v
+		if v > maxV {
+			maxV = v
 		}
 	}
-	return max
+	return maxV
 }
 
 func maxFloat64arrays(pool memory.Allocator, arrs []arrow.Array) arrow.Array {
@@ -925,13 +925,13 @@ func maxFloat64array(arr *array.Float64) float64 {
 	// Note that the zero-length check must be performed before calling this
 	// function.
 	vals := arr.Float64Values()
-	max := vals[0]
+	maxV := vals[0]
 	for _, v := range vals {
-		if v > max {
-			max = v
+		if v > maxV {
+			maxV = v
 		}
 	}
-	return max
+	return maxV
 }
 
 type CountAggregation struct{}

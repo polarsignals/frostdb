@@ -62,7 +62,7 @@ func TestUniqueAggregation(t *testing.T) {
 			[]*logicalplan.AggregationFunction{logicalplan.Unique(logicalplan.Col("example"))},
 			[]logicalplan.Expr{logicalplan.Col("timestamp")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			require.Equal(t, []int64{1, 3}, r.Column(0).(*array.Int64).Int64Values())
 			require.True(t, r.Column(1).(*array.Int64).IsNull(0))
 			require.True(t, r.Column(1).(*array.Int64).IsValid(1))
@@ -122,7 +122,7 @@ func TestAndAggregation(t *testing.T) {
 			[]*logicalplan.AggregationFunction{logicalplan.AndAgg(logicalplan.Col("example"))},
 			[]logicalplan.Expr{logicalplan.Col("timestamp")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			require.Equal(t, []int64{1, 3}, r.Column(0).(*array.Int64).Int64Values())
 			require.False(t, r.Column(1).(*array.Boolean).Value(0))
 			require.True(t, r.Column(1).(*array.Boolean).Value(1))
@@ -180,7 +180,7 @@ func TestIfProjection(t *testing.T) {
 		Project(
 			logicalplan.If(logicalplan.Col("example").Eq(logicalplan.Literal(int64(1))), logicalplan.Literal(int64(1)), logicalplan.Literal(int64(0))),
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			require.Equal(t, []int64{1, 0, 0}, r.Column(0).(*array.Int64).Int64Values())
 			ran = true
 			return nil
@@ -227,7 +227,7 @@ func TestIsNullProjection(t *testing.T) {
 		Project(
 			logicalplan.IsNull(logicalplan.Col("example")),
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			require.False(t, r.Column(0).(*array.Boolean).Value(0))
 			require.False(t, r.Column(0).(*array.Boolean).Value(1))
 			require.True(t, r.Column(0).(*array.Boolean).Value(2))

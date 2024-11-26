@@ -150,13 +150,6 @@ func (b *builder) unsafeSetValid(length int) {
 	b.length = newLength
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // ListBuilder is a wrapper over an array.ListBuilder that uses ColumnBuilder as a values buffer.
 type ListBuilder struct {
 	builder

@@ -32,7 +32,7 @@ func TestSynchronize(t *testing.T) {
 	err := op.Execute(
 		context.Background(),
 		memory.NewGoAllocator(),
-		func(ctx context.Context, r arrow.Record) error {
+		func(_ context.Context, _ arrow.Record) error {
 			calls++
 			return nil
 		},

@@ -145,12 +145,12 @@ func TestSnapshot(t *testing.T) {
 			},
 		} {
 			if testCase.expMaxTimestamp != 0 {
-				max := []*logicalplan.AggregationFunction{
+				aggrMax := []*logicalplan.AggregationFunction{
 					logicalplan.Max(logicalplan.Col("timestamp")),
 				}
 				require.NoError(
 					t,
-					snapshotEngine.ScanTable(testCase.name).Aggregate(max, nil).Execute(ctx,
+					snapshotEngine.ScanTable(testCase.name).Aggregate(aggrMax, nil).Execute(ctx,
 						func(_ context.Context,
 							r arrow.Record,
 						) error {

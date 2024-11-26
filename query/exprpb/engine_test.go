@@ -36,7 +36,7 @@ func TestPlan(t *testing.T) {
 
 	require.Equal(t, "bar", builder.LogicalPlan.SchemaScan.TableName)
 
-	err = builder.Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+	err = builder.Execute(context.Background(), func(_ context.Context, _ arrow.Record) error {
 		return nil
 	})
 	require.NoError(t, err)
@@ -82,7 +82,7 @@ func TestPlan(t *testing.T) {
 	require.Equal(t, &logicalplan.Column{ColumnName: "foo"}, builder.LogicalPlan.Projection.Exprs[0])
 	require.Equal(t, "bar", builder.LogicalPlan.Input.TableScan.TableName)
 
-	err = builder.Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+	err = builder.Execute(context.Background(), func(_ context.Context, _ arrow.Record) error {
 		return nil
 	})
 	require.NoError(t, err)

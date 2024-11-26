@@ -968,14 +968,14 @@ func allOrNoneGreaterThan(
 	allTrue := true
 	allFalse := true
 	for i := 0; i < numPages; i++ {
-		min := index.MinValue(i)
-		max := index.MaxValue(i)
+		minValue := index.MinValue(i)
+		maxValue := index.MaxValue(i)
 
-		if typ.Compare(max, value) <= 0 {
+		if typ.Compare(maxValue, value) <= 0 {
 			allTrue = false
 		}
 
-		if typ.Compare(min, value) > 0 {
+		if typ.Compare(minValue, value) > 0 {
 			allFalse = false
 		}
 	}

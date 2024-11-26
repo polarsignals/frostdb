@@ -136,7 +136,7 @@ func (p *nilPage) NumNulls() int64 {
 
 // Bounds returns the minimum and maximum values of the page, since all values
 // in the page are null, both the minimum and maximum values are null.
-func (p *nilPage) Bounds() (min, max parquet.Value, ok bool) {
+func (p *nilPage) Bounds() (_, _ parquet.Value, _ bool) {
 	return parquet.ValueOf(nil).Level(0, 0, p.columnIndex), parquet.ValueOf(nil).Level(0, 0, p.columnIndex), true
 }
 
@@ -167,14 +167,6 @@ type nilValueReader struct {
 	numValues int
 	idx       int
 	read      int
-}
-
-// min determines the minimum of two integers and returns the minimum.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // ReadValues reads the next n values from the page and returns the amount of
