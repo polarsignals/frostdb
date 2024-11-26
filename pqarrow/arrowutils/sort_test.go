@@ -696,7 +696,6 @@ func (s Samples) Record() arrow.Record {
 		} else {
 			fNullable.AppendNull()
 		}
-
 	}
 	return b.NewRecord()
 }
