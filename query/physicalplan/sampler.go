@@ -174,6 +174,10 @@ func (s *ReservoirSampler) sliceReservoir() {
 
 // sample implements the reservoir sampling algorithm found https://en.wikipedia.org/wiki/Reservoir_sampling.
 func (s *ReservoirSampler) sample(r arrow.Record, ref *referencedRecord) {
+	// The size can be 0 and in that case we don't want to sample.
+	if s.size == 0 {
+		return
+	}
 	n := s.n + r.NumRows()
 	if s.i == 0 {
 		s.i = float64(s.n) - 1
