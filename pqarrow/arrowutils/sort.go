@@ -148,7 +148,7 @@ func TakeColumn(ctx context.Context, a arrow.Array, idx int, arr []arrow.Array, 
 
 func TakeDictColumn(ctx context.Context, a *array.Dictionary, idx int, arr []arrow.Array, indices *array.Int32) error {
 	switch a.Dictionary().(type) {
-	case *array.String:
+	case *array.String, *array.Binary:
 		r := array.NewDictionaryBuilderWithDict(
 			compute.GetAllocator(ctx), a.DataType().(*arrow.DictionaryType), a.Dictionary(),
 		).(*array.BinaryDictionaryBuilder)
