@@ -21,7 +21,7 @@ require (
 	github.com/prometheus/client_golang v1.19.1
 	github.com/spf13/cobra v1.8.0
 	github.com/stretchr/testify v1.9.0
-	github.com/tetratelabs/wazero v1.7.3
+	github.com/tetratelabs/wazero v1.8.2
 	github.com/thanos-io/objstore v0.0.0-20240818203309-0363dadfdfb1
 	go.opentelemetry.io/otel v1.27.0
 	go.opentelemetry.io/otel/trace v1.27.0
