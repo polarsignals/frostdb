@@ -1,6 +1,8 @@
 module github.com/polarsignals/frostdb/cmd/parquet-tool
 
-go 1.21
+go 1.22
+
+toolchain go1.23.4
 
 require (
 	github.com/apache/arrow/go/v16 v16.1.0
@@ -8,7 +10,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-kit/log v0.2.1
 	github.com/olekukonko/tablewriter v0.0.5
-	github.com/parquet-go/parquet-go v0.22.0
+	github.com/parquet-go/parquet-go v0.24.0
 	github.com/polarsignals/frostdb v0.0.0-20240531143051-eaf80c711e0a
 	github.com/prometheus/client_golang v1.19.1
 	github.com/spf13/cobra v1.8.0
@@ -34,7 +36,7 @@ require (
 	github.com/google/flatbuffers v24.3.25+incompatible // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/klauspost/compress v1.17.8 // indirect
+	github.com/klauspost/compress v1.17.9 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -55,8 +57,8 @@ require (
 	go.etcd.io/bbolt v1.3.7 // indirect
 	golang.org/x/mod v0.17.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
-	golang.org/x/sys v0.20.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
 	golang.org/x/tools v0.21.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
-	google.golang.org/protobuf v1.33.0 // indirect
+	google.golang.org/protobuf v1.34.2 // indirect
 )
