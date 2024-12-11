@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/apache/arrow/go/v16/arrow"
-	"github.com/apache/arrow/go/v16/arrow/array"
+	"github.com/apache/arrow/go/v17/arrow"
+	"github.com/apache/arrow/go/v17/arrow/array"
 )
 
 // EnsureSameSchema ensures that all the records have the same schema. In cases

@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/apache/arrow/go/v16/arrow"
-	"github.com/apache/arrow/go/v16/arrow/array"
-	"github.com/apache/arrow/go/v16/arrow/compute"
+	"github.com/apache/arrow/go/v17/arrow"
+	"github.com/apache/arrow/go/v17/arrow/array"
+	"github.com/apache/arrow/go/v17/arrow/compute"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
