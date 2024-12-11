@@ -5,7 +5,7 @@ import (
 
 	"github.com/polarsignals/frostdb/dynparquet"
 
-	"github.com/apache/arrow/go/v16/arrow/scalar"
+	"github.com/apache/arrow/go/v17/arrow/scalar"
 	"github.com/stretchr/testify/require"
 )
 

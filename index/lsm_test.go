@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v16/arrow"
+	"github.com/apache/arrow/go/v17/arrow"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
