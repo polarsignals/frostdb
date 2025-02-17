@@ -279,6 +279,68 @@ func TestMerge(t *testing.T) {
 	}
 }
 
+func TestMergeNestedListStruct(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer mem.AssertSize(t, 0)
+
+	rb := array.NewRecordBuilder(mem, arrow.NewSchema([]arrow.Field{
+		{Name: "int64", Type: arrow.PrimitiveTypes.Int64},
+		{Name: "list", Type: arrow.ListOf(arrow.StructOf([]arrow.Field{
+			{Name: "int32", Type: arrow.PrimitiveTypes.Int32},
+			{Name: "uint64", Type: arrow.PrimitiveTypes.Uint64},
+		}...))},
+	}, nil))
+	defer rb.Release()
+
+	var recs []arrow.Record
+	defer func() {
+		for _, r := range recs {
+			r.Release()
+		}
+	}()
+
+	int64Builder := rb.Field(0).(*array.Int64Builder)
+	listBuilder := rb.Field(1).(*array.ListBuilder)
+	listStructBuilder := listBuilder.ValueBuilder().(*array.StructBuilder)
+	listStructInt32Builder := listStructBuilder.FieldBuilder(0).(*array.Int32Builder)
+	listStructUint64Builder := listStructBuilder.FieldBuilder(1).(*array.Uint64Builder)
+
+	int64Builder.Append(-123)
+	listBuilder.Append(true)
+	listStructBuilder.Append(true)
+	listStructInt32Builder.Append(123)
+	listStructUint64Builder.Append(123 * 2)
+	listStructBuilder.Append(true)
+	listStructInt32Builder.Append(123 * 3)
+	listStructUint64Builder.Append(123 * 4)
+	recs = append(recs, rb.NewRecord())
+
+	int64Builder.Append(-123 * 2)
+	listBuilder.Append(true)
+	listStructBuilder.Append(true)
+	listStructInt32Builder.Append(123 * 5)
+	listStructUint64Builder.Append(123 * 6)
+	listStructBuilder.Append(true)
+	listStructInt32Builder.Append(123 * 7)
+	listStructUint64Builder.Append(123 * 8)
+	listStructBuilder.Append(true)
+	listStructInt32Builder.Append(123 * 9)
+	listStructUint64Builder.Append(123 * 10)
+	recs = append(recs, rb.NewRecord())
+
+	mergeRecord, err := arrowutils.MergeRecords(mem, recs, []arrowutils.SortingColumn{
+		{Index: 0, Direction: arrowutils.Ascending},
+	}, 0)
+	require.NoError(t, err)
+	defer mergeRecord.Release()
+
+	require.Equal(t, int64(2), mergeRecord.NumCols())
+	require.Equal(t, int64(2), mergeRecord.NumRows())
+
+	require.Equal(t, `[-246 -123]`, mergeRecord.Column(0).String())
+	require.Equal(t, `[{[615 861 1107] [738 984 1230]} {[123 369] [246 492]}]`, mergeRecord.Column(1).String())
+}
+
 func BenchmarkMergeRecords(b *testing.B) {
 	ctx := context.Background()
 	mem := memory.NewGoAllocator()
