@@ -14,6 +14,7 @@ import (
 	"github.com/apache/arrow/go/v17/arrow"
 	"github.com/apache/arrow/go/v17/arrow/array"
 	"github.com/apache/arrow/go/v17/arrow/compute"
+	"github.com/apache/arrow/go/v17/arrow/memory"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
@@ -236,45 +237,109 @@ func TakeRunEndEncodedColumn(ctx context.Context, a *array.RunEndEncoded, idx in
 }
 
 func TakeListColumn(ctx context.Context, a *array.List, idx int, arr []arrow.Array, indices *array.Int32) error {
-	r := array.NewBuilder(compute.GetAllocator(ctx), a.DataType()).(*array.ListBuilder)
-	valueBuilder, ok := r.ValueBuilder().(*array.BinaryDictionaryBuilder)
-	if !ok {
+	mem := compute.GetAllocator(ctx)
+	r := array.NewBuilder(mem, a.DataType()).(*array.ListBuilder)
+
+	switch valueBuilder := r.ValueBuilder().(type) {
+	case *array.BinaryDictionaryBuilder:
+		defer valueBuilder.Release()
+
+		listValues := a.ListValues().(*array.Dictionary)
+		switch dictV := listValues.Dictionary().(type) {
+		case *array.String:
+			if err := valueBuilder.InsertStringDictValues(dictV); err != nil {
+				return err
+			}
+		case *array.Binary:
+			if err := valueBuilder.InsertDictValues(dictV); err != nil {
+				return err
+			}
+		}
+		idxBuilder := valueBuilder.IndexBuilder()
+
+		r.Reserve(indices.Len())
+		for _, i := range indices.Int32Values() {
+			if a.IsNull(int(i)) {
+				r.AppendNull()
+				continue
+			}
+
+			r.Append(true)
+			start, end := a.ValueOffsets(int(i))
+			for j := start; j < end; j++ {
+				idxBuilder.Append(listValues.GetValueIndex(int(j)))
+			}
+			// Resize is necessary here for the correct offsets to be appended to
+			// the list builder. Otherwise, length will remain at 0.
+			valueBuilder.Resize(idxBuilder.Len())
+		}
+
+		arr[idx] = r.NewArray()
+		return nil
+	case *array.StructBuilder:
+		defer valueBuilder.Release()
+
+		structArray := a.ListValues().(*array.Struct)
+
+		// expand the indices from the list to each row in the struct.
+		structIndicesBuilder := array.NewInt32Builder(mem)
+		structIndicesBuilder.Reserve(structArray.Len())
+		defer structIndicesBuilder.Release()
+
+		for _, i := range indices.Int32Values() {
+			start, end := a.ValueOffsets(int(i))
+			for j := start; j < end; j++ {
+				structIndicesBuilder.Append(int32(j))
+			}
+		}
+		structIndices := structIndicesBuilder.NewInt32Array()
+		defer structIndices.Release()
+
+		arrays := []arrow.Array{structArray}
+		err := TakeStructColumn(ctx, structArray, 0, arrays, structIndices)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			for _, a := range arrays {
+				a.Release()
+			}
+		}()
+
+		newOffsetBuilder := array.NewInt32Builder(mem)
+		defer newOffsetBuilder.Release()
+
+		newOffsetBuilder.Append(0)
+		newOffsetPrevious := int32(0)
+		for _, i := range indices.Int32Values() {
+			if a.IsNull(int(i)) {
+				newOffsetBuilder.AppendNull()
+				continue
+			}
+
+			start, end := a.ValueOffsets(int(i))
+			// calculate the length of the current list element and add it to the offsets
+			newOffsetPrevious += int32(end - start)
+			newOffsetBuilder.Append(newOffsetPrevious)
+		}
+		newOffsets := newOffsetBuilder.NewInt32Array()
+		defer newOffsets.Release()
+
+		data := array.NewData(
+			arrow.ListOf(structArray.DataType()),
+			a.Len(),
+			[]*memory.Buffer{nil, newOffsets.Data().Buffers()[1]},
+			[]arrow.ArrayData{arrays[0].Data()},
+			newOffsets.NullN(),
+			0,
+		)
+		defer data.Release()
+		arr[idx] = array.NewListData(data)
+
+		return nil
+	default:
 		return fmt.Errorf("unexpected value builder type %T for list column", r.ValueBuilder())
 	}
-	defer valueBuilder.Release()
-
-	listValues := a.ListValues().(*array.Dictionary)
-	switch dictV := listValues.Dictionary().(type) {
-	case *array.String:
-		if err := valueBuilder.InsertStringDictValues(dictV); err != nil {
-			return err
-		}
-	case *array.Binary:
-		if err := valueBuilder.InsertDictValues(dictV); err != nil {
-			return err
-		}
-	}
-	idxBuilder := valueBuilder.IndexBuilder()
-
-	r.Reserve(indices.Len())
-	for _, i := range indices.Int32Values() {
-		if a.IsNull(int(i)) {
-			r.AppendNull()
-			continue
-		}
-
-		r.Append(true)
-		start, end := a.ValueOffsets(int(i))
-		for j := start; j < end; j++ {
-			idxBuilder.Append(listValues.GetValueIndex(int(j)))
-		}
-		// Resize is necessary here for the correct offsets to be appended to
-		// the list builder. Otherwise length will remain at 0.
-		valueBuilder.Resize(idxBuilder.Len())
-	}
-
-	arr[idx] = r.NewArray()
-	return nil
 }
 
 func TakeStructColumn(ctx context.Context, a *array.Struct, idx int, arr []arrow.Array, indices *array.Int32) error {
@@ -304,8 +369,15 @@ func TakeStructColumn(ctx context.Context, a *array.Struct, idx int, arr []arrow
 
 		switch f := a.Field(i).(type) {
 		case *array.RunEndEncoded:
-			err := TakeRunEndEncodedColumn(ctx, f, i, cols, indices)
-			if err != nil {
+			if err := TakeRunEndEncodedColumn(ctx, f, i, cols, indices); err != nil {
+				return err
+			}
+		case *array.Dictionary:
+			if err := TakeDictColumn(ctx, f, i, cols, indices); err != nil {
+				return err
+			}
+		case *array.List:
+			if err := TakeListColumn(ctx, f, i, cols, indices); err != nil {
 				return err
 			}
 		default:

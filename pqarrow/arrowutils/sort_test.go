@@ -584,7 +584,59 @@ func TestReorderRecord(t *testing.T) {
 		require.Equal(t, "[3 2 5 1 4]", readRunEndEncodedDictionary(resultStruct.Field(1).(*array.RunEndEncoded)))
 		require.Equal(t, "[3 2 5 1 4]", resultStruct.Field(2).(*array.Int64).String())
 	})
+	t.Run("ListStruct", func(t *testing.T) {
+		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+		defer mem.AssertSize(t, 0)
 
+		b := array.NewRecordBuilder(mem, arrow.NewSchema([]arrow.Field{
+			{Name: "list", Type: arrow.ListOf(arrow.StructOf([]arrow.Field{
+				{Name: "int64", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+				{Name: "uint64", Type: arrow.PrimitiveTypes.Uint64, Nullable: true},
+			}...))},
+		}, nil))
+		defer b.Release()
+
+		lb := b.Field(0).(*array.ListBuilder)
+		sb := lb.ValueBuilder().(*array.StructBuilder)
+		int64b := sb.FieldBuilder(0).(*array.Int64Builder)
+		uint64b := sb.FieldBuilder(1).(*array.Uint64Builder)
+
+		lb.Append(true)
+		sb.Append(true)
+		int64b.Append(1)
+		uint64b.Append(2)
+		sb.Append(true)
+		int64b.Append(3)
+		uint64b.Append(4)
+
+		lb.Append(true)
+		sb.Append(true)
+		int64b.Append(5)
+		uint64b.Append(6)
+
+		lb.Append(true)
+		sb.Append(true)
+		int64b.Append(7)
+		uint64b.Append(8)
+		sb.Append(true)
+		int64b.Append(9)
+		uint64b.Append(10)
+
+		r := b.NewRecord()
+		defer r.Release()
+
+		indices := array.NewInt32Builder(mem)
+		indices.AppendValues([]int32{2, 1, 0}, nil)
+		defer indices.Release()
+		by := indices.NewInt32Array()
+		defer by.Release()
+
+		result, err := Take(compute.WithAllocator(context.Background(), mem), r, by)
+		require.Nil(t, err)
+		defer result.Release()
+
+		require.Equal(t, `[{[7 9] [8 10]} {[5] [6]} {[1 3] [2 4]}]`, result.Column(0).String())
+	})
 	t.Run("StructEmpty", func(t *testing.T) {
 		mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
 		defer mem.AssertSize(t, 0)
