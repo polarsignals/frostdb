@@ -80,6 +80,15 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 		b.Append(arr.(*array.FixedSizeBinary).Value(i))
 	case *array.BooleanBuilder:
 		b.Append(arr.(*array.Boolean).Value(i))
+	case *array.StructBuilder:
+		arrStruct := arr.(*array.Struct)
+
+		b.Append(true)
+		for j := 0; j < b.NumField(); j++ {
+			if err := AppendValue(b.FieldBuilder(j), arrStruct.Field(j), i); err != nil {
+				return fmt.Errorf("failed to append struct field: %w", err)
+			}
+		}
 	case *array.BinaryDictionaryBuilder:
 		switch a := arr.(type) {
 		case *array.Dictionary:
@@ -119,6 +128,12 @@ func buildList(vb any, b ListLikeBuilder, arr arrow.Array, i int) error {
 	defer values.Release()
 
 	switch v := values.(type) {
+	case *array.Int64:
+		int64Builder := vb.(*OptInt64Builder)
+		b.Append(true)
+		for j := 0; j < v.Len(); j++ {
+			int64Builder.Append(v.Value(j))
+		}
 	case *array.Dictionary:
 		switch dict := v.Dictionary().(type) {
 		case *array.Binary:
@@ -130,10 +145,27 @@ func buildList(vb any, b ListLikeBuilder, arr arrow.Array, i int) error {
 						return err
 					}
 				default:
-					return fmt.Errorf("uknown value builder type %T", bldr)
+					return fmt.Errorf("unknown value builder type %T", bldr)
 				}
 			}
 		}
+	case *array.Struct:
+		structBuilder, ok := vb.(*array.StructBuilder)
+		if !ok {
+			return fmt.Errorf("unsupported type for ListLikeBuilder: %T", vb)
+		}
+
+		b.Append(true)
+		for j := 0; j < v.Len(); j++ {
+			structBuilder.Append(true)
+			for k := 0; k < v.NumField(); k++ {
+				if err := AppendValue(structBuilder.FieldBuilder(k), v.Field(k), j); err != nil {
+					return err
+				}
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported type for List builder %T", v)
 	}
 
 	return nil
