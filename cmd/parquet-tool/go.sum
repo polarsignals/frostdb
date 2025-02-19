@@ -99,6 +99,8 @@ github.com/parquet-go/parquet-go v0.21.0 h1:cBIT1S7dA00LRVB4k9ZSrjPC1rQbiryIducp
 github.com/parquet-go/parquet-go v0.21.0/go.mod h1:wMYanjuaE900FTDTNY00JU+67Oqh9uO0pYWRNoPGctQ=
 github.com/parquet-go/parquet-go v0.22.0 h1:9G32efs+11L/MDc0Zt05AuvBubRGAp5lRKufv6pB/B8=
 github.com/parquet-go/parquet-go v0.22.0/go.mod h1:3VBP+djJCNuV+D5uSUs2pWQufk2yKO+9pwYvXglsB8Y=
+github.com/parquet-go/parquet-go v0.24.0 h1:VrsifmLPDnas8zpoHmYiWDZ1YHzLmc7NmNwPGkI2JM4=
+github.com/parquet-go/parquet-go v0.24.0/go.mod h1:OqBBRGBl7+llplCvDMql8dEKaDqjaFA/VAPw+OJiNiw=
 github.com/pierrec/lz4/v4 v4.1.21 h1:yOVMLb6qSIDP67pl/5F7RepeKYu/VmTyEXvuMI5d9mQ=
 github.com/pierrec/lz4/v4 v4.1.21/go.mod h1:gZWDp/Ze/IJXGXf23ltt2EXimqmTUXEy0GFuRQyBid4=
 github.com/planetscale/vtprotobuf v0.6.0 h1:nBeETjudeJ5ZgBHUz1fVHvbqUKnYOXNhsIEabROxmNA=
