@@ -1,8 +1,8 @@
 module github.com/polarsignals/frostdb/cmd/parquet-tool
 
-go 1.22.0
+go 1.23
 
-toolchain go1.23.5
+toolchain go1.24.0
 
 require (
 	github.com/apache/arrow/go/v16 v16.1.0
@@ -11,8 +11,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-kit/log v0.2.1
 	github.com/olekukonko/tablewriter v0.0.5
-	github.com/parquet-go/parquet-go v0.22.0
-	github.com/polarsignals/frostdb v0.0.0-20240531143051-eaf80c711e0a
+	github.com/parquet-go/parquet-go v0.24.0
+	github.com/polarsignals/frostdb v0.0.0-20250218183442-9c9972458112
 	github.com/prometheus/client_golang v1.20.5
 	github.com/spf13/cobra v1.8.0
 	golang.org/x/exp v0.0.0-20250128182459-e0ece0dbea4c
@@ -31,7 +31,7 @@ require (
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
 	github.com/coreos/pkg v0.0.0-20230601102743-20bbbf26f4d8 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/dgryski/go-metro v0.0.0-20211217172704-adc40b04c140 // indirect
+	github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/goccy/go-json v0.10.3 // indirect
 	github.com/google/flatbuffers v24.3.25+incompatible // indirect
@@ -48,7 +48,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/planetscale/vtprotobuf v0.6.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/polarsignals/wal v0.0.0-20240514152147-1cd4b81c9b88 // indirect
+	github.com/polarsignals/wal v0.0.0-20240619104840-9da940027f9c // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
