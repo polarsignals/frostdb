@@ -11,7 +11,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-kit/log v0.2.1
 	github.com/olekukonko/tablewriter v0.0.5
-	github.com/parquet-go/parquet-go v0.22.0
+	github.com/parquet-go/parquet-go v0.25.0
 	github.com/polarsignals/frostdb v0.0.0-20240531143051-eaf80c711e0a
 	github.com/prometheus/client_golang v1.20.5
 	github.com/spf13/cobra v1.8.0
