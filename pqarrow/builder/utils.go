@@ -124,6 +124,12 @@ type ListLikeBuilder interface {
 func buildList(vb any, b ListLikeBuilder, arr arrow.Array, i int) error {
 	list := arr.(*array.List)
 	start, end := list.ValueOffsets(i)
+
+	data := list.ListValues().Data()
+	if start > int64(data.Len()) || start > end || data.Offset()+int(start) > data.Offset()+data.Len() {
+		return fmt.Errorf("invalid data range: start=%d end=%d for list with %v", start, end, list.Offsets())
+	}
+
 	values := array.NewSlice(list.ListValues(), start, end)
 	defer values.Release()
 
