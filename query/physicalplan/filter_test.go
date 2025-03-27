@@ -3,7 +3,7 @@ package physicalplan
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v17/arrow"
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/stretchr/testify/require"
 )
 
