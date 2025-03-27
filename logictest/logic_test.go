@@ -24,13 +24,13 @@ type frostDB struct {
 }
 
 func (db frostDB) CreateTable(name string, schema *schemapb.Schema) (Table, error) {
-	return db.DB.Table(name, frostdb.NewTableConfig(schema))
+	return db.Table(name, frostdb.NewTableConfig(schema))
 }
 
 func (db frostDB) ScanTable(name string) query.Builder {
 	queryEngine := query.NewEngine(
 		db.allocator,
-		db.DB.TableProvider(),
+		db.TableProvider(),
 		query.WithPhysicalplanOptions(
 			physicalplan.WithOrderedAggregations(),
 		),

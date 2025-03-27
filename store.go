@@ -137,7 +137,7 @@ func (b *DefaultObjstoreBucket) Prefixes(ctx context.Context, prefix string) ([]
 }
 
 func (b *DefaultObjstoreBucket) String() string {
-	return b.Bucket.Name()
+	return b.Name()
 }
 
 func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynparquet.Schema, filter logicalplan.Expr, lastBlockTimestamp uint64, callback func(context.Context, any) error) error {

@@ -13,7 +13,7 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
-// This example demonstrates how to use FrostDB's to aggregate data
+// This example demonstrates how to use FrostDB's to aggregate data.
 func main() {
 	// Create a new column store
 	columnstore, _ := frostdb.New()
@@ -80,7 +80,7 @@ func main() {
 			},
 			[]logicalplan.Expr{logicalplan.Col("city.name")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			// print the results
 			fmt.Println(r)
 			return nil
@@ -97,7 +97,7 @@ func main() {
 			},
 			[]logicalplan.Expr{logicalplan.Col("day")},
 		).
-		Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 			// print the results
 			fmt.Println(r)
 			return nil

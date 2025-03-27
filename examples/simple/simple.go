@@ -63,7 +63,7 @@ func main() {
 		Project(logicalplan.DynCol("names")). // We don't know all dynamic columns at query time, but we want all of them to be returned.
 		Filter(
 			logicalplan.Col("names.first_name").Eq(logicalplan.Literal("Frederic")),
-		).Execute(context.Background(), func(ctx context.Context, r arrow.Record) error {
+		).Execute(context.Background(), func(_ context.Context, r arrow.Record) error {
 		fmt.Println(r)
 		return nil
 	})

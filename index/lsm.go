@@ -567,10 +567,10 @@ func (l *LSM) merge(level SentinelType) error {
 	var iterErr error
 	compact.Iterate(func(node *Node) bool {
 		if node.part == nil { // sentinel encountered
-			switch {
-			case node.sentinel == level: // the sentinel for the beginning of the list
+			switch node.sentinel {
+			case level: // the sentinel for the beginning of the list
 				return true
-			case node.sentinel == level+1:
+			case level + 1:
 				next = node.next.Load() // skip the sentinel to combine the lists
 			default:
 				next = node

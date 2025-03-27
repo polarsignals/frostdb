@@ -201,7 +201,7 @@ func (b *ListBuilder) AppendNull() {
 func (b *ListBuilder) AppendValues(offsets []int32, valid []bool) {
 	b.Reserve(len(valid))
 	b.offsets.AppendValues(offsets, nil)
-	b.builder.unsafeAppendBoolsToBitmap(valid, len(valid))
+	b.unsafeAppendBoolsToBitmap(valid, len(valid))
 }
 
 func (b *ListBuilder) unsafeAppendBoolToBitmap(isValid bool) {
@@ -221,7 +221,7 @@ func (b *ListBuilder) init(capacity int) {
 // Reserve ensures there is enough space for appending n elements
 // by checking the capacity and calling Resize if necessary.
 func (b *ListBuilder) Reserve(n int) {
-	b.builder.reserve(n, b.resizeHelper)
+	b.reserve(n, b.resizeHelper)
 	b.offsets.Reserve(n)
 }
 
@@ -240,7 +240,7 @@ func (b *ListBuilder) resizeHelper(n int) {
 	if b.capacity == 0 {
 		b.init(n)
 	} else {
-		b.builder.resize(n, b.builder.init)
+		b.resize(n, b.builder.init)
 	}
 }
 

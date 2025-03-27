@@ -149,12 +149,12 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps
 func hasMapFields(n parquet.Node) bool {
 	// toplevel group requiredto be repeated group key_value with
-	if !(len(n.Fields()) == 1 && n.Fields()[0].Repeated() && n.Fields()[0].Name() == "key_value") {
+	if len(n.Fields()) != 1 || !n.Fields()[0].Repeated() || n.Fields()[0].Name() != "key_value" {
 		return false
 	}
 
 	// can only be two fields, a key field and an optional value field
-	if !(len(n.Fields()[0].Fields()) >= 1 && len(n.Fields()[0].Fields()) <= 2) {
+	if len(n.Fields()[0].Fields()) < 1 || len(n.Fields()[0].Fields()) > 2 {
 		return false
 	}
 
@@ -170,12 +170,12 @@ func hasMapFields(n parquet.Node) bool {
 
 // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
 func hasListFields(n parquet.Node) bool {
-	if !((n.Optional() || n.Required()) && len(n.Fields()) == 1) {
+	if (!n.Optional() && !n.Required()) || len(n.Fields()) != 1 {
 		return false
 	}
 
 	list := n.Fields()[0]
-	if !(list.Name() == "list" && list.Repeated() && len(list.Fields()) == 1) {
+	if list.Name() != "list" || !list.Repeated() || len(list.Fields()) != 1 {
 		return false
 	}
 

@@ -76,9 +76,9 @@ func (b *SerializedBuffer) String() string {
 	numRowGroups := b.NumRowGroups()
 	numRows := b.NumRows()
 	w := newPrettyWriter()
-	_, _ = w.Write([]byte(fmt.Sprintf("row groups: %d\ttotal rows: %d\n", numRowGroups, numRows)))
+	_, _ = fmt.Fprintf(w, "num row groups: %d\tnum rows: %d\n", numRowGroups, numRows)
 	for i := 0; i < numRowGroups; i++ {
-		_, _ = w.Write([]byte("---\n"))
+		_, _ = fmt.Fprint(w, "---\n")
 		w.writePrettyRowGroup(b.DynamicRowGroup(i))
 	}
 	_ = w.Flush()

@@ -40,7 +40,6 @@ import (
 	"github.com/polarsignals/frostdb/query/logicalplan"
 	"github.com/polarsignals/frostdb/query/physicalplan"
 	"github.com/polarsignals/frostdb/recovery"
-	"github.com/polarsignals/frostdb/wal"
 	walpkg "github.com/polarsignals/frostdb/wal"
 )
 
@@ -289,7 +288,7 @@ type WAL interface {
 	// first index on disk, the replay happens from the first index on disk.
 	// If the handler panics, the WAL implementation will truncate the WAL up to
 	// the last valid index.
-	Replay(tx uint64, handler wal.ReplayHandlerFunc) error
+	Replay(tx uint64, handler walpkg.ReplayHandlerFunc) error
 	Truncate(tx uint64) error
 	Reset(nextTx uint64) error
 	FirstIndex() (uint64, error)
@@ -502,14 +501,7 @@ func (t *Table) writeBlock(
 	sort.Slice(t.completedBlocks, func(i, j int) bool {
 		return t.completedBlocks[i].prevTx < t.completedBlocks[j].prevTx
 	})
-	for {
-		if len(t.completedBlocks) == 0 {
-			break
-		}
-		if t.completedBlocks[0].prevTx != t.lastCompleted {
-			break
-		}
-
+	for len(t.completedBlocks) > 0 && t.completedBlocks[0].prevTx == t.lastCompleted {
 		t.lastCompleted = t.completedBlocks[0].tx
 		t.metrics.lastCompletedBlockTx.Set(float64(t.lastCompleted))
 		t.completedBlocks = t.completedBlocks[1:]

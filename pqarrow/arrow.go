@@ -859,7 +859,7 @@ func recordBuilderLength(rb *builder.RecordBuilder) (maxLength, maxLengthFields 
 			maxLengthFields++
 		}
 	}
-	return maxLength, maxLengthFields, !(maxLengthFields == len(rb.Fields()))
+	return maxLength, maxLengthFields, maxLengthFields != len(rb.Fields())
 }
 
 // parquetSchemaEqual returns whether the two input schemas are equal. For now,

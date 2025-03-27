@@ -474,15 +474,15 @@ func (s *v1storageLayoutWrapper) GetRepeated() bool {
 }
 
 func (s *v1storageLayoutWrapper) GetTypeInt32() int32 {
-	return int32(s.StorageLayout.GetType())
+	return int32(s.GetType())
 }
 
 func (s *v1storageLayoutWrapper) GetEncodingInt32() int32 {
-	return int32(s.StorageLayout.GetEncoding())
+	return int32(s.GetEncoding())
 }
 
 func (s *v1storageLayoutWrapper) GetCompressionInt32() int32 {
-	return int32(s.StorageLayout.GetCompression())
+	return int32(s.GetCompression())
 }
 
 type v2storageLayoutWrapper struct {
@@ -490,15 +490,15 @@ type v2storageLayoutWrapper struct {
 }
 
 func (s *v2storageLayoutWrapper) GetTypeInt32() int32 {
-	return int32(s.StorageLayout.GetType())
+	return int32(s.GetType())
 }
 
 func (s *v2storageLayoutWrapper) GetEncodingInt32() int32 {
-	return int32(s.StorageLayout.GetEncoding())
+	return int32(s.GetEncoding())
 }
 
 func (s *v2storageLayoutWrapper) GetCompressionInt32() int32 {
-	return int32(s.StorageLayout.GetCompression())
+	return int32(s.GetCompression())
 }
 
 func StorageLayoutWrapper(_ *schemav2pb.StorageLayout) StorageLayout {
@@ -1184,7 +1184,7 @@ func (s *Schema) GetWriter(w io.Writer, dynamicColumns map[string][]string, sort
 			ParquetWriter: pw,
 		}, nil
 	}
-	pooled.(*PooledWriter).ParquetWriter.Reset(w)
+	pooled.(*PooledWriter).Reset(w)
 	return pooled.(*PooledWriter), nil
 }
 
@@ -1239,7 +1239,7 @@ func (s *Schema) PutPooledParquetSchema(ps *PooledParquetSchema) {
 }
 
 func (s *Schema) PutWriter(w *PooledWriter) {
-	w.ParquetWriter.Reset(bytes.NewBuffer(nil))
+	w.Reset(bytes.NewBuffer(nil))
 	w.pool.Put(w)
 }
 
@@ -1270,7 +1270,7 @@ func (s *Schema) GetBuffer(dynamicColumns map[string][]string) (*PooledBuffer, e
 }
 
 func (s *Schema) PutBuffer(b *PooledBuffer) {
-	b.Buffer.Reset()
+	b.Reset()
 	b.pool.Put(b)
 }
 

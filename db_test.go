@@ -382,7 +382,7 @@ func Test_DB_WithStorage(t *testing.T) {
 
 func Test_DB_Filter_Block(t *testing.T) {
 	sanitize := func(name string) string {
-		return strings.Replace(name, "/", "-", -1)
+		return strings.ReplaceAll(name, "/", "-")
 	}
 
 	config := NewTableConfig(
@@ -674,7 +674,7 @@ func Test_DB_OpenError(t *testing.T) {
 
 func Test_DB_Block_Optimization(t *testing.T) {
 	sanitize := func(name string) string {
-		return strings.Replace(name, "/", "-", -1)
+		return strings.ReplaceAll(name, "/", "-")
 	}
 
 	config := NewTableConfig(
