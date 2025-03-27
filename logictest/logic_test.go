@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/apache/arrow/go/v17/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/cockroachdb/datadriven"
 	"github.com/stretchr/testify/require"
 
@@ -24,13 +24,13 @@ type frostDB struct {
 }
 
 func (db frostDB) CreateTable(name string, schema *schemapb.Schema) (Table, error) {
-	return db.DB.Table(name, frostdb.NewTableConfig(schema))
+	return db.Table(name, frostdb.NewTableConfig(schema))
 }
 
 func (db frostDB) ScanTable(name string) query.Builder {
 	queryEngine := query.NewEngine(
 		db.allocator,
-		db.DB.TableProvider(),
+		db.TableProvider(),
 		query.WithPhysicalplanOptions(
 			physicalplan.WithOrderedAggregations(),
 		),

@@ -16,8 +16,8 @@ import (
 	"github.com/oklog/ulid/v2"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/apache/arrow/go/v17/arrow/ipc"
-	"github.com/apache/arrow/go/v17/arrow/util"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/util"
 	"github.com/go-kit/log/level"
 
 	"github.com/polarsignals/frostdb/dynparquet"

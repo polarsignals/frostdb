@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v17/arrow"
-	"github.com/apache/arrow/go/v17/arrow/array"
-	"github.com/apache/arrow/go/v17/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
 	"github.com/polarsignals/iceberg-go"
@@ -382,7 +382,7 @@ func Test_DB_WithStorage(t *testing.T) {
 
 func Test_DB_Filter_Block(t *testing.T) {
 	sanitize := func(name string) string {
-		return strings.Replace(name, "/", "-", -1)
+		return strings.ReplaceAll(name, "/", "-")
 	}
 
 	config := NewTableConfig(
@@ -674,7 +674,7 @@ func Test_DB_OpenError(t *testing.T) {
 
 func Test_DB_Block_Optimization(t *testing.T) {
 	sanitize := func(name string) string {
-		return strings.Replace(name, "/", "-", -1)
+		return strings.ReplaceAll(name, "/", "-")
 	}
 
 	config := NewTableConfig(

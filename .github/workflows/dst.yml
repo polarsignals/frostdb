@@ -14,7 +14,7 @@ jobs:
 
     - name: Set up Go
       run: |
-        curl -L -o go-custom-linux-amd64.tar.gz https://github.com/polarsignals/go/releases/download/v0.0.1/go-custom-linux-amd64.tar.gz
+        curl -L -o go-custom-linux-amd64.tar.gz https://github.com/polarsignals/go/releases/download/v0.0.2/go-custom-linux-amd64.tar.gz
         tar -xzf go-custom-linux-amd64.tar.gz
         sudo mv go /usr/local/go
         echo "/usr/local/go/bin" >> $GITHUB_PATH

@@ -7,10 +7,10 @@ import (
 	"math/rand"
 	"slices"
 
-	"github.com/apache/arrow/go/v17/arrow"
-	"github.com/apache/arrow/go/v17/arrow/array"
-	"github.com/apache/arrow/go/v17/arrow/memory"
-	"github.com/apache/arrow/go/v17/arrow/util"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/util"
 
 	"github.com/polarsignals/frostdb/pqarrow/builder"
 )
@@ -159,7 +159,7 @@ func (s *ReservoirSampler) sliceReservoir() {
 	newReservoir := make([]sample, 0, s.size)
 	for _, r := range s.reservoir {
 		ref := refPtr(r.ref.Record)
-		for j := int64(0); j < r.ref.Record.NumRows(); j++ {
+		for j := int64(0); j < r.ref.NumRows(); j++ {
 			smpl := sample{
 				i:   j,
 				ref: ref,
@@ -208,7 +208,7 @@ func (s *ReservoirSampler) Finish(ctx context.Context) error {
 			continue
 		}
 
-		record := r.ref.Record.NewSlice(r.i, r.i+1)
+		record := r.ref.NewSlice(r.i, r.i+1)
 		defer record.Release()
 		if err := s.next.Callback(ctx, record); err != nil {
 			return err

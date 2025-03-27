@@ -58,10 +58,7 @@ func deserializeDynamicColumns(columns string) (map[string][]string, error) {
 		values := make([]string, 0, strings.Count(labels, ","))
 
 		var label string
-		for {
-			if labels == "" {
-				break
-			}
+		for labels != "" {
 			label, labels, _ = strings.Cut(labels, ",")
 			values = append(values, label)
 		}
