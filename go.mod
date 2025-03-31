@@ -91,4 +91,4 @@ require (
 )
 
 // Avro has a regression in parsing map[string]any in v2.20.0 and higher. Issue to track this regression: https://github.com/hamba/avro/issues/386
-replace github.com/hamba/avro/v2 => github.com/hamba/avro/v2 v2.19.0
+replace github.com/hamba/avro/v2 => github.com/hamba/avro/v2 v2.28.0
