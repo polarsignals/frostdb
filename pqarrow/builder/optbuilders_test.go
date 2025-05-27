@@ -169,3 +169,70 @@ func TestOptBinaryBuilder_Value(t *testing.T) {
 		require.Equal(t, value, string(b.Value(i)))
 	}
 }
+
+func TestAppendEmptyValue(t *testing.T) {
+	t.Run("OptBinaryBuilder", func(t *testing.T) {
+		b := builder.NewOptBinaryBuilder(arrow.BinaryTypes.Binary)
+		b.AppendEmptyValue()
+		require.Equal(t, 1, b.Len())
+		require.True(t, b.IsValid(0))
+		require.Len(t, b.Value(0), 0) // Empty value should have length 0
+
+		arr := b.NewArray().(*array.Binary)
+		require.Equal(t, 1, arr.Len())
+		require.False(t, arr.IsNull(0))
+		require.Len(t, arr.Value(0), 0) // Empty value should have length 0
+	})
+
+	t.Run("OptInt64Builder", func(t *testing.T) {
+		b := builder.NewOptInt64Builder(arrow.PrimitiveTypes.Int64)
+		b.AppendEmptyValue()
+		require.Equal(t, 1, b.Len())
+		require.True(t, b.IsValid(0))
+		require.Equal(t, int64(0), b.Value(0))
+
+		arr := b.NewArray().(*array.Int64)
+		require.Equal(t, 1, arr.Len())
+		require.False(t, arr.IsNull(0))
+		require.Equal(t, int64(0), arr.Value(0))
+	})
+
+	t.Run("OptInt32Builder", func(t *testing.T) {
+		b := builder.NewOptInt32Builder(arrow.PrimitiveTypes.Int32)
+		b.AppendEmptyValue()
+		require.Equal(t, 1, b.Len())
+		require.True(t, b.IsValid(0))
+		require.Equal(t, int32(0), b.Value(0))
+
+		arr := b.NewArray().(*array.Int32)
+		require.Equal(t, 1, arr.Len())
+		require.False(t, arr.IsNull(0))
+		require.Equal(t, int32(0), arr.Value(0))
+	})
+
+	t.Run("OptFloat64Builder", func(t *testing.T) {
+		b := builder.NewOptFloat64Builder(arrow.PrimitiveTypes.Float64)
+		b.AppendEmptyValue()
+		require.Equal(t, 1, b.Len())
+		require.True(t, b.IsValid(0))
+		require.Equal(t, 0.0, b.Value(0))
+
+		arr := b.NewArray().(*array.Float64)
+		require.Equal(t, 1, arr.Len())
+		require.False(t, arr.IsNull(0))
+		require.Equal(t, 0.0, arr.Value(0))
+	})
+
+	t.Run("OptBooleanBuilder", func(t *testing.T) {
+		b := builder.NewOptBooleanBuilder(arrow.FixedWidthTypes.Boolean)
+		b.AppendEmptyValue()
+		require.Equal(t, 1, b.Len())
+		require.True(t, b.IsValid(0))
+		require.Equal(t, false, b.Value(0))
+
+		arr := b.NewArray().(*array.Boolean)
+		require.Equal(t, 1, arr.Len())
+		require.False(t, arr.IsNull(0))
+		require.Equal(t, false, arr.Value(0))
+	})
+}
