@@ -151,6 +151,13 @@ func (b *OptBinaryBuilder) AppendNull() {
 	b.builderBase.AppendNulls(1)
 }
 
+// AppendEmptyValue adds a new empty byte slice to the array being built.
+func (b *OptBinaryBuilder) AppendEmptyValue() {
+	b.offsets = append(b.offsets, uint32(len(b.data)))
+	// Don't append any data, just close the offset for an empty slice
+	b.appendValid(1)
+}
+
 // AppendNulls appends n null values to the array being built. This is specific
 // to distinct optimizations in FrostDB.
 func (b *OptBinaryBuilder) AppendNulls(n int) {
@@ -322,6 +329,11 @@ func (b *OptInt64Builder) AppendNull() {
 	b.AppendNulls(1)
 }
 
+// AppendEmptyValue adds a new zero value (0) to the array being built.
+func (b *OptInt64Builder) AppendEmptyValue() {
+	b.Append(0)
+}
+
 func (b *OptInt64Builder) AppendNulls(n int) {
 	b.resizeData(b.length + n)
 	b.builderBase.AppendNulls(n)
@@ -433,6 +445,11 @@ func (b *OptBooleanBuilder) Release() {
 
 func (b *OptBooleanBuilder) AppendNull() {
 	b.AppendNulls(1)
+}
+
+// AppendEmptyValue adds a new zero value (false) to the array being built.
+func (b *OptBooleanBuilder) AppendEmptyValue() {
+	b.AppendSingle(false)
 }
 
 func (b *OptBooleanBuilder) AppendNulls(n int) {
@@ -564,6 +581,11 @@ func (b *OptInt32Builder) Release() {
 
 func (b *OptInt32Builder) AppendNull() {
 	b.AppendNulls(1)
+}
+
+// AppendEmptyValue adds a new zero value (0) to the array being built.
+func (b *OptInt32Builder) AppendEmptyValue() {
+	b.Append(0)
 }
 
 func (b *OptInt32Builder) AppendNulls(n int) {
@@ -700,6 +722,11 @@ func (b *OptFloat64Builder) Release() {
 
 func (b *OptFloat64Builder) AppendNull() {
 	b.AppendNulls(1)
+}
+
+// AppendEmptyValue adds a new zero value (0.0) to the array being built.
+func (b *OptFloat64Builder) AppendEmptyValue() {
+	b.Append(0.0)
 }
 
 func (b *OptFloat64Builder) AppendNulls(n int) {
