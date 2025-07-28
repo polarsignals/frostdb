@@ -6,7 +6,6 @@ toolchain go1.24.5
 
 require (
 	github.com/apache/arrow-go/v18 v18.4.0
-	github.com/apache/arrow/go/v16 v16.1.0
 	github.com/apache/arrow/go/v17 v17.0.0
 	github.com/charmbracelet/lipgloss v0.13.1
 	github.com/dustin/go-humanize v1.0.1
@@ -23,6 +22,7 @@ require (
 	github.com/JohnCGriffin/overflow v0.0.0-20211019200055-46fa312c352c // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/apache/arrow/go/v15 v15.0.2 // indirect
+	github.com/apache/arrow/go/v16 v16.0.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/benbjohnson/immutable v0.4.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
