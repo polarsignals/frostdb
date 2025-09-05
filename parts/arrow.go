@@ -49,6 +49,10 @@ func (p *arrowPart) Write(w io.Writer) error {
 func (p *arrowPart) Retain() { p.record.Retain() }
 
 func (p *arrowPart) Record() arrow.Record {
+	return p.RecordBatch()
+}
+
+func (p *arrowPart) RecordBatch() arrow.RecordBatch {
 	return p.record
 }
 
