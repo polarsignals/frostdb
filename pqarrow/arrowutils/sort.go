@@ -309,11 +309,19 @@ func TakeListColumn(ctx context.Context, a *array.List, idx int, arr []arrow.Arr
 		newOffsetBuilder := array.NewInt32Builder(mem)
 		defer newOffsetBuilder.Release()
 
+		// Build validity bitmap for the list array
+		nullBitmapBuilder := array.NewBooleanBuilder(mem)
+		defer nullBitmapBuilder.Release()
+
 		newOffsetBuilder.Append(0)
 		newOffsetPrevious := int32(0)
+		nullCount := 0
 		for _, i := range indices.Int32Values() {
 			if a.IsNull(int(i)) {
-				newOffsetBuilder.AppendNull()
+				// If the list is null, repeat the previous offset and set the validity to false
+				newOffsetBuilder.Append(newOffsetPrevious)
+				nullBitmapBuilder.Append(false)
+				nullCount++
 				continue
 			}
 
@@ -321,16 +329,27 @@ func TakeListColumn(ctx context.Context, a *array.List, idx int, arr []arrow.Arr
 			// calculate the length of the current list element and add it to the offsets
 			newOffsetPrevious += int32(end - start)
 			newOffsetBuilder.Append(newOffsetPrevious)
+			nullBitmapBuilder.Append(true)
 		}
 		newOffsets := newOffsetBuilder.NewInt32Array()
 		defer newOffsets.Release()
 
+		// Build validity buffer from the boolean builder
+		var validityBuffer *memory.Buffer
+		if nullCount > 0 {
+			nullBitmap := nullBitmapBuilder.NewBooleanArray()
+			defer nullBitmap.Release()
+			validityBuffer = nullBitmap.Data().Buffers()[1]
+		}
+
+		offsetsBuffer := newOffsets.Data().Buffers()[1]
+
 		data := array.NewData(
 			arrow.ListOf(structArray.DataType()),
-			a.Len(),
-			[]*memory.Buffer{nil, newOffsets.Data().Buffers()[1]},
+			indices.Len(),
+			[]*memory.Buffer{validityBuffer, offsetsBuffer},
 			[]arrow.ArrayData{arrays[0].Data()},
-			newOffsets.NullN(),
+			nullCount,
 			0,
 		)
 		defer data.Release()
