@@ -1139,7 +1139,7 @@ func (s *Schema) NewWriter(w io.Writer, dynamicColumns map[string][]string, sort
 
 	writerOptions := []parquet.WriterOption{
 		ps.Schema,
-		parquet.ColumnIndexSizeLimit(ColumnIndexSize),
+		parquet.ColumnIndexSizeLimit(func(path []string) int { return ColumnIndexSize }),
 		parquet.BloomFilters(bloomFilterColumns...),
 		parquet.KeyValueMetadata(
 			DynamicColumnsKey,
