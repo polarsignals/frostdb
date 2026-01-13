@@ -14,6 +14,16 @@ import (
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
 
+// requireReadRowsSchema is a helper that checks for errors after ReadRows,
+// handles the io.EOF when all rows are read.
+func requireReadRowsSchema(t *testing.T, n int, err error, expectedN int) {
+	t.Helper()
+	if err != nil && err != io.EOF {
+		require.NoError(t, err)
+	}
+	require.Equal(t, expectedN, n)
+}
+
 func TestMergeRowBatches(t *testing.T) {
 	schema := NewSampleSchema()
 	samples := NewTestSamples()
@@ -46,20 +56,17 @@ func TestMergeRowBatches(t *testing.T) {
 	rowBuf := make([]parquet.Row, 1)
 	rows := buf.Rows()
 	n, err := rows.ReadRows(rowBuf)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	requireReadRowsSchema(t, n, err, 1)
 	row := rowBuf[0]
 	require.Equal(t, "test3", string(row[3].ByteArray()))
 
 	n, err = rows.ReadRows(rowBuf)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	requireReadRowsSchema(t, n, err, 1)
 	row = rowBuf[0]
 	require.True(t, row[3].IsNull())
 
 	n, err = rows.ReadRows(rowBuf)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	requireReadRowsSchema(t, n, err, 1)
 	row = rowBuf[0]
 	require.True(t, row[3].IsNull())
 }
@@ -208,11 +215,11 @@ func TestMultipleIterations(t *testing.T) {
 	i := 0
 	for {
 		n, err := rows.ReadRows(rowBuf)
+		i += n // Count rows before checking error (parquet-go v0.26.4+ returns EOF with data)
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
-		i += n
 	}
 	require.Equal(t, 3, i)
 	require.NoError(t, rows.Close())
@@ -221,11 +228,11 @@ func TestMultipleIterations(t *testing.T) {
 	i = 0
 	for {
 		n, err := rows.ReadRows(rowBuf)
+		i += n // Count rows before checking error (parquet-go v0.26.4+ returns EOF with data)
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
-		i += n
 	}
 	require.Equal(t, 3, i)
 	require.NoError(t, rows.Close())
