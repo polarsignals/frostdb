@@ -1,6 +1,7 @@
 package dynparquet
 
 import (
+	"io"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,6 +10,16 @@ import (
 
 	schemapb "github.com/polarsignals/frostdb/gen/proto/go/frostdb/schema/v1alpha1"
 )
+
+// requireReadRows is a helper that checks for errors after ReadRows,
+// handles io.EOF when rows were successfully read.
+func requireReadRows(t *testing.T, n int, err error, expectedN int) {
+	t.Helper()
+	if err != nil && err != io.EOF {
+		require.NoError(t, err)
+	}
+	require.Equal(t, expectedN, n)
+}
 
 type TestStructMiddleList struct {
 	A int64
@@ -114,8 +125,7 @@ func TestLess(t *testing.T) {
 		fields:         rowGroups[0].Schema().Fields(),
 	}
 	n, err := rowGroups[0].Rows().ReadRows(row1.Rows)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	requireReadRows(t, n, err, 1)
 
 	row2 := &DynamicRows{
 		Schema:         rowGroups[1].Schema(),
@@ -124,8 +134,7 @@ func TestLess(t *testing.T) {
 		fields:         rowGroups[1].Schema().Fields(),
 	}
 	n, err = rowGroups[1].Rows().ReadRows(row2.Rows)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	requireReadRows(t, n, err, 1)
 
 	row3 := &DynamicRows{
 		Schema:         rowGroups[2].Schema(),
@@ -134,8 +143,7 @@ func TestLess(t *testing.T) {
 		fields:         rowGroups[2].Schema().Fields(),
 	}
 	n, err = rowGroups[2].Rows().ReadRows(row3.Rows)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	requireReadRows(t, n, err, 1)
 
 	require.True(t, schema.RowLessThan(row1.Get(0), row2.Get(0)))
 	require.True(t, schema.RowLessThan(row1.Get(0), row3.Get(0)))
@@ -170,8 +178,7 @@ func TestLess(t *testing.T) {
 			fields:         rg.Schema().Fields(),
 		}
 		n, err = rg.Rows().ReadRows(row4.Rows)
-		require.NoError(t, err)
-		require.Equal(t, 1, n)
+		requireReadRows(t, n, err, 1)
 		require.True(t, schema.RowLessThan(row1.Get(0), row4.Get(0)))
 	})
 
@@ -204,8 +211,7 @@ func TestLess(t *testing.T) {
 			fields:         rg.Schema().Fields(),
 		}
 		n, err := rg.Rows().ReadRows(row1.Rows)
-		require.NoError(t, err)
-		require.Equal(t, 1, n)
+		requireReadRows(t, n, err, 1)
 
 		// Add 1 to the last stacktrace byte.
 		sample.Stacktrace[1][15] = 0x3
@@ -218,8 +224,7 @@ func TestLess(t *testing.T) {
 			fields:         rg.Schema().Fields(),
 		}
 		n, err = rg.Rows().ReadRows(row2.Rows)
-		require.NoError(t, err)
-		require.Equal(t, 1, n)
+		requireReadRows(t, n, err, 1)
 
 		require.True(t, schema.RowLessThan(row1.Get(0), row2.Get(0)))
 	})
@@ -265,8 +270,7 @@ func TestLessWithDynamicSchemas(t *testing.T) {
 		fields:         rowGroups[0].Schema().Fields(),
 	}
 	n, err := rowGroups[0].Rows().ReadRows(row1.Rows)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	requireReadRows(t, n, err, 1)
 
 	row2 := &DynamicRows{
 		Schema:         rowGroups[1].Schema(),
@@ -275,8 +279,7 @@ func TestLessWithDynamicSchemas(t *testing.T) {
 		fields:         rowGroups[1].Schema().Fields(),
 	}
 	n, err = rowGroups[1].Rows().ReadRows(row2.Rows)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	requireReadRows(t, n, err, 1)
 
 	require.True(t, schema.RowLessThan(row2.Get(0), row1.Get(0)))
 	require.False(t, schema.RowLessThan(row1.Get(0), row2.Get(0)))
