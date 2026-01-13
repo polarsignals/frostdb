@@ -153,9 +153,11 @@ func minRow(buf *dynparquet.SerializedBuffer) (*dynparquet.DynamicRow, error) {
 	reader := buf.DynamicRowGroup(0).DynamicRows()
 	defer reader.Close()
 
-	if n, err := reader.ReadRows(rowBuf); err != nil {
-		return nil, fmt.Errorf("read first row of part: %w", err)
-	} else if n != 1 {
+	n, err := reader.ReadRows(rowBuf)
+	if n != 1 {
+		if err != nil {
+			return nil, fmt.Errorf("read first row of part: %w", err)
+		}
 		return nil, fmt.Errorf("expected to read exactly 1 row, but read %d", n)
 	}
 
