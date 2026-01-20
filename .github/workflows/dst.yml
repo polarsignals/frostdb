@@ -8,8 +8,6 @@ on:
 
 jobs:
   dst:
-    # Disabling as DST tests are broken after the recent parquet-go version upgrade.
-    if: false
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
