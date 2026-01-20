@@ -173,10 +173,10 @@ func Test_LSM_CascadeCompaction(t *testing.T) {
 	t.Parallel()
 	lsm, err := NewLSM("test", nil, []*LevelConfig{
 		{Level: L0, MaxSize: 257, Type: CompactionTypeParquetMemory, Compact: compactParts},
-		{Level: L1, MaxSize: 2800, Type: CompactionTypeParquetMemory, Compact: compactParts},
-		{Level: L2, MaxSize: 2700, Type: CompactionTypeParquetMemory, Compact: compactParts},
-		{Level: 3, MaxSize: 2700, Type: CompactionTypeParquetMemory, Compact: compactParts},
-		{Level: 4, MaxSize: 2900},
+		{Level: L1, MaxSize: 2281, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: L2, MaxSize: 2281, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: 3, MaxSize: 2281, Type: CompactionTypeParquetMemory, Compact: compactParts},
+		{Level: 4, MaxSize: 2281},
 	},
 		func() uint64 { return math.MaxUint64 },
 	)
