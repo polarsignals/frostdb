@@ -15,7 +15,7 @@ require (
 	github.com/parquet-go/parquet-go v0.22.0
 	github.com/polarsignals/frostdb v0.0.0-20240531143051-eaf80c711e0a
 	github.com/prometheus/client_golang v1.20.5
-	github.com/spf13/cobra v1.8.0
+	github.com/spf13/cobra v1.10.2
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
 )
 
@@ -55,7 +55,7 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/segmentio/encoding v0.3.6 // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.etcd.io/bbolt v1.3.7 // indirect
 	golang.org/x/mod v0.25.0 // indirect
