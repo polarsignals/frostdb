@@ -92,13 +92,22 @@ func AppendValue(cb ColumnBuilder, arr arrow.Array, i int) error {
 	case *array.BinaryDictionaryBuilder:
 		switch a := arr.(type) {
 		case *array.Dictionary:
+			idx := a.GetValueIndex(i)
 			switch dict := a.Dictionary().(type) {
 			case *array.Binary:
-				if err := b.Append(dict.Value(a.GetValueIndex(i))); err != nil {
+				if idx < 0 || idx >= dict.Len() {
+					b.AppendNull()
+					return nil
+				}
+				if err := b.Append(dict.Value(idx)); err != nil {
 					return err
 				}
 			case *array.String:
-				if err := b.AppendString(dict.Value(a.GetValueIndex(i))); err != nil {
+				if idx < 0 || idx >= dict.Len() {
+					b.AppendNull()
+					return nil
+				}
+				if err := b.AppendString(dict.Value(idx)); err != nil {
 					return err
 				}
 			default:
