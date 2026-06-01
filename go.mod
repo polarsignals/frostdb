@@ -1,6 +1,6 @@
 module github.com/polarsignals/frostdb
 
-go 1.24.1
+go 1.25.0
 
 require (
 	github.com/RoaringBitmap/roaring v1.9.4
@@ -21,7 +21,7 @@ require (
 	github.com/prometheus/client_golang v1.20.5
 	github.com/spf13/cobra v1.8.0
 	github.com/stretchr/testify v1.10.0
-	github.com/tetratelabs/wazero v1.7.3
+	github.com/tetratelabs/wazero v1.12.0
 	github.com/thanos-io/objstore v0.0.0-20240818203309-0363dadfdfb1
 	go.opentelemetry.io/otel v1.34.0
 	go.opentelemetry.io/otel/trace v1.34.0
@@ -81,7 +81,7 @@ require (
 	go.uber.org/zap v1.25.0 // indirect
 	golang.org/x/mod v0.23.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/tools v0.30.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
