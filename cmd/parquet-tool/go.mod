@@ -2,7 +2,7 @@ module github.com/polarsignals/frostdb/cmd/parquet-tool
 
 go 1.23.0
 
-toolchain go1.24.5
+toolchain go1.27.1
 
 require (
 	github.com/apache/arrow-go/v18 v18.4.0
