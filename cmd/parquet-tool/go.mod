@@ -1,8 +1,6 @@
 module github.com/polarsignals/frostdb/cmd/parquet-tool
 
-go 1.23.0
-
-toolchain go1.24.5
+go 1.26.0
 
 require (
 	github.com/apache/arrow-go/v18 v18.4.0
@@ -16,7 +14,7 @@ require (
 	github.com/polarsignals/frostdb v0.0.0-20240531143051-eaf80c711e0a
 	github.com/prometheus/client_golang v1.20.5
 	github.com/spf13/cobra v1.8.0
-	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
+	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e
 )
 
 require (
@@ -58,10 +56,11 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.etcd.io/bbolt v1.3.7 // indirect
-	golang.org/x/mod v0.25.0 // indirect
-	golang.org/x/sync v0.15.0 // indirect
-	golang.org/x/sys v0.33.0 // indirect
-	golang.org/x/tools v0.34.0 // indirect
+	golang.org/x/mod v0.42.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/telemetry v0.0.0-20261009151841-97e8ea77aa2a // indirect
+	golang.org/x/tools v0.52.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 )
