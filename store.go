@@ -68,6 +68,7 @@ type DefaultObjstoreBucket struct {
 	logger log.Logger
 
 	blockReaderLimit int
+	onUnreadable     func(blockDir string, err error) error
 }
 
 type DefaultObjstoreBucketOption func(*DefaultObjstoreBucket)
@@ -75,6 +76,14 @@ type DefaultObjstoreBucketOption func(*DefaultObjstoreBucket)
 func StorageWithBlockReaderLimit(limit int) DefaultObjstoreBucketOption {
 	return func(b *DefaultObjstoreBucket) {
 		b.blockReaderLimit = limit
+	}
+}
+
+// StorageWithSkipUnreadableBlocks makes Scan pass a block's read error to onUnreadable, which returns nil to
+// skip the block or an error to fail the scan. Callback and context errors always fail the scan; nil keeps the default.
+func StorageWithSkipUnreadableBlocks(onUnreadable func(blockDir string, err error) error) DefaultObjstoreBucketOption {
+	return func(b *DefaultObjstoreBucket) {
+		b.onUnreadable = onUnreadable
 	}
 }
 
@@ -155,7 +164,17 @@ func (b *DefaultObjstoreBucket) Scan(ctx context.Context, prefix string, _ *dynp
 	errg.SetLimit(int(b.blockReaderLimit))
 	err = b.Iter(ctx, prefix, func(blockDir string) error {
 		n++
-		errg.Go(func() error { return b.ProcessFile(ctx, blockDir, lastBlockTimestamp, f, callback) })
+		errg.Go(func() error {
+			var callbackErr error
+			err := b.ProcessFile(ctx, blockDir, lastBlockTimestamp, f, func(ctx context.Context, v any) error {
+				callbackErr = callback(ctx, v)
+				return callbackErr
+			})
+			if err == nil || b.onUnreadable == nil || callbackErr != nil || ctx.Err() != nil {
+				return err
+			}
+			return b.onUnreadable(blockDir, err)
+		})
 		return nil
 	})
 	if err != nil {
@@ -183,7 +202,7 @@ func (b *DefaultObjstoreBucket) openBlockFile(ctx context.Context, blockName str
 		parquet.FileReadMode(parquet.ReadModeAsync),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open block: %s :%v", blockName, err)
+		return nil, fmt.Errorf("failed to open block: %s: %w", blockName, err)
 	}
 
 	return file, nil

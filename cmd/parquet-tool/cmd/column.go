@@ -23,7 +23,7 @@ var columnCmd = &cobra.Command{
 	},
 }
 
-func column(file string, col string, rg int) error {
+func column(file, col string, rg int) error {
 	pf, closer, err := openParquetFile(file)
 	if err != nil {
 		return fmt.Errorf("failed to open file: ", err)

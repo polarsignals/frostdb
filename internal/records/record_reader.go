@@ -14,7 +14,7 @@ type Reader[T any] struct {
 func NewReader[T any](records ...arrow.Record) *Reader[T] {
 	var a T
 	r := reflect.TypeOf(a)
-	for r.Kind() == reflect.Ptr {
+	for r.Kind() == reflect.Pointer {
 		r = r.Elem()
 	}
 	if r.Kind() != reflect.Struct {

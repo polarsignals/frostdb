@@ -719,12 +719,8 @@ func (p literalProjection) Project(mem memory.Allocator, ar arrow.Record) ([]arr
 		return nil, nil, fmt.Errorf("make array from literal value: %w", err)
 	}
 
-	return []arrow.Field{{
-			Name: p.value.String(),
-			Type: p.value.DataType(),
-		}}, []arrow.Array{
-			arr,
-		}, nil
+	field := arrow.Field{Name: p.value.String(), Type: p.value.DataType()}
+	return []arrow.Field{field}, []arrow.Array{arr}, nil
 }
 
 type dynamicProjection struct {
