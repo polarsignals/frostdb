@@ -98,7 +98,7 @@ type Build[T any] struct {
 func NewBuild[T any](mem memory.Allocator) *Build[T] {
 	var a T
 	r := reflect.TypeOf(a)
-	for r.Kind() == reflect.Ptr {
+	for r.Kind() == reflect.Pointer {
 		r = r.Elem()
 	}
 	if r.Kind() != reflect.Struct {
@@ -172,7 +172,7 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 			encoding:    encoding,
 		}
 		fty := f.Type
-		for fty.Kind() == reflect.Ptr {
+		for fty.Kind() == reflect.Pointer {
 			nullable = true
 			fty = fty.Elem()
 		}
@@ -185,7 +185,7 @@ func NewBuild[T any](mem memory.Allocator) *Build[T] {
 			fr.build = newMapFieldBuilder(newFieldFunc(typ, mem, name,
 				// Pointer base types needs to be property handled even for dynamic columns
 				// so map[string]string and map[string]*string should all work the same.
-				fty.Elem().Kind() == reflect.Ptr),
+				fty.Elem().Kind() == reflect.Pointer),
 				newRowsBeforeFunc(i, b.numRowsBefore),
 			)
 		case reflect.Slice:
@@ -251,7 +251,7 @@ func (b *Build[T]) numRowsBefore(fieldIdx int) int {
 func (b *Build[T]) Append(values ...T) error {
 	for _, value := range values {
 		v := reflect.ValueOf(value)
-		for v.Kind() == reflect.Ptr {
+		for v.Kind() == reflect.Pointer {
 			v = v.Elem()
 		}
 		for i := 0; i < v.NumField(); i++ {
@@ -494,7 +494,7 @@ func (m *mapFieldBuilder) get(name string, size int) fieldBuilder {
 }
 
 func baseType(fty reflect.Type, dictionary bool) (typ arrow.DataType, sty schemapb.StorageLayout_Type) {
-	for fty.Kind() == reflect.Ptr {
+	for fty.Kind() == reflect.Pointer {
 		fty = fty.Elem()
 	}
 	switch fty.Kind() {
