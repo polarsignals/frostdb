@@ -7,7 +7,7 @@ require (
 	github.com/apache/arrow-go/v18 v18.2.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cockroachdb/datadriven v1.0.2
-	github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33
+	github.com/dgryski/go-metro v0.0.0-20261008173524-5059e0b1da03
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-kit/log v0.2.1
 	github.com/google/uuid v1.6.0
