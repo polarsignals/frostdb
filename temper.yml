@@ -1,0 +1,8 @@
+temper: "0.1"
+project: frostdb
+
+levels:
+  - name: unit
+    description: go test -short -race -tags assert,debug ./..., the command frostdb's CI runs
+  - name: long
+    description: the tests that skip in -short mode; go test -tags assert,debug -run '^(Test_BuildLargeArray|Test_Aggregate_ArrayOverflow)$' ./...
