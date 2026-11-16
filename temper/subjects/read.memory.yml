@@ -1,0 +1,23 @@
+id: read.memory
+kind: read_path
+feature: table.insert
+answers:
+  column_types:
+    string: supported
+    string nullable: supported
+    string repeated: supported
+    int64: supported
+    int64 nullable: supported
+    int64 repeated: supported
+    double: supported
+    double nullable: supported
+    double repeated: supported
+    bool: supported
+    bool nullable: supported
+    bool repeated: supported
+    int32: supported
+    int32 nullable: supported
+    int32 repeated: supported
+    uint64: supported
+    uint64 nullable: supported
+    uint64 repeated: supported

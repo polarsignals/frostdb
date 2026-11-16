@@ -3,6 +3,7 @@ package physicalplan
 import (
 	"context"
 	"encoding/binary"
+	"github.com/turbolytics/temper"
 	"hash/maphash"
 	"math/rand"
 	"testing"
@@ -26,6 +27,7 @@ func randByteSlice(n int) []byte {
 // Test_Aggregate_ArrayOverflow ensures that if more data is sent to the aggreagte function than can fit in a single array
 // that the Aggregate function correctly splits the data into multiple records.
 func Test_Aggregate_ArrayOverflow(t *testing.T) {
+	temper.Covers(t, "aggregate.array_overflow")
 	if testing.Short() {
 		t.Skip("short test; skipping")
 	}

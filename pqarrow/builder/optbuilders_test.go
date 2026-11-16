@@ -2,6 +2,7 @@ package builder_test
 
 import (
 	"fmt"
+	"github.com/turbolytics/temper"
 	"math"
 	"math/rand"
 	"testing"
@@ -125,6 +126,7 @@ func Test_ListBuilder(t *testing.T) {
 // The reason for this test we've hit cases where the binary array builder had so many values appended onto
 // it that it caused the uint32 that was being used to track value offsets to overflow.
 func Test_BuildLargeArray(t *testing.T) {
+	temper.Covers(t, "builder.large_binary")
 	if testing.Short() {
 		t.Skip("in short mode; skipping long test")
 	}

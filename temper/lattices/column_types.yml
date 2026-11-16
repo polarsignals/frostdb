@@ -1,0 +1,26 @@
+id: column_types
+description: >
+  Every column type a frostdb schema can declare (StorageLayout.Type in
+  proto/frostdb/schema/v1alpha2/schema.proto), in plain, nullable and
+  repeated form.
+applies_to: read_path
+requires: [unit]
+members:
+  - key: string
+  - key: string nullable
+  - key: string repeated
+  - key: int64
+  - key: int64 nullable
+  - key: int64 repeated
+  - key: double
+  - key: double nullable
+  - key: double repeated
+  - key: bool
+  - key: bool nullable
+  - key: bool repeated
+  - key: int32
+  - key: int32 nullable
+  - key: int32 repeated
+  - key: uint64
+  - key: uint64 nullable
+  - key: uint64 repeated

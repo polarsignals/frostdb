@@ -1,0 +1,15 @@
+# What frostdb's README says it does: Arrow records in, Parquet for storage,
+# Arrow at query time.
+features:
+  - id: table.insert
+    description: Inserts Arrow records into a table and reads them back at query time.
+    requires: [unit]
+  - id: compaction.parquet
+    description: Compacts in-memory blocks to Parquet, and reads them back as Arrow at query time.
+    requires: [unit]
+  - id: builder.large_binary
+    description: Builds a binary array larger than MaxInt32 bytes without overflowing its offsets.
+    requires: [unit]
+  - id: aggregate.array_overflow
+    description: Splits an aggregation into several records when its data does not fit in one array.
+    requires: [unit]
