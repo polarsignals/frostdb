@@ -514,7 +514,7 @@ func (b *OptBooleanBuilder) AppendParquetValues(values []parquet.Value) {
 
 	for _, v := range values {
 		bitutil.SetBitTo(b.data, b.length, v.Boolean())
-		bitutil.SetBitTo(b.validityBitmap, b.length, true)
+		bitutil.SetBitTo(b.validityBitmap, b.length, !v.IsNull())
 		b.length++
 	}
 }

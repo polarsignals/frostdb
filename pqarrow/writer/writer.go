@@ -113,6 +113,28 @@ func (w *uint64ValueWriter) Write(values []parquet.Value) {
 	}
 }
 
+type int32ValueWriter struct {
+	b *array.Int32Builder
+}
+
+func NewInt32ValueWriter(b builder.ColumnBuilder, numValues int) ValueWriter {
+	res := &int32ValueWriter{
+		b: b.(*array.Int32Builder),
+	}
+	res.b.Reserve(numValues)
+	return res
+}
+
+func (w *int32ValueWriter) Write(values []parquet.Value) {
+	for _, v := range values {
+		if v.IsNull() {
+			w.b.AppendNull()
+		} else {
+			w.b.Append(v.Int32())
+		}
+	}
+}
+
 type repeatedValueWriter struct {
 	b      *builder.ListBuilder
 	values ValueWriter

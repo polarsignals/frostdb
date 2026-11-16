@@ -251,6 +251,10 @@ func writeList(def, column, startIdx int, a *array.List) (arrowToParquet, error)
 		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
 			return parquet.Int64Value(e.Value(idx))
 		})
+	case *array.Uint64:
+		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
+			return parquet.Int64Value(int64(e.Value(idx)))
+		})
 	case *array.Boolean:
 		lw = writeListOf(def, column, startIdx, a, func(idx int) parquet.Value {
 			return parquet.BooleanValue(e.Value(idx))

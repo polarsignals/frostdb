@@ -73,13 +73,13 @@ func ParquetNodeToType(n parquet.Node) (arrow.DataType, error) {
 				}
 			}
 		case lt.Integer != nil:
-			switch lt.Integer.BitWidth {
-			case 64:
-				if lt.Integer.IsSigned {
-					dt = &arrow.Int64Type{}
-				} else {
-					dt = &arrow.Uint64Type{}
-				}
+			switch {
+			case lt.Integer.BitWidth == 64 && lt.Integer.IsSigned:
+				dt = &arrow.Int64Type{}
+			case lt.Integer.BitWidth == 64:
+				dt = &arrow.Uint64Type{}
+			case lt.Integer.BitWidth == 32 && lt.Integer.IsSigned:
+				dt = &arrow.Int32Type{}
 			default:
 				return nil, errors.New("unsupported int bit width")
 			}
@@ -123,6 +123,8 @@ func GetWriter(offset int, n parquet.Node) (writer.NewWriterFunc, error) {
 		wr = writer.NewInt64ValueWriter
 	case *arrow.Uint64Type:
 		wr = writer.NewUint64ValueWriter
+	case *arrow.Int32Type:
+		wr = writer.NewInt32ValueWriter
 	case *arrow.MapType:
 		wr = writer.NewMapWriter
 	case *arrow.StructType:
